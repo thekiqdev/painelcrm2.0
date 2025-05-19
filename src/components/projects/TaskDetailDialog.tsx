@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,8 @@ interface TaskDetailDialogProps {
   onToggleChecklistItem: (itemId: string) => void;
   onAddChecklistItem: (text: string) => void;
   onDeleteChecklistItem: (itemId: string) => void;
+  newChecklistItemText: string;
+  setNewChecklistItemText: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export function TaskDetailDialog({
@@ -31,10 +33,10 @@ export function TaskDetailDialog({
   onToggleTaskStatus,
   onToggleChecklistItem,
   onAddChecklistItem,
-  onDeleteChecklistItem
+  onDeleteChecklistItem,
+  newChecklistItemText,
+  setNewChecklistItemText
 }: TaskDetailDialogProps) {
-  const [newChecklistItemText, setNewChecklistItemText] = useState("");
-
   if (!task || !listId) return null;
 
   const checklistItems = task.checklist || [];

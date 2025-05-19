@@ -17,7 +17,7 @@ import { EditListDialog } from "@/components/projects/EditListDialog";
 import { NewProjectDialog } from "@/components/projects/NewProjectDialog";
 
 // Importações de tipos e dados
-import { Project, ProjectList, Task, ChecklistItem } from "@/components/projects/types";
+import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
 import { initialProjects, mockMembers } from "@/components/projects/mockData";
 
 // Padrão de página única para toda a funcionalidade de projetos
@@ -37,6 +37,9 @@ const Projects = () => {
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [editingList, setEditingList] = useState<ProjectList | null>(null);
   const [selectedTask, setSelectedTask] = useState<{task: Task, listId: string} | null>(null);
+  const [newChecklistItemText, setNewChecklistItemText] = useState("");
+  const [newTagText, setNewTagText] = useState("");
+  const [tagsInput, setTagsInput] = useState<string[]>([]);
 
   // Funções para gestão de projetos
   const handleCreateProject = (event: React.FormEvent) => {
@@ -160,12 +163,12 @@ const Projects = () => {
       assignee = mockMembers.find(m => m.id === assigneeId);
     }
     
-    // Criar nova tarefa
+    // Criar nova tarefa - Garantir que status seja um valor válido de TaskStatus
     const newTask: Task = {
       id: `t-${Date.now()}`,
       title,
       description,
-      status: "todo",
+      status: "todo" as TaskStatus, // Corrigido: usando um valor literal do tipo TaskStatus
       priority: priority as any,
       dueDate,
       assignee,
@@ -205,7 +208,8 @@ const Projects = () => {
           tasks: list.tasks.map(task => {
             if (task.id !== taskId) return task;
             
-            const newStatus = task.status === "completed" ? "todo" : "completed";
+            // Corrigido: Usando valores corretos de TaskStatus
+            const newStatus: TaskStatus = task.status === "completed" ? "todo" : "completed";
             if (newStatus === "completed") {
               toast.success("Tarefa concluída!");
             }
@@ -281,7 +285,9 @@ const Projects = () => {
             
             // Verificar se todos os itens estão completos
             const allCompleted = updatedChecklist.length > 0 && updatedChecklist.every(item => item.completed);
-            const newStatus = allCompleted ? "completed" : task.status;
+            
+            // Corrigido: Usando valores corretos de TaskStatus
+            const newStatus: TaskStatus = allCompleted ? "completed" : task.status;
             
             if (allCompleted && task.status !== "completed") {
               toast.success("Todas as tarefas concluídas!");
@@ -562,6 +568,10 @@ const Projects = () => {
         onOpenChange={setNewTaskDialogOpen}
         members={selectedProject?.members || []}
         onAddTask={handleCreateTask}
+        tagsInput={tagsInput}
+        setTagsInput={setTagsInput}
+        newTagText={newTagText}
+        setNewTagText={setNewTagText}
       />
       
       <TaskDetailDialog
@@ -574,6 +584,8 @@ const Projects = () => {
         onToggleChecklistItem={toggleChecklistItem}
         onAddChecklistItem={addChecklistItem}
         onDeleteChecklistItem={deleteChecklistItem}
+        newChecklistItemText={newChecklistItemText}
+        setNewChecklistItemText={setNewChecklistItemText}
       />
     </div>
   );

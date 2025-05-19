@@ -1,6 +1,6 @@
 
-import React, { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import React, { Dispatch, SetStateAction } from "react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,60 +8,63 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
 import { CalendarIcon, Plus, X } from "lucide-react";
-import { Member } from "@/components/shared/types";
-import { Task } from "./types";
+import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
+import { Member } from "@/components/shared/types";
 
 interface NewTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   members: Member[];
   onAddTask: (formData: FormData) => void;
+  tagsInput: string[];
+  setTagsInput: Dispatch<SetStateAction<string[]>>;
+  newTagText: string;
+  setNewTagText: Dispatch<SetStateAction<string>>;
 }
 
 export function NewTaskDialog({
   open,
   onOpenChange,
   members,
-  onAddTask
+  onAddTask,
+  tagsInput,
+  setTagsInput,
+  newTagText,
+  setNewTagText
 }: NewTaskDialogProps) {
-  const [selectedDate, setSelectedDate] = useState<Date | undefined>();
-  const [newTagText, setNewTagText] = useState("");
-  const [tagsInput, setTagsInput] = useState<string[]>([]);
+  const [date, setDate] = React.useState<Date>();
 
-  // Function to add tag for task creation
+  // Função para adicionar tag
   const addTag = () => {
     if (!newTagText.trim()) return;
     setTagsInput([...tagsInput, newTagText.trim()]);
     setNewTagText("");
   };
 
-  // Function to remove tag
+  // Função para remover tag
   const removeTag = (tagToRemove: string) => {
     setTagsInput(tagsInput.filter(tag => tag !== tagToRemove));
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const formData = new FormData(form);
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
     
-    // Add tags to the form data
+    // Adicionar tags ao FormData como JSON
     formData.append('tags', JSON.stringify(tagsInput));
     
-    // Add selected date if available
-    if (selectedDate) {
-      formData.append('dueDate', format(selectedDate, 'yyyy-MM-dd'));
+    // Adicionar a data formatada, se selecionada
+    if (date) {
+      formData.set('dueDate', format(date, 'yyyy-MM-dd'));
     }
     
     onAddTask(formData);
     
-    // Reset form
-    form.reset();
-    setSelectedDate(undefined);
+    // Limpar campos após submissão
     setTagsInput([]);
+    setDate(undefined);
   };
 
   return (
@@ -134,14 +137,14 @@ export function NewTaskDialog({
                   <PopoverTrigger asChild>
                     <Button variant="outline" className="w-full justify-start">
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {selectedDate ? format(selectedDate, "dd/MM/yyyy") : <span>Selecionar data</span>}
+                      {date ? format(date, "dd/MM/yyyy") : <span>Selecionar data</span>}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0">
                     <Calendar
                       mode="single"
-                      selected={selectedDate}
-                      onSelect={setSelectedDate}
+                      selected={date}
+                      onSelect={setDate}
                       initialFocus
                     />
                   </PopoverContent>
