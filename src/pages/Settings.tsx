@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,8 +12,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Member } from "@/components/shared/types";
-import { FileEdit, Plus, Trash2, UserPlus } from "lucide-react";
+import { 
+  FileEdit, Plus, Trash2, UserPlus, Building, Users, 
+  Globe, CreditCard, Bell, Settings as SettingsIcon, 
+  Shield, Menu 
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 const Settings = () => {
   const [collaborators, setCollaborators] = useState<Member[]>([
@@ -23,6 +29,7 @@ const Settings = () => {
   const [newCollaboratorDialog, setNewCollaboratorDialog] = useState(false);
   const [editCollaboratorDialog, setEditCollaboratorDialog] = useState(false);
   const [currentCollaborator, setCurrentCollaborator] = useState<Member | null>(null);
+  const [activeSettingsTab, setActiveSettingsTab] = useState("company");
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,148 +102,79 @@ const Settings = () => {
     setCollaborators(collaborators.filter(c => c.id !== id));
     toast.success("Colaborador removido com sucesso!");
   };
+  
+  // Define the settings menu items
+  const settingsMenuItems = [
+    { id: "company", label: "Dados da Empresa", icon: <Building className="mr-2 h-5 w-5" /> },
+    { id: "users", label: "Usuários & Permissões", icon: <Users className="mr-2 h-5 w-5" /> },
+    { id: "domain", label: "Domínio e URLs", icon: <Globe className="mr-2 h-5 w-5" /> },
+    { id: "billing", label: "Pagamentos e Faturamento", icon: <CreditCard className="mr-2 h-5 w-5" /> },
+    { id: "notifications", label: "Notificações", icon: <Bell className="mr-2 h-5 w-5" /> },
+    { id: "preferences", label: "Preferências Gerais", icon: <SettingsIcon className="mr-2 h-5 w-5" /> },
+    { id: "security", label: "Segurança", icon: <Shield className="mr-2 h-5 w-5" /> },
+  ];
 
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Configurações</h1>
-      </div>
-
-      <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList className="grid w-full md:w-auto grid-cols-5">
-          <TabsTrigger value="profile">Perfil</TabsTrigger>
-          <TabsTrigger value="company">Empresa</TabsTrigger>
-          <TabsTrigger value="users">Usuários</TabsTrigger>
-          <TabsTrigger value="collaborators">Colaboradores</TabsTrigger>
-          <TabsTrigger value="customization">Personalização</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="profile">
+  // Render the content based on the active settings tab
+  const renderSettingsContent = () => {
+    switch (activeSettingsTab) {
+      case "company":
+        return (
           <Card>
             <CardHeader>
-              <CardTitle>Perfil do Usuário</CardTitle>
-              <CardDescription>Gerencie suas informações pessoais e credenciais</CardDescription>
+              <CardTitle>Dados da Empresa</CardTitle>
+              <CardDescription>Configure as informações da sua empresa</CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSave} className="space-y-6">
-                <div className="flex flex-col md:flex-row gap-4 md:items-center mb-6">
-                  <Avatar className="w-16 h-16">
-                    <div className="bg-primary h-full w-full flex items-center justify-center text-xl font-medium text-primary-foreground">
-                      AU
-                    </div>
-                  </Avatar>
-                  <div className="flex flex-col md:flex-row gap-2">
-                    <Button variant="outline" size="sm">
-                      Alterar foto
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
-                      Remover
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid gap-6">
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Nome</Label>
-                      <Input id="name" defaultValue="Admin" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="lastName">Sobrenome</Label>
-                      <Input id="lastName" defaultValue="User" />
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="email">E-mail</Label>
-                    <Input id="email" type="email" defaultValue="admin@exemplo.com" />
-                  </div>
-                  
-                  <Separator />
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="currentPassword">Senha Atual</Label>
-                    <Input id="currentPassword" type="password" />
-                  </div>
-                  
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="newPassword">Nova Senha</Label>
-                      <Input id="newPassword" type="password" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="confirmPassword">Confirmar Senha</Label>
-                      <Input id="confirmPassword" type="password" />
-                    </div>
-                  </div>
-                  
-                  <Separator />
-                  
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="notifications">Notificações por e-mail</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Receba atualizações sobre tarefas e eventos
-                      </p>
-                    </div>
-                    <Switch id="notifications" defaultChecked />
-                  </div>
-                </div>
-              </form>
-            </CardContent>
-            <CardFooter>
-              <Button onClick={handleSave}>Salvar Alterações</Button>
-            </CardFooter>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="company">
-          <Card>
-            <CardHeader>
-              <CardTitle>Informações da Empresa</CardTitle>
-              <CardDescription>Configure os dados da sua empresa</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="space-y-6">
+              <form className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="companyName">Nome da Empresa</Label>
-                  <Input id="companyName" defaultValue="Minha Empresa" />
+                  <Input id="companyName" placeholder="Nome da sua empresa" />
                 </div>
                 
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="cnpj">CNPJ</Label>
-                    <Input id="cnpj" placeholder="XX.XXX.XXX/XXXX-XX" />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cnpj">CNPJ/CPF</Label>
+                  <Input id="cnpj" placeholder="XX.XXX.XXX/XXXX-XX" />
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="phone">Telefone</Label>
                     <Input id="phone" placeholder="(XX) XXXX-XXXX" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="whatsapp">WhatsApp</Label>
+                    <Input id="whatsapp" placeholder="(XX) XXXXX-XXXX" />
                   </div>
                 </div>
                 
                 <div className="space-y-2">
                   <Label htmlFor="address">Endereço</Label>
-                  <Input id="address" />
+                  <Input id="address" placeholder="Endereço completo" />
                 </div>
                 
-                <div className="grid md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="city">Cidade</Label>
-                    <Input id="city" />
+                    <Input id="city" placeholder="Cidade" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="state">Estado</Label>
-                    <Input id="state" />
+                    <Input id="state" placeholder="Estado" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="zipCode">CEP</Label>
-                    <Input id="zipCode" />
+                    <Input id="zipCode" placeholder="XXXXX-XXX" />
                   </div>
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="website">Website</Label>
-                  <Input id="website" type="url" placeholder="https://" />
+                  <Label>Logotipo da Empresa</Label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                    <Button variant="outline">Enviar logo</Button>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      Formatos suportados: PNG, JPG, GIF (max. 2MB)
+                    </p>
+                  </div>
                 </div>
               </form>
             </CardContent>
@@ -244,26 +182,81 @@ const Settings = () => {
               <Button onClick={handleSave}>Salvar Alterações</Button>
             </CardFooter>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="users">
+        );
+      case "users":
+        return (
           <Card>
             <CardHeader>
-              <CardTitle>Usuários e Permissões</CardTitle>
+              <CardTitle>Usuários & Permissões</CardTitle>
               <CardDescription>Gerencie os usuários do sistema e suas permissões</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-10">
-                <p className="text-muted-foreground mb-4">
-                  O gerenciamento de usuários e permissões estará disponível em breve.
-                </p>
-                <Button variant="outline">Solicitar Acesso</Button>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-medium">Usuários</h3>
+                  <Button size="sm">
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Novo Usuário
+                  </Button>
+                </div>
+                
+                <div className="border rounded-md">
+                  <div className="grid grid-cols-12 gap-4 p-4 border-b font-medium text-sm">
+                    <div className="col-span-3">Nome</div>
+                    <div className="col-span-4">Email</div>
+                    <div className="col-span-3">Tipo de Acesso</div>
+                    <div className="col-span-2">Ações</div>
+                  </div>
+                  
+                  <div className="grid grid-cols-12 gap-4 p-4 border-b text-sm">
+                    <div className="col-span-3 flex items-center gap-2">
+                      <Avatar className="h-8 w-8">
+                        <AvatarFallback>AD</AvatarFallback>
+                      </Avatar>
+                      <span>Admin</span>
+                    </div>
+                    <div className="col-span-4 flex items-center">admin@example.com</div>
+                    <div className="col-span-3 flex items-center">
+                      <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">
+                        Administrador
+                      </span>
+                    </div>
+                    <div className="col-span-2 flex items-center gap-1">
+                      <Button variant="ghost" size="icon">
+                        <FileEdit className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-12 gap-4 p-4 text-sm">
+                    <div className="col-span-3 flex items-center gap-2">
+                      <Avatar className="h-8 w-8">
+                        <AvatarFallback>US</AvatarFallback>
+                      </Avatar>
+                      <span>Usuário Padrão</span>
+                    </div>
+                    <div className="col-span-4 flex items-center">usuario@example.com</div>
+                    <div className="col-span-3 flex items-center">
+                      <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded-full text-xs">
+                        Padrão
+                      </span>
+                    </div>
+                    <div className="col-span-2 flex items-center gap-1">
+                      <Button variant="ghost" size="icon">
+                        <FileEdit className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon">
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="collaborators">
+        );
+      case "collaborators":
+        return (
           <Card>
             <CardHeader>
               <div className="flex justify-between items-center">
@@ -344,67 +337,431 @@ const Settings = () => {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="customization">
+        );
+      case "domain":
+        return (
           <Card>
             <CardHeader>
-              <CardTitle>Personalização</CardTitle>
-              <CardDescription>Ajuste a aparência do seu sistema CRM</CardDescription>
+              <CardTitle>Domínio e URLs</CardTitle>
+              <CardDescription>Configure seu domínio personalizado</CardDescription>
             </CardHeader>
             <CardContent>
-              <form className="space-y-6">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Tema</Label>
-                    <div className="flex gap-4">
-                      <Button variant="outline" className="flex-1">Claro</Button>
-                      <Button variant="outline" className="flex-1">Escuro</Button>
-                      <Button variant="outline" className="flex-1">Sistema</Button>
-                    </div>
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="domain">Domínio Personalizado</Label>
+                  <div className="flex gap-2">
+                    <Input id="domain" placeholder="example.com" />
+                    <Button>Verificar</Button>
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label>Esquema de Cores</Label>
-                    <div className="grid grid-cols-5 gap-2">
-                      <div className="w-full h-10 rounded-md bg-blue-500 cursor-pointer ring-2 ring-offset-2"></div>
-                      <div className="w-full h-10 rounded-md bg-green-500 cursor-pointer"></div>
-                      <div className="w-full h-10 rounded-md bg-purple-500 cursor-pointer"></div>
-                      <div className="w-full h-10 rounded-md bg-red-500 cursor-pointer"></div>
-                      <div className="w-full h-10 rounded-md bg-orange-500 cursor-pointer"></div>
+                </div>
+                
+                <div className="p-4 border rounded-md bg-yellow-50">
+                  <div className="flex items-center gap-2 font-medium text-amber-800">
+                    <div className="p-1 bg-amber-200 rounded-full">
+                      <Bell className="h-5 w-5 text-amber-800" />
                     </div>
+                    Status do Domínio: Pendente
+                  </div>
+                  <p className="mt-2 text-sm text-amber-700">
+                    Aguardando propagação de DNS. Isso pode levar até 48 horas.
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="url">URL do Painel</Label>
+                  <div className="flex items-center gap-2">
+                    <Input id="url" value="https://app.example.com/dashboard" readOnly />
+                    <Button variant="outline" size="icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+            <CardFooter>
+              <Button onClick={handleSave}>Salvar Alterações</Button>
+            </CardFooter>
+          </Card>
+        );
+      case "billing":
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Pagamentos e Faturamento</CardTitle>
+              <CardDescription>Gerencie métodos de pagamento e faturas</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <h3 className="text-lg font-medium">Métodos de Pagamento</h3>
+                  <div className="space-y-4">
+                    <div className="p-4 border rounded-md flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <div className="p-1.5 bg-gray-100 rounded-md">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="2" y="5" width="20" height="14" rx="2" />
+                            <line x1="2" y1="10" x2="22" y2="10" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="font-medium">Cartão de Crédito</p>
+                          <p className="text-sm text-muted-foreground">Visa terminando em 1234</p>
+                        </div>
+                      </div>
+                      <Button variant="outline" size="sm">Remover</Button>
+                    </div>
+                    
+                    <div className="p-4 border rounded-md flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <div className="p-1.5 bg-gray-100 rounded-md">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="12" y1="1" x2="12" y2="23" />
+                            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="font-medium">Chave PIX</p>
+                          <p className="text-sm text-muted-foreground">CPF: 123.456.789-00</p>
+                        </div>
+                      </div>
+                      <Button variant="outline" size="sm">Editar</Button>
+                    </div>
+                    
+                    <Button variant="outline" className="w-full">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Adicionar Método de Pagamento
+                    </Button>
+                  </div>
+                </div>
+                
+                <Separator />
+                
+                <div className="space-y-2">
+                  <h3 className="text-lg font-medium">Histórico de Faturas</h3>
+                  <div className="border rounded-md overflow-hidden">
+                    <table className="w-full">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-sm font-medium">Fatura</th>
+                          <th className="px-4 py-3 text-left text-sm font-medium">Data</th>
+                          <th className="px-4 py-3 text-left text-sm font-medium">Valor</th>
+                          <th className="px-4 py-3 text-left text-sm font-medium">Status</th>
+                          <th className="px-4 py-3 text-right text-sm font-medium"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-t">
+                          <td className="px-4 py-3 text-sm">#INV-001</td>
+                          <td className="px-4 py-3 text-sm">21/05/2023</td>
+                          <td className="px-4 py-3 text-sm">R$ 149,90</td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+                              Pago
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            <Button variant="ghost" size="sm">Ver</Button>
+                          </td>
+                        </tr>
+                        <tr className="border-t">
+                          <td className="px-4 py-3 text-sm">#INV-002</td>
+                          <td className="px-4 py-3 text-sm">21/04/2023</td>
+                          <td className="px-4 py-3 text-sm">R$ 149,90</td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+                              Pago
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            <Button variant="ghost" size="sm">Ver</Button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      case "notifications":
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Notificações</CardTitle>
+              <CardDescription>Configure suas preferências de notificação</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium">Canais de Notificação</h3>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="email-notifications">E-mail</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Receba notificações no seu e-mail
+                      </p>
+                    </div>
+                    <Switch id="email-notifications" defaultChecked />
                   </div>
                   
                   <Separator />
                   
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="compactView">Modo compacto</Label>
+                      <Label htmlFor="whatsapp-notifications">WhatsApp</Label>
                       <p className="text-sm text-muted-foreground">
-                        Reduzir espaçamento de elementos na interface
+                        Receba notificações via WhatsApp
                       </p>
                     </div>
-                    <Switch id="compactView" />
+                    <Switch id="whatsapp-notifications" />
                   </div>
+                  
+                  <Separator />
                   
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="animations">Animações</Label>
+                      <Label htmlFor="app-notifications">Notificações no App</Label>
                       <p className="text-sm text-muted-foreground">
-                        Habilitar animações na interface
+                        Receba notificações dentro do aplicativo
                       </p>
                     </div>
-                    <Switch id="animations" defaultChecked />
+                    <Switch id="app-notifications" defaultChecked />
                   </div>
                 </div>
-              </form>
+                
+                <Separator />
+                
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium">Preferências de Notificação</h3>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="new-project">Novos Projetos</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Quando um novo projeto for criado
+                      </p>
+                    </div>
+                    <Switch id="new-project" defaultChecked />
+                  </div>
+                  
+                  <Separator />
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="project-updates">Atualizações de Projetos</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Quando um projeto for atualizado
+                      </p>
+                    </div>
+                    <Switch id="project-updates" defaultChecked />
+                  </div>
+                  
+                  <Separator />
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="invoice-notifications">Faturas e Pagamentos</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Notificações sobre faturas e pagamentos
+                      </p>
+                    </div>
+                    <Switch id="invoice-notifications" defaultChecked />
+                  </div>
+                  
+                  <Separator />
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="marketing-notifications">Marketing</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Receba novidades e ofertas especiais
+                      </p>
+                    </div>
+                    <Switch id="marketing-notifications" />
+                  </div>
+                </div>
+              </div>
             </CardContent>
             <CardFooter>
-              <Button onClick={handleSave}>Salvar Alterações</Button>
+              <Button onClick={handleSave}>Salvar Preferências</Button>
             </CardFooter>
           </Card>
-        </TabsContent>
-      </Tabs>
+        );
+      case "preferences":
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Preferências Gerais</CardTitle>
+              <CardDescription>Personalize sua experiência no sistema</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="language">Idioma do Sistema</Label>
+                  <Select defaultValue="pt-BR">
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um idioma" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pt-BR">Português (Brasil)</SelectItem>
+                      <SelectItem value="en-US">English (US)</SelectItem>
+                      <SelectItem value="es">Español</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="timezone">Fuso Horário</Label>
+                  <Select defaultValue="America/Sao_Paulo">
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um fuso horário" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="America/Sao_Paulo">Brasília (UTC-3)</SelectItem>
+                      <SelectItem value="America/Manaus">Manaus (UTC-4)</SelectItem>
+                      <SelectItem value="America/Belem">Belém (UTC-3)</SelectItem>
+                      <SelectItem value="America/Noronha">Fernando de Noronha (UTC-2)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="dateFormat">Formato de Data</Label>
+                  <Select defaultValue="DD/MM/YYYY">
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um formato de data" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
+                      <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
+                      <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardContent>
+            <CardFooter>
+              <Button onClick={handleSave}>Salvar Preferências</Button>
+            </CardFooter>
+          </Card>
+        );
+      case "security":
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Segurança</CardTitle>
+              <CardDescription>Configure as opções de segurança da sua conta</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium">Alterar Senha</h3>
+                  <div className="space-y-2">
+                    <Label htmlFor="currentPassword">Senha Atual</Label>
+                    <Input id="currentPassword" type="password" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="newPassword">Nova Senha</Label>
+                    <Input id="newPassword" type="password" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="confirmPassword">Confirmar Nova Senha</Label>
+                    <Input id="confirmPassword" type="password" />
+                  </div>
+                  <Button>Atualizar Senha</Button>
+                </div>
+                
+                <Separator />
+                
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-medium">Autenticação em Dois Fatores</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Aumente a segurança da sua conta com autenticação em dois fatores
+                      </p>
+                    </div>
+                    <Switch id="2fa" />
+                  </div>
+                </div>
+                
+                <Separator />
+                
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium">Sessões Ativas</h3>
+                  <div className="space-y-2">
+                    <div className="p-4 border rounded-md">
+                      <div className="flex justify-between">
+                        <div>
+                          <p className="font-medium">Chrome - Windows 10</p>
+                          <p className="text-xs text-muted-foreground">São Paulo, Brasil · Ativo agora</p>
+                        </div>
+                        <p className="text-xs text-green-600">Sessão Atual</p>
+                      </div>
+                    </div>
+                    
+                    <div className="p-4 border rounded-md">
+                      <div className="flex justify-between">
+                        <div>
+                          <p className="font-medium">Safari - iPhone</p>
+                          <p className="text-xs text-muted-foreground">São Paulo, Brasil · Último acesso: 2 dias atrás</p>
+                        </div>
+                        <Button variant="ghost" size="sm">Encerrar</Button>
+                      </div>
+                    </div>
+                  </div>
+                  <Button variant="outline">Encerrar Todas as Outras Sessões</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold">Configurações</h1>
+        <Sheet>
+          <SheetTrigger asChild>
+            <Button variant="outline" className="flex items-center gap-2">
+              <Menu className="h-4 w-4" />
+              Menu de Configurações
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="left" className="w-80">
+            <div className="py-4">
+              <h2 className="text-xl font-bold mb-6">Menu de Configurações</h2>
+              <nav>
+                <ul className="space-y-2">
+                  {settingsMenuItems.map((item) => (
+                    <li key={item.id}>
+                      <Button 
+                        variant={activeSettingsTab === item.id ? "default" : "ghost"} 
+                        className="w-full justify-start"
+                        onClick={() => setActiveSettingsTab(item.id)}
+                      >
+                        {item.icon}
+                        {item.label}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            </div>
+          </SheetContent>
+        </Sheet>
+      </div>
+
+      {renderSettingsContent()}
 
       {/* Dialog para adicionar novo colaborador */}
       <Dialog open={newCollaboratorDialog} onOpenChange={setNewCollaboratorDialog}>
