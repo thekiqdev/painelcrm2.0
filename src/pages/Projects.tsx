@@ -28,6 +28,12 @@ const Projects = () => {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState("board");
   const [projectsViewType, setProjectsViewType] = useState<"grid" | "kanban">("grid");
+  const [kanbanStages, setKanbanStages] = useState<ProjectList[]>([
+    { id: "backlog", name: "Backlog", tasks: [], order: 0 },
+    { id: "in-progress", name: "Em Andamento", tasks: [], order: 1 },
+    { id: "review", name: "Revisão", tasks: [], order: 2 },
+    { id: "done", name: "Concluído", tasks: [], order: 3 },
+  ]);
 
   // Estados de diálogos
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
@@ -80,77 +86,125 @@ const Projects = () => {
     toast.success("Projeto criado com sucesso!");
   };
 
-  // Funções para gestão de listas
+  // Funções para gestão de listas e etapas do kanban
   const handleCreateList = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedProject) return;
-
+    
     const form = event.target as HTMLFormElement;
     const formData = new FormData(form);
     const listName = formData.get('listName') as string;
 
-    const highestOrder = Math.max(...selectedProject.lists.map(list => list.order));
+    if (viewMode === "detail" && selectedProject) {
+      const highestOrder = Math.max(...selectedProject.lists.map(list => list.order));
+      
+      const newList: ProjectList = {
+        id: `l-${Date.now()}`,
+        name: listName,
+        tasks: [],
+        order: highestOrder + 1
+      };
+
+      const updatedProject = {
+        ...selectedProject,
+        lists: [...selectedProject.lists, newList]
+      };
+
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+    } else {
+      // Add stage to kanban board when in list view
+      const highestOrder = Math.max(...kanbanStages.map(list => list.order));
+      
+      const newStage: ProjectList = {
+        id: `stage-${Date.now()}`,
+        name: listName,
+        tasks: [],
+        order: highestOrder + 1
+      };
+
+      setKanbanStages([...kanbanStages, newStage]);
+    }
     
-    const newList: ProjectList = {
-      id: `l-${Date.now()}`,
-      name: listName,
-      tasks: [],
-      order: highestOrder + 1
-    };
-
-    const updatedProject = {
-      ...selectedProject,
-      lists: [...selectedProject.lists, newList]
-    };
-
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
     setNewListDialogOpen(false);
-    toast.success("Lista criada com sucesso!");
+    toast.success("Etapa criada com sucesso!");
   };
 
   const handleEditList = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedProject || !editingList) return;
+    if (!editingList) return;
 
     const form = event.target as HTMLFormElement;
     const formData = new FormData(form);
     const listName = formData.get('listName') as string;
 
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => 
-        list.id === editingList.id 
-          ? { ...list, name: listName }
-          : list
-      )
-    };
+    if (viewMode === "detail" && selectedProject) {
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => 
+          list.id === editingList.id 
+            ? { ...list, name: listName }
+            : list
+        )
+      };
 
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+    } else {
+      // Update stage in kanban board
+      setKanbanStages(kanbanStages.map(stage => 
+        stage.id === editingList.id 
+          ? { ...stage, name: listName }
+          : stage
+      ));
+    }
+
     setEditListDialogOpen(false);
     setEditingList(null);
-    toast.success("Lista atualizada com sucesso!");
+    toast.success("Etapa atualizada com sucesso!");
   };
 
   const deleteList = (listId: string) => {
-    if (!selectedProject) return;
+    if (viewMode === "detail" && selectedProject) {
+      // Não excluir se a lista contém tarefas
+      const listToDelete = selectedProject.lists.find(list => list.id === listId);
+      if (listToDelete && listToDelete.tasks.length > 0) {
+        toast.error("Não é possível excluir uma etapa que contém tarefas");
+        return;
+      }
 
-    // Não excluir se a lista contém tarefas
-    const listToDelete = selectedProject.lists.find(list => list.id === listId);
-    if (listToDelete && listToDelete.tasks.length > 0) {
-      toast.error("Não é possível excluir uma lista que contém tarefas");
-      return;
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.filter(list => list.id !== listId)
+      };
+
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+    } else {
+      // Delete stage from kanban board when in list view
+      // Only if it doesn't have projects
+      if (projects.some(p => p.id === listId)) {
+        toast.error("Não é possível excluir uma etapa que contém projetos");
+        return;
+      }
+      
+      setKanbanStages(kanbanStages.filter(stage => stage.id !== listId));
     }
 
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.filter(list => list.id !== listId)
-    };
+    toast.success("Etapa removida com sucesso!");
+  };
 
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    toast.success("Lista removida com sucesso!");
+  // Mover projeto entre etapas no kanban
+  const moveProject = (projectId: string, newStageId: string) => {
+    const projectToMove = projects.find(p => p.id === projectId);
+    if (!projectToMove) return;
+
+    // Update the project with the new stage id
+    const updatedProjects = projects.map(p => 
+      p.id === projectId ? { ...p, id: newStageId } : p
+    );
+    
+    setProjects(updatedProjects);
+    toast.success(`Projeto movido para ${kanbanStages.find(s => s.id === newStageId)?.name}`);
   };
 
   // Funções para gestão de tarefas
@@ -603,35 +657,24 @@ const Projects = () => {
           />
         ) : (
           <BoardView 
-            lists={[
-              {
-                id: "backlog",
-                name: "Backlog",
-                tasks: projects.map(p => ({
-                  id: p.id,
-                  title: p.name,
-                  description: p.description,
-                  status: "todo" as TaskStatus,
-                  priority: "medium",
-                  dueDate: p.dueDate,
-                  assignee: p.members?.[0],
-                  tags: p.tags
-                })),
-                order: 0
-              }
-            ]}
+            lists={kanbanStages}
             onToggleTaskStatus={() => {}}
-            onTaskClick={(task) => {
-              const project = projects.find(p => p.id === task.id);
-              if (project) {
-                setSelectedProject(project);
-                setViewMode("detail");
-              }
+            onTaskClick={() => {}}
+            onAddTask={() => {}}
+            onEditList={(list) => {
+              setEditingList(list);
+              setEditListDialogOpen(true);
             }}
-            onAddTask={() => setNewProjectDialogOpen(true)}
-            onEditList={() => {}}
-            onDeleteList={() => {}}
-            onAddList={() => {}}
+            onDeleteList={deleteList}
+            onAddList={() => setNewListDialogOpen(true)}
+            isProjectView={true}
+            projects={projects}
+            onProjectClick={(project) => {
+              setSelectedProject(project);
+              setViewMode("detail");
+            }}
+            onAddProject={() => setNewProjectDialogOpen(true)}
+            onMoveProject={moveProject}
           />
         )
       ) : (
