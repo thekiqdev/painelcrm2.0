@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,6 +20,9 @@ import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProj
 import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
 import { Member } from "@/components/shared/types";
 import { mockMembers, initialProjects } from "@/components/projects/mockData";
+
+// Add import for ProjectFinance
+import { ProjectFinance } from "@/components/projects/ProjectFinance";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const Projects = () => {
@@ -84,7 +86,7 @@ const Projects = () => {
         uploadedAt: new Date().toISOString(),
         url: URL.createObjectURL(file) // Url temporária
       })),
-      financeItems: [],
+      financeItems: [], // Initialize with empty array
       kanbanStage: 'backlog' // Default to backlog stage
     };
 
@@ -475,6 +477,15 @@ const Projects = () => {
     setTaskDetailOpen(true);
   };
 
+  // Add function to update project
+  const handleUpdateProject = (updatedProject: Project) => {
+    const newProjects = projects.map(p => 
+      p.id === updatedProject.id ? updatedProject : p
+    );
+    setProjects(newProjects);
+    setSelectedProject(updatedProject);
+  };
+
   // Renderização condicional da interface principal
   const renderProjectDetail = () => {
     if (!selectedProject) {
@@ -550,6 +561,7 @@ const Projects = () => {
                   Financeiro
                 </TabsTrigger>
               </TabsList>
+              
               <TabsContent value="board">
                 <BoardView 
                   lists={selectedProject.lists}
@@ -567,6 +579,7 @@ const Projects = () => {
                   onAddList={() => setNewListDialogOpen(true)}
                 />
               </TabsContent>
+              
               <TabsContent value="list">
                 <TaskListView 
                   lists={selectedProject.lists}
@@ -574,6 +587,7 @@ const Projects = () => {
                   onTaskClick={openTaskDetail}
                 />
               </TabsContent>
+              
               <TabsContent value="files">
                 {selectedProject.files && selectedProject.files.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -602,16 +616,19 @@ const Projects = () => {
                   </div>
                 )}
               </TabsContent>
+              
               <TabsContent value="calendar">
                 <CalendarView 
                   project={selectedProject}
                   onTaskClick={openTaskDetail}
                 />
               </TabsContent>
+              
               <TabsContent value="finance">
-                <div className="text-center p-8 text-muted-foreground">
-                  Funcionalidade financeira carregará aqui
-                </div>
+                <ProjectFinance 
+                  project={selectedProject} 
+                  onUpdateProject={handleUpdateProject} 
+                />
               </TabsContent>
             </Tabs>
           </div>

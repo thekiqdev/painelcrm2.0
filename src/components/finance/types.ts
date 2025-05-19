@@ -8,6 +8,7 @@ export interface Invoice {
   status: "draft" | "pending" | "paid" | "overdue";
   items: InvoiceItem[];
   total: number;
+  projectId?: string;
 }
 
 export interface InvoiceItem {
@@ -26,4 +27,5 @@ export interface Expense {
   category: string;
   isPaid: boolean;
   notes?: string;
+  projectId?: string;
 }

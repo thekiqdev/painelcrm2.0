@@ -1,23 +1,51 @@
 
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarIcon, ChartBarIcon, FileTextIcon, PlusIcon, Receipt } from "lucide-react";
-import { InvoiceForm } from "@/components/finance/InvoiceForm";
-import { ExpenseForm } from "@/components/finance/ExpenseForm";
-import { FinancialSummary } from "@/components/finance/FinancialSummary";
-import { Invoice, Expense } from "@/components/finance/types";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
+import { PlusIcon, Receipt, FileTextIcon } from "lucide-react";
+import { Project, ProjectFinanceItem } from "@/components/projects/types";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InvoiceForm } from "@/components/finance/InvoiceForm";
+import { ExpenseForm } from "@/components/finance/ExpenseForm";
+import { FinancialSummary } from "@/components/finance/FinancialSummary";
 import { toast } from "sonner";
-import { initialProjects } from "@/components/projects/mockData";
 
-const Finance = () => {
+interface ProjectFinanceProps {
+  project: Project;
+  onUpdateProject: (updatedProject: Project) => void;
+}
+
+export function ProjectFinance({ project, onUpdateProject }: ProjectFinanceProps) {
   const [invoiceFormOpen, setInvoiceFormOpen] = useState(false);
   const [expenseFormOpen, setExpenseFormOpen] = useState(false);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
+
+  // Process project finance data to match format needed by FinancialSummary
+  const getFinancialData = () => {
+    const invoices = project.financeItems
+      .filter(item => item.type === "invoice")
+      .map(item => ({
+        id: item.id,
+        clientName: item.description,
+        amount: item.amount,
+        date: item.date,
+        status: item.status
+      }));
+      
+    const expenses = project.financeItems
+      .filter(item => item.type === "expense")
+      .map(item => ({
+        id: item.id,
+        description: item.description,
+        amount: item.amount,
+        date: item.date,
+        category: item.category || "other",
+        isPaid: item.status === "paid"
+      }));
+      
+    return { invoices, expenses };
+  };
   
   const handleCreateInvoice = (formData: FormData) => {
     const clientName = formData.get('clientName') as string;
@@ -27,23 +55,27 @@ const Finance = () => {
     const status = formData.get('status') as "draft" | "pending" | "paid" | "overdue";
     const items = JSON.parse(formData.get('items') as string);
     const total = parseFloat(formData.get('total') as string);
-    const projectId = formData.get('projectId') as string;
     
-    const newInvoice: Invoice = {
+    const newInvoice: ProjectFinanceItem = {
       id: `inv-${Date.now()}`,
-      clientName,
-      invoiceNumber,
-      issueDate,
+      type: "invoice",
+      description: clientName,
+      amount: total,
+      date: issueDate,
       dueDate,
       status,
-      items,
-      total,
-      projectId: projectId || undefined
+      invoiceNumber,
+      items
     };
     
-    setInvoices([...invoices, newInvoice]);
+    const updatedProject = {
+      ...project,
+      financeItems: [...project.financeItems, newInvoice]
+    };
+    
+    onUpdateProject(updatedProject);
     setInvoiceFormOpen(false);
-    toast.success("Fatura criada com sucesso");
+    toast.success("Fatura adicionada ao projeto");
   };
   
   const handleCreateExpense = (formData: FormData) => {
@@ -53,25 +85,29 @@ const Finance = () => {
     const category = formData.get('category') as string;
     const isPaid = formData.get('isPaid') === 'true';
     const notes = formData.get('notes') as string;
-    const projectId = formData.get('projectId') as string;
     
-    const newExpense: Expense = {
+    const newExpense: ProjectFinanceItem = {
       id: `exp-${Date.now()}`,
+      type: "expense",
       description,
       amount,
       date,
       category,
-      isPaid,
-      notes,
-      projectId: projectId || undefined
+      status: isPaid ? "paid" : "pending",
+      notes
     };
     
-    setExpenses([...expenses, newExpense]);
+    const updatedProject = {
+      ...project,
+      financeItems: [...project.financeItems, newExpense]
+    };
+    
+    onUpdateProject(updatedProject);
     setExpenseFormOpen(false);
-    toast.success("Despesa registrada com sucesso");
+    toast.success("Despesa adicionada ao projeto");
   };
   
-  const getStatusBadge = (status: Invoice["status"]) => {
+  const getStatusBadge = (status: string) => {
     switch(status) {
       case 'draft':
         return <Badge variant="outline">Rascunho</Badge>;
@@ -86,74 +122,46 @@ const Finance = () => {
     }
   };
   
-  const getExpenseStatusBadge = (isPaid: boolean) => {
-    return isPaid 
-      ? <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Paga</Badge>
-      : <Badge variant="secondary">Pendente</Badge>;
-  };
-
-  // Financial data for the summary component
-  const financialData = {
-    invoices: invoices.map(inv => ({
-      id: inv.id,
-      clientName: inv.clientName,
-      amount: inv.total,
-      date: inv.issueDate,
-      status: inv.status
-    })),
-    expenses: expenses.map(exp => ({
-      id: exp.id,
-      description: exp.description,
-      amount: exp.amount,
-      date: exp.date,
-      category: exp.category,
-      isPaid: exp.isPaid
-    }))
-  };
-
-  // Get available projects for linking
-  const availableProjects = initialProjects.map(project => ({
-    id: project.id!,
-    name: project.name!
-  }));
-
+  const invoices = project.financeItems.filter(item => item.type === "invoice");
+  const expenses = project.financeItems.filter(item => item.type === "expense");
+  const financialData = getFinancialData();
+  
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Financeiro</h1>
-        <div className="flex space-x-2">
-          <Button onClick={() => setExpenseFormOpen(true)}>
-            <PlusIcon className="h-4 w-4 mr-2" />
-            Nova Despesa
-          </Button>
-          <Button onClick={() => setInvoiceFormOpen(true)}>
-            <PlusIcon className="h-4 w-4 mr-2" />
-            Nova Fatura
-          </Button>
-        </div>
+    <div className="space-y-4">
+      <div className="flex justify-end space-x-2">
+        <Button onClick={() => setExpenseFormOpen(true)}>
+          <PlusIcon className="h-4 w-4 mr-2" />
+          Nova Despesa
+        </Button>
+        <Button onClick={() => setInvoiceFormOpen(true)}>
+          <PlusIcon className="h-4 w-4 mr-2" />
+          Nova Fatura
+        </Button>
       </div>
       
       <Tabs defaultValue="summary">
         <TabsList>
-          <TabsTrigger value="summary">
-            <ChartBarIcon className="h-4 w-4 mr-2" />
-            Resumo
-          </TabsTrigger>
-          <TabsTrigger value="invoices">
-            <Receipt className="h-4 w-4 mr-2" />
-            Faturas
-          </TabsTrigger>
-          <TabsTrigger value="expenses">
-            <FileTextIcon className="h-4 w-4 mr-2" />
-            Despesas
-          </TabsTrigger>
+          <TabsTrigger value="summary">Resumo</TabsTrigger>
+          <TabsTrigger value="invoices">Faturas</TabsTrigger>
+          <TabsTrigger value="expenses">Despesas</TabsTrigger>
         </TabsList>
         
-        <TabsContent value="summary" className="space-y-4">
-          <FinancialSummary data={financialData} />
+        <TabsContent value="summary">
+          {project.financeItems.length > 0 ? (
+            <FinancialSummary data={financialData} />
+          ) : (
+            <Card>
+              <CardContent className="pt-6 text-center">
+                <p className="text-muted-foreground">
+                  Nenhum item financeiro registrado para este projeto. 
+                  Adicione faturas ou despesas para visualizar o resumo financeiro.
+                </p>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
         
-        <TabsContent value="invoices" className="space-y-4">
+        <TabsContent value="invoices">
           {invoices.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {invoices.map(invoice => (
@@ -163,30 +171,24 @@ const Finance = () => {
                       <CardTitle>{invoice.invoiceNumber}</CardTitle>
                       {getStatusBadge(invoice.status)}
                     </div>
-                    <CardDescription>{invoice.clientName}</CardDescription>
+                    <CardDescription>{invoice.description}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Emissão:</span>
-                        <span>{format(new Date(invoice.issueDate), "dd/MM/yyyy")}</span>
+                        <span>{format(new Date(invoice.date), "dd/MM/yyyy")}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Vencimento:</span>
-                        <span>{format(new Date(invoice.dueDate), "dd/MM/yyyy")}</span>
-                      </div>
-                      <div className="flex justify-between font-medium mt-2">
-                        <span>Total:</span>
-                        <span>R$ {invoice.total.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
-                      </div>
-                      {invoice.projectId && (
-                        <div className="mt-2 text-xs">
-                          <span className="text-muted-foreground">Projeto: </span>
-                          <span className="font-medium">
-                            {availableProjects.find(p => p.id === invoice.projectId)?.name}
-                          </span>
+                      {invoice.dueDate && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Vencimento:</span>
+                          <span>{format(new Date(invoice.dueDate), "dd/MM/yyyy")}</span>
                         </div>
                       )}
+                      <div className="flex justify-between font-medium mt-2">
+                        <span>Total:</span>
+                        <span>R$ {invoice.amount.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
+                      </div>
                     </div>
                   </CardContent>
                   <CardFooter>
@@ -203,7 +205,7 @@ const Finance = () => {
                 <Receipt className="mx-auto h-12 w-12 text-muted-foreground" />
                 <h2 className="text-xl font-semibold mb-3 mt-4">Nenhuma fatura</h2>
                 <p className="text-muted-foreground mb-6">
-                  Você ainda não tem nenhuma fatura registrada. Crie sua primeira fatura para começar a gerenciar suas receitas.
+                  Este projeto ainda não tem nenhuma fatura registrada.
                 </p>
                 <Button onClick={() => setInvoiceFormOpen(true)}>Criar Fatura</Button>
               </div>
@@ -211,7 +213,7 @@ const Finance = () => {
           )}
         </TabsContent>
         
-        <TabsContent value="expenses" className="space-y-4">
+        <TabsContent value="expenses">
           {expenses.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {expenses.map(expense => (
@@ -219,7 +221,7 @@ const Finance = () => {
                   <CardHeader className="pb-2">
                     <div className="flex justify-between">
                       <CardTitle className="text-base">{expense.description}</CardTitle>
-                      {getExpenseStatusBadge(expense.isPaid)}
+                      {getStatusBadge(expense.status)}
                     </div>
                     <CardDescription>{expense.category}</CardDescription>
                   </CardHeader>
@@ -239,19 +241,11 @@ const Finance = () => {
                           <p>{expense.notes}</p>
                         </div>
                       )}
-                      {expense.projectId && (
-                        <div className="mt-2 text-xs">
-                          <span className="text-muted-foreground">Projeto: </span>
-                          <span className="font-medium">
-                            {availableProjects.find(p => p.id === expense.projectId)?.name}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </CardContent>
                   <CardFooter>
                     <Button variant="outline" size="sm" className="w-full">
-                      {expense.isPaid ? "Marcar como não paga" : "Marcar como paga"}
+                      {expense.status === "paid" ? "Marcar como não paga" : "Marcar como paga"}
                     </Button>
                   </CardFooter>
                 </Card>
@@ -263,7 +257,7 @@ const Finance = () => {
                 <FileTextIcon className="mx-auto h-12 w-12 text-muted-foreground" />
                 <h2 className="text-xl font-semibold mb-3 mt-4">Nenhuma despesa</h2>
                 <p className="text-muted-foreground mb-6">
-                  Você ainda não tem nenhuma despesa registrada. Registre sua primeira despesa para começar a controlar seus gastos.
+                  Este projeto ainda não tem nenhuma despesa registrada.
                 </p>
                 <Button onClick={() => setExpenseFormOpen(true)}>Registrar Despesa</Button>
               </div>
@@ -276,17 +270,13 @@ const Finance = () => {
         open={invoiceFormOpen} 
         onOpenChange={setInvoiceFormOpen}
         onSave={handleCreateInvoice}
-        availableProjects={availableProjects}
       />
       
       <ExpenseForm
         open={expenseFormOpen}
         onOpenChange={setExpenseFormOpen}
         onSave={handleCreateExpense}
-        availableProjects={availableProjects}
       />
     </div>
   );
-};
-
-export default Finance;
+}

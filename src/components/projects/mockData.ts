@@ -1,192 +1,154 @@
-
-import { Project, ProjectFile, ProjectFinanceItem } from "./types";
 import { Member } from "@/components/shared/types";
+import { Project } from "@/components/projects/types";
 
 export const mockMembers: Member[] = [
-  { id: "m1", name: "Alex Silva", avatar: "AS" },
-  { id: "m2", name: "Maria Oliveira", avatar: "MO" },
-  { id: "m3", name: "João Santos", avatar: "JS" }
-];
-
-export const mockFiles: ProjectFile[] = [
   {
-    id: "f1",
-    name: "proposta_comercial.pdf",
-    type: "application/pdf",
-    size: "125 KB",
-    uploadedBy: mockMembers[0],
-    uploadedAt: "2025-05-10T14:30:00Z",
-    url: "#"
+    id: "m1",
+    name: "João Silva",
+    email: "joao.silva@example.com",
+    avatar: "https://utfs.io/f/c9a334bb-c989-4490-8f7f-5552aef9f7db-m92xjn.png"
   },
   {
-    id: "f2",
-    name: "cronograma.xlsx",
-    type: "application/excel",
-    size: "78 KB",
-    uploadedBy: mockMembers[1],
-    uploadedAt: "2025-05-12T10:15:00Z",
-    url: "#"
+    id: "m2",
+    name: "Maria Oliveira",
+    email: "maria.oliveira@example.com",
+    avatar: "https://utfs.io/f/414ff4ff-c988-449b-94a2-41b9c654299a-1v9jue.png"
+  },
+  {
+    id: "m3",
+    name: "Carlos Pereira",
+    email: "carlos.pereira@example.com",
+    avatar: "https://utfs.io/f/16674979-c98a-4a1d-a919-49347498a954-zl09ke.png"
+  },
+  {
+    id: "m4",
+    name: "Ana Rodrigues",
+    email: "ana.rodrigues@example.com",
+    avatar: "https://utfs.io/f/35941994-c98a-4a4d-8e93-16a998935ca9-i6wg9j.png"
   }
 ];
 
-export const mockFinanceItems: ProjectFinanceItem[] = [
-  {
-    id: "fi1",
-    description: "Pagamento inicial",
-    amount: 2500,
-    type: "income",
-    date: "2025-05-15",
-    status: "paid"
-  },
-  {
-    id: "fi2",
-    description: "Licenças de software",
-    amount: 350,
-    type: "expense",
-    date: "2025-05-20",
-    status: "pending"
-  }
-];
-
-export const initialProjects: Project[] = [
+// Update initialProjects to include financeItems
+export const initialProjects: Partial<Project>[] = [
   {
     id: "p1",
-    name: "Redesenho do Site",
-    description: "Atualização completa do design e da funcionalidade do site corporativo",
+    name: "Website Redesign",
+    description: "Complete redesign of the company website with a focus on user experience and modern design principles.",
     status: "active",
-    dueDate: "2025-06-30",
-    members: [mockMembers[0], mockMembers[1]],
-    tags: ["Design", "Web", "Frontend"],
+    dueDate: "2023-06-15",
+    members: [
+      mockMembers[0],
+      mockMembers[1],
+      mockMembers[2]
+    ],
+    tags: ["design", "development", "high-priority"],
     lists: [
       {
         id: "l1",
         name: "A Fazer",
-        order: 0,
         tasks: [
           {
             id: "t1",
-            title: "Wireframes para homepage",
-            description: "Criar wireframes para a nova homepage",
+            title: "Criar wireframes das páginas principais",
+            description: "Desenvolver wireframes para a página inicial, sobre nós e contato.",
             status: "todo",
             priority: "high",
-            dueDate: "2025-05-25",
-            assignee: mockMembers[1],
-            labels: ["Design", "Frontend"],
-            tags: ["Design", "Homepage"],
-            checklist: [
-              { id: "cl1", text: "Definir layout principal", completed: false },
-              { id: "cl2", text: "Criar mockup mobile", completed: true },
-              { id: "cl3", text: "Revisar com cliente", completed: false }
-            ]
+            assignee: mockMembers[1]
           },
           {
             id: "t2",
-            title: "Estrutura de navegação",
-            description: "Definir nova estrutura de navegação do site",
+            title: "Definir paleta de cores",
+            description: "Escolher uma paleta de cores que reflita a identidade da marca.",
             status: "todo",
-            priority: "medium",
-            dueDate: "2025-05-23",
-            assignee: mockMembers[0],
-            labels: ["UX"],
-            tags: ["UX", "Navegação"],
-            checklist: [
-              { id: "cl4", text: "Mapear páginas atuais", completed: true },
-              { id: "cl5", text: "Propor nova hierarquia", completed: false }
-            ]
-          },
-        ]
+            priority: "medium"
+          }
+        ],
+        order: 0
       },
       {
         id: "l2",
         name: "Em Andamento",
-        order: 1,
         tasks: [
           {
             id: "t3",
-            title: "Design do formulário de contato",
-            description: "Implementar design responsivo para o formulário",
+            title: "Pesquisa de usuário",
+            description: "Conduzir entrevistas com 10 usuários para entender suas necessidades.",
             status: "in-progress",
-            priority: "medium",
-            dueDate: "2025-05-20",
-            assignee: mockMembers[1],
-            labels: ["Design", "Form"],
-            tags: ["Design", "Formulário"],
+            priority: "high",
+            assignee: mockMembers[0],
+            dueDate: "2023-05-20"
           }
-        ]
+        ],
+        order: 1
       },
       {
         id: "l3",
         name: "Revisão",
-        order: 2,
-        tasks: []
+        tasks: [],
+        order: 2
       },
       {
         id: "l4",
         name: "Concluídos",
-        order: 3,
         tasks: [
           {
             id: "t4",
-            title: "Pesquisa de mercado",
-            description: "Análise de concorrentes e referências",
+            title: "Análise do site atual",
+            description: "Identificar pontos fortes e fracos do site existente.",
             status: "completed",
-            priority: "low",
-            dueDate: "2025-05-10",
-            assignee: mockMembers[2],
-            tags: ["Pesquisa", "Análise"],
+            priority: "high",
+            assignee: mockMembers[2]
           }
-        ]
+        ],
+        order: 3
       }
     ],
-    files: mockFiles,
-    financeItems: mockFinanceItems
+    financeItems: []
   },
   {
     id: "p2",
     name: "Aplicativo Mobile",
-    description: "Desenvolvimento de um aplicativo móvel para clientes",
+    description: "Desenvolvimento de um aplicativo mobile para clientes acessarem nossos serviços.",
     status: "active",
-    dueDate: "2025-07-15",
-    members: [mockMembers[0], mockMembers[2]],
-    tags: ["Mobile", "App", "React Native"],
+    members: [
+      mockMembers[1],
+      mockMembers[3]
+    ],
+    tags: ["mobile", "development"],
     lists: [
       {
         id: "l5",
         name: "A Fazer",
-        order: 0,
         tasks: [
           {
             id: "t5",
-            title: "Protótipos de telas",
-            description: "Criar protótipos para as principais telas do app",
+            title: "Design de telas",
+            description: "Criar designs para todas as telas principais do aplicativo.",
             status: "todo",
             priority: "high",
-            dueDate: "2025-05-22",
-            assignee: mockMembers[0],
-            tags: ["Design", "UI/UX"],
           }
-        ]
+        ],
+        order: 0
       },
       {
         id: "l6",
         name: "Em Andamento",
-        order: 1,
-        tasks: []
+        tasks: [],
+        order: 1
       },
       {
         id: "l7",
         name: "Revisão",
-        order: 2,
-        tasks: []
+        tasks: [],
+        order: 2
       },
       {
         id: "l8",
         name: "Concluídos",
-        order: 3,
-        tasks: []
+        tasks: [],
+        order: 3
       }
     ],
-    files: [],
     financeItems: []
-  }
+  },
 ];

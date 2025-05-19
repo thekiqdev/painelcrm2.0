@@ -28,13 +28,19 @@ import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 
+interface Project {
+  id: string;
+  name: string;
+}
+
 interface ExpenseFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (formData: FormData) => void;
+  availableProjects?: Project[];
 }
 
-export function ExpenseForm({ open, onOpenChange, onSave }: ExpenseFormProps) {
+export function ExpenseForm({ open, onOpenChange, onSave, availableProjects = [] }: ExpenseFormProps) {
   const [date, setDate] = useState<Date>(new Date());
   const [isPaid, setIsPaid] = useState(false);
 
@@ -113,7 +119,7 @@ export function ExpenseForm({ open, onOpenChange, onSave }: ExpenseFormProps) {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Categoria</Label>
-              <Select name="category">
+              <Select name="category" defaultValue="other">
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione a categoria" />
                 </SelectTrigger>
@@ -148,6 +154,28 @@ export function ExpenseForm({ open, onOpenChange, onSave }: ExpenseFormProps) {
               </div>
             </div>
           </div>
+          
+          {availableProjects.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="projectId">Projeto (opcional)</Label>
+              <Select name="projectId">
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione um projeto" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>Projetos</SelectLabel>
+                    <SelectItem value="">Sem projeto</SelectItem>
+                    {availableProjects.map(project => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           
           <div className="space-y-2">
             <Label htmlFor="notes">Observações</Label>

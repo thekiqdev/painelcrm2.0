@@ -1,27 +1,11 @@
-
-import { Member } from "@/components/shared/types";
-
-export type ProjectStatus = "active" | "completed" | "archived";
-export type TaskStatus = "todo" | "in-progress" | "review" | "completed";
-export type Priority = "low" | "medium" | "high";
-
-export interface ChecklistItem {
+export interface ProjectFile {
   id: string;
-  text: string;
-  completed: boolean;
-}
-
-export interface Task {
-  id: string;
-  title: string;
-  description?: string;
-  status: TaskStatus;
-  priority: Priority;
-  dueDate?: string;
-  assignee?: Member;
-  labels?: string[];
-  checklist?: ChecklistItem[];
-  tags?: string[];
+  name: string;
+  type: string;
+  size: string;
+  uploadedBy?: Member;
+  uploadedAt: string;
+  url: string;
 }
 
 export interface ProjectList {
@@ -31,36 +15,54 @@ export interface ProjectList {
   order: number;
 }
 
-export interface ProjectFile {
+export type TaskStatus = "todo" | "in-progress" | "review" | "completed";
+
+export interface Task {
   id: string;
-  name: string;
-  type: string;
-  size: string;
-  uploadedBy: Member;
-  uploadedAt: string;
-  url: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: "high" | "medium" | "low";
+  dueDate?: string;
+  assignee?: Member;
+  tags?: string[];
+  checklist?: ChecklistItem[];
 }
 
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+// Add ProjectFinanceItem type
 export interface ProjectFinanceItem {
   id: string;
+  type: "invoice" | "expense";
   description: string;
   amount: number;
-  type: "income" | "expense";
   date: string;
-  status: "paid" | "pending" | "overdue";
+  status: "draft" | "pending" | "paid" | "overdue";
   category?: string;
+  dueDate?: string;
+  invoiceNumber?: string;
+  items?: any[];
+  notes?: string;
 }
+
+// Interface Project
+import { Member } from "@/components/shared/types";
 
 export interface Project {
   id: string;
   name: string;
   description: string;
-  status: ProjectStatus;
+  status: string;
   dueDate?: string;
   members: Member[];
-  lists: ProjectList[];
-  files: ProjectFile[];
-  financeItems: ProjectFinanceItem[];
   tags?: string[];
-  kanbanStage?: string; // ID of the stage in the Kanban view
+  lists: ProjectList[];
+  files?: ProjectFile[];
+  financeItems: ProjectFinanceItem[];
+  kanbanStage?: string;
 }

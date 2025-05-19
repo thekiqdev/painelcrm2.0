@@ -26,6 +26,11 @@ import { format } from "date-fns";
 import { CalendarIcon, Plus, Trash } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+interface Project {
+  id: string;
+  name: string;
+}
+
 interface InvoiceItem {
   id: string;
   description: string;
@@ -38,9 +43,10 @@ interface InvoiceFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (formData: FormData) => void;
+  availableProjects?: Project[];
 }
 
-export function InvoiceForm({ open, onOpenChange, onSave }: InvoiceFormProps) {
+export function InvoiceForm({ open, onOpenChange, onSave, availableProjects = [] }: InvoiceFormProps) {
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [dueDate, setDueDate] = useState<Date | undefined>(
     new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // Default: 7 days from now
@@ -175,21 +181,45 @@ export function InvoiceForm({ open, onOpenChange, onSave }: InvoiceFormProps) {
             </div>
           </div>
           
-          <div className="space-y-2">
-            <Label>Status</Label>
-            <Select name="status" defaultValue="draft">
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione o status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>Status</SelectLabel>
-                  <SelectItem value="draft">Rascunho</SelectItem>
-                  <SelectItem value="pending">Pendente</SelectItem>
-                  <SelectItem value="paid">Paga</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select name="status" defaultValue="draft">
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>Status</SelectLabel>
+                    <SelectItem value="draft">Rascunho</SelectItem>
+                    <SelectItem value="pending">Pendente</SelectItem>
+                    <SelectItem value="paid">Paga</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {availableProjects.length > 0 && (
+              <div className="space-y-2">
+                <Label htmlFor="projectId">Projeto (opcional)</Label>
+                <Select name="projectId">
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione um projeto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectLabel>Projetos</SelectLabel>
+                      <SelectItem value="">Sem projeto</SelectItem>
+                      {availableProjects.map(project => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           
           <div className="space-y-2">
