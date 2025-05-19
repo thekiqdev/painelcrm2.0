@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -122,6 +121,7 @@ export function NewProjectDialog({
                 value={description}
                 onChange={setDescription}
                 className="min-h-[150px]"
+                placeholder="Adicione aqui a descrição detalhada do projeto..."
               />
             </div>
             

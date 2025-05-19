@@ -100,7 +100,10 @@ export function TaskDetailDialog({
           {task.description && (
             <div>
               <h4 className="text-sm font-semibold mb-1">Descrição</h4>
-              <p className="text-sm text-muted-foreground">{task.description}</p>
+              <div 
+                className="text-sm text-muted-foreground"
+                dangerouslySetInnerHTML={{ __html: task.description }}
+              />
             </div>
           )}
           

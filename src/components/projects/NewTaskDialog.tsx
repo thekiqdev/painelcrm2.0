@@ -1,10 +1,8 @@
-
 import React, { Dispatch, SetStateAction } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -12,6 +10,7 @@ import { CalendarIcon, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { Member } from "@/components/shared/types";
+import { RichTextEditor } from "@/components/shared/RichTextEditor";
 
 interface NewTaskDialogProps {
   open: boolean;
@@ -35,6 +34,7 @@ export function NewTaskDialog({
   setNewTagText
 }: NewTaskDialogProps) {
   const [date, setDate] = React.useState<Date>();
+  const [description, setDescription] = React.useState("");
 
   // Função para adicionar tag
   const addTag = () => {
@@ -60,11 +60,15 @@ export function NewTaskDialog({
       formData.set('dueDate', format(date, 'yyyy-MM-dd'));
     }
     
+    // Adicionar a descrição rich text
+    formData.set('description', description);
+    
     onAddTask(formData);
     
     // Limpar campos após submissão
     setTagsInput([]);
     setDate(undefined);
+    setDescription("");
   };
 
   return (
@@ -86,7 +90,11 @@ export function NewTaskDialog({
 
             <div className="grid gap-2">
               <Label htmlFor="description">Descrição</Label>
-              <Textarea id="description" name="description" placeholder="Detalhes da tarefa" />
+              <RichTextEditor 
+                value={description} 
+                onChange={setDescription}
+                placeholder="Detalhes da tarefa"
+              />
             </div>
 
             {/* Tags input section */}
