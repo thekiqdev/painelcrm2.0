@@ -9,16 +9,17 @@ import { format } from "date-fns";
 import { ProjectsListView } from "@/components/projects/ProjectsListView";
 import { BoardView } from "@/components/projects/BoardView";
 import { TaskListView } from "@/components/projects/TaskListView";
+import { CalendarView } from "@/components/projects/CalendarView";
 import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
 import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
-import { NewListDialog } from "@/components/projects/NewListDialog";
-import { EditListDialog } from "@/components/projects/EditListDialog";
-import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProjectDialog";
+import { NewListDialog } from "@/components/NewListDialog";
+import { EditListDialog } from "@/components/EditListDialog";
+import { NewProjectDialog, ProjectFormData } from "@/components/NewProjectDialog";
 
 // Importações de tipos e dados
-import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
+import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/types";
 import { Member } from "@/components/shared/types";
-import { mockMembers, initialProjects } from "@/components/projects/mockData";
+import { mockMembers, initialProjects } from "@/components/mockData";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const Projects = () => {
@@ -601,9 +602,10 @@ const Projects = () => {
                 )}
               </TabsContent>
               <TabsContent value="calendar">
-                <div className="text-center p-8 text-muted-foreground">
-                  Funcionalidade de calendário carregará aqui
-                </div>
+                <CalendarView 
+                  project={selectedProject}
+                  onTaskClick={openTaskDetail}
+                />
               </TabsContent>
               <TabsContent value="finance">
                 <div className="text-center p-8 text-muted-foreground">
