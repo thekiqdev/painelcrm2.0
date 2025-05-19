@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,8 +13,8 @@ import { TaskListView } from "@/components/projects/TaskListView";
 import { CalendarView } from "@/components/projects/CalendarView";
 import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
 import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
-import { NewListDialog } from "@/components/NewListDialog";
-import { EditListDialog } from "@/components/EditListDialog";
+import { NewListDialog } from "@/components/projects/NewListDialog";
+import { EditListDialog } from "@/components/projects/EditListDialog";
 import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProjectDialog";
 
 // Importações de tipos e dados
