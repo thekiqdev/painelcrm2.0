@@ -215,7 +215,8 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
                     },
                   }}
                 >
-                  <>
+                  {/* The React element must be wrapped in a Fragment */}
+                  <React.Fragment>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={monthlyData}>
                         <CartesianGrid strokeDasharray="3 3" />
@@ -245,7 +246,7 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
                       </BarChart>
                     </ResponsiveContainer>
                     <ChartLegend content={<ChartLegendContent />} />
-                  </>
+                  </React.Fragment>
                 </ChartContainer>
               </CardContent>
             </Card>
