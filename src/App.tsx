@@ -11,6 +11,7 @@ import Clients from "./pages/Clients";
 import Leads from "./pages/Leads";
 import Funnel from "./pages/Funnel";
 import Tasks from "./pages/Tasks";
+import Projects from "./pages/Projects";
 import Products from "./pages/Products";
 import Proposals from "./pages/Proposals";
 import Contracts from "./pages/Contracts";
@@ -38,6 +39,7 @@ const App = () => (
           <Route path="/clients" element={<AppLayout><Clients /></AppLayout>} />
           <Route path="/leads" element={<AppLayout><Leads /></AppLayout>} />
           <Route path="/funnel" element={<AppLayout><Funnel /></AppLayout>} />
+          <Route path="/projects" element={<AppLayout><Projects /></AppLayout>} />
           <Route path="/tasks" element={<AppLayout><Tasks /></AppLayout>} />
           <Route path="/products" element={<AppLayout><Products /></AppLayout>} />
           <Route path="/proposals" element={<AppLayout><Proposals /></AppLayout>} />

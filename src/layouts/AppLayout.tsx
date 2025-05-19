@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useLocation, NavLink } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -92,17 +92,33 @@ const Nav = () => {
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <NavLink to="/tasks" className={getNavClass}>
+                  <NavLink to="/products" className={getNavClass}>
+                    <Briefcase className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>Produtos</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Projetos</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink to="/projects" className={getNavClass}>
                     <Calendar className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Tarefas</span>}
+                    {!collapsed && <span>Projetos</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <NavLink to="/products" className={getNavClass}>
-                    <Briefcase className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Produtos</span>}
+                  <NavLink to="/tasks" className={getNavClass}>
+                    <ClipboardCheck className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>Tarefas</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
