@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, AlignJustify, Link, Image } from 'lucide-react';
 
@@ -13,6 +13,13 @@ interface RichTextEditorProps {
 export function RichTextEditor({ value, onChange, className, placeholder }: RichTextEditorProps) {
   const [editorContent, setEditorContent] = useState(value);
   const editorRef = useRef<HTMLDivElement>(null);
+
+  // Apply initial content
+  useEffect(() => {
+    if (editorRef.current && value !== editorRef.current.innerHTML) {
+      editorRef.current.innerHTML = value;
+    }
+  }, [value]);
 
   // Handle content changes
   const handleContentChange = () => {
@@ -148,14 +155,10 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
       <div
         ref={editorRef}
         contentEditable
-        dangerouslySetInnerHTML={{ __html: editorContent }}
         onInput={handleContentChange}
         onBlur={handleContentChange}
         className="w-full p-3 focus:outline-none min-h-[120px] resize-y overflow-auto"
-        style={{
-          direction: 'ltr',
-          textAlign: 'left'
-        }}
+        style={{ direction: "ltr" }}
         data-placeholder={placeholder || "Adicione aqui a descrição detalhada do projeto..."}
       />
     </div>
