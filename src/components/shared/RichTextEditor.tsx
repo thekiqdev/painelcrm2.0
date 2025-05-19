@@ -7,9 +7,10 @@ interface RichTextEditorProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  placeholder?: string;
 }
 
-export function RichTextEditor({ value, onChange, className }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, className, placeholder }: RichTextEditorProps) {
   const [html, setHtml] = useState(value);
   
   // Reference to the editor element
@@ -107,8 +108,11 @@ export function RichTextEditor({ value, onChange, className }: RichTextEditorPro
         contentEditable
         dangerouslySetInnerHTML={{ __html: html }}
         onInput={handleEditorChange}
-        className="w-full p-3 focus:outline-none min-h-[120px] resize-y overflow-auto"
-        placeholder="Adicione aqui a descrição detalhada do projeto..."
+        className={cn(
+          "w-full p-3 focus:outline-none min-h-[120px] resize-y overflow-auto",
+          !html && "before:content-[attr(data-placeholder)] before:text-gray-400"
+        )}
+        data-placeholder={placeholder || "Adicione aqui a descrição detalhada do projeto..."}
       />
     </div>
   );
