@@ -26,13 +26,15 @@ interface AppLayoutProps {
 
 const Nav = () => {
   const location = useLocation();
-  const { collapsed } = useSidebar();
+  const { state } = useSidebar();
+  // Use state instead of collapsed
+  const collapsed = state === "collapsed";
   
   const getNavClass = ({ isActive }: { isActive: boolean }) => 
     isActive ? "bg-crm-primary/10 text-crm-primary font-medium" : "hover:bg-muted/50";
 
   return (
-    <Sidebar collapsible className={collapsed ? "w-16 transition-all duration-300" : "w-64 transition-all duration-300"}>
+    <Sidebar collapsible="icon" className={collapsed ? "w-16 transition-all duration-300" : "w-64 transition-all duration-300"}>
       <SidebarTrigger className="m-2 self-end" />
       
       <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-start px-4'} pb-2 mb-6`}>

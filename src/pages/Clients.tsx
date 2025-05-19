@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -274,7 +273,7 @@ const Clients = () => {
                       <div className="space-y-1">
                         <Label>Status</Label>
                         <p className="text-sm">
-                          <Badge variant={selectedClient.status === "Ativo" ? "success" : (selectedClient.status === "Inativo" ? "destructive" : "outline")}>
+                          <Badge variant={selectedClient.status === "Ativo" ? "default" : (selectedClient.status === "Inativo" ? "destructive" : "outline")}>
                             {selectedClient.status}
                           </Badge>
                         </p>
@@ -381,7 +380,7 @@ const Clients = () => {
                     <TableCell>
                       <Badge 
                         variant={
-                          client.status === "Ativo" ? "success" :
+                          client.status === "Ativo" ? "default" :
                           client.status === "Inativo" ? "destructive" :
                           client.status === "Novo" ? "outline" : "secondary"
                         }
