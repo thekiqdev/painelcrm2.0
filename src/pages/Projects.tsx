@@ -1,7 +1,8 @@
+
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2 } from "lucide-react";
+import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, LayoutList } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -27,6 +28,7 @@ const Projects = () => {
   const [projects, setProjects] = useState<Project[]>(initialProjects);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState("board");
+  const [projectsViewType, setProjectsViewType] = useState<"grid" | "kanban">("grid");
 
   // Estados de diálogos
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
@@ -560,23 +562,79 @@ const Projects = () => {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Gerenciamento de Projetos</h1>
         {viewMode === "list" && (
-          <Button onClick={() => setNewProjectDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Novo Projeto
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="border rounded-md p-0.5 flex">
+              <Button 
+                variant={projectsViewType === "grid" ? "default" : "ghost"} 
+                size="sm" 
+                onClick={() => setProjectsViewType("grid")}
+                className="rounded-r-none"
+              >
+                <LayoutGrid className="h-4 w-4 mr-1" />
+                Grade
+              </Button>
+              <Button 
+                variant={projectsViewType === "kanban" ? "default" : "ghost"} 
+                size="sm" 
+                onClick={() => setProjectsViewType("kanban")}
+                className="rounded-l-none"
+              >
+                <Kanban className="h-4 w-4 mr-1" />
+                Kanban
+              </Button>
+            </div>
+            <Button onClick={() => setNewProjectDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Novo Projeto
+            </Button>
+          </div>
         )}
       </div>
 
       {/* Conteúdo principal */}
       {viewMode === "list" ? (
-        <ProjectsListView 
-          projects={projects}
-          onViewDetails={(project) => {
-            setSelectedProject(project);
-            setViewMode("detail");
-          }}
-          onNewProject={() => setNewProjectDialogOpen(true)}
-        />
+        projectsViewType === "grid" ? (
+          <ProjectsListView 
+            projects={projects}
+            onViewDetails={(project) => {
+              setSelectedProject(project);
+              setViewMode("detail");
+            }}
+            onNewProject={() => setNewProjectDialogOpen(true)}
+          />
+        ) : (
+          <BoardView 
+            lists={[
+              {
+                id: "backlog",
+                name: "Backlog",
+                tasks: projects.map(p => ({
+                  id: p.id,
+                  title: p.name,
+                  description: p.description,
+                  status: "todo" as TaskStatus,
+                  priority: "medium",
+                  dueDate: p.dueDate,
+                  assignee: p.members?.[0],
+                  tags: p.tags
+                })),
+                order: 0
+              }
+            ]}
+            onToggleTaskStatus={() => {}}
+            onTaskClick={(task) => {
+              const project = projects.find(p => p.id === task.id);
+              if (project) {
+                setSelectedProject(project);
+                setViewMode("detail");
+              }
+            }}
+            onAddTask={() => setNewProjectDialogOpen(true)}
+            onEditList={() => {}}
+            onDeleteList={() => {}}
+            onAddList={() => {}}
+          />
+        )
       ) : (
         renderProjectDetail()
       )}
