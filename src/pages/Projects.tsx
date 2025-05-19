@@ -24,7 +24,13 @@ import { mockMembers, initialProjects } from "@/components/projects/mockData";
 const Projects = () => {
   // Estados principais
   const [viewMode, setViewMode] = useState<"list" | "detail">("list");
-  const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    // Initialize projects with kanbanStage
+    return initialProjects.map(project => ({
+      ...project,
+      kanbanStage: "backlog" // Default all projects to backlog stage initially
+    }));
+  });
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState("board");
   const [projectsViewType, setProjectsViewType] = useState<"grid" | "kanban">("grid");
@@ -76,7 +82,8 @@ const Projects = () => {
         uploadedAt: new Date().toISOString(),
         url: URL.createObjectURL(file) // Url temporária
       })),
-      financeItems: []
+      financeItems: [],
+      kanbanStage: 'backlog' // Default to backlog stage
     };
 
     setProjects([...projects, newProject]);
@@ -200,7 +207,7 @@ const Projects = () => {
 
     // Update the project with the new stage id
     const updatedProjects = projects.map(p => 
-      p.id === projectId ? { ...p, id: newStageId } : p
+      p.id === projectId ? { ...p, kanbanStage: newStageId } : p
     );
     
     setProjects(updatedProjects);

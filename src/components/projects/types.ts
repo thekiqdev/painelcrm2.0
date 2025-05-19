@@ -62,4 +62,5 @@ export interface Project {
   files: ProjectFile[];
   financeItems: ProjectFinanceItem[];
   tags?: string[];
+  kanbanStage?: string; // ID of the stage in the Kanban view
 }

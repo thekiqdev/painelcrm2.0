@@ -90,6 +90,12 @@ export function BoardView({
     }
   };
 
+  // Get projects for a specific stage in Kanban view
+  const getProjectsForStage = (stageId: string): Project[] => {
+    if (!projects) return [];
+    return projects.filter(project => project.kanbanStage === stageId);
+  };
+
   // Render project card
   const renderProjectCard = (project: Project) => (
     <Card 
@@ -172,7 +178,7 @@ export function BoardView({
                 <h3 className="font-medium truncate">{list.name}</h3>
                 <div className="flex items-center space-x-1">
                   <span className="text-xs text-muted-foreground bg-background px-2 py-0.5 rounded-full">
-                    {isProjectView ? projects?.filter(p => p.id === list.id).length || 0 : list.tasks.length}
+                    {isProjectView ? getProjectsForStage(list.id).length : list.tasks.length}
                   </span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -202,7 +208,7 @@ export function BoardView({
               {isProjectView ? (
                 // Project view (Kanban)
                 <>
-                  {projects?.filter(p => p.id === list.id).map(project => renderProjectCard(project))}
+                  {getProjectsForStage(list.id).map(project => renderProjectCard(project))}
                 </>
               ) : (
                 // Task view (normal board)
