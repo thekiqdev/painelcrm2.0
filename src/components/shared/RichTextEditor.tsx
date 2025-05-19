@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, AlignJustify } from 'lucide-react';
@@ -23,6 +22,18 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
       setHtml(value);
     }
   }, [value]);
+  
+  // Ensure correct text direction
+  useEffect(() => {
+    if (editorRef.current) {
+      // Force LTR direction on the contentEditable element
+      editorRef.current.setAttribute('dir', 'ltr');
+      
+      // Set writing mode properties
+      editorRef.current.style.unicodeBidi = 'bidi-override';
+      editorRef.current.style.textAlign = 'left';
+    }
+  }, []);
   
   const applyFormatting = (command: string, value: string | null = null) => {
     document.execCommand(command, false, value);
@@ -130,6 +141,10 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
         )}
         data-placeholder={placeholder || "Adicione aqui a descrição detalhada do projeto..."}
         dir="ltr" // Ensure left-to-right text direction
+        style={{
+          unicodeBidi: 'plaintext', // Use plaintext for bidirectional algorithm
+          textAlign: 'left'
+        }}
       />
     </div>
   );
