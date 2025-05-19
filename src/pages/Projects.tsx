@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,11 +13,12 @@ import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
 import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
 import { NewListDialog } from "@/components/projects/NewListDialog";
 import { EditListDialog } from "@/components/projects/EditListDialog";
-import { NewProjectDialog } from "@/components/projects/NewProjectDialog";
+import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProjectDialog";
 
 // Importações de tipos e dados
 import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
-import { initialProjects, mockMembers } from "@/components/projects/mockData";
+import { Member } from "@/components/shared/types";
+import { mockMembers, initialProjects } from "@/components/projects/mockData";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const Projects = () => {
@@ -42,25 +42,33 @@ const Projects = () => {
   const [tagsInput, setTagsInput] = useState<string[]>([]);
 
   // Funções para gestão de projetos
-  const handleCreateProject = (event: React.FormEvent) => {
+  const handleCreateProject = (event: React.FormEvent, data: ProjectFormData) => {
     event.preventDefault();
-    const form = event.target as HTMLFormElement;
-    const formData = new FormData(form);
-
+    
+    // Criar o novo projeto com os dados do formulário
     const newProject: Project = {
       id: `p${projects.length + 1}`,
-      name: formData.get('projectName') as string,
-      description: formData.get('description') as string,
+      name: data.name,
+      description: data.description,
       status: "active",
-      dueDate: formData.get('dueDate') as string,
-      members: [],
+      dueDate: data.dueDate ? format(data.dueDate, 'yyyy-MM-dd') : undefined,
+      members: data.members,
+      tags: data.tags,
       lists: [
         { id: `l-${Date.now()}-1`, name: "A Fazer", tasks: [], order: 0 },
         { id: `l-${Date.now()}-2`, name: "Em Andamento", tasks: [], order: 1 },
         { id: `l-${Date.now()}-3`, name: "Revisão", tasks: [], order: 2 },
         { id: `l-${Date.now()}-4`, name: "Concluídos", tasks: [], order: 3 },
       ],
-      files: [],
+      files: data.files.map((file, index) => ({
+        id: `f-${Date.now()}-${index}`,
+        name: file.name,
+        type: file.type,
+        size: `${(file.size / 1024).toFixed(1)} KB`,
+        uploadedBy: mockMembers[0], // Usuário atual
+        uploadedAt: new Date().toISOString(),
+        url: URL.createObjectURL(file) // Url temporária
+      })),
       financeItems: []
     };
 
@@ -432,7 +440,14 @@ const Projects = () => {
                 </Button>
                 <h2 className="text-xl font-bold">{selectedProject.name}</h2>
               </div>
-              <p className="text-muted-foreground">{selectedProject.description}</p>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {selectedProject.tags && selectedProject.tags.map(tag => (
+                  <span key={tag} className="text-xs bg-muted px-2 py-0.5 rounded">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2" dangerouslySetInnerHTML={{ __html: selectedProject.description }} />
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="outline">
@@ -496,9 +511,32 @@ const Projects = () => {
                 />
               </TabsContent>
               <TabsContent value="files">
-                <div className="text-center p-8 text-muted-foreground">
-                  Funcionalidade de arquivos carregará aqui
-                </div>
+                {selectedProject.files && selectedProject.files.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {selectedProject.files.map(file => (
+                      <div key={file.id} className="border rounded-md p-4 flex flex-col">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <h4 className="font-medium">{file.name}</h4>
+                            <p className="text-xs text-muted-foreground">{file.size} • {file.type}</p>
+                          </div>
+                        </div>
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          Enviado por {file.uploadedBy?.name} em {new Date(file.uploadedAt).toLocaleDateString()}
+                        </div>
+                        <div className="mt-auto pt-2">
+                          <Button variant="outline" size="sm" className="w-full" onClick={() => window.open(file.url, '_blank')}>
+                            Visualizar
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center p-8 text-muted-foreground">
+                    Nenhum arquivo adicionado a este projeto
+                  </div>
+                )}
               </TabsContent>
               <TabsContent value="calendar">
                 <div className="text-center p-8 text-muted-foreground">
@@ -548,6 +586,7 @@ const Projects = () => {
         open={newProjectDialogOpen}
         onOpenChange={setNewProjectDialogOpen}
         onSave={handleCreateProject}
+        availableMembers={mockMembers}
       />
       
       <NewListDialog

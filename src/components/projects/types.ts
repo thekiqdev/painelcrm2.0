@@ -61,4 +61,5 @@ export interface Project {
   lists: ProjectList[];
   files: ProjectFile[];
   financeItems: ProjectFinanceItem[];
+  tags?: string[];
 }

@@ -1,77 +1,53 @@
 
 import { Project, ProjectFile, ProjectFinanceItem } from "./types";
-import { Member } from "../shared/types";
+import { Member } from "@/components/shared/types";
 
-// Mock members
 export const mockMembers: Member[] = [
   { id: "m1", name: "Alex Silva", avatar: "AS" },
   { id: "m2", name: "Maria Oliveira", avatar: "MO" },
   { id: "m3", name: "João Santos", avatar: "JS" }
 ];
 
-// Mock files
 export const mockFiles: ProjectFile[] = [
   {
     id: "f1",
-    name: "projeto-wireframe.pdf",
-    type: "pdf",
-    size: "2.4 MB",
+    name: "proposta_comercial.pdf",
+    type: "application/pdf",
+    size: "125 KB",
     uploadedBy: mockMembers[0],
-    uploadedAt: "2025-05-10",
+    uploadedAt: "2025-05-10T14:30:00Z",
     url: "#"
   },
   {
     id: "f2",
-    name: "design-mockup.psd",
-    type: "psd",
-    size: "8.1 MB",
+    name: "cronograma.xlsx",
+    type: "application/excel",
+    size: "78 KB",
     uploadedBy: mockMembers[1],
-    uploadedAt: "2025-05-12",
-    url: "#"
-  },
-  {
-    id: "f3",
-    name: "contrato-cliente.docx",
-    type: "docx",
-    size: "1.2 MB",
-    uploadedBy: mockMembers[2],
-    uploadedAt: "2025-05-15",
+    uploadedAt: "2025-05-12T10:15:00Z",
     url: "#"
   }
 ];
 
-// Mock finance items
 export const mockFinanceItems: ProjectFinanceItem[] = [
   {
-    id: "fin1",
+    id: "fi1",
     description: "Pagamento inicial",
-    amount: 5000,
+    amount: 2500,
     type: "income",
-    date: "2025-05-05",
-    status: "paid",
-    category: "Faturamento"
+    date: "2025-05-15",
+    status: "paid"
   },
   {
-    id: "fin2",
-    description: "Licença de software",
+    id: "fi2",
+    description: "Licenças de software",
     amount: 350,
     type: "expense",
-    date: "2025-05-10",
-    status: "paid",
-    category: "Ferramentas"
-  },
-  {
-    id: "fin3",
-    description: "Segunda parcela",
-    amount: 3500,
-    type: "income",
-    date: "2025-06-10",
-    status: "pending",
-    category: "Faturamento"
+    date: "2025-05-20",
+    status: "pending"
   }
 ];
 
-// Initial projects data
 export const initialProjects: Project[] = [
   {
     id: "p1",
@@ -80,6 +56,7 @@ export const initialProjects: Project[] = [
     status: "active",
     dueDate: "2025-06-30",
     members: [mockMembers[0], mockMembers[1]],
+    tags: ["Design", "Web", "Frontend"],
     lists: [
       {
         id: "l1",
@@ -141,18 +118,7 @@ export const initialProjects: Project[] = [
         id: "l3",
         name: "Revisão",
         order: 2,
-        tasks: [
-          {
-            id: "t4",
-            title: "Paleta de cores",
-            description: "Finalizar paleta de cores para o novo site",
-            status: "review",
-            priority: "low",
-            assignee: mockMembers[2],
-            labels: ["Design"],
-            tags: ["Design", "Cores"],
-          }
-        ]
+        tasks: []
       },
       {
         id: "l4",
@@ -160,14 +126,14 @@ export const initialProjects: Project[] = [
         order: 3,
         tasks: [
           {
-            id: "t5",
-            title: "Benchmark concorrentes",
-            description: "Análise dos sites dos concorrentes",
+            id: "t4",
+            title: "Pesquisa de mercado",
+            description: "Análise de concorrentes e referências",
             status: "completed",
-            priority: "high",
-            assignee: mockMembers[0],
-            labels: ["Research"],
-            tags: ["Pesquisa", "Concorrentes"],
+            priority: "low",
+            dueDate: "2025-05-10",
+            assignee: mockMembers[2],
+            tags: ["Pesquisa", "Análise"],
           }
         ]
       }
@@ -177,11 +143,12 @@ export const initialProjects: Project[] = [
   },
   {
     id: "p2",
-    name: "Campanha Marketing Q2",
-    description: "Planejamento e execução da campanha de marketing do segundo trimestre",
+    name: "Aplicativo Mobile",
+    description: "Desenvolvimento de um aplicativo móvel para clientes",
     status: "active",
     dueDate: "2025-07-15",
-    members: [mockMembers[1], mockMembers[2]],
+    members: [mockMembers[0], mockMembers[2]],
+    tags: ["Mobile", "App", "React Native"],
     lists: [
       {
         id: "l5",
@@ -189,15 +156,14 @@ export const initialProjects: Project[] = [
         order: 0,
         tasks: [
           {
-            id: "t6",
-            title: "Definir canais",
-            description: "Selecionar canais de marketing para a campanha",
+            id: "t5",
+            title: "Protótipos de telas",
+            description: "Criar protótipos para as principais telas do app",
             status: "todo",
             priority: "high",
-            dueDate: "2025-05-24",
-            assignee: mockMembers[2],
-            labels: ["Planejamento"],
-            tags: ["Canais", "Planejamento"],
+            dueDate: "2025-05-22",
+            assignee: mockMembers[0],
+            tags: ["Design", "UI/UX"],
           }
         ]
       },
@@ -205,19 +171,7 @@ export const initialProjects: Project[] = [
         id: "l6",
         name: "Em Andamento",
         order: 1,
-        tasks: [
-          {
-            id: "t7",
-            title: "Criar conteúdo",
-            description: "Desenvolver conteúdo para redes sociais",
-            status: "in-progress",
-            priority: "medium",
-            dueDate: "2025-05-28",
-            assignee: mockMembers[1],
-            labels: ["Conteúdo"],
-            tags: ["Conteúdo", "Social Media"],
-          }
-        ]
+        tasks: []
       },
       {
         id: "l7",
