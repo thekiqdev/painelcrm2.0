@@ -215,32 +215,34 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
                     },
                   }}
                 >
-                  <BarChart data={monthlyData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <ChartTooltip
-                      content={<ChartTooltipContent />}
-                    />
-                    <Bar
-                      dataKey="income"
-                      fill="var(--color-income)"
-                      radius={4}
-                      barSize={8}
-                    />
-                    <Bar
-                      dataKey="expenses"
-                      fill="var(--color-expenses)"
-                      radius={4}
-                      barSize={8}
-                    />
-                    <Bar
-                      dataKey="profit"
-                      fill="var(--color-profit)"
-                      radius={4}
-                      barSize={8}
-                    />
-                  </BarChart>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={monthlyData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <ChartTooltip
+                        content={<ChartTooltipContent />}
+                      />
+                      <Bar
+                        dataKey="income"
+                        fill="var(--color-income)"
+                        radius={4}
+                        barSize={8}
+                      />
+                      <Bar
+                        dataKey="expenses"
+                        fill="var(--color-expenses)"
+                        radius={4}
+                        barSize={8}
+                      />
+                      <Bar
+                        dataKey="profit"
+                        fill="var(--color-profit)"
+                        radius={4}
+                        barSize={8}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
                   <ChartLegend content={<ChartLegendContent />} />
                 </ChartContainer>
               </CardContent>

@@ -73,7 +73,7 @@ const Finance = () => {
       case 'pending':
         return <Badge variant="secondary">Pendente</Badge>;
       case 'paid':
-        return <Badge variant="success" className="bg-green-100 text-green-800 hover:bg-green-200">Paga</Badge>;
+        return <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Paga</Badge>;
       case 'overdue':
         return <Badge variant="destructive">Vencida</Badge>;
       default:
@@ -83,7 +83,7 @@ const Finance = () => {
   
   const getExpenseStatusBadge = (isPaid: boolean) => {
     return isPaid 
-      ? <Badge variant="success" className="bg-green-100 text-green-800 hover:bg-green-200">Paga</Badge>
+      ? <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Paga</Badge>
       : <Badge variant="secondary">Pendente</Badge>;
   };
 

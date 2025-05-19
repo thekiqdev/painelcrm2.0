@@ -14,12 +14,12 @@ import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
 import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
 import { NewListDialog } from "@/components/NewListDialog";
 import { EditListDialog } from "@/components/EditListDialog";
-import { NewProjectDialog, ProjectFormData } from "@/components/NewProjectDialog";
+import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProjectDialog";
 
 // Importações de tipos e dados
-import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/types";
+import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
 import { Member } from "@/components/shared/types";
-import { mockMembers, initialProjects } from "@/components/mockData";
+import { mockMembers, initialProjects } from "@/components/projects/mockData";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const Projects = () => {
