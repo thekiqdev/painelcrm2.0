@@ -1,6 +1,7 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 
 interface RichTextEditorProps {
   value: string;
@@ -9,45 +10,104 @@ interface RichTextEditorProps {
 }
 
 export function RichTextEditor({ value, onChange, className }: RichTextEditorProps) {
-  // Implementação básica - em produção, integraria uma biblioteca como TipTap ou Quill
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onChange(e.target.value);
+  const [html, setHtml] = useState(value);
+  
+  // Reference to the editor element
+  const editorRef = React.useRef<HTMLDivElement>(null);
+  
+  const applyFormatting = (command: string, value: string | null = null) => {
+    document.execCommand(command, false, value);
+    if (editorRef.current) {
+      const newContent = editorRef.current.innerHTML;
+      setHtml(newContent);
+      onChange(newContent);
+    }
+  };
+  
+  const handleEditorChange = () => {
+    if (editorRef.current) {
+      const newContent = editorRef.current.innerHTML;
+      setHtml(newContent);
+      onChange(newContent);
+    }
   };
 
   return (
     <div className={cn("border rounded-md overflow-hidden", className)}>
-      <div className="bg-muted/50 p-1 border-b flex gap-1">
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Negrito">
-          <strong>B</strong>
+      <div className="bg-muted/50 p-1 border-b flex flex-wrap gap-1">
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Negrito"
+          onClick={() => applyFormatting('bold')}
+        >
+          <Bold className="h-4 w-4" />
         </button>
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Itálico">
-          <em>I</em>
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Itálico"
+          onClick={() => applyFormatting('italic')}
+        >
+          <Italic className="h-4 w-4" />
         </button>
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Sublinhado">
-          <u>U</u>
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Sublinhado"
+          onClick={() => applyFormatting('underline')}
+        >
+          <Underline className="h-4 w-4" />
         </button>
         <span className="mx-1 border-r"></span>
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Lista com marcadores">
-          • Lista
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Lista com marcadores"
+          onClick={() => applyFormatting('insertUnorderedList')}
+        >
+          <List className="h-4 w-4" />
         </button>
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Lista numerada">
-          1. Lista
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Lista numerada"
+          onClick={() => applyFormatting('insertOrderedList')}
+        >
+          <ListOrdered className="h-4 w-4" />
         </button>
         <span className="mx-1 border-r"></span>
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Alinhar à esquerda">
-          ⫷⫷
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Alinhar à esquerda"
+          onClick={() => applyFormatting('justifyLeft')}
+        >
+          <AlignLeft className="h-4 w-4" />
         </button>
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Centralizar">
-          ⟺
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Centralizar"
+          onClick={() => applyFormatting('justifyCenter')}
+        >
+          <AlignCenter className="h-4 w-4" />
         </button>
-        <button type="button" className="p-1 hover:bg-muted rounded" title="Alinhar à direita">
-          ⫸⫸
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Alinhar à direita"
+          onClick={() => applyFormatting('justifyRight')}
+        >
+          <AlignRight className="h-4 w-4" />
         </button>
       </div>
-      <textarea
-        value={value}
-        onChange={handleChange}
-        className="w-full p-3 focus:outline-none min-h-[120px] resize-y"
+      <div
+        ref={editorRef}
+        contentEditable
+        dangerouslySetInnerHTML={{ __html: html }}
+        onInput={handleEditorChange}
+        className="w-full p-3 focus:outline-none min-h-[120px] resize-y overflow-auto"
         placeholder="Adicione aqui a descrição detalhada do projeto..."
       />
     </div>
