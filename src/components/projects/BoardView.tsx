@@ -50,14 +50,6 @@ export function BoardView({
   onAddProject,
   onMoveProject
 }: BoardViewProps) {
-  // Calcular progresso do checklist
-  const getChecklistProgress = (task: Task) => {
-    const checklist = task.checklist || [];
-    if (checklist.length === 0) return 0;
-    const completed = checklist.filter(item => item.completed).length;
-    return Math.round((completed / checklist.length) * 100);
-  };
-
   // Calculate project progress
   const calculateProgress = (project: Project): number => {
     if (!project.lists || project.lists.length === 0) return 0;
@@ -77,16 +69,6 @@ export function BoardView({
   const formatDate = (dateString?: string) => {
     if (!dateString) return null;
     return format(new Date(dateString), "dd/MM/yyyy");
-  };
-
-  // Obter prioridade
-  const getPriorityColor = (priority: string) => {
-    switch(priority) {
-      case "high": return "text-red-500";
-      case "medium": return "text-amber-500";
-      case "low": return "text-blue-500";
-      default: return "text-muted-foreground";
-    }
   };
 
   // Handle project drag start
@@ -229,11 +211,9 @@ export function BoardView({
                     <TaskCard 
                       key={task.id}
                       task={task}
+                      listId={list.id}
                       onClick={() => onTaskClick(task, list.id)}
                       onToggleStatus={() => onToggleTaskStatus(list.id, task.id)}
-                      getChecklistProgress={getChecklistProgress}
-                      formatDate={formatDate}
-                      getPriorityColor={getPriorityColor}
                     />
                   ))}
                 </>
