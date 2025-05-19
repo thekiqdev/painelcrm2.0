@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useLocation, NavLink } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -71,6 +71,14 @@ const Nav = () => {
                   <NavLink to="/clients" className={getNavClass}>
                     <Users className="mr-2 h-5 w-5" />
                     {!collapsed && <span>Clientes</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink to="/leads" className={getNavClass}>
+                    <UserPlus className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>Leads</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>

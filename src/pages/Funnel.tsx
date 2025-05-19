@@ -10,8 +10,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
-import { Plus, MoreHorizontal, Calendar, DollarSign } from "lucide-react";
+import { Plus, MoreHorizontal, Calendar, DollarSign, Edit, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type Deal = {
   id: string;
@@ -21,7 +29,41 @@ type Deal = {
   probability: number;
   dueDate: string;
   stage: string;
+  funnelId: string;
 };
+
+type SalesFunnel = {
+  id: string;
+  name: string;
+  description: string;
+  isDefault: boolean;
+  createdAt: string;
+};
+
+// Exemplo de lista de funis de vendas
+const initialFunnels: SalesFunnel[] = [
+  {
+    id: "funnel-1",
+    name: "Funil Padrão",
+    description: "Funil de vendas padrão",
+    isDefault: true,
+    createdAt: "15/05/2023"
+  },
+  {
+    id: "funnel-2",
+    name: "Campanha Website",
+    description: "Funil para leads da campanha de website",
+    isDefault: false,
+    createdAt: "20/06/2023"
+  },
+  {
+    id: "funnel-3",
+    name: "Black Friday",
+    description: "Funil de vendas para a Black Friday",
+    isDefault: false,
+    createdAt: "01/10/2023"
+  }
+];
 
 // Exemplo de lista de negócios
 const initialDeals: Deal[] = [
@@ -33,6 +75,7 @@ const initialDeals: Deal[] = [
     probability: 20,
     dueDate: "15/06/2023",
     stage: "lead",
+    funnelId: "funnel-1"
   },
   {
     id: "D002",
@@ -42,6 +85,7 @@ const initialDeals: Deal[] = [
     probability: 50,
     dueDate: "28/06/2023",
     stage: "lead",
+    funnelId: "funnel-1"
   },
   {
     id: "D003",
@@ -51,6 +95,7 @@ const initialDeals: Deal[] = [
     probability: 75,
     dueDate: "10/07/2023",
     stage: "qualification",
+    funnelId: "funnel-1"
   },
   {
     id: "D004",
@@ -60,6 +105,7 @@ const initialDeals: Deal[] = [
     probability: 90,
     dueDate: "30/06/2023",
     stage: "proposal",
+    funnelId: "funnel-1"
   },
   {
     id: "D005",
@@ -69,6 +115,7 @@ const initialDeals: Deal[] = [
     probability: 60,
     dueDate: "15/07/2023",
     stage: "negotiation",
+    funnelId: "funnel-2"
   },
   {
     id: "D006",
@@ -78,6 +125,17 @@ const initialDeals: Deal[] = [
     probability: 95,
     dueDate: "01/07/2023",
     stage: "closed",
+    funnelId: "funnel-2"
+  },
+  {
+    id: "D007",
+    title: "Promoção Black Friday",
+    client: "Loja Virtual",
+    amount: "R$ 30.000,00",
+    probability: 80,
+    dueDate: "25/11/2023",
+    stage: "lead",
+    funnelId: "funnel-3"
   },
 ];
 
@@ -92,8 +150,14 @@ const stages = [
 
 const Funnel = () => {
   const [deals, setDeals] = useState<Deal[]>(initialDeals);
+  const [funnels, setFunnels] = useState<SalesFunnel[]>(initialFunnels);
   const [isNewDealDialogOpen, setIsNewDealDialogOpen] = useState(false);
-  const [activeFunnel, setActiveFunnel] = useState("default");
+  const [isNewFunnelDialogOpen, setIsNewFunnelDialogOpen] = useState(false);
+  const [isEditFunnelDialogOpen, setIsEditFunnelDialogOpen] = useState(false);
+  const [activeFunnelId, setActiveFunnelId] = useState("funnel-1");
+  const [editingFunnel, setEditingFunnel] = useState<SalesFunnel | null>(null);
+
+  const activeFunnel = funnels.find(f => f.id === activeFunnelId) || funnels[0];
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, dealId: string) => {
     e.dataTransfer.setData("dealId", dealId);
@@ -124,26 +188,167 @@ const Funnel = () => {
     setIsNewDealDialogOpen(false);
   };
 
+  const handleAddNewFunnel = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Aqui você adicionaria o código para salvar o novo funil
+    const newFunnel: SalesFunnel = {
+      id: `funnel-${funnels.length + 1}`,
+      name: "Novo Funil", // Substituir por valores do formulário
+      description: "Descrição do novo funil",
+      isDefault: false,
+      createdAt: new Date().toLocaleDateString('pt-BR')
+    };
+    
+    setFunnels(prev => [...prev, newFunnel]);
+    setActiveFunnelId(newFunnel.id);
+    toast.success("Novo funil criado com sucesso!");
+    setIsNewFunnelDialogOpen(false);
+  };
+
+  const handleEditFunnel = (funnel: SalesFunnel) => {
+    setEditingFunnel(funnel);
+    setIsEditFunnelDialogOpen(true);
+  };
+
+  const handleSaveEditedFunnel = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFunnel) return;
+    
+    setFunnels(prev => 
+      prev.map(f => f.id === editingFunnel.id ? editingFunnel : f)
+    );
+    
+    toast.success("Funil atualizado com sucesso!");
+    setIsEditFunnelDialogOpen(false);
+  };
+
+  const handleDeleteFunnel = (funnelId: string) => {
+    // Não permite excluir o funil padrão
+    const funnelToDelete = funnels.find(f => f.id === funnelId);
+    if (funnelToDelete?.isDefault) {
+      toast.error("Não é possível excluir o funil padrão");
+      return;
+    }
+
+    setFunnels(prev => prev.filter(f => f.id !== funnelId));
+    
+    // Se o funil ativo for excluído, muda para o funil padrão
+    if (activeFunnelId === funnelId) {
+      const defaultFunnel = funnels.find(f => f.isDefault);
+      if (defaultFunnel) setActiveFunnelId(defaultFunnel.id);
+    }
+    
+    toast.success("Funil excluído com sucesso");
+  };
+
+  // Filtra negócios pelo funil ativo
+  const filteredDeals = deals.filter(deal => deal.funnelId === activeFunnelId);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-2xl font-bold">Funil de Vendas</h1>
 
         <div className="flex flex-col sm:flex-row gap-2">
-          <Tabs 
-            value={activeFunnel} 
-            onValueChange={setActiveFunnel}
-            className="w-full sm:w-auto"
-          >
-            <TabsList>
-              <TabsTrigger value="default">Funil Padrão</TabsTrigger>
-              <TabsTrigger value="complex">Funil Complexo</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <Dialog open={isNewFunnelDialogOpen} onOpenChange={setIsNewFunnelDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Plus className="mr-2 h-4 w-4" />
+                Novo Funil
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[450px]">
+              <DialogHeader>
+                <DialogTitle>Criar Novo Funil</DialogTitle>
+                <DialogDescription>
+                  Configure um novo funil de vendas para sua campanha ou segmento de clientes.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleAddNewFunnel}>
+                <div className="grid gap-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Nome do Funil</Label>
+                    <Input id="name" placeholder="Ex: Campanha de Email" required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="description">Descrição</Label>
+                    <Textarea id="description" placeholder="Descrição ou objetivo deste funil" />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsNewFunnelDialogOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button type="submit">Criar Funil</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isEditFunnelDialogOpen} onOpenChange={setIsEditFunnelDialogOpen}>
+            {editingFunnel && (
+              <DialogContent className="sm:max-w-[450px]">
+                <DialogHeader>
+                  <DialogTitle>Editar Funil</DialogTitle>
+                  <DialogDescription>
+                    Modifique as configurações do funil selecionado.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleSaveEditedFunnel}>
+                  <div className="grid gap-4 py-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-name">Nome do Funil</Label>
+                      <Input 
+                        id="edit-name" 
+                        value={editingFunnel.name} 
+                        onChange={e => setEditingFunnel({...editingFunnel, name: e.target.value})}
+                        required 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-description">Descrição</Label>
+                      <Textarea 
+                        id="edit-description" 
+                        value={editingFunnel.description}
+                        onChange={e => setEditingFunnel({...editingFunnel, description: e.target.value})}
+                      />
+                    </div>
+                    {!editingFunnel.isDefault && (
+                      <div className="space-y-2">
+                        <Label htmlFor="isDefault">Definir como padrão</Label>
+                        <Select 
+                          value={editingFunnel.isDefault ? "yes" : "no"}
+                          onValueChange={(value) => setEditingFunnel({
+                            ...editingFunnel, 
+                            isDefault: value === "yes"
+                          })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="yes">Sim</SelectItem>
+                            <SelectItem value="no">Não</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setIsEditFunnelDialogOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit">Salvar Alterações</Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            )}
+          </Dialog>
 
           <Dialog open={isNewDealDialogOpen} onOpenChange={setIsNewDealDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="w-full sm:w-auto">
+              <Button>
                 <Plus className="mr-2 h-4 w-4" />
                 Novo Negócio
               </Button>
@@ -209,6 +414,23 @@ const Funnel = () => {
                       <Input id="probability" type="number" min="0" max="100" defaultValue="50" />
                     </div>
                   </div>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="funnel">Funil</Label>
+                      <Select defaultValue={activeFunnelId}>
+                        <SelectTrigger id="funnel">
+                          <SelectValue placeholder="Selecione o funil" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {funnels.map((funnel) => (
+                            <SelectItem key={funnel.id} value={funnel.id}>
+                              {funnel.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="notes">Observações</Label>
                     <Textarea id="notes" placeholder="Detalhes sobre esta oportunidade..." />
@@ -226,10 +448,81 @@ const Funnel = () => {
         </div>
       </div>
 
+      {/* Seletor de Funis */}
+      <div className="flex flex-col space-y-4">
+        <div className="bg-muted rounded-md p-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+            <h2 className="text-lg font-semibold">Selecione um funil de vendas</h2>
+            <span className="text-sm text-muted-foreground">{funnels.length} funis disponíveis</span>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {funnels.map((funnel) => (
+              <Card 
+                key={funnel.id} 
+                className={`cursor-pointer transition-all ${activeFunnelId === funnel.id ? 'border-crm-primary shadow-md' : 'hover:shadow-md'}`}
+                onClick={() => setActiveFunnelId(funnel.id)}
+              >
+                <CardHeader className="pb-2">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <CardTitle className="text-md">{funnel.name}</CardTitle>
+                      {funnel.isDefault && <Badge className="mt-1">Padrão</Badge>}
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Ações do Funil</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleEditFunnel(funnel)}>
+                          <Edit className="mr-2 h-4 w-4" />
+                          Editar Funil
+                        </DropdownMenuItem>
+                        {!funnel.isDefault && (
+                          <DropdownMenuItem 
+                            onClick={() => handleDeleteFunnel(funnel.id)}
+                            className="text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Excluir Funil
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground line-clamp-2">{funnel.description}</p>
+                  <div className="flex justify-between items-center mt-3 text-xs text-muted-foreground">
+                    <span>Criado em {funnel.createdAt}</span>
+                    <span>{filteredDeals.length} negócios</span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Título do funil ativo */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b pb-3">
+        <div>
+          <h2 className="text-xl font-semibold">{activeFunnel?.name}</h2>
+          <p className="text-sm text-muted-foreground">{activeFunnel?.description}</p>
+        </div>
+        <Badge variant="outline" className="mt-2 sm:mt-0">
+          {filteredDeals.length} negócios
+        </Badge>
+      </div>
+
       <div className="grid grid-cols-1 gap-4">
         <div className="grid grid-cols-1 lg:grid-cols-6 gap-4">
           {stages.map((stage) => {
-            const stageDeals = deals.filter((deal) => deal.stage === stage.id);
+            const stageDeals = filteredDeals.filter((deal) => deal.stage === stage.id);
             const stageTotal = stageDeals.reduce((sum, deal) => {
               const amount = parseFloat(deal.amount.replace("R$ ", "").replace(".", "").replace(",", "."));
               return sum + amount;

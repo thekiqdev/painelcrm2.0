@@ -37,47 +37,47 @@ import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, Pagi
 import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter } from "lucide-react";
 import { toast } from "sonner";
 
-// Dados de exemplo - apenas clientes (sem leads)
-const clients = [
+// Dados de exemplo - apenas leads
+const leads = [
   {
-    id: "CL-001",
-    name: "João Silva",
-    company: "ABC Tecnologia",
-    email: "joao@abctech.com",
-    phone: "(11) 98765-4321",
-    status: "Ativo",
+    id: "LD-001",
+    name: "Maria Oliveira",
+    company: "Construtora XYZ",
+    email: "maria@xyz.com",
+    phone: "(11) 91234-5678",
+    status: "Novo",
   },
   {
-    id: "CL-003",
-    name: "Carlos Santos",
-    company: "Supermercados Sul",
-    email: "carlos@sulmercados.com",
-    phone: "(21) 99876-5432",
-    status: "Ativo",
+    id: "LD-002",
+    name: "Ana Pereira",
+    company: "Consultoria Global",
+    email: "ana@consultoriaglobal.com",
+    phone: "(31) 98877-6655",
+    status: "Em contato",
   },
   {
-    id: "CL-005",
-    name: "Roberto Almeida",
-    company: "Tech Solutions",
-    email: "roberto@techsolutions.com",
-    phone: "(41) 99988-7766",
-    status: "Inativo",
+    id: "LD-003",
+    name: "Paulo Henrique",
+    company: "Tech Digital",
+    email: "paulo@techdigital.com",
+    phone: "(21) 98765-4321",
+    status: "Qualificado",
   },
   {
-    id: "CL-006",
-    name: "Fernanda Lima",
-    company: "Lima & Associados",
-    email: "fernanda@limaassociados.com",
-    phone: "(51) 97766-5544",
-    status: "Ativo",
+    id: "LD-004",
+    name: "Julia Mendes",
+    company: "Arquitetura JM",
+    email: "julia@arquiteturajm.com",
+    phone: "(41) 97654-3210",
+    status: "Novo",
   }
 ];
 
-const Clients = () => {
+const Leads = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
-  const [selectedClient, setSelectedClient] = useState<any>(null);
+  const [selectedLead, setSelectedLead] = useState<any>(null);
   const [sortField, setSortField] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
@@ -90,7 +90,7 @@ const Clients = () => {
     }
   };
 
-  const sortedClients = [...clients].sort((a: any, b: any) => {
+  const sortedLeads = [...leads].sort((a: any, b: any) => {
     if (sortDirection === "asc") {
       return a[sortField] > b[sortField] ? 1 : -1;
     } else {
@@ -98,22 +98,22 @@ const Clients = () => {
     }
   });
 
-  const filteredClients = sortedClients.filter((client) => {
+  const filteredLeads = sortedLeads.filter((lead) => {
     return (
-      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.email.toLowerCase().includes(searchTerm.toLowerCase())
+      lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      lead.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      lead.email.toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
 
-  const handleViewClient = (client: any) => {
-    setSelectedClient(client);
+  const handleViewLead = (lead: any) => {
+    setSelectedLead(lead);
     setIsViewDialogOpen(true);
   };
 
-  const handleAddClient = (e: React.FormEvent) => {
+  const handleAddLead = (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success("Cliente adicionado com sucesso!");
+    toast.success("Lead adicionado com sucesso!");
     setIsAddDialogOpen(false);
   };
 
@@ -122,16 +122,26 @@ const Clients = () => {
     return sortDirection === "asc" ? <ArrowUp className="ml-1 h-4 w-4" /> : <ArrowDown className="ml-1 h-4 w-4" />;
   };
 
+  const getStatusVariant = (status: string) => {
+    switch (status) {
+      case "Novo": return "outline";
+      case "Em contato": return "secondary";
+      case "Qualificado": return "default";
+      case "Perdido": return "destructive";
+      default: return "outline";
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-4 sm:space-y-0">
-        <h1 className="text-2xl font-bold">Clientes</h1>
+        <h1 className="text-2xl font-bold">Leads</h1>
         <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Buscar clientes..."
+              placeholder="Buscar leads..."
               className="pl-8 w-full sm:w-[250px]"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -141,17 +151,17 @@ const Clients = () => {
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
-                Novo Cliente
+                Novo Lead
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>Adicionar Cliente</DialogTitle>
+                <DialogTitle>Adicionar Lead</DialogTitle>
                 <DialogDescription>
-                  Preencha os dados para adicionar um novo cliente ao sistema.
+                  Preencha os dados para adicionar um novo lead ao sistema.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleAddClient}>
+              <form onSubmit={handleAddLead}>
                 <div className="grid gap-6 py-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -173,42 +183,46 @@ const Clients = () => {
                       <Input id="phone" placeholder="(00) 00000-0000" />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="status">Status</Label>
-                    <Select defaultValue="active">
-                      <SelectTrigger id="status">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">Ativo</SelectItem>
-                        <SelectItem value="inactive">Inativo</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="status">Status</Label>
+                      <Select defaultValue="new">
+                        <SelectTrigger id="status">
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="new">Novo</SelectItem>
+                          <SelectItem value="contacted">Em contato</SelectItem>
+                          <SelectItem value="qualified">Qualificado</SelectItem>
+                          <SelectItem value="lost">Perdido</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="notes">Observações</Label>
-                    <Textarea id="notes" placeholder="Adicione informações relevantes sobre este cliente" />
+                    <Textarea id="notes" placeholder="Adicione informações relevantes sobre este lead" />
                   </div>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
                     Cancelar
                   </Button>
-                  <Button type="submit">Salvar Cliente</Button>
+                  <Button type="submit">Salvar Lead</Button>
                 </DialogFooter>
               </form>
             </DialogContent>
           </Dialog>
 
           <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-            {selectedClient && (
+            {selectedLead && (
               <DialogContent className="max-w-3xl">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
-                    {selectedClient.name}
-                    <Badge variant="default">Cliente</Badge>
+                    {selectedLead.name}
+                    <Badge variant="outline">Lead</Badge>
                   </DialogTitle>
-                  <DialogDescription>{selectedClient.company}</DialogDescription>
+                  <DialogDescription>{selectedLead.company}</DialogDescription>
                 </DialogHeader>
                 <Tabs defaultValue="details" className="w-full">
                   <TabsList className="grid grid-cols-4 mb-4">
@@ -221,21 +235,21 @@ const Clients = () => {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <Label>E-mail</Label>
-                        <p className="text-sm">{selectedClient.email}</p>
+                        <p className="text-sm">{selectedLead.email}</p>
                       </div>
                       <div className="space-y-1">
                         <Label>Telefone</Label>
-                        <p className="text-sm">{selectedClient.phone}</p>
+                        <p className="text-sm">{selectedLead.phone}</p>
                       </div>
                       <div className="space-y-1">
                         <Label>Empresa</Label>
-                        <p className="text-sm">{selectedClient.company}</p>
+                        <p className="text-sm">{selectedLead.company}</p>
                       </div>
                       <div className="space-y-1">
                         <Label>Status</Label>
                         <p className="text-sm">
-                          <Badge variant={selectedClient.status === "Ativo" ? "default" : (selectedClient.status === "Inativo" ? "destructive" : "outline")}>
-                            {selectedClient.status}
+                          <Badge variant={getStatusVariant(selectedLead.status)}>
+                            {selectedLead.status}
                           </Badge>
                         </p>
                       </div>
@@ -243,7 +257,7 @@ const Clients = () => {
                   </TabsContent>
                   <TabsContent value="opportunities">
                     <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma oportunidade encontrada para este cliente.
+                      Nenhuma oportunidade encontrada para este lead.
                     </p>
                     <Button className="w-full">
                       <Plus className="mr-2 h-4 w-4" />
@@ -252,7 +266,7 @@ const Clients = () => {
                   </TabsContent>
                   <TabsContent value="tasks">
                     <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma tarefa encontrada para este cliente.
+                      Nenhuma tarefa encontrada para este lead.
                     </p>
                     <Button className="w-full">
                       <Plus className="mr-2 h-4 w-4" />
@@ -260,7 +274,7 @@ const Clients = () => {
                     </Button>
                   </TabsContent>
                   <TabsContent value="notes">
-                    <Textarea className="mb-4" placeholder="Adicione uma nota sobre este cliente..." />
+                    <Textarea className="mb-4" placeholder="Adicione uma nota sobre este lead..." />
                     <Button>Salvar Nota</Button>
                   </TabsContent>
                 </Tabs>
@@ -268,7 +282,7 @@ const Clients = () => {
                   <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
                     Fechar
                   </Button>
-                  <Button>Editar Cliente</Button>
+                  <Button>Editar Lead</Button>
                 </DialogFooter>
               </DialogContent>
             )}
@@ -281,8 +295,9 @@ const Clients = () => {
         <Tabs defaultValue="all">
           <TabsList>
             <TabsTrigger value="all">Todos</TabsTrigger>
-            <TabsTrigger value="active">Ativos</TabsTrigger>
-            <TabsTrigger value="inactive">Inativos</TabsTrigger>
+            <TabsTrigger value="new">Novos</TabsTrigger>
+            <TabsTrigger value="contacted">Em contato</TabsTrigger>
+            <TabsTrigger value="qualified">Qualificados</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -294,7 +309,7 @@ const Clients = () => {
 
       <Card>
         <CardHeader className="pb-0">
-          <CardTitle>Lista de Clientes</CardTitle>
+          <CardTitle>Lista de Leads</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -319,28 +334,22 @@ const Clients = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredClients.length === 0 ? (
+              {filteredLeads.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground">
-                    Nenhum cliente encontrado com os critérios de busca
+                    Nenhum lead encontrado com os critérios de busca
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredClients.map((client) => (
-                  <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
-                    <TableCell>{client.name}</TableCell>
-                    <TableCell>{client.company}</TableCell>
-                    <TableCell>{client.email}</TableCell>
-                    <TableCell>{client.phone}</TableCell>
+                filteredLeads.map((lead) => (
+                  <TableRow key={lead.id} className="cursor-pointer" onClick={() => handleViewLead(lead)}>
+                    <TableCell>{lead.name}</TableCell>
+                    <TableCell>{lead.company}</TableCell>
+                    <TableCell>{lead.email}</TableCell>
+                    <TableCell>{lead.phone}</TableCell>
                     <TableCell>
-                      <Badge 
-                        variant={
-                          client.status === "Ativo" ? "default" :
-                          client.status === "Inativo" ? "destructive" :
-                          "outline"
-                        }
-                      >
-                        {client.status}
+                      <Badge variant={getStatusVariant(lead.status)}>
+                        {lead.status}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -359,7 +368,7 @@ const Clients = () => {
                           </DropdownMenuItem>
                           <DropdownMenuItem>
                             <FileText className="h-4 w-4 mr-2" />
-                            Gerar Proposta
+                            Converter para Cliente
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -397,4 +406,4 @@ const Clients = () => {
   );
 };
 
-export default Clients;
+export default Leads;

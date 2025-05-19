@@ -8,6 +8,7 @@ import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Dashboard from "./pages/Dashboard";
 import Clients from "./pages/Clients";
+import Leads from "./pages/Leads";
 import Funnel from "./pages/Funnel";
 import Tasks from "./pages/Tasks";
 import Products from "./pages/Products";
@@ -35,6 +36,7 @@ const App = () => (
           <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
           <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
           <Route path="/clients" element={<AppLayout><Clients /></AppLayout>} />
+          <Route path="/leads" element={<AppLayout><Leads /></AppLayout>} />
           <Route path="/funnel" element={<AppLayout><Funnel /></AppLayout>} />
           <Route path="/tasks" element={<AppLayout><Tasks /></AppLayout>} />
           <Route path="/products" element={<AppLayout><Products /></AppLayout>} />
