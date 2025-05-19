@@ -1,0 +1,193 @@
+
+import React, { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Badge } from "@/components/ui/badge";
+import { CalendarIcon, Plus, X } from "lucide-react";
+import { Member } from "@/components/shared/types";
+import { Task } from "./types";
+import { format } from "date-fns";
+
+interface NewTaskDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  members: Member[];
+  onAddTask: (formData: FormData) => void;
+}
+
+export function NewTaskDialog({
+  open,
+  onOpenChange,
+  members,
+  onAddTask
+}: NewTaskDialogProps) {
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>();
+  const [newTagText, setNewTagText] = useState("");
+  const [tagsInput, setTagsInput] = useState<string[]>([]);
+
+  // Function to add tag for task creation
+  const addTag = () => {
+    if (!newTagText.trim()) return;
+    setTagsInput([...tagsInput, newTagText.trim()]);
+    setNewTagText("");
+  };
+
+  // Function to remove tag
+  const removeTag = (tagToRemove: string) => {
+    setTagsInput(tagsInput.filter(tag => tag !== tagToRemove));
+  };
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    
+    // Add tags to the form data
+    formData.append('tags', JSON.stringify(tagsInput));
+    
+    // Add selected date if available
+    if (selectedDate) {
+      formData.append('dueDate', format(selectedDate, 'yyyy-MM-dd'));
+    }
+    
+    onAddTask(formData);
+    
+    // Reset form
+    form.reset();
+    setSelectedDate(undefined);
+    setTagsInput([]);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[550px]">
+        <DialogHeader>
+          <DialogTitle>Nova Tarefa</DialogTitle>
+          <DialogDescription>
+            Adicione uma nova tarefa à etapa selecionada.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit}>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="title">Título</Label>
+              <Input id="title" name="title" placeholder="Título da tarefa" required />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="description">Descrição</Label>
+              <Textarea id="description" name="description" placeholder="Detalhes da tarefa" />
+            </div>
+
+            {/* Tags input section */}
+            <div className="grid gap-2">
+              <Label>Tags</Label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {tagsInput.map(tag => (
+                  <Badge key={tag} variant="secondary" className="px-2 py-1">
+                    {tag}
+                    <button 
+                      type="button" 
+                      className="ml-1 hover:text-destructive" 
+                      onClick={() => removeTag(tag)}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Input 
+                  placeholder="Adicionar tag" 
+                  value={newTagText} 
+                  onChange={(e) => setNewTagText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newTagText.trim()) {
+                      e.preventDefault();
+                      addTag();
+                    }
+                  }}
+                  className="flex-1"
+                />
+                <Button 
+                  type="button" 
+                  variant="secondary" 
+                  onClick={addTag}
+                  disabled={!newTagText.trim()}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="dueDate">Data de Entrega</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full justify-start">
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {selectedDate ? format(selectedDate, "dd/MM/yyyy") : <span>Selecionar data</span>}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={selectedDate}
+                      onSelect={setSelectedDate}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="priority">Prioridade</Label>
+                <Select name="priority" defaultValue="medium">
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Baixa</SelectItem>
+                    <SelectItem value="medium">Média</SelectItem>
+                    <SelectItem value="high">Alta</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="assignee">Responsável</Label>
+              <Select name="assignee">
+                <SelectTrigger>
+                  <SelectValue placeholder="Atribuir à" />
+                </SelectTrigger>
+                <SelectContent>
+                  {members.map(member => (
+                    <SelectItem key={member.id} value={member.id}>
+                      {member.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit">Salvar</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
