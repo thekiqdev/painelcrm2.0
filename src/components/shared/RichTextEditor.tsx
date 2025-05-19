@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
+import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, AlignJustify } from 'lucide-react';
 
 interface RichTextEditorProps {
   value: string;
@@ -15,6 +15,14 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
   
   // Reference to the editor element
   const editorRef = React.useRef<HTMLDivElement>(null);
+  
+  // Update the editor content when the value prop changes
+  useEffect(() => {
+    if (editorRef.current && value !== html) {
+      editorRef.current.innerHTML = value;
+      setHtml(value);
+    }
+  }, [value]);
   
   const applyFormatting = (command: string, value: string | null = null) => {
     document.execCommand(command, false, value);
@@ -102,6 +110,14 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
         >
           <AlignRight className="h-4 w-4" />
         </button>
+        <button 
+          type="button" 
+          className="p-1 hover:bg-muted rounded" 
+          title="Justificar"
+          onClick={() => applyFormatting('justifyFull')}
+        >
+          <AlignJustify className="h-4 w-4" />
+        </button>
       </div>
       <div
         ref={editorRef}
@@ -113,6 +129,7 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
           !html && "before:content-[attr(data-placeholder)] before:text-gray-400"
         )}
         data-placeholder={placeholder || "Adicione aqui a descrição detalhada do projeto..."}
+        dir="ltr" // Ensure left-to-right text direction
       />
     </div>
   );
