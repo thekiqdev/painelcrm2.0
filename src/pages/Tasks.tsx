@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar as CalendarIcon, Clock, Plus, CheckCircle, User, Circle } from "lucide-react";
+import { Calendar as CalendarIcon, Clock, Plus, CheckCircle, User, Circle, CheckSquare, MoreHorizontal, X, Edit } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar } from "@/components/ui/avatar";
@@ -30,6 +30,13 @@ type Task = {
   deal?: string;
   assignee?: string;
   assigneeAvatar?: string;
+  checklist?: ChecklistItem[];
+};
+
+type ChecklistItem = {
+  id: string;
+  text: string;
+  completed: boolean;
 };
 
 // Exemplo de tarefas
@@ -46,6 +53,11 @@ const initialTasks: Task[] = [
     deal: "Implementação de Sistema ERP",
     assignee: "Carlos Silva",
     assigneeAvatar: "CS",
+    checklist: [
+      { id: "cl1", text: "Preparar slides de apresentação", completed: false },
+      { id: "cl2", text: "Revisar orçamento", completed: true },
+      { id: "cl3", text: "Agendar sala de reuniões", completed: false }
+    ]
   },
   {
     id: "T002",
@@ -58,6 +70,10 @@ const initialTasks: Task[] = [
     client: "XYZ Corp",
     assignee: "Ana Oliveira",
     assigneeAvatar: "AO",
+    checklist: [
+      { id: "cl4", text: "Enviar email de acompanhamento", completed: true },
+      { id: "cl5", text: "Registrar feedback no CRM", completed: true }
+    ]
   },
   {
     id: "T003",
@@ -70,6 +86,11 @@ const initialTasks: Task[] = [
     deal: "Expansão de Servidor",
     assignee: "Carlos Silva",
     assigneeAvatar: "CS",
+    checklist: [
+      { id: "cl6", text: "Levantar requisitos técnicos", completed: true },
+      { id: "cl7", text: "Calcular custos", completed: false },
+      { id: "cl8", text: "Elaborar cronograma", completed: false }
+    ]
   },
   {
     id: "T004",
@@ -80,7 +101,7 @@ const initialTasks: Task[] = [
     status: "pending",
     priority: "low",
     assignee: "Ana Oliveira",
-    assigneeAvatar: "AO",
+    assigneeAvatar: "AO"
   },
   {
     id: "T005",
@@ -93,6 +114,11 @@ const initialTasks: Task[] = [
     deal: "Projeto de Marketing Digital",
     assignee: "Marcos Santos",
     assigneeAvatar: "MS",
+    checklist: [
+      { id: "cl9", text: "Revisar cláusulas", completed: true },
+      { id: "cl10", text: "Verificar valores", completed: true },
+      { id: "cl11", text: "Enviar por email", completed: false }
+    ]
   },
 ];
 
@@ -100,6 +126,11 @@ const Tasks = () => {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [date, setDate] = useState<Date>();
+  
+  // Estados para o modal de detalhes e gerenciamento de checklist
+  const [taskDetailOpen, setTaskDetailOpen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [newChecklistItem, setNewChecklistItem] = useState("");
 
   const handleToggleTaskStatus = (taskId: string) => {
     setTasks(prev =>
@@ -114,12 +145,110 @@ const Tasks = () => {
         return task;
       })
     );
+    
+    // Atualizar o selectedTask se estiver visualizando os detalhes
+    if (selectedTask && selectedTask.id === taskId) {
+      setSelectedTask({
+        ...selectedTask,
+        status: selectedTask.status === "pending" ? "completed" : "pending"
+      });
+    }
   };
 
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();
     toast.success("Tarefa adicionada com sucesso!");
     setIsAddTaskDialogOpen(false);
+  };
+
+  // Função para abrir o modal de detalhes da tarefa
+  const openTaskDetail = (task: Task) => {
+    setSelectedTask(task);
+    setTaskDetailOpen(true);
+  };
+
+  // Função para alternar status de um item no checklist
+  const toggleChecklistItem = (itemId: string) => {
+    if (!selectedTask) return;
+    
+    const updatedChecklist = selectedTask.checklist?.map(item => 
+      item.id === itemId ? { ...item, completed: !item.completed } : item
+    );
+    
+    // Verificar se todos os itens estão completos
+    const allCompleted = updatedChecklist && 
+                         updatedChecklist.length > 0 && 
+                         updatedChecklist.every(item => item.completed);
+    
+    // Atualizar a tarefa selecionada
+    const updatedTask = {
+      ...selectedTask,
+      status: allCompleted ? "completed" : selectedTask.status,
+      checklist: updatedChecklist
+    };
+    
+    setSelectedTask(updatedTask);
+    
+    // Atualizar a lista principal de tarefas
+    setTasks(tasks.map(task => 
+      task.id === selectedTask.id ? updatedTask : task
+    ));
+    
+    // Notificar se todos os itens foram concluídos
+    if (allCompleted && selectedTask.status !== "completed") {
+      toast.success("Todos os itens concluídos! Tarefa marcada como completa.");
+    }
+  };
+
+  // Função para adicionar novo item ao checklist
+  const addChecklistItem = () => {
+    if (!selectedTask || !newChecklistItem.trim()) return;
+    
+    const newItem: ChecklistItem = {
+      id: `cl-${Date.now()}`,
+      text: newChecklistItem,
+      completed: false
+    };
+    
+    const updatedChecklist = selectedTask.checklist 
+      ? [...selectedTask.checklist, newItem] 
+      : [newItem];
+    
+    const updatedTask = {
+      ...selectedTask,
+      checklist: updatedChecklist
+    };
+    
+    setSelectedTask(updatedTask);
+    
+    // Atualizar a lista principal de tarefas
+    setTasks(tasks.map(task => 
+      task.id === selectedTask.id ? updatedTask : task
+    ));
+    
+    setNewChecklistItem("");
+    toast.success("Item adicionado à lista de verificação");
+  };
+
+  // Função para remover item do checklist
+  const removeChecklistItem = (itemId: string) => {
+    if (!selectedTask || !selectedTask.checklist) return;
+    
+    const updatedChecklist = selectedTask.checklist.filter(item => item.id !== itemId);
+    
+    const updatedTask = {
+      ...selectedTask,
+      checklist: updatedChecklist
+    };
+    
+    setSelectedTask(updatedTask);
+    
+    // Atualizar a lista principal de tarefas
+    setTasks(tasks.map(task => 
+      task.id === selectedTask.id ? updatedTask : task
+    ));
+    
+    toast.success("Item removido da lista de verificação");
   };
 
   const getTodayTasks = () => tasks.filter(task => task.date === "2025-05-19" && task.status === "pending");
@@ -133,6 +262,13 @@ const Tasks = () => {
       case "low": return "text-blue-500";
       default: return "text-gray-500";
     }
+  };
+
+  // Cálculo do progresso do checklist
+  const getChecklistProgress = (task: Task) => {
+    if (!task.checklist || task.checklist.length === 0) return 0;
+    const completedItems = task.checklist.filter(item => item.completed).length;
+    return Math.round((completedItems / task.checklist.length) * 100);
   };
 
   return (
@@ -279,6 +415,7 @@ const Tasks = () => {
             tasks={tasks} 
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
+            onTaskClick={openTaskDetail}
           />
         </TabsContent>
 
@@ -287,6 +424,7 @@ const Tasks = () => {
             tasks={getTodayTasks()} 
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
+            onTaskClick={openTaskDetail}
           />
         </TabsContent>
 
@@ -295,6 +433,7 @@ const Tasks = () => {
             tasks={getUpcomingTasks()} 
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
+            onTaskClick={openTaskDetail}
           />
         </TabsContent>
 
@@ -303,9 +442,161 @@ const Tasks = () => {
             tasks={getCompletedTasks()} 
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
+            onTaskClick={openTaskDetail}
           />
         </TabsContent>
       </Tabs>
+
+      {/* Modal de Detalhes da Tarefa */}
+      <Dialog open={taskDetailOpen} onOpenChange={setTaskDetailOpen}>
+        {selectedTask && (
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <div className="flex items-center gap-2">
+                <Checkbox 
+                  checked={selectedTask.status === "completed"} 
+                  onCheckedChange={() => handleToggleTaskStatus(selectedTask.id)}
+                  className="mr-1"
+                />
+                <DialogTitle className={cn({"line-through opacity-70": selectedTask.status === "completed"})}>
+                  {selectedTask.title}
+                </DialogTitle>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {selectedTask.client && (
+                  <Badge variant="outline">Cliente: {selectedTask.client}</Badge>
+                )}
+                {selectedTask.deal && (
+                  <Badge variant="outline">Negócio: {selectedTask.deal}</Badge>
+                )}
+                <Badge variant={selectedTask.priority === "high" ? "destructive" : 
+                                selectedTask.priority === "medium" ? "default" : "secondary"}>
+                  {selectedTask.priority === "high" ? "Alta Prioridade" : 
+                   selectedTask.priority === "medium" ? "Média Prioridade" : "Baixa Prioridade"}
+                </Badge>
+              </div>
+            </DialogHeader>
+            <div className="grid gap-6">
+              {selectedTask.description && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-1">Descrição</h4>
+                  <p className="text-sm text-muted-foreground">{selectedTask.description}</p>
+                </div>
+              )}
+              
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-sm font-semibold">Lista de Verificação</h4>
+                  {selectedTask.checklist && selectedTask.checklist.length > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {selectedTask.checklist.filter(item => item.completed).length}/{selectedTask.checklist.length} concluídos 
+                      ({getChecklistProgress(selectedTask)}%)
+                    </span>
+                  )}
+                </div>
+
+                {/* Barra de progresso */}
+                {selectedTask.checklist && selectedTask.checklist.length > 0 && (
+                  <div className="w-full bg-muted h-2 rounded-full mb-3">
+                    <div 
+                      className="bg-primary h-2 rounded-full" 
+                      style={{ width: `${getChecklistProgress(selectedTask)}%` }} 
+                    />
+                  </div>
+                )}
+
+                {/* Itens do checklist */}
+                <div className="space-y-2 mb-3">
+                  {selectedTask.checklist?.map(item => (
+                    <div key={item.id} className="flex items-center group">
+                      <Checkbox 
+                        checked={item.completed} 
+                        onCheckedChange={() => toggleChecklistItem(item.id)}
+                        className="mr-2"
+                      />
+                      <span className={cn("flex-1 text-sm", {"line-through text-muted-foreground": item.completed})}>
+                        {item.text}
+                      </span>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0" 
+                        onClick={() => removeChecklistItem(item.id)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Adicionar novo item ao checklist */}
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="Adicionar item à lista" 
+                    value={newChecklistItem} 
+                    onChange={(e) => setNewChecklistItem(e.target.value)}
+                    className="text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newChecklistItem.trim()) {
+                        addChecklistItem();
+                      }
+                    }}
+                  />
+                  <Button onClick={addChecklistItem} disabled={!newChecklistItem.trim()}>
+                    Adicionar
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Detalhes</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex gap-2">
+                      <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                      <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
+                    </div>
+                    {selectedTask.time && (
+                      <div className="flex gap-2">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <span>Horário: {selectedTask.time}</span>
+                      </div>
+                    )}
+                    {selectedTask.assignee && (
+                      <div className="flex gap-2 items-center">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        <span>Responsável: {selectedTask.assignee}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Ações</h4>
+                  <div className="space-y-2">
+                    <Button variant="outline" size="sm" className="w-full justify-start">
+                      <Edit className="mr-2 h-4 w-4" />
+                      Editar tarefa
+                    </Button>
+                    <Button 
+                      variant={selectedTask.status === "completed" ? "default" : "secondary"} 
+                      size="sm" 
+                      className="w-full justify-start"
+                      onClick={() => handleToggleTaskStatus(selectedTask.id)}
+                    >
+                      <CheckSquare className="mr-2 h-4 w-4" />
+                      {selectedTask.status === "completed" ? "Marcar como pendente" : "Marcar como concluída"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setTaskDetailOpen(false)}>Fechar</Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
     </div>
   );
 };
@@ -314,9 +605,10 @@ type TaskListProps = {
   tasks: Task[];
   onToggleTaskStatus: (taskId: string) => void;
   getPriorityColor: (priority: string) => string;
+  onTaskClick: (task: Task) => void;
 };
 
-const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor }: TaskListProps) => {
+const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick }: TaskListProps) => {
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return format(date, "dd/MM/yyyy");
@@ -341,13 +633,24 @@ const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor }: TaskListProps
   return (
     <div className="space-y-4">
       {tasks.map(task => (
-        <Card key={task.id} className={cn("transition-all", {"opacity-80": task.status === "completed" })}>
+        <Card 
+          key={task.id} 
+          className={cn(
+            "transition-all cursor-pointer hover:shadow-md", 
+            {"opacity-80": task.status === "completed" }
+          )}
+          onClick={() => onTaskClick(task)}
+        >
           <CardContent className="p-4">
             <div className="flex items-start gap-4">
               <Checkbox 
                 checked={task.status === "completed"} 
                 onCheckedChange={() => onToggleTaskStatus(task.id)}
                 className="mt-1"
+                onClick={(e) => {
+                  // Evita que o clique do checkbox propague e abra o modal de detalhes
+                  e.stopPropagation();
+                }}
               />
               
               <div className="flex-1">
@@ -367,6 +670,23 @@ const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor }: TaskListProps
                   <p className={cn("text-sm text-muted-foreground mb-3", {"line-through opacity-70": task.status === "completed"})}>
                     {task.description}
                   </p>
+                )}
+                
+                {task.checklist && task.checklist.length > 0 && (
+                  <div className="flex items-center gap-1 mb-3">
+                    <CheckSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                    <div className="text-xs text-muted-foreground">
+                      {task.checklist.filter(item => item.completed).length}/{task.checklist.length} itens concluídos
+                    </div>
+                    <div className="flex-1 h-1 bg-muted rounded-full ml-1">
+                      <div 
+                        className="h-1 bg-primary rounded-full" 
+                        style={{ 
+                          width: `${(task.checklist.filter(item => item.completed).length / task.checklist.length) * 100}%` 
+                        }} 
+                      />
+                    </div>
+                  </div>
                 )}
                 
                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
