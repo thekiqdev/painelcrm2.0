@@ -27,6 +27,8 @@ import AuthLayout from "./layouts/AuthLayout";
 import AuthWhatsApp from "./pages/AuthWhatsApp";
 import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
+import FunnelDetails from "./pages/FunnelDetails";
+import ProposalDetails from "./pages/ProposalDetails";
 
 const queryClient = new QueryClient();
 
@@ -68,6 +70,16 @@ const App = () => (
             <Route path="/funnel" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Funnel /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/funnel/:funnelId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><FunnelDetails /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/funnel/:funnelId/stage/:stageId/proposal/:proposalId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><ProposalDetails /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/projects" element={

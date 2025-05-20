@@ -3,15 +3,17 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, FileText } from "lucide-react";
+import { Plus, FileText, ExternalLink } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useNavigate } from "react-router-dom";
 
 const Proposals = () => {
   const [activeTab, setActiveTab] = useState("all");
+  const navigate = useNavigate();
   
   return (
     <div className="space-y-6">
@@ -106,9 +108,9 @@ const Proposals = () => {
         <TabsContent value="all">
           <div className="mt-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <ProposalCard />
-              <ProposalCard />
-              <ProposalCard />
+              <ProposalCard navigate={navigate} />
+              <ProposalCard navigate={navigate} />
+              <ProposalCard navigate={navigate} />
             </div>
           </div>
         </TabsContent>
@@ -116,7 +118,7 @@ const Proposals = () => {
         <TabsContent value="draft">
           <div className="mt-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <ProposalCard />
+              <ProposalCard navigate={navigate} />
             </div>
           </div>
         </TabsContent>
@@ -124,8 +126,8 @@ const Proposals = () => {
         <TabsContent value="sent">
           <div className="mt-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <ProposalCard />
-              <ProposalCard />
+              <ProposalCard navigate={navigate} />
+              <ProposalCard navigate={navigate} />
             </div>
           </div>
         </TabsContent>
@@ -133,7 +135,7 @@ const Proposals = () => {
         <TabsContent value="accepted">
           <div className="mt-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <ProposalCard />
+              <ProposalCard navigate={navigate} />
             </div>
           </div>
         </TabsContent>
@@ -141,7 +143,7 @@ const Proposals = () => {
         <TabsContent value="rejected">
           <div className="mt-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <ProposalCard />
+              <ProposalCard navigate={navigate} />
             </div>
           </div>
         </TabsContent>
@@ -151,12 +153,20 @@ const Proposals = () => {
             <p className="text-sm text-muted-foreground mb-2">
               Veja e gerencie suas propostas no funil de vendas
             </p>
-            <Button variant="outline" asChild>
-              <a href="/funnel" className="inline-flex items-center">
-                <FileText className="mr-2 h-4 w-4" />
-                Ver Funil de Propostas
-              </a>
-            </Button>
+            <div className="space-x-2">
+              <Button variant="outline" asChild>
+                <a href="/funnel" className="inline-flex items-center">
+                  <FileText className="mr-2 h-4 w-4" />
+                  Ver Todos Funis
+                </a>
+              </Button>
+              <Button variant="outline" asChild>
+                <a href="/funnel/funnel-3" className="inline-flex items-center">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Funil de Propostas
+                </a>
+              </Button>
+            </div>
           </div>
         )}
       </Tabs>
@@ -164,7 +174,7 @@ const Proposals = () => {
   );
 };
 
-const ProposalCard = () => {
+const ProposalCard = ({ navigate }: { navigate: any }) => {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -193,7 +203,7 @@ const ProposalCard = () => {
           </div>
         </div>
         <div className="mt-4 pt-4 border-t flex gap-2">
-          <Button variant="outline" size="sm" className="flex-1">
+          <Button variant="outline" size="sm" className="flex-1" onClick={() => navigate("/funnel/funnel-3/stage/stage-14/proposal/D002")}>
             Visualizar
           </Button>
           <Button size="sm" className="flex-1">
