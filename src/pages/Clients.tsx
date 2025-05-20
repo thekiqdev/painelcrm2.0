@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -86,7 +87,8 @@ const clientGroups = [
   "Outro"
 ];
 
-const ITEMS_PER_PAGE = 2; // For demonstration purposes, using a small number
+// Opções para quantidade de itens por página
+const itemsPerPageOptions = [10, 25, 50, 100];
 
 const Clients = () => {
   const [searchTerm, setSearchTerm] = useState("");
@@ -99,6 +101,18 @@ const Clients = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [newClientGroup, setNewClientGroup] = useState("");
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  
+  // New client data state
+  const [newClient, setNewClient] = useState({
+    name: "",
+    company: "",
+    email: "",
+    phone: "",
+    status: "active",
+    group: "",
+    notes: ""
+  });
 
   const handleSort = (field: string) => {
     if (field === sortField) {
@@ -140,20 +154,62 @@ const Clients = () => {
     }
   });
 
-  // Apply pagination
-  const totalPages = Math.ceil(sortedClients.length / ITEMS_PER_PAGE);
-  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const paginatedClients = sortedClients.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  // Apply pagination with dynamic itemsPerPage
+  const totalPages = Math.ceil(sortedClients.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedClients = sortedClients.slice(startIndex, startIndex + itemsPerPage);
 
   const handleViewClient = (client: any) => {
     setSelectedClient(client);
     setIsViewDialogOpen(true);
   };
 
+  // Handle input change for new client form
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { id, value } = e.target;
+    setNewClient({
+      ...newClient,
+      [id]: value
+    });
+  };
+
+  // Handle select change for select components
+  const handleSelectChange = (field: string, value: string) => {
+    setNewClient({
+      ...newClient,
+      [field]: value
+    });
+  };
+
   const handleAddClient = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Create a new client object
+    const clientToAdd = {
+      id: `CL-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
+      name: newClient.name,
+      company: newClient.company,
+      email: newClient.email,
+      phone: newClient.phone,
+      status: newClient.status === "active" ? "Ativo" : "Inativo",
+      group: newClient.group
+    };
+    
+    // In a real app, this would be added to the database
+    // Here we'll just show a success message
     toast.success("Cliente adicionado com sucesso!");
     setIsAddDialogOpen(false);
+    
+    // Reset the form
+    setNewClient({
+      name: "",
+      company: "",
+      email: "",
+      phone: "",
+      status: "active",
+      group: "",
+      notes: ""
+    });
   };
 
   const handleUpdateGroup = (e: React.FormEvent) => {
@@ -292,27 +348,53 @@ const Clients = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="name">Nome</Label>
-                      <Input id="name" placeholder="Nome completo" required />
+                      <Input 
+                        id="name" 
+                        placeholder="Nome completo" 
+                        required 
+                        value={newClient.name}
+                        onChange={handleInputChange}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="company">Empresa</Label>
-                      <Input id="company" placeholder="Nome da empresa" />
+                      <Input 
+                        id="company" 
+                        placeholder="Nome da empresa" 
+                        value={newClient.company}
+                        onChange={handleInputChange}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="email">E-mail</Label>
-                      <Input id="email" type="email" placeholder="email@exemplo.com" required />
+                      <Input 
+                        id="email" 
+                        type="email" 
+                        placeholder="email@exemplo.com" 
+                        required 
+                        value={newClient.email}
+                        onChange={handleInputChange}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="phone">Telefone</Label>
-                      <Input id="phone" placeholder="(00) 00000-0000" />
+                      <Input 
+                        id="phone" 
+                        placeholder="(00) 00000-0000" 
+                        value={newClient.phone}
+                        onChange={handleInputChange}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="status">Status</Label>
-                      <Select defaultValue="active">
+                      <Select 
+                        defaultValue="active"
+                        onValueChange={(value) => handleSelectChange("status", value)}
+                      >
                         <SelectTrigger id="status">
                           <SelectValue placeholder="Selecione" />
                         </SelectTrigger>
@@ -324,7 +406,10 @@ const Clients = () => {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="group">Grupo</Label>
-                      <Select defaultValue="none">
+                      <Select 
+                        defaultValue="none" 
+                        onValueChange={(value) => handleSelectChange("group", value)}
+                      >
                         <SelectTrigger id="group">
                           <SelectValue placeholder="Selecione um grupo" />
                         </SelectTrigger>
@@ -338,7 +423,12 @@ const Clients = () => {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="notes">Observações</Label>
-                    <Textarea id="notes" placeholder="Adicione informações relevantes sobre este cliente" />
+                    <Textarea 
+                      id="notes" 
+                      placeholder="Adicione informações relevantes sobre este cliente" 
+                      value={newClient.notes}
+                      onChange={handleInputChange}
+                    />
                   </div>
                 </div>
                 <DialogFooter>
@@ -483,6 +573,36 @@ const Clients = () => {
           <CardTitle>Lista de Clientes</CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="flex flex-col sm:flex-row justify-between mb-4">
+            <div className="mb-2 sm:mb-0">
+              <p className="text-sm text-muted-foreground">
+                Mostrando {paginatedClients.length} de {filteredClients.length} clientes
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm">Mostrar</span>
+              <Select 
+                value={itemsPerPage.toString()} 
+                onValueChange={(value) => {
+                  setItemsPerPage(Number(value));
+                  setCurrentPage(1); // Reset to first page when changing items per page
+                }}
+              >
+                <SelectTrigger className="w-[80px] h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {itemsPerPageOptions.map(option => (
+                    <SelectItem key={option} value={option.toString()}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-sm">por página</span>
+            </div>
+          </div>
+          
           <Table>
             <TableHeader>
               <TableRow>
