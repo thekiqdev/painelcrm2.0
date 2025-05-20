@@ -9,6 +9,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { UserCheck, Clock, Send } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { Database } from "@/integrations/supabase/types";
 
 interface Message {
   id: string;
@@ -28,6 +29,10 @@ interface Conversation {
   unreadCount: number;
   updatedAt: Date;
 }
+
+type ProfileWithConnection = {
+  whatsapp_connected: boolean | null;
+};
 
 const Chat = () => {
   const { user } = useAuth();
@@ -56,7 +61,10 @@ const Chat = () => {
           return;
         }
         
-        if (data && data.whatsapp_connected === true) {
+        // Cast the data to the correct type
+        const profile = data as unknown as ProfileWithConnection;
+        
+        if (profile && profile.whatsapp_connected === true) {
           setConnectionStatus("connected");
           // Load mock conversations only if WhatsApp is connected
           loadMockData();
