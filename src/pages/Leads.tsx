@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -180,10 +181,9 @@ const Leads = () => {
   // Adicionar novo lead
   const handleAddLead = async (values: LeadFormValues) => {
     try {
-      // Aqui está a correção: passando um objeto único, não um array
       const { data, error } = await supabase
         .from("leads")
-        .insert(values) // Passando o objeto values diretamente
+        .insert(values)
         .select();
 
       if (error) throw error;
