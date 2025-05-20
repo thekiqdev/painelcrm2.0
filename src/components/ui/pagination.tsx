@@ -1,3 +1,4 @@
+
 import * as React from "react"
 import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
 
@@ -36,16 +37,20 @@ PaginationItem.displayName = "PaginationItem"
 
 type PaginationLinkProps = {
   isActive?: boolean
+  onClick?: () => void
 } & Pick<ButtonProps, "size"> &
-  React.ComponentProps<"a">
+  Omit<React.ComponentProps<"button">, "size" | "onClick">
 
 const PaginationLink = ({
   className,
   isActive,
   size = "icon",
+  onClick,
   ...props
 }: PaginationLinkProps) => (
-  <a
+  <button
+    onClick={onClick}
+    type="button"
     aria-current={isActive ? "page" : undefined}
     className={cn(
       buttonVariants({
@@ -59,35 +64,53 @@ const PaginationLink = ({
 )
 PaginationLink.displayName = "PaginationLink"
 
+type PaginationButtonProps = {
+  onClick?: () => void
+  className?: string
+  "aria-disabled"?: boolean
+} & Omit<React.ComponentProps<"button">, "onClick" | "className">
+
 const PaginationPrevious = ({
   className,
+  onClick,
   ...props
-}: React.ComponentProps<typeof PaginationLink>) => (
-  <PaginationLink
+}: PaginationButtonProps) => (
+  <button
+    onClick={onClick}
     aria-label="Go to previous page"
     size="default"
-    className={cn("gap-1 pl-2.5", className)}
+    className={cn(
+      buttonVariants({ variant: "ghost", size: "default" }), 
+      "gap-1 pl-2.5", 
+      className
+    )}
     {...props}
   >
     <ChevronLeft className="h-4 w-4" />
     <span>Previous</span>
-  </PaginationLink>
+  </button>
 )
 PaginationPrevious.displayName = "PaginationPrevious"
 
 const PaginationNext = ({
   className,
+  onClick,
   ...props
-}: React.ComponentProps<typeof PaginationLink>) => (
-  <PaginationLink
+}: PaginationButtonProps) => (
+  <button
+    onClick={onClick}
     aria-label="Go to next page"
     size="default"
-    className={cn("gap-1 pr-2.5", className)}
+    className={cn(
+      buttonVariants({ variant: "ghost", size: "default" }), 
+      "gap-1 pr-2.5", 
+      className
+    )}
     {...props}
   >
     <span>Next</span>
     <ChevronRight className="h-4 w-4" />
-  </PaginationLink>
+  </button>
 )
 PaginationNext.displayName = "PaginationNext"
 

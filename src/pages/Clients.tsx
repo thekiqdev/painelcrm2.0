@@ -46,6 +46,7 @@ const clients = [
     email: "joao@abctech.com",
     phone: "(11) 98765-4321",
     status: "Ativo",
+    group: "Tecnologia"
   },
   {
     id: "CL-003",
@@ -54,6 +55,7 @@ const clients = [
     email: "carlos@sulmercados.com",
     phone: "(21) 99876-5432",
     status: "Ativo",
+    group: "Varejo"
   },
   {
     id: "CL-005",
@@ -62,6 +64,7 @@ const clients = [
     email: "roberto@techsolutions.com",
     phone: "(41) 99988-7766",
     status: "Inativo",
+    group: "Tecnologia"
   },
   {
     id: "CL-006",
@@ -70,8 +73,21 @@ const clients = [
     email: "fernanda@limaassociados.com",
     phone: "(51) 97766-5544",
     status: "Ativo",
+    group: "Serviços"
   }
 ];
+
+// Dados de grupos de clientes
+const clientGroups = [
+  "Tecnologia",
+  "Varejo",
+  "Serviços",
+  "Saúde",
+  "Educação",
+  "Outro"
+];
+
+const ITEMS_PER_PAGE = 2; // For demonstration purposes, using a small number
 
 const Clients = () => {
   const [searchTerm, setSearchTerm] = useState("");
@@ -80,6 +96,10 @@ const Clients = () => {
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [sortField, setSortField] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [activeTab, setActiveTab] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [newClientGroup, setNewClientGroup] = useState("");
 
   const handleSort = (field: string) => {
     if (field === sortField) {
@@ -90,7 +110,30 @@ const Clients = () => {
     }
   };
 
-  const sortedClients = [...clients].sort((a: any, b: any) => {
+  // First apply status filter
+  const filteredByStatus = clients.filter((client) => {
+    if (activeTab === "all") return true;
+    if (activeTab === "active") return client.status === "Ativo";
+    if (activeTab === "inactive") return client.status === "Inativo";
+    return true;
+  });
+
+  // Then apply group filter if selected
+  const filteredByGroup = selectedGroup 
+    ? filteredByStatus.filter(client => client.group === selectedGroup)
+    : filteredByStatus;
+
+  // Finally apply search term
+  const filteredClients = filteredByGroup.filter((client) => {
+    return (
+      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.email.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  });
+
+  // Sort the filtered clients
+  const sortedClients = [...filteredClients].sort((a: any, b: any) => {
     if (sortDirection === "asc") {
       return a[sortField] > b[sortField] ? 1 : -1;
     } else {
@@ -98,13 +141,10 @@ const Clients = () => {
     }
   });
 
-  const filteredClients = sortedClients.filter((client) => {
-    return (
-      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.email.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  });
+  // Apply pagination
+  const totalPages = Math.ceil(sortedClients.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const paginatedClients = sortedClients.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
   const handleViewClient = (client: any) => {
     setSelectedClient(client);
@@ -117,9 +157,106 @@ const Clients = () => {
     setIsAddDialogOpen(false);
   };
 
+  const handleUpdateGroup = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedClient && newClientGroup) {
+      // In a real app, this would update the database
+      toast.success(`Grupo do cliente ${selectedClient.name} alterado para ${newClientGroup}`);
+    }
+    setIsViewDialogOpen(false);
+  };
+
   const SortIcon = ({ field }: { field: string }) => {
     if (field !== sortField) return null;
     return sortDirection === "asc" ? <ArrowUp className="ml-1 h-4 w-4" /> : <ArrowDown className="ml-1 h-4 w-4" />;
+  };
+
+  const renderPagination = () => {
+    const pages = [];
+    const maxVisiblePages = 3;
+    
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+    
+    if (endPage - startPage + 1 < maxVisiblePages) {
+      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+    
+    // Previous button
+    pages.push(
+      <PaginationItem key="prev">
+        <PaginationPrevious 
+          onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+          className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+          aria-disabled={currentPage === 1}
+        />
+      </PaginationItem>
+    );
+    
+    // First page if not visible
+    if (startPage > 1) {
+      pages.push(
+        <PaginationItem key="1">
+          <PaginationLink onClick={() => setCurrentPage(1)}>1</PaginationLink>
+        </PaginationItem>
+      );
+      
+      // Ellipsis if needed
+      if (startPage > 2) {
+        pages.push(
+          <PaginationItem key="start-ellipsis">
+            <PaginationEllipsis />
+          </PaginationItem>
+        );
+      }
+    }
+    
+    // Visible page numbers
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(
+        <PaginationItem key={i}>
+          <PaginationLink 
+            isActive={currentPage === i}
+            onClick={() => setCurrentPage(i)}
+          >
+            {i}
+          </PaginationLink>
+        </PaginationItem>
+      );
+    }
+    
+    // Ellipsis if needed
+    if (endPage < totalPages - 1) {
+      pages.push(
+        <PaginationItem key="end-ellipsis">
+          <PaginationEllipsis />
+        </PaginationItem>
+      );
+    }
+    
+    // Last page if not visible
+    if (endPage < totalPages) {
+      pages.push(
+        <PaginationItem key={totalPages}>
+          <PaginationLink onClick={() => setCurrentPage(totalPages)}>
+            {totalPages}
+          </PaginationLink>
+        </PaginationItem>
+      );
+    }
+    
+    // Next button
+    pages.push(
+      <PaginationItem key="next">
+        <PaginationNext 
+          onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+          className={currentPage === totalPages || totalPages === 0 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+          aria-disabled={currentPage === totalPages || totalPages === 0}
+        />
+      </PaginationItem>
+    );
+    
+    return pages;
   };
 
   return (
@@ -173,17 +310,32 @@ const Clients = () => {
                       <Input id="phone" placeholder="(00) 00000-0000" />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="status">Status</Label>
-                    <Select defaultValue="active">
-                      <SelectTrigger id="status">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">Ativo</SelectItem>
-                        <SelectItem value="inactive">Inativo</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="status">Status</Label>
+                      <Select defaultValue="active">
+                        <SelectTrigger id="status">
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active">Ativo</SelectItem>
+                          <SelectItem value="inactive">Inativo</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="group">Grupo</Label>
+                      <Select defaultValue="">
+                        <SelectTrigger id="group">
+                          <SelectValue placeholder="Selecione um grupo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {clientGroups.map(group => (
+                            <SelectItem key={group} value={group}>{group}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="notes">Observações</Label>
@@ -239,6 +391,27 @@ const Clients = () => {
                           </Badge>
                         </p>
                       </div>
+                      <div className="space-y-1">
+                        <Label>Grupo</Label>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm">{selectedClient.group || "Nenhum grupo atribuído"}</p>
+                          <form onSubmit={handleUpdateGroup} className="flex items-center gap-2">
+                            <Select value={newClientGroup} onValueChange={setNewClientGroup}>
+                              <SelectTrigger className="h-8 w-[180px]">
+                                <SelectValue placeholder="Alterar grupo" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {clientGroups.map(group => (
+                                  <SelectItem key={group} value={group}>{group}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button type="submit" size="sm" disabled={!newClientGroup}>
+                              Atribuir
+                            </Button>
+                          </form>
+                        </div>
+                      </div>
                     </div>
                   </TabsContent>
                   <TabsContent value="opportunities">
@@ -278,7 +451,7 @@ const Clients = () => {
 
       {/* Tabs e Filtros */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-        <Tabs defaultValue="all">
+        <Tabs defaultValue="all" value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="all">Todos</TabsTrigger>
             <TabsTrigger value="active">Ativos</TabsTrigger>
@@ -286,10 +459,24 @@ const Clients = () => {
           </TabsList>
         </Tabs>
 
-        <Button variant="outline" size="sm">
-          <Filter className="h-4 w-4 mr-2" />
-          Filtros
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select value={selectedGroup || ""} onValueChange={(value) => setSelectedGroup(value || null)}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Filtrar por grupo" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Todos os grupos</SelectItem>
+              {clientGroups.map(group => (
+                <SelectItem key={group} value={group}>{group}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Button variant="outline" size="sm">
+            <Filter className="h-4 w-4 mr-2" />
+            Mais Filtros
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -315,18 +502,19 @@ const Clients = () => {
                 <TableHead>E-mail</TableHead>
                 <TableHead>Telefone</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Grupo</TableHead>
                 <TableHead>Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredClients.length === 0 ? (
+              {paginatedClients.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
                     Nenhum cliente encontrado com os critérios de busca
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredClients.map((client) => (
+                paginatedClients.map((client) => (
                   <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
                     <TableCell>{client.name}</TableCell>
                     <TableCell>{client.company}</TableCell>
@@ -343,6 +531,7 @@ const Clients = () => {
                         {client.status}
                       </Badge>
                     </TableCell>
+                    <TableCell>{client.group || "—"}</TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -373,21 +562,7 @@ const Clients = () => {
           <div className="mt-4">
             <Pagination>
               <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious href="#" />
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationLink href="#" isActive>1</PaginationLink>
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationLink href="#">2</PaginationLink>
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationEllipsis />
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationNext href="#" />
-                </PaginationItem>
+                {renderPagination()}
               </PaginationContent>
             </Pagination>
           </div>
