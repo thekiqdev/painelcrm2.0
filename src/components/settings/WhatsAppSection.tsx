@@ -9,11 +9,24 @@ import { useAuth } from "@/contexts/AuthContext";
 import QRCodeScanner from "@/components/whatsapp/QRCodeScanner";
 import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
 import { whatsappService } from "@/services/whatsapp";
+import AddConnectionDialog from "@/components/whatsapp/AddConnectionDialog";
+import { Plus, QrCode } from "lucide-react";
+
+type Connection = {
+  id: string;
+  name: string;
+  type: "qrcode" | "evolution" | "webjs";
+  status: "disconnected" | "connecting" | "connected";
+  configData?: any;
+};
 
 export const WhatsAppSection = () => {
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [activeConnection, setActiveConnection] = useState<Connection | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [connectionMethod, setConnectionMethod] = useState<"qrcode" | "evolution" | "webjs">("qrcode");
   const { user, profile, updateProfile } = useAuth();
   
@@ -51,8 +64,25 @@ export const WhatsAppSection = () => {
     checkConnectionStatus();
   }, [user, profile, updateProfile]);
   
-  const handleConnect = async () => {
+  const handleAddConnection = (connectionName: string, connectionType: string, configData?: any) => {
+    const newConnection: Connection = {
+      id: `conn_${Date.now()}`,
+      name: connectionName,
+      type: connectionType as "qrcode" | "evolution" | "webjs",
+      status: "disconnected",
+      configData
+    };
+    
+    setConnections([...connections, newConnection]);
+    setIsDialogOpen(false);
+    toast.success("Conexão adicionada", { 
+      description: `A conexão "${connectionName}" foi adicionada com sucesso.` 
+    });
+  };
+  
+  const handleConnect = async (connection: Connection) => {
     try {
+      setActiveConnection(connection);
       setIsLoading(true);
       setConnectionStatus("connecting");
       
@@ -62,10 +92,10 @@ export const WhatsAppSection = () => {
       
       let result;
       
-      if (connectionMethod === "evolution") {
-        // This would be implemented with actual API key integration
-        result = await whatsappService.connectEvolution("demo-key");
-      } else if (connectionMethod === "webjs") {
+      if (connection.type === "evolution") {
+        const { apiKey, instanceId } = connection.configData || {};
+        result = await whatsappService.connectEvolution(apiKey || "demo-key", instanceId);
+      } else if (connection.type === "webjs") {
         result = await whatsappService.connectWebJS();
       } else {
         // Default QR code method
@@ -76,6 +106,13 @@ export const WhatsAppSection = () => {
         setConnectionStatus("connected");
         setQrCode(null);
         await updateProfile({ whatsapp_connected: true });
+        
+        // Update connection status in the list
+        const updatedConnections = connections.map(c => 
+          c.id === connection.id ? { ...c, status: "connected" } : c
+        );
+        setConnections(updatedConnections);
+        
         toast.success("Conectado com sucesso!", {
           description: "Sua conta WhatsApp foi conectada",
         });
@@ -105,6 +142,15 @@ export const WhatsAppSection = () => {
       await whatsappService.disconnect();
       setConnectionStatus("disconnected");
       setQrCode(null);
+      
+      // Update connection status in the list if there's an active connection
+      if (activeConnection) {
+        const updatedConnections = connections.map(c => 
+          c.id === activeConnection.id ? { ...c, status: "disconnected" } : c
+        );
+        setConnections(updatedConnections);
+        setActiveConnection(null);
+      }
       
       // Update user profile to indicate WhatsApp is disconnected
       if (user) {
@@ -136,6 +182,14 @@ export const WhatsAppSection = () => {
       setQrCode(null);
       await updateProfile({ whatsapp_connected: true });
       
+      // Update connection status in the list if there's an active connection
+      if (activeConnection) {
+        const updatedConnections = connections.map(c => 
+          c.id === activeConnection.id ? { ...c, status: "connected" } : c
+        );
+        setConnections(updatedConnections);
+      }
+      
       toast.success("Conectado com sucesso!", {
         description: "Sua conta WhatsApp foi confirmada manualmente",
       });
@@ -161,6 +215,15 @@ export const WhatsAppSection = () => {
           if (status.connected || status.status === "connected") {
             setConnectionStatus("connected");
             setQrCode(null);
+            
+            // Update connection status in the list if there's an active connection
+            if (activeConnection) {
+              const updatedConnections = connections.map(c => 
+                c.id === activeConnection.id ? { ...c, status: "connected" } : c
+              );
+              setConnections(updatedConnections);
+            }
+            
             await updateProfile({ whatsapp_connected: true });
             toast.success("Conectado com sucesso!", {
               description: "Sua conta WhatsApp foi conectada",
@@ -178,72 +241,101 @@ export const WhatsAppSection = () => {
         clearInterval(intervalId);
       }
     };
-  }, [connectionStatus, qrCode, updateProfile]);
+  }, [connectionStatus, qrCode, activeConnection, connections, updateProfile]);
+
+  const renderConnectionsList = () => {
+    if (connections.length === 0) {
+      return (
+        <div className="text-center p-6 border rounded-md">
+          <p className="text-muted-foreground mb-4">
+            Você ainda não tem conexões WhatsApp configuradas.
+          </p>
+          <Button onClick={() => setIsDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Adicionar Conexão
+          </Button>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="space-y-4">
+        {connections.map((connection) => (
+          <Card key={connection.id} className="overflow-hidden">
+            <div className="flex items-center justify-between p-4">
+              <div>
+                <h3 className="font-medium">{connection.name}</h3>
+                <p className="text-sm text-muted-foreground">
+                  Tipo: {connection.type === "qrcode" ? "QR Code" : connection.type === "evolution" ? "Evolution API" : "WhatsApp Web.js"}
+                </p>
+              </div>
+              
+              <div>
+                {connection.status === "disconnected" ? (
+                  <Button 
+                    size="sm" 
+                    onClick={() => handleConnect(connection)}
+                    disabled={isLoading}
+                  >
+                    Conectar
+                  </Button>
+                ) : connection.status === "connecting" ? (
+                  <Button size="sm" disabled>Conectando...</Button>
+                ) : (
+                  <Button 
+                    size="sm" 
+                    variant="destructive" 
+                    onClick={handleDisconnect}
+                    disabled={isLoading}
+                  >
+                    Desconectar
+                  </Button>
+                )}
+              </div>
+            </div>
+          </Card>
+        ))}
+        
+        <div className="flex justify-center mt-4">
+          <Button onClick={() => setIsDialogOpen(true)} variant="outline">
+            <Plus className="mr-2 h-4 w-4" />
+            Adicionar Outra Conexão
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-xl">WhatsApp</CardTitle>
-            <CardDescription>
-              Conecte sua conta WhatsApp para gerenciar mensagens e atendimentos
-            </CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-xl">WhatsApp</CardTitle>
+              <CardDescription>
+                Conecte sua conta WhatsApp para gerenciar mensagens e atendimentos
+              </CardDescription>
+            </div>
+            
+            {connections.length === 0 && (
+              <Button onClick={() => setIsDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Adicionar Conexão
+              </Button>
+            )}
           </CardHeader>
           
           <CardContent>
-            {connectionStatus === "disconnected" ? (
-              <div className="space-y-6">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="h-24 w-24 text-muted-foreground flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M3 21l1.65-3.8a9 9 0 1 1 3.4 2.9L3 21"/>
-                    </svg>
-                  </div>
-                  <p className="text-center text-muted-foreground mb-4">
-                    Clique no botão abaixo para gerar um QR code e conectar o seu WhatsApp
-                  </p>
-                </div>
-                
-                <Tabs defaultValue="qrcode" className="w-full" onValueChange={(value) => setConnectionMethod(value as any)}>
-                  <TabsList className="grid grid-cols-3 w-full">
-                    <TabsTrigger value="qrcode">Via QR Code</TabsTrigger>
-                    <TabsTrigger value="webjs">Via WhatsApp Web.js</TabsTrigger>
-                    <TabsTrigger value="evolution">Via Evolution API</TabsTrigger>
-                  </TabsList>
-                  
-                  <TabsContent value="qrcode" className="pt-4">
-                    <p className="mb-4 text-sm text-center">
-                      Conecte escaneando um QR code com seu celular
-                    </p>
-                  </TabsContent>
-                  
-                  <TabsContent value="webjs" className="pt-4">
-                    <p className="mb-4 text-sm text-center">
-                      Use a biblioteca WhatsApp Web.js para conectar
-                    </p>
-                  </TabsContent>
-                  
-                  <TabsContent value="evolution" className="pt-4">
-                    <p className="mb-4 text-sm text-center">
-                      Conecte usando a Evolution API (requer credenciais separadas)
-                    </p>
-                  </TabsContent>
-                </Tabs>
-                
-                <div className="flex justify-center mt-4">
-                  <Button onClick={handleConnect} disabled={isLoading} className="bg-[#1a202c] hover:bg-[#2d3748]">
-                    {isLoading ? "Conectando..." : "Conectar WhatsApp"}
-                  </Button>
-                </div>
-              </div>
-            ) : (
+            {activeConnection && qrCode ? (
               <QRCodeScanner 
                 qrCode={qrCode} 
                 connectionStatus={connectionStatus} 
                 onDisconnect={handleDisconnect}
                 onConfirmConnection={handleConfirmConnection}
               />
+            ) : (
+              renderConnectionsList()
             )}
           </CardContent>
         </Card>
@@ -267,7 +359,7 @@ export const WhatsAppSection = () => {
               </Alert>
             )}
             
-            {connectionStatus === "disconnected" && (
+            {connectionStatus === "disconnected" && !activeConnection && (
               <div className="mt-4">
                 <p className="text-sm text-muted-foreground">
                   WhatsApp não está conectado.
@@ -322,6 +414,12 @@ export const WhatsAppSection = () => {
           </CardContent>
         </Card>
       )}
+      
+      <AddConnectionDialog
+        isOpen={isDialogOpen}
+        onClose={() => setIsDialogOpen(false)}
+        onAddConnection={handleAddConnection}
+      />
     </div>
   );
 };
