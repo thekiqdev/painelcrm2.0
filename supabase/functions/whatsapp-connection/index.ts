@@ -1,7 +1,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.3";
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from "npm:@whiskeysockets/baileys";
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from "npm:@adiwajshing/baileys@5.0.0";
 import { Boom } from "npm:@hapi/boom";
 
 // Cache for active connections by user ID
