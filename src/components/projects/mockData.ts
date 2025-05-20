@@ -1,3 +1,4 @@
+
 import { Member } from "@/components/shared/types";
 import { Project } from "@/components/projects/types";
 
@@ -28,8 +29,8 @@ export const mockMembers: Member[] = [
   }
 ];
 
-// Update initialProjects to include financeItems
-export const initialProjects: Partial<Project>[] = [
+// Update initialProjects to include financeItems and ensure all required properties
+export const initialProjects: Project[] = [
   {
     id: "p1",
     name: "Website Redesign",

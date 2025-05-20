@@ -1,3 +1,4 @@
+
 export interface ProjectFile {
   id: string;
   name: string;
@@ -16,16 +17,18 @@ export interface ProjectList {
 }
 
 export type TaskStatus = "todo" | "in-progress" | "review" | "completed";
+export type Priority = "high" | "medium" | "low";
 
 export interface Task {
   id: string;
   title: string;
   description: string;
   status: TaskStatus;
-  priority: "high" | "medium" | "low";
+  priority: Priority;
   dueDate?: string;
   assignee?: Member;
   tags?: string[];
+  labels?: string[];
   checklist?: ChecklistItem[];
 }
 

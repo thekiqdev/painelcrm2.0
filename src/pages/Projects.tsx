@@ -32,7 +32,7 @@ const Projects = () => {
     // Initialize projects with kanbanStage
     return initialProjects.map(project => ({
       ...project,
-      kanbanStage: "backlog" // Default all projects to backlog stage initially
+      kanbanStage: project.kanbanStage || "backlog" // Default all projects to backlog stage initially
     }));
   });
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
