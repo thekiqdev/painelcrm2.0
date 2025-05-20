@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -181,9 +180,19 @@ const Leads = () => {
   // Adicionar novo lead
   const handleAddLead = async (values: LeadFormValues) => {
     try {
+      // Make sure the values object meets the type requirements of Supabase
+      const leadData = {
+        name: values.name, // This is required
+        company: values.company || null,
+        email: values.email || null,
+        phone: values.phone || null,
+        status: values.status,
+        notes: values.notes || null,
+      };
+
       const { data, error } = await supabase
         .from("leads")
-        .insert(values)
+        .insert(leadData)
         .select();
 
       if (error) throw error;
