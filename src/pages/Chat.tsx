@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +9,7 @@ import { UserCheck, Clock, Send } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/integrations/supabase/types";
+import { useNavigate } from "react-router-dom";
 
 interface Message {
   id: string;
@@ -36,6 +36,7 @@ type ProfileWithConnection = {
 
 const Chat = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -212,6 +213,11 @@ const Chat = () => {
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   };
 
+  const handleNavigateToSettings = () => {
+    // Navigate to settings page and indicate to open the WhatsApp tab
+    navigate("/settings?tab=whatsapp");
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -234,7 +240,7 @@ const Chat = () => {
                 Você precisa conectar sua conta WhatsApp antes de poder usar o chat.
               </p>
               <Button 
-                onClick={() => window.location.href = "/settings"}
+                onClick={handleNavigateToSettings}
                 className="px-8"
               >
                 Ir para Configurações

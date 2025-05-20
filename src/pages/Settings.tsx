@@ -1,7 +1,7 @@
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Building, Users, Globe, CreditCard, Bell, Settings as SettingsIcon, Shield, MessageSquare } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { CompanyDataSection } from "@/components/settings/CompanyDataSection";
 import { UsersSection } from "@/components/settings/UsersSection";
@@ -16,6 +16,19 @@ import { SettingsMenuItemProps } from "@/components/settings/types";
 
 const Settings = () => {
   const [activeSettingsTab, setActiveSettingsTab] = useState("company");
+  const location = useLocation();
+
+  // Check for URL parameters on component mount
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const tabParam = searchParams.get("tab");
+    
+    // If tab parameter exists and is one of our valid tabs, set it as active
+    if (tabParam && ["company", "whatsapp", "users", "collaborators", "domain", 
+                     "billing", "notifications", "preferences", "security"].includes(tabParam)) {
+      setActiveSettingsTab(tabParam);
+    }
+  }, [location]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
