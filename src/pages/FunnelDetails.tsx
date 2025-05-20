@@ -282,6 +282,34 @@ const FunnelDetails: React.FC = () => {
     setDraggedClientId(null);
   };
 
+  // Client tag handlers
+  const handleClientAddTag = (client: Client, tagId: string) => {
+    const updatedClient = handleAddTagToClient(client, tagId);
+    setClients(prevClients => 
+      prevClients.map(c => c.id === client.id ? updatedClient : c)
+    );
+    setSelectedClient(updatedClient);
+  };
+  
+  const handleClientRemoveTag = (client: Client, tagId: string) => {
+    const updatedClient = handleRemoveTagFromClient(client, tagId);
+    setClients(prevClients => 
+      prevClients.map(c => c.id === client.id ? updatedClient : c)
+    );
+    setSelectedClient(updatedClient);
+  };
+
+  // Rules handlers
+  const handleRuleSave = (rule: Rule) => {
+    handleSaveRule(rule);
+    setRules(prev => [...prev, rule]);
+  };
+  
+  const handleRuleRemove = (ruleId: string) => {
+    handleRemoveRule(ruleId);
+    setRules(prev => prev.filter(r => r.id !== ruleId));
+  };
+  
   // Render the content based on the active settings tab
   const renderContent = () => {
     if (funnel?.type === "clients") {
@@ -437,6 +465,17 @@ const FunnelDetails: React.FC = () => {
       );
     }
   };
+
+  // Tabs content for Rules
+  const renderRulesContent = () => (
+    <RuleForm 
+      leadStatuses={leadStatuses}
+      sourcesOptions={sourcesOptions}
+      onSaveRule={handleRuleSave}
+      existingRules={rules}
+      onRemoveRule={handleRuleRemove}
+    />
+  );
 
   if (!funnel) {
     return (
@@ -608,13 +647,7 @@ const FunnelDetails: React.FC = () => {
                 </TabsContent>
                 
                 <TabsContent value="rules" className="pt-4">
-                  <RuleForm 
-                    leadStatuses={leadStatuses}
-                    sourcesOptions={sourcesOptions}
-                    onSaveRule={handleSaveRule}
-                    existingRules={rules}
-                    onRemoveRule={handleRemoveRule}
-                  />
+                  {renderRulesContent()}
                 </TabsContent>
 
                 <TabsContent value="tags" className="pt-4">
@@ -685,20 +718,8 @@ const FunnelDetails: React.FC = () => {
         onClose={() => setShowClientDetailsDialog(false)}
         client={selectedClient}
         availableTags={clientTags}
-        onAddTag={(client, tagId) => {
-          const updatedClient = handleAddTagToClient(client, tagId);
-          setClients(prevClients => 
-            prevClients.map(c => c.id === client.id ? updatedClient : c)
-          );
-          setSelectedClient(updatedClient);
-        }}
-        onRemoveTag={(client, tagId) => {
-          const updatedClient = handleRemoveTagFromClient(client, tagId);
-          setClients(prevClients => 
-            prevClients.map(c => c.id === client.id ? updatedClient : c)
-          );
-          setSelectedClient(updatedClient);
-        }}
+        onAddTag={handleClientAddTag}
+        onRemoveTag={handleClientRemoveTag}
       />
 
       {/* Add Stage Dialog */}

@@ -10,17 +10,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { CalendarIcon, PlusCircle, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
-
-type Rule = {
-  id: string;
-  type: "date" | "status" | "source";
-  operator: string;
-  value: string | Date;
-};
+import { Rule, RuleCondition, RuleAction, SourceOption } from "./types";
 
 interface RuleFormProps {
   leadStatuses: Array<{ id: string; name: string; color: string }>;
-  sourcesOptions: string[];
+  sourcesOptions: SourceOption[];
   onSaveRule: (rule: Rule) => void;
   existingRules: Rule[];
   onRemoveRule: (id: string) => void;
@@ -35,18 +29,33 @@ const RuleForm: React.FC<RuleFormProps> = ({
 }) => {
   const [ruleType, setRuleType] = useState<"date" | "status" | "source">("date");
   const [operator, setOperator] = useState("equals");
-  const [value, setValue] = useState<string | Date>("");
+  const [value, setValue] = useState<string>("");
   const [dateValue, setDateValue] = useState<Date | undefined>(undefined);
+  const [ruleName, setRuleName] = useState<string>("");
 
   const handleAddRule = () => {
     if (ruleType === "date" && !dateValue) return;
     if ((ruleType === "status" || ruleType === "source") && !value) return;
+    if (!ruleName) return;
+
+    const condition: RuleCondition = {
+      id: `condition-${Date.now()}`,
+      field: ruleType,
+      operator: operator,
+      value: ruleType === "date" ? dateValue?.toISOString() || "" : value
+    };
+
+    const action: RuleAction = {
+      id: `action-${Date.now()}`,
+      type: "notify",
+      value: "Notification sent"
+    };
 
     const newRule: Rule = {
       id: `rule-${Date.now()}`,
-      type: ruleType,
-      operator: operator,
-      value: ruleType === "date" ? dateValue as Date : value
+      name: ruleName,
+      conditions: [condition],
+      actions: [action]
     };
     
     onSaveRule(newRule);
@@ -56,6 +65,7 @@ const RuleForm: React.FC<RuleFormProps> = ({
     setOperator("equals");
     setValue("");
     setDateValue(undefined);
+    setRuleName("");
   };
 
   const getOperatorOptions = () => {
@@ -82,25 +92,24 @@ const RuleForm: React.FC<RuleFormProps> = ({
   };
 
   const formatRuleDisplay = (rule: Rule) => {
-    if (rule.type === "date") {
-      const dateString = rule.value instanceof Date 
-        ? format(rule.value, "dd/MM/yyyy")
-        : typeof rule.value === 'string' && new Date(rule.value) instanceof Date 
-          ? format(new Date(rule.value), "dd/MM/yyyy") 
-          : String(rule.value);
-          
-      return `Data de Adição ${rule.operator === "before" ? "antes de" : rule.operator === "after" ? "após" : "igual a"} ${dateString}`;
+    if (!rule.conditions.length) return rule.name;
+    
+    const condition = rule.conditions[0];
+    
+    if (condition.field === "date") {
+      const dateString = new Date(condition.value).toLocaleDateString();
+      return `${rule.name}: Data ${condition.operator === "before" ? "antes de" : condition.operator === "after" ? "após" : "igual a"} ${dateString}`;
     }
     
-    if (rule.type === "status") {
-      return `Status ${rule.operator === "equals" ? "é" : "não é"} ${rule.value}`;
+    if (condition.field === "status") {
+      return `${rule.name}: Status ${condition.operator === "equals" ? "é" : "não é"} ${condition.value}`;
     }
     
-    if (rule.type === "source") {
-      return `Fonte ${rule.operator === "equals" ? "é" : "não é"} ${rule.value}`;
+    if (condition.field === "source") {
+      return `${rule.name}: Fonte ${condition.operator === "equals" ? "é" : "não é"} ${condition.value}`;
     }
     
-    return "";
+    return rule.name;
   };
 
   return (
@@ -112,6 +121,15 @@ const RuleForm: React.FC<RuleFormProps> = ({
         <CardContent>
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4">
+              <div>
+                <Label>Nome da Regra</Label>
+                <Input 
+                  value={ruleName}
+                  onChange={(e) => setRuleName(e.target.value)}
+                  placeholder="Nome descritivo para a regra"
+                />
+              </div>
+              
               <div>
                 <Label>Tipo de Regra</Label>
                 <Select value={ruleType} onValueChange={(val) => setRuleType(val as "date" | "status" | "source")}>
@@ -166,7 +184,7 @@ const RuleForm: React.FC<RuleFormProps> = ({
               ) : ruleType === "status" ? (
                 <div>
                   <Label>Status</Label>
-                  <Select value={value as string} onValueChange={setValue}>
+                  <Select value={value} onValueChange={setValue}>
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione o status" />
                     </SelectTrigger>
@@ -188,13 +206,13 @@ const RuleForm: React.FC<RuleFormProps> = ({
               ) : (
                 <div>
                   <Label>Fonte</Label>
-                  <Select value={value as string} onValueChange={setValue}>
+                  <Select value={value} onValueChange={setValue}>
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione a fonte" />
                     </SelectTrigger>
                     <SelectContent>
                       {sourcesOptions.map(source => (
-                        <SelectItem key={source} value={source}>{source}</SelectItem>
+                        <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

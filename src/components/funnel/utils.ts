@@ -41,9 +41,8 @@ export const handleRemoveTagFromClient = (client: Client, tagId: string): Client
 };
 
 // Rules handlers
-export const handleSaveRule = (rule: Rule): Rule => {
+export const handleSaveRule = (rule: Rule): void => {
   console.log("Save rule:", rule);
-  return rule;
 };
 
 export const handleRemoveRule = (ruleId: string) => {
