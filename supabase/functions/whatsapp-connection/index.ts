@@ -3,28 +3,43 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.3";
 import * as qrcode from "https://deno.land/x/qrcode@v2.0.0/mod.ts";
 
-// Cache for active connections by user ID
+// Cache para conexões ativas por ID de usuário
 const activeConnections: Record<string, boolean> = {};
 
-// Generate a QR code as base64
+// Gerar um QR code como base64
 async function generateQRCode(text: string): Promise<string> {
   const qr = await qrcode.generate(text);
   return qr;
 }
 
+// Headers CORS para permitir requisições de qualquer origem
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+};
+
 serve(async (req) => {
+  // Tratar requisições OPTIONS (CORS preflight)
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders
+    });
+  }
+
   const url = new URL(req.url);
   const supabaseClient = createClient(
     Deno.env.get("SUPABASE_URL") as string,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") as string
   );
   
-  // Get JWT from request
+  // Obter JWT da requisição
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
-    return new Response(JSON.stringify({ error: "Missing authorization header" }), {
+    return new Response(JSON.stringify({ error: "Cabeçalho de autorização ausente" }), {
       status: 401,
-      headers: { "Content-Type": "application/json" }
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   }
 
@@ -32,36 +47,151 @@ serve(async (req) => {
   const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
 
   if (authError || !user) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    return new Response(JSON.stringify({ error: "Não autorizado" }), {
       status: 401, 
-      headers: { "Content-Type": "application/json" }
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   }
 
   const userId = user.id;
 
-  // Handle different operations based on path
+  // Tratar diferentes operações com base no caminho
   const action = url.pathname.split("/").pop() || "";
   
   if (req.method === "POST") {
-    if (action === "connect") {
+    // Rota para conectar Evolution API
+    if (action === "connect-evolution") {
       try {
-        // Generate a unique connection identifier
+        // Obter dados do corpo da requisição
+        const requestData = await req.json();
+        const { apiKey, instanceId } = requestData;
+        
+        if (!apiKey) {
+          return new Response(
+            JSON.stringify({ error: "API Key da Evolution é obrigatória" }),
+            { 
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+              status: 400 
+            }
+          );
+        }
+        
+        // Em uma implementação real, você conectaria à Evolution API aqui
+        console.log(`Conectando via Evolution API com chave: ${apiKey.substring(0, 3)}***`);
+        
+        // Armazenar status da conexão
+        activeConnections[userId] = true;
+        
+        // Atualizar perfil do usuário
+        await supabaseClient.from("profiles")
+          .update({ whatsapp_connected: true })
+          .eq("id", userId);
+          
+        // Atualizar status da conexão
+        await supabaseClient.from("whatsapp_connections")
+          .upsert({
+            user_id: userId,
+            status: "connected",
+            provider: "evolution",
+            updated_at: new Date().toISOString()
+          });
+          
+        return new Response(
+          JSON.stringify({
+            status: "connected",
+            provider: "evolution"
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200
+          }
+        );
+      } catch (err) {
+        console.error("Erro ao conectar com Evolution API:", err);
+        return new Response(
+          JSON.stringify({ error: "Falha ao conectar com Evolution API" }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 500
+          }
+        );
+      }
+    } else if (action === "connect") {
+      try {
+        // Verificar se a requisição especifica um provedor
+        let requestData = {};
+        let provider = "default";
+        
+        try {
+          requestData = await req.json();
+          provider = (requestData as any).provider || "default";
+        } catch (e) {
+          // Continuar com o provedor padrão se não houver corpo JSON
+        }
+        
+        if (provider === "evolution") {
+          const apiKey = (requestData as any).apiKey;
+          
+          if (!apiKey) {
+            return new Response(
+              JSON.stringify({ error: "API Key da Evolution é obrigatória" }),
+              { 
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+                status: 400 
+              }
+            );
+          }
+          
+          // Em uma implementação real, você conectaria à Evolution API aqui
+          console.log(`Conectando via Evolution API com chave: ${apiKey.substring(0, 3)}***`);
+          
+          // Armazenar status da conexão
+          activeConnections[userId] = true;
+          
+          // Atualizar perfil do usuário
+          await supabaseClient.from("profiles")
+            .update({ whatsapp_connected: true })
+            .eq("id", userId);
+            
+          // Atualizar status da conexão
+          await supabaseClient.from("whatsapp_connections")
+            .upsert({
+              user_id: userId,
+              status: "connected",
+              provider: "evolution",
+              updated_at: new Date().toISOString()
+            });
+            
+          return new Response(
+            JSON.stringify({
+              status: "connected",
+              provider: "evolution"
+            }),
+            {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+              status: 200
+            }
+          );
+        }
+        
+        // Fluxo padrão via QR Code
+        // Gerar um identificador de conexão único
         const connectionId = crypto.randomUUID();
         const connectionCode = `whatsapp-connection-${userId}-${connectionId}`;
         
-        // Generate QR code containing the connection code
+        // Gerar QR code contendo o código de conexão
         const qrCodeData = await generateQRCode(connectionCode);
         
-        // Store active connection status
+        // Armazenar status da conexão ativa
         activeConnections[userId] = true;
         
-        // Save QR code and status in Supabase
+        // Salvar QR code e status no Supabase
         await supabaseClient.from("whatsapp_connections")
           .upsert({
             user_id: userId,
             qr_code: qrCodeData,
             status: "awaiting_scan",
+            provider: "qrcode",
             updated_at: new Date().toISOString()
           });
           
@@ -71,16 +201,16 @@ serve(async (req) => {
             qrCode: qrCodeData
           }),
           {
-            headers: { "Content-Type": "application/json" },
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
             status: 200
           }
         );
       } catch (err) {
-        console.error("Error generating QR code:", err);
+        console.error("Erro ao gerar QR code:", err);
         return new Response(
-          JSON.stringify({ error: "Failed to generate QR code" }),
+          JSON.stringify({ error: "Falha ao gerar QR code" }),
           {
-            headers: { "Content-Type": "application/json" },
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
             status: 500
           }
         );
@@ -88,12 +218,12 @@ serve(async (req) => {
     } else if (action === "disconnect") {
       delete activeConnections[userId];
       
-      // Update user profile in Supabase
+      // Atualizar perfil do usuário no Supabase
       await supabaseClient.from("profiles")
         .update({ whatsapp_connected: false })
         .eq("id", userId);
         
-      // Update connection status in Supabase
+      // Atualizar status da conexão no Supabase
       await supabaseClient.from("whatsapp_connections")
         .update({
           status: "disconnected",
@@ -102,20 +232,23 @@ serve(async (req) => {
         })
         .eq("user_id", userId);
         
-      return new Response(JSON.stringify({ status: "disconnected" }), {
-        headers: { "Content-Type": "application/json" },
-        status: 200
-      });
+      return new Response(
+        JSON.stringify({ status: "disconnected" }), 
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200
+        }
+      );
     } else if (action === "confirm") {
-      // Simulate confirming a connection after QR code scan
-      // In a real implementation, this would verify the connection
+      // Simular confirmação de conexão após escaneamento do QR code
+      // Em uma implementação real, isso verificaria a conexão
       
-      // Update user profile in Supabase
+      // Atualizar perfil do usuário no Supabase
       await supabaseClient.from("profiles")
         .update({ whatsapp_connected: true })
         .eq("id", userId);
         
-      // Update connection status in Supabase
+      // Atualizar status da conexão no Supabase
       await supabaseClient.from("whatsapp_connections")
         .update({
           status: "connected",
@@ -124,19 +257,22 @@ serve(async (req) => {
         })
         .eq("user_id", userId);
         
-      return new Response(JSON.stringify({ status: "connected" }), {
-        headers: { "Content-Type": "application/json" },
-        status: 200
-      });
+      return new Response(
+        JSON.stringify({ status: "connected" }), 
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200
+        }
+      );
     }
   } else if (req.method === "GET" && action === "status") {
-    // Check if there's an active connection
+    // Verificar se há uma conexão ativa
     const isConnected = !!activeConnections[userId];
     
-    // Get any existing QR code from database
+    // Obter qualquer QR code existente do banco de dados
     const { data: connectionData } = await supabaseClient
       .from("whatsapp_connections")
-      .select("qr_code, status")
+      .select("qr_code, status, provider")
       .eq("user_id", userId)
       .single();
     
@@ -144,17 +280,21 @@ serve(async (req) => {
       JSON.stringify({
         connected: isConnected,
         status: connectionData?.status || "disconnected",
+        provider: connectionData?.provider || "default",
         qrCode: connectionData?.qr_code || null
       }),
       {
-        headers: { "Content-Type": "application/json" },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200
       }
     );
   }
   
-  return new Response(JSON.stringify({ error: "Invalid request" }), {
-    headers: { "Content-Type": "application/json" },
-    status: 400
-  });
+  return new Response(
+    JSON.stringify({ error: "Requisição inválida" }), 
+    {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400
+    }
+  );
 });
