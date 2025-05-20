@@ -87,6 +87,8 @@ const Leads = () => {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [leadTasks, setLeadTasks] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState("details");
+  const [activeStatusFilter, setActiveStatusFilter] = useState("all");
+  const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   
   // Form para adicionar novo lead
   const leadForm = useForm<LeadFormValues>({
@@ -202,14 +204,22 @@ const Leads = () => {
     }
   };
 
-  // Filtrar leads
-  const filteredLeads = leads.filter((lead) => {
-    return (
-      lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (lead.company && lead.company.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (lead.email && lead.email.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-  });
+  // Filtrar leads por status e termo de busca
+  const getFilteredLeads = () => {
+    return leads.filter((lead) => {
+      // Filtrar por status se não for "all"
+      const statusMatches = activeStatusFilter === "all" || lead.status.toLowerCase() === activeStatusFilter;
+      
+      // Filtrar por termo de busca
+      const searchMatches = 
+        lead.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        (lead.company && lead.company.toLowerCase().includes(searchTerm.toLowerCase())) || 
+        (lead.email && lead.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (lead.phone && lead.phone.includes(searchTerm));
+        
+      return statusMatches && searchMatches;
+    });
+  };
 
   // Visualizar detalhes do lead
   const handleViewLead = async (lead: any) => {
@@ -360,6 +370,60 @@ const Leads = () => {
     }
   };
 
+  // Converter lead para cliente
+  const handleConvertToClient = async () => {
+    if (!selectedLead) return;
+
+    try {
+      // Primeiro, criar o cliente com os dados do lead
+      const { data: clientData, error: clientError } = await supabase
+        .from("clients")
+        .insert({
+          name: selectedLead.name,
+          company: selectedLead.company,
+          email: selectedLead.email,
+          phone: selectedLead.phone,
+          notes: selectedLead.notes,
+          status: "Ativo"
+        })
+        .select();
+
+      if (clientError) throw clientError;
+
+      // Transferir tarefas do lead para o cliente (opcional)
+      if (leadTasks.length > 0 && clientData && clientData[0]) {
+        const clientId = clientData[0].id;
+        
+        // Converter tarefas do lead para tarefas do cliente
+        for (const task of leadTasks) {
+          await supabase
+            .from("client_tasks")
+            .insert({
+              client_id: clientId,
+              title: task.title,
+              description: task.description,
+              due_date: task.due_date,
+              status: task.status
+            });
+        }
+      }
+
+      // Opcionalmente, marcar o lead como convertido ou remover
+      await supabase
+        .from("leads")
+        .update({ status: "Convertido" })
+        .eq("id", selectedLead.id);
+
+      toast.success("Lead convertido para cliente com sucesso!");
+      setIsConvertDialogOpen(false);
+      setIsViewDialogOpen(false);
+      fetchLeads(); // Atualiza a lista de leads
+    } catch (error: any) {
+      console.error("Erro ao converter lead:", error.message);
+      toast.error("Não foi possível converter o lead para cliente");
+    }
+  };
+
   // Atualizar status da tarefa
   const updateTaskStatus = async (taskId: string, newStatus: string) => {
     try {
@@ -413,6 +477,8 @@ const Leads = () => {
       default: return "outline";
     }
   };
+
+  const filteredLeads = getFilteredLeads();
 
   return (
     <div className="space-y-6">
@@ -697,6 +763,37 @@ const Leads = () => {
             </DialogContent>
           </Dialog>
 
+          {/* Dialog de conversão para cliente */}
+          <Dialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Converter Lead para Cliente</DialogTitle>
+                <DialogDescription>
+                  Você está prestes a converter o lead "{selectedLead?.name}" em um cliente. Esta ação irá transferir todos os dados do lead para um novo cliente.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                <p className="text-sm text-muted-foreground">
+                  Os seguintes dados serão transferidos:
+                </p>
+                <ul className="list-disc list-inside text-sm text-muted-foreground mt-2 space-y-1">
+                  <li>Dados de contato</li>
+                  <li>Tarefas associadas ({leadTasks?.length || 0})</li>
+                  <li>Notas e observações</li>
+                </ul>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsConvertDialogOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleConvertToClient}>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Converter para Cliente
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
             {selectedLead && (
               <DialogContent className="max-w-3xl">
@@ -761,6 +858,16 @@ const Leads = () => {
                           </Badge>
                         </p>
                       </div>
+                    </div>
+                    <div className="mt-6">
+                      <Button 
+                        onClick={() => setIsConvertDialogOpen(true)} 
+                        variant="outline" 
+                        className="w-full"
+                      >
+                        <UserPlus className="mr-2 h-4 w-4" />
+                        Converter para Cliente
+                      </Button>
                     </div>
                   </TabsContent>
                   
@@ -954,12 +1061,22 @@ const Leads = () => {
 
       {/* Tabs e Filtros */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-        <Tabs defaultValue="all">
+        <Tabs 
+          defaultValue="all" 
+          value={activeStatusFilter}
+          onValueChange={setActiveStatusFilter}
+        >
           <TabsList>
             <TabsTrigger value="all">Todos</TabsTrigger>
             {leadStatuses.map(status => (
-              <TabsTrigger key={status.id} value={status.name.toLowerCase().replace(/\s+/g, '-')}>
-                {status.name}
+              <TabsTrigger key={status.id} value={status.name.toLowerCase()}>
+                <div className="flex items-center gap-2">
+                  <div 
+                    className="w-2 h-2 rounded-full" 
+                    style={{ backgroundColor: status.color }} 
+                  />
+                  {status.name}
+                </div>
               </TabsTrigger>
             ))}
           </TabsList>
@@ -1052,12 +1169,13 @@ const Leads = () => {
                             <Plus className="h-4 w-4 mr-2" />
                             Adicionar Tarefa
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedLead(lead);
+                            fetchLeadTasks(lead.id);
+                            setIsConvertDialogOpen(true);
+                          }}>
                             <UserPlus className="h-4 w-4 mr-2" />
-                            Adicionar Oportunidade
-                          </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <FileText className="h-4 w-4 mr-2" />
                             Converter para Cliente
                           </DropdownMenuItem>
                         </DropdownMenuContent>
