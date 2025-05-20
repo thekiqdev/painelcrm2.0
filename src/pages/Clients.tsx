@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -36,61 +36,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter } from "lucide-react";
 import { toast } from "sonner";
-
-// Dados de exemplo - apenas clientes (sem leads)
-const clients = [
-  {
-    id: "CL-001",
-    name: "João Silva",
-    company: "ABC Tecnologia",
-    email: "joao@abctech.com",
-    phone: "(11) 98765-4321",
-    status: "Ativo",
-    group: "Tecnologia"
-  },
-  {
-    id: "CL-003",
-    name: "Carlos Santos",
-    company: "Supermercados Sul",
-    email: "carlos@sulmercados.com",
-    phone: "(21) 99876-5432",
-    status: "Ativo",
-    group: "Varejo"
-  },
-  {
-    id: "CL-005",
-    name: "Roberto Almeida",
-    company: "Tech Solutions",
-    email: "roberto@techsolutions.com",
-    phone: "(41) 99988-7766",
-    status: "Inativo",
-    group: "Tecnologia"
-  },
-  {
-    id: "CL-006",
-    name: "Fernanda Lima",
-    company: "Lima & Associados",
-    email: "fernanda@limaassociados.com",
-    phone: "(51) 97766-5544",
-    status: "Ativo",
-    group: "Serviços"
-  }
-];
-
-// Dados de grupos de clientes
-const clientGroups = [
-  "Tecnologia",
-  "Varejo",
-  "Serviços",
-  "Saúde",
-  "Educação",
-  "Outro"
-];
+import { supabase } from "@/integrations/supabase/client";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
 
 const Clients = () => {
+  const [clients, setClients] = useState<any[]>([]);
+  const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -102,6 +55,7 @@ const Clients = () => {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [newClientGroup, setNewClientGroup] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [isLoading, setIsLoading] = useState(true);
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -109,10 +63,59 @@ const Clients = () => {
     company: "",
     email: "",
     phone: "",
-    status: "active",
-    group: "",
+    status: "Ativo",
+    group_id: "",
     notes: ""
   });
+
+  // Carregar clientes e grupos do Supabase
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        // Carregar grupos de clientes
+        const { data: groupsData, error: groupsError } = await supabase
+          .from("client_groups")
+          .select("*")
+          .order("name");
+
+        if (groupsError) throw groupsError;
+        setClientGroups(groupsData || []);
+
+        // Carregar clientes
+        const { data: clientsData, error: clientsError } = await supabase
+          .from("clients")
+          .select(`
+            *,
+            client_groups (id, name)
+          `);
+
+        if (clientsError) throw clientsError;
+        
+        // Formatar os dados dos clientes
+        const formattedClients = clientsData?.map(client => ({
+          id: client.id,
+          name: client.name,
+          company: client.company,
+          email: client.email,
+          phone: client.phone,
+          status: client.status,
+          group: client.client_groups?.name || "",
+          group_id: client.group_id,
+          notes: client.notes
+        }));
+
+        setClients(formattedClients || []);
+      } catch (error) {
+        console.error("Erro ao carregar dados:", error);
+        toast.error("Erro ao carregar os dados. Tente novamente.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   const handleSort = (field: string) => {
     if (field === sortField) {
@@ -133,24 +136,27 @@ const Clients = () => {
 
   // Then apply group filter if selected
   const filteredByGroup = selectedGroup 
-    ? filteredByStatus.filter(client => client.group === selectedGroup)
+    ? filteredByStatus.filter(client => client.group_id === selectedGroup)
     : filteredByStatus;
 
   // Finally apply search term
   const filteredClients = filteredByGroup.filter((client) => {
     return (
       client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      client.email.toLowerCase().includes(searchTerm.toLowerCase())
+      (client.company && client.company.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (client.email && client.email.toLowerCase().includes(searchTerm.toLowerCase()))
     );
   });
 
   // Sort the filtered clients
   const sortedClients = [...filteredClients].sort((a: any, b: any) => {
+    const valueA = a[sortField] || "";
+    const valueB = b[sortField] || "";
+    
     if (sortDirection === "asc") {
-      return a[sortField] > b[sortField] ? 1 : -1;
+      return valueA > valueB ? 1 : -1;
     } else {
-      return a[sortField] < b[sortField] ? 1 : -1;
+      return valueA < valueB ? 1 : -1;
     }
   });
 
@@ -161,6 +167,7 @@ const Clients = () => {
 
   const handleViewClient = (client: any) => {
     setSelectedClient(client);
+    setNewClientGroup(client.group_id || "");
     setIsViewDialogOpen(true);
   };
 
@@ -181,44 +188,101 @@ const Clients = () => {
     });
   };
 
-  const handleAddClient = (e: React.FormEvent) => {
+  const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Create a new client object
-    const clientToAdd = {
-      id: `CL-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
-      name: newClient.name,
-      company: newClient.company,
-      email: newClient.email,
-      phone: newClient.phone,
-      status: newClient.status === "active" ? "Ativo" : "Inativo",
-      group: newClient.group
-    };
-    
-    // In a real app, this would be added to the database
-    // Here we'll just show a success message
-    toast.success("Cliente adicionado com sucesso!");
-    setIsAddDialogOpen(false);
-    
-    // Reset the form
-    setNewClient({
-      name: "",
-      company: "",
-      email: "",
-      phone: "",
-      status: "active",
-      group: "",
-      notes: ""
-    });
+    try {
+      // Inserir novo cliente no Supabase
+      const { data, error } = await supabase
+        .from("clients")
+        .insert({
+          name: newClient.name,
+          company: newClient.company,
+          email: newClient.email,
+          phone: newClient.phone,
+          status: newClient.status,
+          group_id: newClient.group_id || null,
+          notes: newClient.notes
+        })
+        .select(`
+          *,
+          client_groups (id, name)
+        `)
+        .single();
+      
+      if (error) throw error;
+      
+      // Formatar o cliente adicionado
+      const addedClient = {
+        id: data.id,
+        name: data.name,
+        company: data.company,
+        email: data.email,
+        phone: data.phone,
+        status: data.status,
+        group: data.client_groups?.name || "",
+        group_id: data.group_id,
+        notes: data.notes
+      };
+      
+      // Adicionar o novo cliente à lista
+      setClients([...clients, addedClient]);
+      
+      toast.success("Cliente adicionado com sucesso!");
+      setIsAddDialogOpen(false);
+      
+      // Reset the form
+      setNewClient({
+        name: "",
+        company: "",
+        email: "",
+        phone: "",
+        status: "Ativo",
+        group_id: "",
+        notes: ""
+      });
+    } catch (error: any) {
+      console.error("Erro ao adicionar cliente:", error);
+      toast.error(`Erro ao adicionar cliente: ${error.message}`);
+    }
   };
 
-  const handleUpdateGroup = (e: React.FormEvent) => {
+  const handleUpdateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     if (selectedClient && newClientGroup) {
-      // In a real app, this would update the database
-      toast.success(`Grupo do cliente ${selectedClient.name} alterado para ${newClientGroup}`);
+      try {
+        // Atualizar o grupo do cliente no Supabase
+        const { error } = await supabase
+          .from("clients")
+          .update({ group_id: newClientGroup })
+          .eq("id", selectedClient.id);
+        
+        if (error) throw error;
+        
+        // Atualizar o cliente na lista local
+        const updatedClients = clients.map(client => {
+          if (client.id === selectedClient.id) {
+            const updatedGroupName = clientGroups.find(group => group.id === newClientGroup)?.name || "";
+            return { 
+              ...client, 
+              group_id: newClientGroup,
+              group: updatedGroupName
+            };
+          }
+          return client;
+        });
+        
+        setClients(updatedClients);
+        
+        const updatedGroupName = clientGroups.find(group => group.id === newClientGroup)?.name || "";
+        toast.success(`Grupo do cliente ${selectedClient.name} alterado para ${updatedGroupName}`);
+        setIsViewDialogOpen(false);
+      } catch (error: any) {
+        console.error("Erro ao atualizar grupo do cliente:", error);
+        toast.error(`Erro ao atualizar grupo: ${error.message}`);
+      }
     }
-    setIsViewDialogOpen(false);
   };
 
   const SortIcon = ({ field }: { field: string }) => {
@@ -392,30 +456,30 @@ const Clients = () => {
                     <div className="space-y-2">
                       <Label htmlFor="status">Status</Label>
                       <Select 
-                        defaultValue="active"
+                        defaultValue="Ativo"
                         onValueChange={(value) => handleSelectChange("status", value)}
                       >
                         <SelectTrigger id="status">
                           <SelectValue placeholder="Selecione" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="active">Ativo</SelectItem>
-                          <SelectItem value="inactive">Inativo</SelectItem>
+                          <SelectItem value="Ativo">Ativo</SelectItem>
+                          <SelectItem value="Inativo">Inativo</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="group">Grupo</Label>
+                      <Label htmlFor="group_id">Grupo</Label>
                       <Select 
-                        defaultValue="none" 
-                        onValueChange={(value) => handleSelectChange("group", value)}
+                        defaultValue=""
+                        onValueChange={(value) => handleSelectChange("group_id", value)}
                       >
-                        <SelectTrigger id="group">
+                        <SelectTrigger id="group_id">
                           <SelectValue placeholder="Selecione um grupo" />
                         </SelectTrigger>
                         <SelectContent>
                           {clientGroups.map(group => (
-                            <SelectItem key={group} value={group}>{group}</SelectItem>
+                            <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -426,7 +490,7 @@ const Clients = () => {
                     <Textarea 
                       id="notes" 
                       placeholder="Adicione informações relevantes sobre este cliente" 
-                      value={newClient.notes}
+                      value={newClient.notes || ""}
                       onChange={handleInputChange}
                     />
                   </div>
@@ -491,7 +555,7 @@ const Clients = () => {
                               </SelectTrigger>
                               <SelectContent>
                                 {clientGroups.map(group => (
-                                  <SelectItem key={group} value={group}>{group}</SelectItem>
+                                  <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -549,14 +613,17 @@ const Clients = () => {
         </Tabs>
 
         <div className="flex items-center gap-2">
-          <Select value={selectedGroup || "all"} onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}>
+          <Select 
+            value={selectedGroup || "all"} 
+            onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}
+          >
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Filtrar por grupo" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos os grupos</SelectItem>
               {clientGroups.map(group => (
-                <SelectItem key={group} value={group}>{group}</SelectItem>
+                <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -603,80 +670,86 @@ const Clients = () => {
             </div>
           </div>
           
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
-                  <div className="flex items-center">
-                    Nome
-                    <SortIcon field="name" />
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
-                  <div className="flex items-center">
-                    Empresa
-                    <SortIcon field="company" />
-                  </div>
-                </TableHead>
-                <TableHead>E-mail</TableHead>
-                <TableHead>Telefone</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Grupo</TableHead>
-                <TableHead>Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {paginatedClients.length === 0 ? (
+          {isLoading ? (
+            <div className="py-10 text-center">
+              <p className="text-muted-foreground">Carregando clientes...</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
-                    Nenhum cliente encontrado com os critérios de busca
-                  </TableCell>
+                  <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
+                    <div className="flex items-center">
+                      Nome
+                      <SortIcon field="name" />
+                    </div>
+                  </TableHead>
+                  <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
+                    <div className="flex items-center">
+                      Empresa
+                      <SortIcon field="company" />
+                    </div>
+                  </TableHead>
+                  <TableHead>E-mail</TableHead>
+                  <TableHead>Telefone</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Grupo</TableHead>
+                  <TableHead>Ações</TableHead>
                 </TableRow>
-              ) : (
-                paginatedClients.map((client) => (
-                  <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
-                    <TableCell>{client.name}</TableCell>
-                    <TableCell>{client.company}</TableCell>
-                    <TableCell>{client.email}</TableCell>
-                    <TableCell>{client.phone}</TableCell>
-                    <TableCell>
-                      <Badge 
-                        variant={
-                          client.status === "Ativo" ? "default" :
-                          client.status === "Inativo" ? "destructive" :
-                          "outline"
-                        }
-                      >
-                        {client.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{client.group || "—"}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem>
-                            <UserPlus className="h-4 w-4 mr-2" />
-                            Adicionar Oportunidade
-                          </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <FileText className="h-4 w-4 mr-2" />
-                            Gerar Proposta
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+              </TableHeader>
+              <TableBody>
+                {paginatedClients.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground">
+                      Nenhum cliente encontrado com os critérios de busca
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : (
+                  paginatedClients.map((client) => (
+                    <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
+                      <TableCell>{client.name}</TableCell>
+                      <TableCell>{client.company || "—"}</TableCell>
+                      <TableCell>{client.email || "—"}</TableCell>
+                      <TableCell>{client.phone || "—"}</TableCell>
+                      <TableCell>
+                        <Badge 
+                          variant={
+                            client.status === "Ativo" ? "default" :
+                            client.status === "Inativo" ? "destructive" :
+                            "outline"
+                          }
+                        >
+                          {client.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{client.group || "—"}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Ações</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem>
+                              <UserPlus className="h-4 w-4 mr-2" />
+                              Adicionar Oportunidade
+                            </DropdownMenuItem>
+                            <DropdownMenuItem>
+                              <FileText className="h-4 w-4 mr-2" />
+                              Gerar Proposta
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
 
           <div className="mt-4">
             <Pagination>

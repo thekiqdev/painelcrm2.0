@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,54 +31,123 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { SettingsSectionProps } from "./types";
-
-// Exemplo de grupos de clientes
-const initialGroups = [
-  { id: 1, name: "Tecnologia", clientCount: 24 },
-  { id: 2, name: "Varejo", clientCount: 18 },
-  { id: 3, name: "Saúde", clientCount: 5 },
-  { id: 4, name: "Educação", clientCount: 8 },
-  { id: 5, name: "Serviços", clientCount: 32 },
-  { id: 6, name: "Outro", clientCount: 10 },
-];
+import { supabase } from "@/integrations/supabase/client";
 
 export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave }) => {
-  const [groups, setGroups] = useState(initialGroups);
+  const [groups, setGroups] = useState<any[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
-  const [editingGroup, setEditingGroup] = useState<{ id: number; name: string } | null>(null);
+  const [editingGroup, setEditingGroup] = useState<{ id: string; name: string } | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleAddGroup = (e: React.FormEvent) => {
+  // Carregar grupos do Supabase
+  useEffect(() => {
+    const fetchGroups = async () => {
+      setIsLoading(true);
+      try {
+        // Buscar grupos de clientes
+        const { data: groupsData, error: groupsError } = await supabase
+          .from("client_groups")
+          .select("*")
+          .order("name");
+          
+        if (groupsError) throw groupsError;
+        
+        // Buscar a contagem de clientes para cada grupo
+        if (groupsData) {
+          // Criar um array para armazenar as promessas
+          const promises = groupsData.map(async (group) => {
+            const { count, error } = await supabase
+              .from("clients")
+              .select("*", { count: 'exact', head: true })
+              .eq("group_id", group.id);
+              
+            if (error) throw error;
+            
+            return {
+              ...group,
+              clientCount: count || 0
+            };
+          });
+          
+          // Esperar todas as promessas serem resolvidas
+          const groupsWithCounts = await Promise.all(promises);
+          setGroups(groupsWithCounts);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar grupos:", error);
+        toast.error("Erro ao carregar os grupos. Tente novamente.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchGroups();
+  }, []);
+
+  const handleAddGroup = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     if (newGroupName.trim()) {
-      const newGroup = {
-        id: Math.max(0, ...groups.map(g => g.id)) + 1,
-        name: newGroupName.trim(),
-        clientCount: 0
-      };
-      setGroups([...groups, newGroup]);
-      setNewGroupName("");
-      setIsAddDialogOpen(false);
-      toast.success("Grupo adicionado com sucesso!");
+      try {
+        // Inserir novo grupo no Supabase
+        const { data, error } = await supabase
+          .from("client_groups")
+          .insert({ name: newGroupName.trim() })
+          .select()
+          .single();
+          
+        if (error) throw error;
+        
+        // Adicionar o novo grupo à lista com contagem de clientes zerada
+        const newGroup = {
+          ...data,
+          clientCount: 0
+        };
+        
+        setGroups([...groups, newGroup]);
+        setNewGroupName("");
+        setIsAddDialogOpen(false);
+        toast.success("Grupo adicionado com sucesso!");
+      } catch (error: any) {
+        console.error("Erro ao adicionar grupo:", error);
+        toast.error(`Erro ao adicionar grupo: ${error.message}`);
+      }
     }
   };
 
-  const handleEditGroup = (e: React.FormEvent) => {
+  const handleEditGroup = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     if (editingGroup && editingGroup.name.trim()) {
-      setGroups(groups.map(group => 
-        group.id === editingGroup.id 
-          ? { ...group, name: editingGroup.name.trim() } 
-          : group
-      ));
-      setEditingGroup(null);
-      setIsEditDialogOpen(false);
-      toast.success("Grupo atualizado com sucesso!");
+      try {
+        // Atualizar o grupo no Supabase
+        const { error } = await supabase
+          .from("client_groups")
+          .update({ name: editingGroup.name.trim() })
+          .eq("id", editingGroup.id);
+          
+        if (error) throw error;
+        
+        // Atualizar o grupo na lista local
+        setGroups(groups.map(group => 
+          group.id === editingGroup.id 
+            ? { ...group, name: editingGroup.name.trim() } 
+            : group
+        ));
+        
+        setEditingGroup(null);
+        setIsEditDialogOpen(false);
+        toast.success("Grupo atualizado com sucesso!");
+      } catch (error: any) {
+        console.error("Erro ao atualizar grupo:", error);
+        toast.error(`Erro ao atualizar grupo: ${error.message}`);
+      }
     }
   };
 
-  const handleDeleteGroup = (id: number) => {
+  const handleDeleteGroup = async (id: string) => {
     // Verificação se o grupo tem clientes
     const group = groups.find(g => g.id === id);
     if (group && group.clientCount > 0) {
@@ -86,11 +155,25 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
       return;
     }
 
-    setGroups(groups.filter(group => group.id !== id));
-    toast.success("Grupo excluído com sucesso!");
+    try {
+      // Excluir o grupo do Supabase
+      const { error } = await supabase
+        .from("client_groups")
+        .delete()
+        .eq("id", id);
+        
+      if (error) throw error;
+      
+      // Remover o grupo da lista local
+      setGroups(groups.filter(group => group.id !== id));
+      toast.success("Grupo excluído com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao excluir grupo:", error);
+      toast.error(`Erro ao excluir grupo: ${error.message}`);
+    }
   };
 
-  const startEditGroup = (group: { id: number; name: string }) => {
+  const startEditGroup = (group: { id: string; name: string }) => {
     setEditingGroup(group);
     setIsEditDialogOpen(true);
   };
@@ -145,50 +228,56 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nome</TableHead>
-                <TableHead>Clientes</TableHead>
-                <TableHead className="text-right">Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groups.length === 0 ? (
+          {isLoading ? (
+            <div className="py-10 text-center">
+              <p className="text-muted-foreground">Carregando grupos de clientes...</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center text-muted-foreground">
-                    Nenhum grupo cadastrado
-                  </TableCell>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Clientes</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
-              ) : (
-                groups.map((group) => (
-                  <TableRow key={group.id}>
-                    <TableCell>{group.name}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{group.clientCount} cliente{group.clientCount !== 1 ? 's' : ''}</Badge>
-                    </TableCell>
-                    <TableCell className="flex justify-end space-x-2">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() => startEditGroup({ id: group.id, name: group.name })}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleDeleteGroup(group.id)}
-                        disabled={group.clientCount > 0}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+              </TableHeader>
+              <TableBody>
+                {groups.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-center text-muted-foreground">
+                      Nenhum grupo cadastrado
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : (
+                  groups.map((group) => (
+                    <TableRow key={group.id}>
+                      <TableCell>{group.name}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{group.clientCount} cliente{group.clientCount !== 1 ? 's' : ''}</Badge>
+                      </TableCell>
+                      <TableCell className="flex justify-end space-x-2">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => startEditGroup({ id: group.id, name: group.name })}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleDeleteGroup(group.id)}
+                          disabled={group.clientCount > 0}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
           
           {/* Dialog para editar grupo */}
           <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
