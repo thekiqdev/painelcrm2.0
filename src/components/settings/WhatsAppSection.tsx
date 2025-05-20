@@ -24,6 +24,8 @@ export const WhatsAppSection = () => {
     handleConfirmConnection
   } = useWhatsAppConnection();
 
+  const showResourcesSection = connections.length > 0;
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -45,7 +47,7 @@ export const WhatsAppSection = () => {
         />
       </div>
       
-      {connectionStatus === "connected" && (
+      {showResourcesSection && (
         <>
           <AdvancedSettings />
           

@@ -16,20 +16,26 @@ export const useWhatsAppConnection = () => {
   
   // Load saved connections from localStorage on component mount
   useEffect(() => {
-    const savedConnectionsJson = localStorage.getItem('whatsapp_connections');
-    if (savedConnectionsJson) {
-      try {
-        const savedConnections = JSON.parse(savedConnectionsJson);
-        setConnections(savedConnections);
-      } catch (error) {
-        console.error('Error loading saved connections:', error);
+    const loadSavedConnections = () => {
+      const savedConnectionsJson = localStorage.getItem('whatsapp_connections');
+      if (savedConnectionsJson) {
+        try {
+          const savedConnections = JSON.parse(savedConnectionsJson);
+          console.log("Loaded connections from localStorage:", savedConnections);
+          setConnections(savedConnections);
+        } catch (error) {
+          console.error('Error loading saved connections:', error);
+        }
       }
-    }
+    };
+    
+    loadSavedConnections();
   }, []);
 
   // Save connections to localStorage whenever they change
   useEffect(() => {
     if (connections.length > 0) {
+      console.log("Saving connections to localStorage:", connections);
       localStorage.setItem('whatsapp_connections', JSON.stringify(connections));
     }
   }, [connections]);
@@ -96,6 +102,8 @@ export const useWhatsAppConnection = () => {
       status: "disconnected" as ConnectionStatus,
       configData
     };
+    
+    console.log("Adding new connection:", newConnection);
     
     // Add new connection to the list
     const updatedConnections = [...connections, newConnection];
