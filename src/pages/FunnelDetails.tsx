@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -6,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, ChevronRight, Plus, Settings } from "lucide-react";
+import { ArrowLeft, ChevronRight, Plus, Settings, Tag, MoveHorizontal, User } from "lucide-react";
 import RuleForm from "@/components/funnel/RuleForm";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -43,6 +42,12 @@ type Deal = {
   funnelId: string;
 };
 
+type ClientTag = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 type Client = {
   id: string;
   name: string;
@@ -52,6 +57,8 @@ type Client = {
   status?: string;
   notes?: string;
   createdAt: string;
+  stage?: string;
+  tags?: ClientTag[];
 };
 
 type Rule = {
@@ -78,6 +85,55 @@ const initialFunnel: SalesFunnel = {
     { id: "stage-6", name: "Perdido", color: "bg-red-500", order: 5, funnelId: "funnel-1" }
   ]
 };
+
+// Adicionar tags de exemplo
+const clientTags: ClientTag[] = [
+  { id: "tag-1", name: "VIP", color: "#F97316" }, // Bright Orange
+  { id: "tag-2", name: "Recorrente", color: "#8B5CF6" }, // Vivid Purple
+  { id: "tag-3", name: "Novo", color: "#0EA5E9" }, // Ocean Blue
+  { id: "tag-4", name: "Potencial", color: "#10B981" }, // Emerald Green
+  { id: "tag-5", name: "Em Risco", color: "#EF4444" }, // Red
+];
+
+// Mock de dados para clientes com tags e estágio
+const mockClients: Client[] = [
+  {
+    id: "C001",
+    name: "ABC Tecnologia",
+    company: "ABC Tecnologia Ltda",
+    email: "contato@abctecnologia.com",
+    phone: "(11) 98765-4321",
+    status: "Ativo",
+    notes: "Cliente desde 2022",
+    createdAt: "10/01/2022",
+    stage: "stage-1",
+    tags: [clientTags[0], clientTags[2]]
+  },
+  {
+    id: "C002",
+    name: "Construtora XYZ",
+    company: "XYZ Construções S.A.",
+    email: "contato@xyzconstr.com",
+    phone: "(11) 91234-5678",
+    status: "Ativo",
+    notes: "Grande potencial para projetos",
+    createdAt: "05/03/2022",
+    stage: "stage-1",
+    tags: [clientTags[3]]
+  },
+  {
+    id: "C003",
+    name: "Lima & Associados",
+    company: "Lima & Associados Advocacia",
+    email: "contato@limaadv.com",
+    phone: "(11) 97777-8888",
+    status: "Ativo",
+    notes: "Escritório de advocacia",
+    createdAt: "15/06/2022",
+    stage: "stage-1",
+    tags: [clientTags[1]]
+  }
+];
 
 const initialDeals: Deal[] = [
   {
@@ -112,40 +168,6 @@ const initialDeals: Deal[] = [
   }
 ];
 
-// Mock de dados para clientes
-const mockClients: Client[] = [
-  {
-    id: "C001",
-    name: "ABC Tecnologia",
-    company: "ABC Tecnologia Ltda",
-    email: "contato@abctecnologia.com",
-    phone: "(11) 98765-4321",
-    status: "Ativo",
-    notes: "Cliente desde 2022",
-    createdAt: "10/01/2022"
-  },
-  {
-    id: "C002",
-    name: "Construtora XYZ",
-    company: "XYZ Construções S.A.",
-    email: "contato@xyzconstr.com",
-    phone: "(11) 91234-5678",
-    status: "Ativo",
-    notes: "Grande potencial para projetos",
-    createdAt: "05/03/2022"
-  },
-  {
-    id: "C003",
-    name: "Lima & Associados",
-    company: "Lima & Associados Advocacia",
-    email: "contato@limaadv.com",
-    phone: "(11) 97777-8888",
-    status: "Ativo",
-    notes: "Escritório de advocacia",
-    createdAt: "15/06/2022"
-  }
-];
-
 const FunnelDetails: React.FC = () => {
   const { funnelId } = useParams<{ funnelId: string }>();
   const navigate = useNavigate();
@@ -156,6 +178,7 @@ const FunnelDetails: React.FC = () => {
   const [rules, setRules] = useState<Rule[]>([]);
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [draggedClientId, setDraggedClientId] = useState<string | null>(null);
 
   // Opções de fontes para leads (poderia vir do banco de dados)
   const sourcesOptions = [
@@ -224,6 +247,36 @@ const FunnelDetails: React.FC = () => {
     }
   }, [funnelId]);
 
+  // Função para lidar com o início do drag de um cliente
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, clientId: string) => {
+    setDraggedClientId(clientId);
+    e.dataTransfer.setData("clientId", clientId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  // Função para permitir o drop
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  // Função para lidar com o drop de um cliente em um estágio
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, stageId: string) => {
+    e.preventDefault();
+    const clientId = e.dataTransfer.getData("clientId");
+    
+    if (clientId) {
+      // Atualizar o estágio do cliente
+      setClients(prevClients => 
+        prevClients.map(client => 
+          client.id === clientId ? { ...client, stage: stageId } : client
+        )
+      );
+
+      toast.success("Cliente movido com sucesso!");
+    }
+  };
+
   const handleSaveRule = (rule: Rule) => {
     setRules([...rules, rule]);
     toast.success("Regra adicionada com sucesso!");
@@ -243,43 +296,90 @@ const FunnelDetails: React.FC = () => {
     }
   }, [rules, funnel?.type]);
 
+  // Renderizar cliente no card com mais informações e tags
+  const renderClientCard = (client: Client) => (
+    <Card 
+      key={client.id} 
+      className="cursor-pointer hover:shadow-md mb-2"
+      draggable
+      onDragStart={(e) => handleDragStart(e, client.id)}
+    >
+      <CardContent className="p-3">
+        <div className="font-medium">{client.name}</div>
+        
+        {client.company && (
+          <div className="text-xs text-muted-foreground mt-1">
+            {client.company}
+          </div>
+        )}
+        
+        {client.email && (
+          <div className="text-xs flex items-center gap-1 mt-1">
+            <span className="text-muted-foreground">Email:</span> {client.email}
+          </div>
+        )}
+        
+        {client.phone && (
+          <div className="text-xs flex items-center gap-1 mt-1">
+            <span className="text-muted-foreground">Tel:</span> {client.phone}
+          </div>
+        )}
+        
+        <div className="flex items-center justify-between mt-2">
+          <div className="text-xs text-muted-foreground">
+            {client.status}
+          </div>
+          
+          <div className="flex flex-wrap gap-1 justify-end">
+            {client.tags?.map(tag => (
+              <Badge
+                key={tag.id}
+                className="text-xs px-1.5 py-0"
+                style={{ backgroundColor: tag.color, color: "white" }}
+              >
+                {tag.name}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   const renderContent = () => {
     if (funnel?.type === "clients") {
       return (
         <TabsContent value="kanban" className="space-y-6">
-          {/* Visão Kanban para Clientes */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {funnel.stages.slice(0, 3).map((stage) => (
-              <Card key={stage.id}>
-                <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-sm">{stage.name}</CardTitle>
-                    <Badge variant="outline" className="text-white border-white">
-                      {stage.id === "stage-1" ? clients.length : 0}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-2 space-y-2">
-                  {stage.id === "stage-1" ? (
-                    clients.map(client => (
-                      <Card key={client.id} className="cursor-pointer hover:shadow-md">
-                        <CardContent className="p-3">
-                          <p className="font-medium">{client.name}</p>
-                          <div className="flex justify-between items-center text-xs text-muted-foreground mt-2">
-                            <span>{client.company || "Empresa"}</span>
-                            <span>{client.status}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))
-                  ) : (
-                    <p className="text-center text-sm text-muted-foreground py-4">
-                      Nenhum cliente neste estágio
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+            {funnel.stages.slice(0, 3).map((stage) => {
+              const stageClients = clients.filter(client => client.stage === stage.id);
+              
+              return (
+                <Card 
+                  key={stage.id}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, stage.id)}
+                >
+                  <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
+                    <div className="flex justify-between items-center">
+                      <CardTitle className="text-sm">{stage.name}</CardTitle>
+                      <Badge variant="outline" className="text-white border-white">
+                        {stageClients.length}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-2 space-y-2">
+                    {stageClients.length > 0 ? (
+                      stageClients.map(client => renderClientCard(client))
+                    ) : (
+                      <p className="text-center text-sm text-muted-foreground py-4">
+                        Nenhum cliente neste estágio
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </TabsContent>
       );
@@ -440,6 +540,7 @@ const FunnelDetails: React.FC = () => {
                   <TabsTrigger value="general">Geral</TabsTrigger>
                   <TabsTrigger value="stages">Estágios</TabsTrigger>
                   <TabsTrigger value="rules">Regras</TabsTrigger>
+                  <TabsTrigger value="tags">Tags</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="general" className="space-y-4 pt-4">
@@ -461,6 +562,38 @@ const FunnelDetails: React.FC = () => {
                     onRemoveRule={handleRemoveRule}
                   />
                 </TabsContent>
+
+                <TabsContent value="tags" className="pt-4">
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-medium">Tags</h3>
+                    <p className="text-muted-foreground">Configure as tags para categorizar seus clientes</p>
+                    
+                    <div className="grid grid-cols-1 gap-2 mt-4">
+                      {clientTags.map(tag => (
+                        <div key={tag.id} className="flex items-center justify-between p-2 border rounded-md">
+                          <div className="flex items-center gap-2">
+                            <div 
+                              className="w-4 h-4 rounded-full" 
+                              style={{ backgroundColor: tag.color }}
+                            />
+                            <span>{tag.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button variant="ghost" size="sm">
+                              <Tag className="h-4 w-4 mr-1" />
+                              Editar
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      
+                      <Button className="mt-2" variant="outline">
+                        <Plus className="h-4 w-4 mr-1" />
+                        Adicionar Tag
+                      </Button>
+                    </div>
+                  </div>
+                </TabsContent>
               </Tabs>
             </DialogContent>
           </Dialog>
@@ -473,6 +606,14 @@ const FunnelDetails: React.FC = () => {
       </div>
 
       <p className="text-muted-foreground">{funnel.description}</p>
+
+      {/* Indica que é possível mover clientes entre colunas */}
+      {funnel.type === "clients" && activeTab === "kanban" && (
+        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+          <MoveHorizontal className="h-4 w-4" />
+          <span>Arraste os cards para mover os clientes entre estágios</span>
+        </div>
+      )}
 
       {/* Tabs */}
       <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="w-full">
