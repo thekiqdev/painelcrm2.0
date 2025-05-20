@@ -81,6 +81,28 @@ const RuleForm: React.FC<RuleFormProps> = ({
     }
   };
 
+  const formatRuleDisplay = (rule: Rule) => {
+    if (rule.type === "date") {
+      const dateString = rule.value instanceof Date 
+        ? format(rule.value, "dd/MM/yyyy")
+        : typeof rule.value === 'string' && new Date(rule.value) instanceof Date 
+          ? format(new Date(rule.value), "dd/MM/yyyy") 
+          : String(rule.value);
+          
+      return `Data de Adição ${rule.operator === "before" ? "antes de" : rule.operator === "after" ? "após" : "igual a"} ${dateString}`;
+    }
+    
+    if (rule.type === "status") {
+      return `Status ${rule.operator === "equals" ? "é" : "não é"} ${rule.value}`;
+    }
+    
+    if (rule.type === "source") {
+      return `Fonte ${rule.operator === "equals" ? "é" : "não é"} ${rule.value}`;
+    }
+    
+    return "";
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -192,23 +214,9 @@ const RuleForm: React.FC<RuleFormProps> = ({
                   {existingRules.map(rule => (
                     <div key={rule.id} className="flex items-center justify-between bg-muted p-2 rounded-md">
                       <div>
-                        {rule.type === "date" && (
-                          <Badge variant="secondary">
-                            Data de Adição {operator === "before" ? "antes de" : operator === "after" ? "após" : "igual a"} {
-                              format(rule.value as Date, "dd/MM/yyyy")
-                            }
-                          </Badge>
-                        )}
-                        {rule.type === "status" && (
-                          <Badge variant="secondary">
-                            Status {operator === "equals" ? "é" : "não é"} {rule.value}
-                          </Badge>
-                        )}
-                        {rule.type === "source" && (
-                          <Badge variant="secondary">
-                            Fonte {operator === "equals" ? "é" : "não é"} {rule.value}
-                          </Badge>
-                        )}
+                        <Badge variant="secondary">
+                          {formatRuleDisplay(rule)}
+                        </Badge>
                       </div>
                       <Button 
                         variant="ghost" 

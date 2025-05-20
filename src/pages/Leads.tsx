@@ -1,55 +1,23 @@
+
 import React, { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, Edit, Save } from "lucide-react";
-import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useForm, FormProvider, useFormContext } from "react-hook-form";
+import { toast } from "sonner";
+import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
 
-// Esquemas de validação com Zod
+// Import our refactored components
+import LeadHeader from "@/components/leads/LeadHeader";
+import LeadFilters from "@/components/leads/LeadFilters";
+import LeadListTable from "@/components/leads/LeadListTable";
+import LeadAddDialog from "@/components/leads/LeadAddDialog";
+import LeadEditDialog from "@/components/leads/LeadEditDialog";
+import LeadDetailsDialog from "@/components/leads/LeadDetailsDialog";
+import LeadConvertDialog from "@/components/leads/LeadConvertDialog";
+
+// Schemas for form validation
 const leadFormSchema = z.object({
   name: z.string().min(2, { message: "Nome é obrigatório" }),
   company: z.string().optional(),
@@ -76,6 +44,7 @@ type TaskFormValues = z.infer<typeof taskFormSchema>;
 type NoteFormValues = z.infer<typeof noteFormSchema>;
 
 const Leads = () => {
+  // State variables
   const [leads, setLeads] = useState<any[]>([]);
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -89,47 +58,8 @@ const Leads = () => {
   const [activeTab, setActiveTab] = useState("details");
   const [activeStatusFilter, setActiveStatusFilter] = useState("all");
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
-  
-  // Form para adicionar novo lead
-  const leadForm = useForm<LeadFormValues>({
-    resolver: zodResolver(leadFormSchema),
-    defaultValues: {
-      name: "",
-      company: "",
-      email: "",
-      phone: "",
-      status: "Novo",
-      source: "Direto",
-      notes: "",
-    },
-  });
 
-  // Form para editar lead
-  const editLeadForm = useForm<LeadFormValues>({
-    resolver: zodResolver(leadFormSchema),
-    defaultValues: {
-      name: "",
-      company: "",
-      email: "",
-      phone: "",
-      status: "Novo",
-      source: "Direto",
-      notes: "",
-    },
-  });
-
-  // Form para adicionar tarefa
-  const taskForm = useForm<TaskFormValues>({
-    resolver: zodResolver(taskFormSchema),
-    defaultValues: {
-      title: "",
-      description: "",
-      due_date: null,
-      status: "Pendente",
-    },
-  });
-
-  // Form para adicionar nota
+  // Forms
   const noteForm = useForm<NoteFormValues>({
     resolver: zodResolver(noteFormSchema),
     defaultValues: {
@@ -137,7 +67,7 @@ const Leads = () => {
     },
   });
 
-  // Buscar status de leads
+  // Fetch lead statuses from Supabase
   const fetchLeadStatuses = async () => {
     try {
       const { data, error } = await supabase
@@ -150,7 +80,7 @@ const Leads = () => {
       if (data && data.length > 0) {
         setLeadStatuses(data);
       } else {
-        // Status padrão se não houver nenhum cadastrado
+        // Default statuses if none are found
         setLeadStatuses([
           { id: "1", name: "Novo", color: "#6E56CF" },
           { id: "2", name: "Em contato", color: "#F59E0B" },
@@ -163,7 +93,7 @@ const Leads = () => {
     }
   };
 
-  // Obter leads do Supabase
+  // Fetch leads from Supabase
   const fetchLeads = async () => {
     try {
       const { data, error } = await supabase
@@ -179,7 +109,7 @@ const Leads = () => {
     }
   };
 
-  // Buscar tarefas quando um lead é selecionado
+  // Fetch tasks for a selected lead
   const fetchLeadTasks = async (leadId: string) => {
     try {
       const { data, error } = await supabase
@@ -196,7 +126,7 @@ const Leads = () => {
     }
   };
 
-  // Ordenar leads
+  // Handle sorting of leads
   const handleSort = (field: string) => {
     if (field === sortField) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -206,13 +136,13 @@ const Leads = () => {
     }
   };
 
-  // Filtrar leads por status e termo de busca
+  // Filter leads by status and search term
   const getFilteredLeads = () => {
     return leads.filter((lead) => {
-      // Filtrar por status se não for "all"
+      // Filter by status if not "all"
       const statusMatches = activeStatusFilter === "all" || lead.status.toLowerCase() === activeStatusFilter;
       
-      // Filtrar por termo de busca
+      // Filter by search term
       const searchMatches = 
         lead.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
         (lead.company && lead.company.toLowerCase().includes(searchTerm.toLowerCase())) || 
@@ -223,7 +153,7 @@ const Leads = () => {
     });
   };
 
-  // Visualizar detalhes do lead
+  // View lead details
   const handleViewLead = async (lead: any) => {
     setSelectedLead(lead);
     setIsViewDialogOpen(true);
@@ -231,22 +161,13 @@ const Leads = () => {
     await fetchLeadTasks(lead.id);
   };
 
-  // Preparar para editar lead
+  // Edit lead
   const handleEditLead = (lead: any) => {
     setSelectedLead(lead);
-    editLeadForm.reset({
-      name: lead.name,
-      company: lead.company || "",
-      email: lead.email || "",
-      phone: lead.phone || "",
-      status: lead.status,
-      source: lead.source || "Direto",
-      notes: lead.notes || "",
-    });
     setIsEditDialogOpen(true);
   };
 
-  // Salvar edição do lead
+  // Save edited lead
   const handleSaveEdit = async (values: LeadFormValues) => {
     if (!selectedLead) return;
 
@@ -272,12 +193,12 @@ const Leads = () => {
       toast.success("Lead atualizado com sucesso!");
       setIsEditDialogOpen(false);
       
-      // Atualizar o lead na lista local
+      // Update the lead in the local list
       setLeads(leads.map(lead => 
         lead.id === selectedLead.id ? { ...lead, ...leadData } : lead
       ));
       
-      // Atualizar lead selecionado se estiver sendo visualizado
+      // Update selected lead if being viewed
       if (isViewDialogOpen && selectedLead) {
         setSelectedLead({ ...selectedLead, ...leadData });
       }
@@ -287,12 +208,12 @@ const Leads = () => {
     }
   };
 
-  // Adicionar novo lead
+  // Add new lead
   const handleAddLead = async (values: LeadFormValues) => {
     try {
       // Make sure the values object meets the type requirements of Supabase
       const leadData = {
-        name: values.name, // This is required
+        name: values.name,
         company: values.company || null,
         email: values.email || null,
         phone: values.phone || null,
@@ -310,7 +231,6 @@ const Leads = () => {
 
       toast.success("Lead adicionado com sucesso!");
       setIsAddDialogOpen(false);
-      leadForm.reset();
       fetchLeads();
     } catch (error: any) {
       console.error("Erro ao adicionar lead:", error.message);
@@ -318,12 +238,12 @@ const Leads = () => {
     }
   };
 
-  // Adicionar tarefa ao lead
+  // Add task to lead
   const handleAddTask = async (values: TaskFormValues) => {
     if (!selectedLead) return;
     
     try {
-      // Convertendo o objeto Date para string no formato ISO
+      // Converting Date to ISO string
       const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
       
       const { data, error } = await supabase
@@ -340,7 +260,6 @@ const Leads = () => {
       if (error) throw error;
 
       toast.success("Tarefa adicionada com sucesso!");
-      taskForm.reset();
       fetchLeadTasks(selectedLead.id);
       setActiveTab("tasks");
     } catch (error: any) {
@@ -349,7 +268,7 @@ const Leads = () => {
     }
   };
 
-  // Salvar nota (atualizar o lead)
+  // Save notes
   const handleSaveNote = async (values: NoteFormValues) => {
     if (!selectedLead) return;
 
@@ -365,7 +284,7 @@ const Leads = () => {
       toast.success("Nota salva com sucesso!");
       setSelectedLead({ ...selectedLead, notes: values.content });
       
-      // Atualizar na lista local
+      // Update in local list
       setLeads(leads.map(lead => 
         lead.id === selectedLead.id ? { ...lead, notes: values.content } : lead
       ));
@@ -375,12 +294,12 @@ const Leads = () => {
     }
   };
 
-  // Converter lead para cliente
+  // Convert lead to client
   const handleConvertToClient = async () => {
     if (!selectedLead) return;
 
     try {
-      // Primeiro, criar o cliente com os dados do lead
+      // Create client from lead data
       const { data: clientData, error: clientError } = await supabase
         .from("clients")
         .insert({
@@ -395,11 +314,11 @@ const Leads = () => {
 
       if (clientError) throw clientError;
 
-      // Transferir tarefas do lead para o cliente (opcional)
+      // Transfer lead tasks to client
       if (leadTasks.length > 0 && clientData && clientData[0]) {
         const clientId = clientData[0].id;
         
-        // Converter tarefas do lead para tarefas do cliente
+        // Convert tasks
         for (const task of leadTasks) {
           await supabase
             .from("client_tasks")
@@ -413,7 +332,7 @@ const Leads = () => {
         }
       }
 
-      // Opcionalmente, marcar o lead como convertido ou remover
+      // Mark lead as converted
       await supabase
         .from("leads")
         .update({ status: "Convertido" })
@@ -422,14 +341,14 @@ const Leads = () => {
       toast.success("Lead convertido para cliente com sucesso!");
       setIsConvertDialogOpen(false);
       setIsViewDialogOpen(false);
-      fetchLeads(); // Atualiza a lista de leads
+      fetchLeads();
     } catch (error: any) {
       console.error("Erro ao converter lead:", error.message);
       toast.error("Não foi possível converter o lead para cliente");
     }
   };
 
-  // Atualizar status da tarefa
+  // Update task status
   const updateTaskStatus = async (taskId: string, newStatus: string) => {
     try {
       const { data, error } = await supabase
@@ -441,20 +360,28 @@ const Leads = () => {
       if (error) throw error;
 
       toast.success("Status atualizado com sucesso!");
-      fetchLeadTasks(selectedLead.id);
+      if (selectedLead) {
+        fetchLeadTasks(selectedLead.id);
+      }
     } catch (error: any) {
       console.error("Erro ao atualizar status:", error.message);
       toast.error("Não foi possível atualizar o status");
     }
   };
 
-  // Efeito para carregar leads e status quando componente montar ou critérios de ordenação mudarem
+  // Get status color variant
+  const getStatusVariant = (status: string) => {
+    const foundStatus = leadStatuses.find(s => s.name === status);
+    return foundStatus ? { color: foundStatus.color } : { color: "#6E56CF" };
+  };
+
+  // Effect to load leads and statuses on mount or sort criteria change
   useEffect(() => {
     fetchLeads();
     fetchLeadStatuses();
   }, [sortField, sortDirection]);
 
-  // Efeito para preparar o formulário de notas quando o lead selecionado mudar
+  // Effect to update note form when selected lead changes
   useEffect(() => {
     if (selectedLead && selectedLead.notes) {
       noteForm.setValue("content", selectedLead.notes);
@@ -463,806 +390,50 @@ const Leads = () => {
     }
   }, [selectedLead, activeTab]);
 
-  const SortIcon = ({ field }: { field: string }) => {
-    if (field !== sortField) return null;
-    return sortDirection === "asc" ? <ArrowUp className="ml-1 h-4 w-4" /> : <ArrowDown className="ml-1 h-4 w-4" />;
-  };
-
-  const getStatusVariant = (status: string) => {
-    const foundStatus = leadStatuses.find(s => s.name === status);
-    return foundStatus ? { color: foundStatus.color } : { color: "#6E56CF" };
-  };
-
-  const getTaskStatusVariant = (status: string) => {
-    switch (status) {
-      case "Pendente": return "outline";
-      case "Em andamento": return "secondary";
-      case "Concluído": return "default";
-      case "Cancelado": return "destructive";
-      default: return "outline";
-    }
-  };
-
   const filteredLeads = getFilteredLeads();
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-4 sm:space-y-0">
-        <h1 className="text-2xl font-bold">Leads</h1>
-        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Buscar leads..."
-              className="pl-8 w-full sm:w-[250px]"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Novo Lead
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Adicionar Lead</DialogTitle>
-                <DialogDescription>
-                  Preencha os dados para adicionar um novo lead ao sistema.
-                </DialogDescription>
-              </DialogHeader>
-              <Form {...leadForm}>
-                <form onSubmit={leadForm.handleSubmit(handleAddLead)}>
-                  <div className="grid gap-6 py-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={leadForm.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Nome</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Nome completo" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={leadForm.control}
-                        name="company"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Empresa</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Nome da empresa" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+      {/* Header with search and add button */}
+      <LeadHeader 
+        searchTerm={searchTerm}
+        onSearchChange={(e) => setSearchTerm(e.target.value)}
+        onAddClick={() => setIsAddDialogOpen(true)} 
+      />
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={leadForm.control}
-                        name="email"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>E-mail</FormLabel>
-                            <FormControl>
-                              <Input type="email" placeholder="email@exemplo.com" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={leadForm.control}
-                        name="phone"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Telefone</FormLabel>
-                            <FormControl>
-                              <Input placeholder="(00) 00000-0000" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+      {/* Status filter tabs */}
+      <LeadFilters 
+        activeStatusFilter={activeStatusFilter}
+        setActiveStatusFilter={setActiveStatusFilter}
+        leadStatuses={leadStatuses}
+      />
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={leadForm.control}
-                        name="status"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Status</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione o status" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {leadStatuses.map(status => (
-                                  <SelectItem key={status.id} value={status.name}>
-                                    <div className="flex items-center">
-                                      <div 
-                                        className="w-3 h-3 rounded-full mr-2" 
-                                        style={{ backgroundColor: status.color }}
-                                      />
-                                      {status.name}
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      
-                      {/* Novo campo de Fonte */}
-                      <FormField
-                        control={leadForm.control}
-                        name="source"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Fonte</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione a fonte" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="Direto">Direto</SelectItem>
-                                <SelectItem value="Website">Website</SelectItem>
-                                <SelectItem value="Indicação">Indicação</SelectItem>
-                                <SelectItem value="Google">Google</SelectItem>
-                                <SelectItem value="Facebook">Facebook</SelectItem>
-                                <SelectItem value="Instagram">Instagram</SelectItem>
-                                <SelectItem value="LinkedIn">LinkedIn</SelectItem>
-                                <SelectItem value="Email Marketing">Email Marketing</SelectItem>
-                                <SelectItem value="WhatsApp">WhatsApp</SelectItem>
-                                <SelectItem value="Outro">Outro</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={leadForm.control}
-                      name="notes"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Observações</FormLabel>
-                          <FormControl>
-                            <Textarea 
-                              placeholder="Adicione informações relevantes sobre este lead" 
-                              className="min-h-[100px]" 
-                              {...field} 
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                      Cancelar
-                    </Button>
-                    <Button type="submit">Salvar Lead</Button>
-                  </DialogFooter>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
-
-          {/* Dialog de edição de Lead */}
-          <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Editar Lead</DialogTitle>
-                <DialogDescription>
-                  Atualize os dados do lead no sistema.
-                </DialogDescription>
-              </DialogHeader>
-              <Form {...editLeadForm}>
-                <form onSubmit={editLeadForm.handleSubmit(handleSaveEdit)}>
-                  <div className="grid gap-6 py-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={editLeadForm.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Nome</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Nome completo" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={editLeadForm.control}
-                        name="company"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Empresa</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Nome da empresa" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={editLeadForm.control}
-                        name="email"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>E-mail</FormLabel>
-                            <FormControl>
-                              <Input type="email" placeholder="email@exemplo.com" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={editLeadForm.control}
-                        name="phone"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Telefone</FormLabel>
-                            <FormControl>
-                              <Input placeholder="(00) 00000-0000" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={editLeadForm.control}
-                        name="status"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Status</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione o status" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {leadStatuses.map(status => (
-                                  <SelectItem key={status.id} value={status.name}>
-                                    <div className="flex items-center">
-                                      <div 
-                                        className="w-3 h-3 rounded-full mr-2" 
-                                        style={{ backgroundColor: status.color }}
-                                      />
-                                      {status.name}
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      
-                      {/* Campo de Fonte no formulário de edição */}
-                      <FormField
-                        control={editLeadForm.control}
-                        name="source"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Fonte</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione a fonte" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="Direto">Direto</SelectItem>
-                                <SelectItem value="Website">Website</SelectItem>
-                                <SelectItem value="Indicação">Indicação</SelectItem>
-                                <SelectItem value="Google">Google</SelectItem>
-                                <SelectItem value="Facebook">Facebook</SelectItem>
-                                <SelectItem value="Instagram">Instagram</SelectItem>
-                                <SelectItem value="LinkedIn">LinkedIn</SelectItem>
-                                <SelectItem value="Email Marketing">Email Marketing</SelectItem>
-                                <SelectItem value="WhatsApp">WhatsApp</SelectItem>
-                                <SelectItem value="Outro">Outro</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={editLeadForm.control}
-                      name="notes"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Observações</FormLabel>
-                          <FormControl>
-                            <Textarea 
-                              placeholder="Adicione informações relevantes sobre este lead" 
-                              className="min-h-[100px]" 
-                              {...field} 
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-                      Cancelar
-                    </Button>
-                    <Button type="submit">
-                      <Save className="mr-2 h-4 w-4" />
-                      Salvar Alterações
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
-
-          {/* Dialog de conversão para cliente */}
-          <Dialog open={isConvertDialogOpen} onOpenChange={setIsConvertDialogOpen}>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Converter Lead para Cliente</DialogTitle>
-                <DialogDescription>
-                  Você está prestes a converter o lead "{selectedLead?.name}" em um cliente. Esta ação irá transferir todos os dados do lead para um novo cliente.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="py-4">
-                <p className="text-sm text-muted-foreground">
-                  Os seguintes dados serão transferidos:
-                </p>
-                <ul className="list-disc list-inside text-sm text-muted-foreground mt-2 space-y-1">
-                  <li>Dados de contato</li>
-                  <li>Tarefas associadas ({leadTasks?.length || 0})</li>
-                  <li>Notas e observações</li>
-                </ul>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsConvertDialogOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button onClick={handleConvertToClient}>
-                  <UserPlus className="mr-2 h-4 w-4" />
-                  Converter para Cliente
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-            {selectedLead && (
-              <DialogContent className="max-w-3xl">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    {selectedLead.name}
-                    <Badge 
-                      variant="outline" 
-                      style={{ 
-                        backgroundColor: getStatusVariant(selectedLead.status).color,
-                        color: '#fff'
-                      }}
-                    >
-                      {selectedLead.status}
-                    </Badge>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="ml-auto" 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditLead(selectedLead);
-                      }}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                  </DialogTitle>
-                  <DialogDescription>{selectedLead.company}</DialogDescription>
-                </DialogHeader>
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                  <TabsList className="grid grid-cols-4 mb-4">
-                    <TabsTrigger value="details">Detalhes</TabsTrigger>
-                    <TabsTrigger value="tasks">Tarefas</TabsTrigger>
-                    <TabsTrigger value="notes">Anotações</TabsTrigger>
-                    <TabsTrigger value="opportunities">Oportunidades</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="details">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <Label>E-mail</Label>
-                        <p className="text-sm">{selectedLead.email || "Não informado"}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label>Telefone</Label>
-                        <p className="text-sm">{selectedLead.phone || "Não informado"}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label>Empresa</Label>
-                        <p className="text-sm">{selectedLead.company || "Não informado"}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label>Status</Label>
-                        <p className="text-sm">
-                          <Badge 
-                            variant="outline"
-                            style={{ 
-                              backgroundColor: getStatusVariant(selectedLead.status).color,
-                              color: '#fff'
-                            }}
-                          >
-                            {selectedLead.status}
-                          </Badge>
-                        </p>
-                      </div>
-                      {/* Adicionando campo de fonte na visualização */}
-                      <div className="space-y-1">
-                        <Label>Fonte</Label>
-                        <p className="text-sm">{selectedLead.source || "Direto"}</p>
-                      </div>
-                    </div>
-                    <div className="mt-6">
-                      <Button 
-                        onClick={() => setIsConvertDialogOpen(true)} 
-                        variant="outline" 
-                        className="w-full"
-                      >
-                        <UserPlus className="mr-2 h-4 w-4" />
-                        Converter para Cliente
-                      </Button>
-                    </div>
-                  </TabsContent>
-                  
-                  <TabsContent value="tasks">
-                    <div className="space-y-4">
-                      <Form {...taskForm}>
-                        <form onSubmit={taskForm.handleSubmit(handleAddTask)} className="space-y-4">
-                          <div className="grid grid-cols-2 gap-4">
-                            <FormField
-                              control={taskForm.control}
-                              name="title"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Título</FormLabel>
-                                  <FormControl>
-                                    <Input placeholder="Título da tarefa" {...field} />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={taskForm.control}
-                              name="status"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Status</FormLabel>
-                                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                    <FormControl>
-                                      <SelectTrigger>
-                                        <SelectValue placeholder="Selecione" />
-                                      </SelectTrigger>
-                                    </FormControl>
-                                    <SelectContent>
-                                      <SelectItem value="Pendente">Pendente</SelectItem>
-                                      <SelectItem value="Em andamento">Em andamento</SelectItem>
-                                      <SelectItem value="Concluído">Concluído</SelectItem>
-                                      <SelectItem value="Cancelado">Cancelado</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
-
-                          <FormField
-                            control={taskForm.control}
-                            name="description"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Descrição</FormLabel>
-                                <FormControl>
-                                  <Textarea placeholder="Descreva a tarefa" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={taskForm.control}
-                            name="due_date"
-                            render={({ field }) => (
-                              <FormItem className="flex flex-col">
-                                <FormLabel>Data de vencimento</FormLabel>
-                                <FormControl>
-                                  <Input
-                                    type="date"
-                                    value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
-                                    onChange={(e) => {
-                                      const value = e.target.value ? new Date(e.target.value) : null;
-                                      field.onChange(value);
-                                    }}
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <Button type="submit" className="w-full">
-                            <Plus className="mr-2 h-4 w-4" />
-                            Adicionar Tarefa
-                          </Button>
-                        </form>
-                      </Form>
-
-                      <div className="space-y-2 mt-6">
-                        <h3 className="text-lg font-medium">Tarefas existentes</h3>
-                        {leadTasks.length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-6">
-                            Nenhuma tarefa encontrada para este lead.
-                          </p>
-                        ) : (
-                          <div className="space-y-2">
-                            {leadTasks.map((task) => (
-                              <Card key={task.id}>
-                                <CardContent className="p-4">
-                                  <div className="flex justify-between items-start">
-                                    <div>
-                                      <h4 className="font-medium">{task.title}</h4>
-                                      <p className="text-sm text-muted-foreground">{task.description}</p>
-                                      {task.due_date && (
-                                        <p className="text-xs mt-1">
-                                          Vencimento: {new Date(task.due_date).toLocaleDateString()}
-                                        </p>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      <Badge variant={getTaskStatusVariant(task.status)}>{task.status}</Badge>
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                          <Button variant="ghost" size="icon">
-                                            <MoreVertical className="h-4 w-4" />
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end">
-                                          <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Pendente")}>
-                                            Marcar como Pendente
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Em andamento")}>
-                                            Marcar como Em andamento
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Concluído")}>
-                                            Marcar como Concluído
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Cancelado")}>
-                                            Marcar como Cancelado
-                                          </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="notes">
-                    <Form {...noteForm}>
-                      <form onSubmit={noteForm.handleSubmit(handleSaveNote)}>
-                        <FormField
-                          control={noteForm.control}
-                          name="content"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Anotações sobre o lead</FormLabel>
-                              <FormControl>
-                                <Textarea 
-                                  className="min-h-[200px]" 
-                                  placeholder="Adicione informações importantes sobre este lead..." 
-                                  {...field} 
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <Button className="mt-4">Salvar Anotações</Button>
-                      </form>
-                    </Form>
-                  </TabsContent>
-
-                  <TabsContent value="opportunities">
-                    <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma oportunidade encontrada para este lead.
-                    </p>
-                    <Button className="w-full">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Adicionar Oportunidade
-                    </Button>
-                  </TabsContent>
-                </Tabs>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
-                    Fechar
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            )}
-          </Dialog>
-        </div>
-      </div>
-
-      {/* Tabs e Filtros */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-        <Tabs 
-          defaultValue="all" 
-          value={activeStatusFilter}
-          onValueChange={setActiveStatusFilter}
-        >
-          <TabsList>
-            <TabsTrigger value="all">Todos</TabsTrigger>
-            {leadStatuses.map(status => (
-              <TabsTrigger key={status.id} value={status.name.toLowerCase()}>
-                <div className="flex items-center gap-2">
-                  <div 
-                    className="w-2 h-2 rounded-full" 
-                    style={{ backgroundColor: status.color }} 
-                  />
-                  {status.name}
-                </div>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-
-        <Button variant="outline" size="sm">
-          <Filter className="h-4 w-4 mr-2" />
-          Filtros
-        </Button>
-      </div>
-
+      {/* Main card with leads table */}
       <Card>
         <CardHeader className="pb-0">
           <CardTitle>Lista de Leads</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
-                  <div className="flex items-center">
-                    Nome
-                    <SortIcon field="name" />
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
-                  <div className="flex items-center">
-                    Empresa
-                    <SortIcon field="company" />
-                  </div>
-                </TableHead>
-                <TableHead>E-mail</TableHead>
-                <TableHead>Fonte</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredLeads.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
-                    Nenhum lead encontrado com os critérios de busca
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredLeads.map((lead) => (
-                  <TableRow key={lead.id}>
-                    <TableCell 
-                      className="cursor-pointer hover:underline"
-                      onClick={() => handleViewLead(lead)}
-                    >
-                      {lead.name}
-                    </TableCell>
-                    <TableCell>{lead.company || "-"}</TableCell>
-                    <TableCell>{lead.email || "-"}</TableCell>
-                    <TableCell>{lead.source || "Direto"}</TableCell>
-                    <TableCell>
-                      <Badge 
-                        variant="outline"
-                        style={{ 
-                          backgroundColor: getStatusVariant(lead.status).color,
-                          color: '#fff'
-                        }}
-                      >
-                        {lead.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={(e) => {
-                            e.stopPropagation();
-                            handleEditLead(lead);
-                          }}>
-                            <Edit className="h-4 w-4 mr-2" />
-                            Editar Lead
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => {
-                            e.stopPropagation();
-                            handleViewLead(lead);
-                            setActiveTab("tasks");
-                          }}>
-                            <Plus className="h-4 w-4 mr-2" />
-                            Adicionar Tarefa
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLead(lead);
-                            fetchLeadTasks(lead.id);
-                            setIsConvertDialogOpen(true);
-                          }}>
-                            <UserPlus className="h-4 w-4 mr-2" />
-                            Converter para Cliente
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <LeadListTable 
+            leads={filteredLeads}
+            sortField={sortField}
+            sortDirection={sortDirection}
+            handleSort={handleSort}
+            handleViewLead={handleViewLead}
+            handleEditLead={handleEditLead}
+            getStatusVariant={getStatusVariant}
+            onSelectLeadForTasks={(lead) => {
+              handleViewLead(lead);
+              setActiveTab("tasks");
+            }}
+            onSelectLeadForConversion={(lead) => {
+              setSelectedLead(lead);
+              fetchLeadTasks(lead.id);
+              setIsConvertDialogOpen(true);
+            }}
+          />
 
+          {/* Pagination */}
           <div className="mt-4">
             <Pagination>
               <PaginationContent>
@@ -1286,6 +457,45 @@ const Leads = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Dialogs */}
+      <LeadAddDialog 
+        isOpen={isAddDialogOpen}
+        onClose={() => setIsAddDialogOpen(false)}
+        onSave={handleAddLead}
+        leadStatuses={leadStatuses}
+      />
+
+      <LeadEditDialog 
+        isOpen={isEditDialogOpen}
+        onClose={() => setIsEditDialogOpen(false)}
+        onSave={handleSaveEdit}
+        lead={selectedLead}
+        leadStatuses={leadStatuses}
+      />
+
+      <LeadDetailsDialog 
+        isOpen={isViewDialogOpen}
+        onClose={() => setIsViewDialogOpen(false)}
+        lead={selectedLead}
+        tasks={leadTasks}
+        getStatusVariant={getStatusVariant}
+        onEditLead={handleEditLead}
+        onTabChange={setActiveTab}
+        activeTab={activeTab}
+        onConvertToClient={() => setIsConvertDialogOpen(true)}
+        onAddTask={handleAddTask}
+        onUpdateTaskStatus={updateTaskStatus}
+        onSaveNote={handleSaveNote}
+      />
+
+      <LeadConvertDialog 
+        isOpen={isConvertDialogOpen}
+        onClose={() => setIsConvertDialogOpen(false)}
+        onConvert={handleConvertToClient}
+        lead={selectedLead}
+        taskCount={leadTasks.length}
+      />
     </div>
   );
 };
