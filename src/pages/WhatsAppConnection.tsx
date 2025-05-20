@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { PhoneCall, QrCode, MessageSquare } from "lucide-react";
+import { PhoneCall, QrCode, MessageSquare, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -12,14 +11,49 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { whatsappService } from "@/services/whatsapp";
 
+interface ConnectionConfig {
+  apiKey?: string;
+  instanceId?: string;
+  instanceName?: string;
+  webhookUrl?: string;
+}
+
 const WhatsAppConnection = () => {
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<string>("");
   const [instanceId, setInstanceId] = useState<string>("");
   const [instanceName, setInstanceName] = useState<string>("");
+  const [webhookUrl, setWebhookUrl] = useState<string>("");
   const [apiProvider, setApiProvider] = useState<"default" | "evolution" | "webjs">("default");
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [savedConnections, setSavedConnections] = useState<Array<{
+    id: string;
+    name: string;
+    type: string;
+    config: ConnectionConfig;
+  }>>([]);
+  const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
   const { toast } = useToast();
+  
+  // Effect to load saved connections from localStorage
+  useEffect(() => {
+    const savedData = localStorage.getItem("whatsapp_connections");
+    if (savedData) {
+      try {
+        setSavedConnections(JSON.parse(savedData));
+      } catch (e) {
+        console.error("Error loading saved connections:", e);
+      }
+    }
+  }, []);
+
+  // Effect to save connections to localStorage when they change
+  useEffect(() => {
+    if (savedConnections.length > 0) {
+      localStorage.setItem("whatsapp_connections", JSON.stringify(savedConnections));
+    }
+  }, [savedConnections]);
   
   const handleConnect = async () => {
     setConnectionStatus("connecting");
@@ -35,7 +69,7 @@ const WhatsAppConnection = () => {
           description: "Usando as credenciais fornecidas para conectar...",
         });
         
-        const result = await whatsappService.connectEvolution(apiKey, instanceId, instanceName);
+        const result = await whatsappService.connectEvolution(apiKey, instanceId, instanceName, webhookUrl);
         
         if (result.status === "connected") {
           setConnectionStatus("connected");
@@ -134,6 +168,118 @@ const WhatsAppConnection = () => {
         variant: "destructive",
       });
     }
+  };
+
+  // Save connection information
+  const handleSaveConnection = () => {
+    const newConnection = {
+      id: Date.now().toString(),
+      name: instanceName || "Evolution API Connection",
+      type: apiProvider,
+      config: {
+        apiKey,
+        instanceId,
+        instanceName,
+        webhookUrl
+      }
+    };
+    
+    const updatedConnections = [...savedConnections, newConnection];
+    setSavedConnections(updatedConnections);
+    
+    toast({
+      title: "Conexão salva",
+      description: "As credenciais de conexão foram salvas",
+    });
+    
+    clearConnectionForm();
+  };
+  
+  // Update existing connection
+  const handleUpdateConnection = () => {
+    if (!selectedConnection) return;
+    
+    const updatedConnections = savedConnections.map(conn => {
+      if (conn.id === selectedConnection) {
+        return {
+          ...conn,
+          name: instanceName || conn.name,
+          config: {
+            apiKey,
+            instanceId,
+            instanceName,
+            webhookUrl
+          }
+        };
+      }
+      return conn;
+    });
+    
+    setSavedConnections(updatedConnections);
+    setSelectedConnection(null);
+    setIsEditing(false);
+    
+    toast({
+      title: "Conexão atualizada",
+      description: "As credenciais de conexão foram atualizadas",
+    });
+    
+    clearConnectionForm();
+  };
+  
+  // Delete a connection
+  const handleDeleteConnection = (id: string) => {
+    const updatedConnections = savedConnections.filter(conn => conn.id !== id);
+    setSavedConnections(updatedConnections);
+    
+    toast({
+      title: "Conexão removida",
+      description: "A conexão foi removida com sucesso",
+    });
+    
+    if (selectedConnection === id) {
+      setSelectedConnection(null);
+      clearConnectionForm();
+    }
+  };
+  
+  // Edit a connection
+  const handleEditConnection = (id: string) => {
+    const connection = savedConnections.find(conn => conn.id === id);
+    if (!connection) return;
+    
+    setApiProvider(connection.type as any);
+    setApiKey(connection.config.apiKey || "");
+    setInstanceId(connection.config.instanceId || "");
+    setInstanceName(connection.config.instanceName || "");
+    setWebhookUrl(connection.config.webhookUrl || "");
+    setSelectedConnection(id);
+    setIsEditing(true);
+  };
+  
+  // Connect using a saved connection
+  const handleConnectSaved = (id: string) => {
+    const connection = savedConnections.find(conn => conn.id === id);
+    if (!connection) return;
+    
+    setApiProvider(connection.type as any);
+    setApiKey(connection.config.apiKey || "");
+    setInstanceId(connection.config.instanceId || "");
+    setInstanceName(connection.config.instanceName || "");
+    setWebhookUrl(connection.config.webhookUrl || "");
+    
+    // After setting credentials, connect
+    handleConnect();
+  };
+  
+  // Clear connection form
+  const clearConnectionForm = () => {
+    setApiKey("");
+    setInstanceId("");
+    setInstanceName("");
+    setWebhookUrl("");
+    setIsEditing(false);
+    setSelectedConnection(null);
   };
 
   // Simulate successful connection after QR code is shown
@@ -249,7 +395,58 @@ const WhatsAppConnection = () => {
               
               <TabsContent value="evolution">
                 <div className="flex flex-col gap-4">
+                  {savedConnections.filter(conn => conn.type === "evolution").length > 0 && (
+                    <div className="space-y-4 mb-4">
+                      <h3 className="font-medium text-lg">Conexões salvas</h3>
+                      <div className="space-y-2">
+                        {savedConnections
+                          .filter(conn => conn.type === "evolution")
+                          .map(conn => (
+                            <div 
+                              key={conn.id} 
+                              className="border rounded-md p-4 cursor-pointer hover:bg-accent transition-colors"
+                              onClick={() => handleEditConnection(conn.id)}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="font-medium">{conn.name}</p>
+                                  <p className="text-sm text-muted-foreground">
+                                    {conn.config.instanceId ? `ID: ${conn.config.instanceId}` : "Sem ID"}
+                                  </p>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEditConnection(conn.id);
+                                    }}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleConnectSaved(conn.id);
+                                    }}
+                                  >
+                                    Conectar
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-4">
+                    <h3 className="font-medium text-lg">
+                      {isEditing ? "Editar conexão" : "Nova conexão"}
+                    </h3>
+                    
                     <div className="space-y-2">
                       <Label htmlFor="apiKey">API Key da Evolution</Label>
                       <Input 
@@ -280,31 +477,54 @@ const WhatsAppConnection = () => {
                       />
                     </div>
                     
+                    <div className="space-y-2">
+                      <Label htmlFor="webhookUrl">URL do Webhook (opcional)</Label>
+                      <Input 
+                        id="webhookUrl" 
+                        placeholder="URL para receber notificações da Evolution API" 
+                        value={webhookUrl}
+                        onChange={(e) => setWebhookUrl(e.target.value)}
+                      />
+                    </div>
+                    
                     <Alert className="mt-2">
                       <AlertDescription>
                         Para obter suas credenciais da Evolution API, você precisa ter uma conta ativa no serviço.
                       </AlertDescription>
                     </Alert>
                     
-                    <div className="flex justify-center mt-4">
-                      {connectionStatus === "disconnected" ? (
-                        <Button 
-                          onClick={() => {
-                            setApiProvider("evolution");
-                            handleConnect();
-                          }}
-                          disabled={!apiKey || !instanceName}
-                        >
-                          Conectar via Evolution API
-                        </Button>
-                      ) : connectionStatus === "connecting" ? (
-                        <Button disabled>
-                          Conectando...
-                        </Button>
+                    <div className="flex justify-center gap-2 mt-4">
+                      {isEditing ? (
+                        <>
+                          <Button 
+                            variant="outline"
+                            onClick={clearConnectionForm}
+                          >
+                            Cancelar
+                          </Button>
+                          <Button 
+                            onClick={handleUpdateConnection}
+                            disabled={!apiKey || !instanceName}
+                          >
+                            Atualizar
+                          </Button>
+                        </>
                       ) : (
-                        <Button variant="destructive" onClick={handleDisconnect}>
-                          Desconectar
-                        </Button>
+                        <>
+                          <Button 
+                            onClick={handleSaveConnection}
+                            variant="outline"
+                            disabled={!apiKey || !instanceName}
+                          >
+                            Salvar Credenciais
+                          </Button>
+                          <Button 
+                            onClick={handleConnect}
+                            disabled={!apiKey || !instanceName}
+                          >
+                            Conectar
+                          </Button>
+                        </>
                       )}
                     </div>
                   </div>
