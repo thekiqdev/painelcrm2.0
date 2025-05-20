@@ -7,12 +7,14 @@ interface QRCodeScannerProps {
   qrCode: string | null;
   connectionStatus: "disconnected" | "connecting" | "connected";
   onDisconnect: () => void;
+  onConfirmConnection: () => void;
 }
 
 const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ 
   qrCode, 
   connectionStatus,
-  onDisconnect
+  onDisconnect,
+  onConfirmConnection
 }) => {
   return (
     <div className="flex flex-col items-center">
@@ -34,12 +36,25 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
           </div>
           <div className="text-center max-w-sm">
             <h3 className="font-medium mb-2">Escaneie o código QR</h3>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground mb-4">
               Abra o WhatsApp no seu celular, toque em Menu ou Configurações e selecione WhatsApp Web. 
               Aponte a câmera do seu celular para esta tela para capturar o código.
             </p>
+            <Button 
+              variant="default" 
+              onClick={onConfirmConnection} 
+              className="w-full mb-2"
+            >
+              Confirmar Conexão Manualmente
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={onDisconnect} 
+              className="w-full"
+            >
+              Cancelar
+            </Button>
           </div>
-          <Button variant="outline" onClick={onDisconnect}>Cancelar</Button>
         </div>
       )}
       

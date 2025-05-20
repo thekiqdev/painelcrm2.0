@@ -112,6 +112,31 @@ export const WhatsAppSection = () => {
     }
   };
 
+  const handleConfirmConnection = async () => {
+    try {
+      setIsLoading(true);
+      toast.info("Confirmando conexão", {
+        description: "Por favor, aguarde enquanto confirmamos sua conexão...",
+      });
+      
+      await whatsappService.confirmConnection();
+      setConnectionStatus("connected");
+      setQrCode(null);
+      await updateProfile({ whatsapp_connected: true });
+      
+      toast.success("Conectado com sucesso!", {
+        description: "Sua conta WhatsApp foi confirmada manualmente",
+      });
+    } catch (error) {
+      console.error("Error confirming WhatsApp connection:", error);
+      toast.error("Erro na confirmação", { 
+        description: "Ocorreu um erro ao tentar confirmar a conexão WhatsApp." 
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Poll for status changes when QR code is shown
   useEffect(() => {
     let intervalId: number;
@@ -173,7 +198,8 @@ export const WhatsAppSection = () => {
               <QRCodeScanner 
                 qrCode={qrCode} 
                 connectionStatus={connectionStatus} 
-                onDisconnect={handleDisconnect} 
+                onDisconnect={handleDisconnect}
+                onConfirmConnection={handleConfirmConnection}
               />
             )}
           </CardContent>

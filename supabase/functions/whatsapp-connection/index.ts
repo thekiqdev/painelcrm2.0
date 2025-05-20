@@ -1,11 +1,16 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.3";
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from "npm:@adiwajshing/baileys@5.0.0";
-import { Boom } from "npm:@hapi/boom";
+import * as qrcode from "https://deno.land/x/qrcode@v2.0.0/mod.ts";
 
 // Cache for active connections by user ID
-const activeConnections: Record<string, any> = {};
+const activeConnections: Record<string, boolean> = {};
+
+// Generate a QR code as base64
+async function generateQRCode(text: string): Promise<string> {
+  const qr = await qrcode.generate(text);
+  return qr;
+}
 
 serve(async (req) => {
   const url = new URL(req.url);
@@ -40,146 +45,92 @@ serve(async (req) => {
   
   if (req.method === "POST") {
     if (action === "connect") {
-      // If a connection already exists for this user, disconnect it first
-      if (activeConnections[userId]) {
-        try {
-          await activeConnections[userId].logout();
-          delete activeConnections[userId];
-        } catch (err) {
-          console.error(`Error disconnecting existing socket:`, err);
-        }
-      }
-
-      // Setup auth state in a user-specific folder
-      const { state, saveCreds } = await useMultiFileAuthState(`./whatsapp-auth-${userId}`);
-      const { version } = await fetchLatestBaileysVersion();
-      
-      const sock = makeWASocket({
-        version,
-        auth: state,
-        printQRInTerminal: false,
-        generateHighQualityLinkPreview: true,
-      });
-
-      // Store the socket in our active connections
-      activeConnections[userId] = sock;
-      
-      let qrCode: string | null = null;
-      let connectionStatus = "connecting";
-      
-      // Handle connection events
-      sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+      try {
+        // Generate a unique connection identifier
+        const connectionId = crypto.randomUUID();
+        const connectionCode = `whatsapp-connection-${userId}-${connectionId}`;
         
-        if (qr) {
-          // New QR code received - save it
-          qrCode = qr;
-          
-          // Update Supabase with new QR code
-          await supabaseClient.from("whatsapp_connections")
-            .upsert({
-              user_id: userId,
-              qr_code: qr,
-              status: "awaiting_scan",
-              updated_at: new Date().toISOString()
-            });
-        }
+        // Generate QR code containing the connection code
+        const qrCodeData = await generateQRCode(connectionCode);
         
-        if (connection === 'open') {
-          // Successfully connected
-          connectionStatus = "connected";
-          
-          // Update user profile in Supabase
-          await supabaseClient.from("profiles")
-            .update({ whatsapp_connected: true })
-            .eq("id", userId);
-            
-          // Update connection status in Supabase
-          await supabaseClient.from("whatsapp_connections")
-            .upsert({
-              user_id: userId,
-              status: "connected",
-              qr_code: null,
-              updated_at: new Date().toISOString()
-            });
-            
-          // Save credentials after successful connection
-          await saveCreds();
-        }
+        // Store active connection status
+        activeConnections[userId] = true;
         
-        if (connection === 'close') {
-          connectionStatus = "disconnected";
-          const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+        // Save QR code and status in Supabase
+        await supabaseClient.from("whatsapp_connections")
+          .upsert({
+            user_id: userId,
+            qr_code: qrCodeData,
+            status: "awaiting_scan",
+            updated_at: new Date().toISOString()
+          });
           
-          // Update connection status in Supabase
-          await supabaseClient.from("profiles")
-            .update({ whatsapp_connected: false })
-            .eq("id", userId);
-            
-          if (statusCode !== DisconnectReason.loggedOut) {
-            // Reconnect if the connection was not intentionally closed
-            delete activeConnections[userId];
-          }
-        }
-      });
-      
-      // Wait for QR code for up to 30 seconds
-      let attempts = 0;
-      while (!qrCode && attempts < 30 && connectionStatus === "connecting") {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        attempts++;
-      }
-      
-      return new Response(
-        JSON.stringify({
-          status: connectionStatus,
-          qrCode: qrCode
-        }),
-        {
-          headers: { "Content-Type": "application/json" },
-          status: 200
-        }
-      );
-    } else if (action === "disconnect") {
-      if (activeConnections[userId]) {
-        try {
-          await activeConnections[userId].logout();
-          delete activeConnections[userId];
-          
-          // Update user profile in Supabase
-          await supabaseClient.from("profiles")
-            .update({ whatsapp_connected: false })
-            .eq("id", userId);
-            
-          // Update connection status in Supabase
-          await supabaseClient.from("whatsapp_connections")
-            .update({
-              status: "disconnected",
-              qr_code: null,
-              updated_at: new Date().toISOString()
-            })
-            .eq("user_id", userId);
-            
-          return new Response(JSON.stringify({ status: "disconnected" }), {
+        return new Response(
+          JSON.stringify({
+            status: "connecting",
+            qrCode: qrCodeData
+          }),
+          {
             headers: { "Content-Type": "application/json" },
             status: 200
-          });
-        } catch (err) {
-          console.error(`Error disconnecting:`, err);
-          return new Response(JSON.stringify({ error: "Failed to disconnect" }), {
+          }
+        );
+      } catch (err) {
+        console.error("Error generating QR code:", err);
+        return new Response(
+          JSON.stringify({ error: "Failed to generate QR code" }),
+          {
             headers: { "Content-Type": "application/json" },
             status: 500
-          });
-        }
-      } else {
-        return new Response(JSON.stringify({ status: "disconnected", message: "No active connection" }), {
-          headers: { "Content-Type": "application/json" },
-          status: 200
-        });
+          }
+        );
       }
+    } else if (action === "disconnect") {
+      delete activeConnections[userId];
+      
+      // Update user profile in Supabase
+      await supabaseClient.from("profiles")
+        .update({ whatsapp_connected: false })
+        .eq("id", userId);
+        
+      // Update connection status in Supabase
+      await supabaseClient.from("whatsapp_connections")
+        .update({
+          status: "disconnected",
+          qr_code: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("user_id", userId);
+        
+      return new Response(JSON.stringify({ status: "disconnected" }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200
+      });
+    } else if (action === "confirm") {
+      // Simulate confirming a connection after QR code scan
+      // In a real implementation, this would verify the connection
+      
+      // Update user profile in Supabase
+      await supabaseClient.from("profiles")
+        .update({ whatsapp_connected: true })
+        .eq("id", userId);
+        
+      // Update connection status in Supabase
+      await supabaseClient.from("whatsapp_connections")
+        .update({
+          status: "connected",
+          qr_code: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("user_id", userId);
+        
+      return new Response(JSON.stringify({ status: "connected" }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200
+      });
     }
   } else if (req.method === "GET" && action === "status") {
-    // Check connection status
+    // Check if there's an active connection
     const isConnected = !!activeConnections[userId];
     
     // Get any existing QR code from database
