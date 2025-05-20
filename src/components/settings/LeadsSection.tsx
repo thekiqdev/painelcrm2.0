@@ -59,7 +59,7 @@ export const LeadsSection = ({ handleSave }: { handleSave: (e: React.FormEvent) 
 
       if (error) throw error;
       
-      setLeadStatuses([...leadStatuses, data[0]]);
+      setLeadStatuses([...leadStatuses, data[0] as LeadStatus]);
       setNewStatusName("");
       setNewStatusColor("#4C7CFF");
       toast.success("Status adicionado com sucesso!");
