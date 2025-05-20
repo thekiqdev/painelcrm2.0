@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,7 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter } from "lucide-react";
+import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, Edit, Save } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useForm, FormProvider, useFormContext } from "react-hook-form";
@@ -76,8 +77,10 @@ type NoteFormValues = z.infer<typeof noteFormSchema>;
 
 const Leads = () => {
   const [leads, setLeads] = useState<any[]>([]);
+  const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [sortField, setSortField] = useState("name");
@@ -87,6 +90,19 @@ const Leads = () => {
   
   // Form para adicionar novo lead
   const leadForm = useForm<LeadFormValues>({
+    resolver: zodResolver(leadFormSchema),
+    defaultValues: {
+      name: "",
+      company: "",
+      email: "",
+      phone: "",
+      status: "Novo",
+      notes: "",
+    },
+  });
+
+  // Form para editar lead
+  const editLeadForm = useForm<LeadFormValues>({
     resolver: zodResolver(leadFormSchema),
     defaultValues: {
       name: "",
@@ -116,6 +132,32 @@ const Leads = () => {
       content: "",
     },
   });
+
+  // Buscar status de leads
+  const fetchLeadStatuses = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("lead_statuses")
+        .select("*")
+        .order("name");
+
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        setLeadStatuses(data);
+      } else {
+        // Status padrão se não houver nenhum cadastrado
+        setLeadStatuses([
+          { id: "1", name: "Novo", color: "#6E56CF" },
+          { id: "2", name: "Em contato", color: "#F59E0B" },
+          { id: "3", name: "Qualificado", color: "#10B981" },
+          { id: "4", name: "Perdido", color: "#EF4444" }
+        ]);
+      }
+    } catch (error: any) {
+      console.error("Erro ao buscar status:", error.message);
+    }
+  };
 
   // Obter leads do Supabase
   const fetchLeads = async () => {
@@ -175,6 +217,60 @@ const Leads = () => {
     setIsViewDialogOpen(true);
     setActiveTab("details");
     await fetchLeadTasks(lead.id);
+  };
+
+  // Preparar para editar lead
+  const handleEditLead = (lead: any) => {
+    setSelectedLead(lead);
+    editLeadForm.reset({
+      name: lead.name,
+      company: lead.company || "",
+      email: lead.email || "",
+      phone: lead.phone || "",
+      status: lead.status,
+      notes: lead.notes || "",
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  // Salvar edição do lead
+  const handleSaveEdit = async (values: LeadFormValues) => {
+    if (!selectedLead) return;
+
+    try {
+      const leadData = {
+        name: values.name,
+        company: values.company || null,
+        email: values.email || null,
+        phone: values.phone || null,
+        status: values.status,
+        notes: values.notes || null,
+      };
+
+      const { data, error } = await supabase
+        .from("leads")
+        .update(leadData)
+        .eq("id", selectedLead.id)
+        .select();
+
+      if (error) throw error;
+
+      toast.success("Lead atualizado com sucesso!");
+      setIsEditDialogOpen(false);
+      
+      // Atualizar o lead na lista local
+      setLeads(leads.map(lead => 
+        lead.id === selectedLead.id ? { ...lead, ...leadData } : lead
+      ));
+      
+      // Atualizar lead selecionado se estiver sendo visualizado
+      if (isViewDialogOpen && selectedLead) {
+        setSelectedLead({ ...selectedLead, ...leadData });
+      }
+    } catch (error: any) {
+      console.error("Erro ao atualizar lead:", error.message);
+      toast.error("Não foi possível atualizar o lead");
+    }
   };
 
   // Adicionar novo lead
@@ -253,6 +349,11 @@ const Leads = () => {
 
       toast.success("Nota salva com sucesso!");
       setSelectedLead({ ...selectedLead, notes: values.content });
+      
+      // Atualizar na lista local
+      setLeads(leads.map(lead => 
+        lead.id === selectedLead.id ? { ...lead, notes: values.content } : lead
+      ));
     } catch (error: any) {
       console.error("Erro ao salvar nota:", error.message);
       toast.error("Não foi possível salvar a nota");
@@ -278,9 +379,10 @@ const Leads = () => {
     }
   };
 
-  // Efeito para carregar leads quando componente montar ou critérios de ordenação mudarem
+  // Efeito para carregar leads e status quando componente montar ou critérios de ordenação mudarem
   useEffect(() => {
     fetchLeads();
+    fetchLeadStatuses();
   }, [sortField, sortDirection]);
 
   // Efeito para preparar o formulário de notas quando o lead selecionado mudar
@@ -298,13 +400,8 @@ const Leads = () => {
   };
 
   const getStatusVariant = (status: string) => {
-    switch (status) {
-      case "Novo": return "outline";
-      case "Em contato": return "secondary";
-      case "Qualificado": return "default";
-      case "Perdido": return "destructive";
-      default: return "outline";
-    }
+    const foundStatus = leadStatuses.find(s => s.name === status);
+    return foundStatus ? { color: foundStatus.color } : { color: "#6E56CF" };
   };
 
   const getTaskStatusVariant = (status: string) => {
@@ -420,10 +517,17 @@ const Leads = () => {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="Novo">Novo</SelectItem>
-                              <SelectItem value="Em contato">Em contato</SelectItem>
-                              <SelectItem value="Qualificado">Qualificado</SelectItem>
-                              <SelectItem value="Perdido">Perdido</SelectItem>
+                              {leadStatuses.map(status => (
+                                <SelectItem key={status.id} value={status.name}>
+                                  <div className="flex items-center">
+                                    <div 
+                                      className="w-3 h-3 rounded-full mr-2" 
+                                      style={{ backgroundColor: status.color }}
+                                    />
+                                    {status.name}
+                                  </div>
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -460,13 +564,165 @@ const Leads = () => {
             </DialogContent>
           </Dialog>
 
+          {/* Dialog de edição de Lead */}
+          <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Editar Lead</DialogTitle>
+                <DialogDescription>
+                  Atualize os dados do lead no sistema.
+                </DialogDescription>
+              </DialogHeader>
+              <Form {...editLeadForm}>
+                <form onSubmit={editLeadForm.handleSubmit(handleSaveEdit)}>
+                  <div className="grid gap-6 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={editLeadForm.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nome</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Nome completo" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={editLeadForm.control}
+                        name="company"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Empresa</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Nome da empresa" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={editLeadForm.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>E-mail</FormLabel>
+                            <FormControl>
+                              <Input type="email" placeholder="email@exemplo.com" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={editLeadForm.control}
+                        name="phone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Telefone</FormLabel>
+                            <FormControl>
+                              <Input placeholder="(00) 00000-0000" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={editLeadForm.control}
+                      name="status"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Status</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione o status" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {leadStatuses.map(status => (
+                                <SelectItem key={status.id} value={status.name}>
+                                  <div className="flex items-center">
+                                    <div 
+                                      className="w-3 h-3 rounded-full mr-2" 
+                                      style={{ backgroundColor: status.color }}
+                                    />
+                                    {status.name}
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={editLeadForm.control}
+                      name="notes"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Observações</FormLabel>
+                          <FormControl>
+                            <Textarea 
+                              placeholder="Adicione informações relevantes sobre este lead" 
+                              className="min-h-[100px]" 
+                              {...field} 
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit">
+                      <Save className="mr-2 h-4 w-4" />
+                      Salvar Alterações
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </Form>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
             {selectedLead && (
               <DialogContent className="max-w-3xl">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                     {selectedLead.name}
-                    <Badge variant="outline">Lead</Badge>
+                    <Badge 
+                      variant="outline" 
+                      style={{ 
+                        backgroundColor: getStatusVariant(selectedLead.status).color,
+                        color: '#fff'
+                      }}
+                    >
+                      {selectedLead.status}
+                    </Badge>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="ml-auto" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditLead(selectedLead);
+                      }}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
                   </DialogTitle>
                   <DialogDescription>{selectedLead.company}</DialogDescription>
                 </DialogHeader>
@@ -494,7 +750,13 @@ const Leads = () => {
                       <div className="space-y-1">
                         <Label>Status</Label>
                         <p className="text-sm">
-                          <Badge variant={getStatusVariant(selectedLead.status)}>
+                          <Badge 
+                            variant="outline"
+                            style={{ 
+                              backgroundColor: getStatusVariant(selectedLead.status).color,
+                              color: '#fff'
+                            }}
+                          >
                             {selectedLead.status}
                           </Badge>
                         </p>
@@ -695,9 +957,11 @@ const Leads = () => {
         <Tabs defaultValue="all">
           <TabsList>
             <TabsTrigger value="all">Todos</TabsTrigger>
-            <TabsTrigger value="new">Novos</TabsTrigger>
-            <TabsTrigger value="contacted">Em contato</TabsTrigger>
-            <TabsTrigger value="qualified">Qualificados</TabsTrigger>
+            {leadStatuses.map(status => (
+              <TabsTrigger key={status.id} value={status.name.toLowerCase().replace(/\s+/g, '-')}>
+                {status.name}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </Tabs>
 
@@ -742,13 +1006,24 @@ const Leads = () => {
                 </TableRow>
               ) : (
                 filteredLeads.map((lead) => (
-                  <TableRow key={lead.id} className="cursor-pointer" onClick={() => handleViewLead(lead)}>
-                    <TableCell>{lead.name}</TableCell>
+                  <TableRow key={lead.id}>
+                    <TableCell 
+                      className="cursor-pointer hover:underline"
+                      onClick={() => handleViewLead(lead)}
+                    >
+                      {lead.name}
+                    </TableCell>
                     <TableCell>{lead.company || "-"}</TableCell>
                     <TableCell>{lead.email || "-"}</TableCell>
                     <TableCell>{lead.phone || "-"}</TableCell>
                     <TableCell>
-                      <Badge variant={getStatusVariant(lead.status)}>
+                      <Badge 
+                        variant="outline"
+                        style={{ 
+                          backgroundColor: getStatusVariant(lead.status).color,
+                          color: '#fff'
+                        }}
+                      >
                         {lead.status}
                       </Badge>
                     </TableCell>
@@ -762,6 +1037,21 @@ const Leads = () => {
                         <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Ações</DropdownMenuLabel>
                           <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditLead(lead);
+                          }}>
+                            <Edit className="h-4 w-4 mr-2" />
+                            Editar Lead
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={(e) => {
+                            e.stopPropagation();
+                            handleViewLead(lead);
+                            setActiveTab("tasks");
+                          }}>
+                            <Plus className="h-4 w-4 mr-2" />
+                            Adicionar Tarefa
+                          </DropdownMenuItem>
                           <DropdownMenuItem>
                             <UserPlus className="h-4 w-4 mr-2" />
                             Adicionar Oportunidade
