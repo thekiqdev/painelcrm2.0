@@ -14,6 +14,7 @@ export const WhatsAppSection = () => {
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [connectionMethod, setConnectionMethod] = useState<"qrcode" | "evolution" | "webjs">("qrcode");
   const { user, profile, updateProfile } = useAuth();
   
   // Check current connection status on component mount
@@ -54,11 +55,22 @@ export const WhatsAppSection = () => {
     try {
       setIsLoading(true);
       setConnectionStatus("connecting");
+      
       toast.info("Iniciando conexão", {
-        description: "Por favor, aguarde enquanto geramos o QR code...",
+        description: "Por favor, aguarde enquanto processamos sua solicitação...",
       });
       
-      const result = await whatsappService.connect();
+      let result;
+      
+      if (connectionMethod === "evolution") {
+        // This would be implemented with actual API key integration
+        result = await whatsappService.connectEvolution("demo-key");
+      } else if (connectionMethod === "webjs") {
+        result = await whatsappService.connectWebJS();
+      } else {
+        // Default QR code method
+        result = await whatsappService.connect();
+      }
       
       if (result.status === "connected") {
         setConnectionStatus("connected");
@@ -179,20 +191,51 @@ export const WhatsAppSection = () => {
             </CardDescription>
           </CardHeader>
           
-          <CardContent className="flex flex-col items-center justify-center min-h-[300px]">
+          <CardContent>
             {connectionStatus === "disconnected" ? (
-              <div className="flex flex-col items-center gap-4">
-                <div className="h-24 w-24 text-muted-foreground flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 21l1.65-3.8a9 9 0 1 1 3.4 2.9L3 21"/>
-                  </svg>
+              <div className="space-y-6">
+                <div className="flex flex-col items-center gap-4">
+                  <div className="h-24 w-24 text-muted-foreground flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 21l1.65-3.8a9 9 0 1 1 3.4 2.9L3 21"/>
+                    </svg>
+                  </div>
+                  <p className="text-center text-muted-foreground mb-4">
+                    Clique no botão abaixo para gerar um QR code e conectar o seu WhatsApp
+                  </p>
                 </div>
-                <p className="text-center text-muted-foreground mb-4">
-                  Clique no botão abaixo para gerar um QR code e conectar o seu WhatsApp
-                </p>
-                <Button onClick={handleConnect} disabled={isLoading}>
-                  {isLoading ? "Conectando..." : "Conectar WhatsApp"}
-                </Button>
+                
+                <Tabs defaultValue="qrcode" className="w-full" onValueChange={(value) => setConnectionMethod(value as any)}>
+                  <TabsList className="grid grid-cols-3 w-full">
+                    <TabsTrigger value="qrcode">Via QR Code</TabsTrigger>
+                    <TabsTrigger value="webjs">Via WhatsApp Web.js</TabsTrigger>
+                    <TabsTrigger value="evolution">Via Evolution API</TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="qrcode" className="pt-4">
+                    <p className="mb-4 text-sm text-center">
+                      Conecte escaneando um QR code com seu celular
+                    </p>
+                  </TabsContent>
+                  
+                  <TabsContent value="webjs" className="pt-4">
+                    <p className="mb-4 text-sm text-center">
+                      Use a biblioteca WhatsApp Web.js para conectar
+                    </p>
+                  </TabsContent>
+                  
+                  <TabsContent value="evolution" className="pt-4">
+                    <p className="mb-4 text-sm text-center">
+                      Conecte usando a Evolution API (requer credenciais separadas)
+                    </p>
+                  </TabsContent>
+                </Tabs>
+                
+                <div className="flex justify-center mt-4">
+                  <Button onClick={handleConnect} disabled={isLoading} className="bg-[#1a202c] hover:bg-[#2d3748]">
+                    {isLoading ? "Conectando..." : "Conectar WhatsApp"}
+                  </Button>
+                </div>
               </div>
             ) : (
               <QRCodeScanner 
@@ -222,6 +265,14 @@ export const WhatsAppSection = () => {
                   Para manter sua sessão ativa, não desconecte o WhatsApp Web do seu dispositivo móvel.
                 </AlertDescription>
               </Alert>
+            )}
+            
+            {connectionStatus === "disconnected" && (
+              <div className="mt-4">
+                <p className="text-sm text-muted-foreground">
+                  WhatsApp não está conectado.
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
