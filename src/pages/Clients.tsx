@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +46,7 @@ const Clients = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [sortField, setSortField] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
@@ -56,6 +56,7 @@ const Clients = () => {
   const [newClientGroup, setNewClientGroup] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
+  const [noteContent, setNoteContent] = useState("");
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -64,6 +65,17 @@ const Clients = () => {
     email: "",
     phone: "",
     status: "Ativo",
+    group_id: "",
+    notes: ""
+  });
+  
+  // Edited client state (for edit mode)
+  const [editedClient, setEditedClient] = useState({
+    name: "",
+    company: "",
+    email: "",
+    phone: "",
+    status: "",
     group_id: "",
     notes: ""
   });
@@ -168,7 +180,87 @@ const Clients = () => {
   const handleViewClient = (client: any) => {
     setSelectedClient(client);
     setNewClientGroup(client.group_id || "");
+    setNoteContent(client.notes || "");
+    setIsEditMode(false);
     setIsViewDialogOpen(true);
+  };
+  
+  const handleEditClient = () => {
+    if (selectedClient) {
+      setEditedClient({
+        name: selectedClient.name,
+        company: selectedClient.company || "",
+        email: selectedClient.email || "",
+        phone: selectedClient.phone || "",
+        status: selectedClient.status,
+        group_id: selectedClient.group_id || "",
+        notes: selectedClient.notes || ""
+      });
+      setIsEditMode(true);
+    }
+  };
+  
+  const handleCancelEdit = () => {
+    setIsEditMode(false);
+  };
+  
+  const handleSaveEdit = async () => {
+    if (selectedClient) {
+      try {
+        const { error } = await supabase
+          .from("clients")
+          .update({
+            name: editedClient.name,
+            company: editedClient.company,
+            email: editedClient.email,
+            phone: editedClient.phone,
+            status: editedClient.status,
+            group_id: editedClient.group_id || null,
+            notes: editedClient.notes
+          })
+          .eq("id", selectedClient.id);
+          
+        if (error) throw error;
+        
+        // Atualizar o cliente na lista local
+        const updatedClients = clients.map(client => {
+          if (client.id === selectedClient.id) {
+            const updatedGroupName = clientGroups.find(g => g.id === editedClient.group_id)?.name || "";
+            return {
+              ...client,
+              name: editedClient.name,
+              company: editedClient.company,
+              email: editedClient.email,
+              phone: editedClient.phone,
+              status: editedClient.status,
+              group_id: editedClient.group_id,
+              group: updatedGroupName,
+              notes: editedClient.notes
+            };
+          }
+          return client;
+        });
+        
+        setClients(updatedClients);
+        setSelectedClient({
+          ...selectedClient,
+          name: editedClient.name,
+          company: editedClient.company,
+          email: editedClient.email,
+          phone: editedClient.phone,
+          status: editedClient.status,
+          group_id: editedClient.group_id,
+          group: clientGroups.find(g => g.id === editedClient.group_id)?.name || "",
+          notes: editedClient.notes
+        });
+        
+        setIsEditMode(false);
+        toast.success("Cliente atualizado com sucesso!");
+      } catch (error: any) {
+        console.error("Erro ao atualizar cliente:", error);
+        toast.error(`Erro ao atualizar cliente: ${error.message}`);
+      }
+    }
   };
 
   // Handle input change for new client form
@@ -179,11 +271,28 @@ const Clients = () => {
       [id]: value
     });
   };
+  
+  // Handle input change for edit client form
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { id, value } = e.target;
+    setEditedClient({
+      ...editedClient,
+      [id]: value
+    });
+  };
 
   // Handle select change for select components
   const handleSelectChange = (field: string, value: string) => {
     setNewClient({
       ...newClient,
+      [field]: value
+    });
+  };
+  
+  // Handle select change for edit form
+  const handleEditSelectChange = (field: string, value: string) => {
+    setEditedClient({
+      ...editedClient,
       [field]: value
     });
   };
@@ -275,14 +384,66 @@ const Clients = () => {
         
         setClients(updatedClients);
         
+        // Atualizar o cliente selecionado
+        setSelectedClient({
+          ...selectedClient, 
+          group_id: newClientGroup,
+          group: clientGroups.find(group => group.id === newClientGroup)?.name || ""
+        });
+        
         const updatedGroupName = clientGroups.find(group => group.id === newClientGroup)?.name || "";
         toast.success(`Grupo do cliente ${selectedClient.name} alterado para ${updatedGroupName}`);
-        setIsViewDialogOpen(false);
       } catch (error: any) {
         console.error("Erro ao atualizar grupo do cliente:", error);
         toast.error(`Erro ao atualizar grupo: ${error.message}`);
       }
     }
+  };
+  
+  const handleSaveNote = async () => {
+    if (!selectedClient) return;
+    
+    try {
+      const { error } = await supabase
+        .from("clients")
+        .update({ notes: noteContent })
+        .eq("id", selectedClient.id);
+      
+      if (error) throw error;
+      
+      // Atualizar o cliente na lista local
+      const updatedClients = clients.map(client => {
+        if (client.id === selectedClient.id) {
+          return { ...client, notes: noteContent };
+        }
+        return client;
+      });
+      
+      setClients(updatedClients);
+      
+      // Atualizar o cliente selecionado
+      setSelectedClient({
+        ...selectedClient,
+        notes: noteContent
+      });
+      
+      toast.success("Anotação salva com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao salvar anotação:", error);
+      toast.error(`Erro ao salvar anotação: ${error.message}`);
+    }
+  };
+  
+  // Função para criar uma nova tarefa para o cliente
+  const handleAddTask = async () => {
+    if (!selectedClient) return;
+    
+    // Aqui seria implementada a lógica para adicionar uma tarefa
+    // que se integra com o sistema de tarefas do projeto
+    toast.info("Funcionalidade de adicionar tarefa será implementada em breve.");
+    
+    // Na implementação real, essa tarefa deveria ser adicionada à tabela de tarefas
+    // e relacionada ao cliente atual
   };
 
   const SortIcon = ({ field }: { field: string }) => {
@@ -378,8 +539,145 @@ const Clients = () => {
     return pages;
   };
 
+  const renderClientDetails = () => {
+    if (!selectedClient) return null;
+    
+    if (isEditMode) {
+      // Modo de edição - exibir formulário
+      return (
+        <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }}>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Nome</Label>
+              <Input 
+                id="name" 
+                value={editedClient.name}
+                onChange={handleEditInputChange}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="company">Empresa</Label>
+              <Input 
+                id="company" 
+                value={editedClient.company}
+                onChange={handleEditInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">E-mail</Label>
+              <Input 
+                id="email"
+                type="email"
+                value={editedClient.email}
+                onChange={handleEditInputChange}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="phone">Telefone</Label>
+              <Input 
+                id="phone"
+                value={editedClient.phone}
+                onChange={handleEditInputChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="status">Status</Label>
+              <Select
+                value={editedClient.status}
+                onValueChange={(value) => handleEditSelectChange("status", value)}
+              >
+                <SelectTrigger id="status">
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Ativo">Ativo</SelectItem>
+                  <SelectItem value="Inativo">Inativo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="group_id">Grupo</Label>
+              <Select
+                value={editedClient.group_id}
+                onValueChange={(value) => handleEditSelectChange("group_id", value)}
+              >
+                <SelectTrigger id="group_id">
+                  <SelectValue placeholder="Selecione um grupo" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clientGroups.map(group => (
+                    <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="notes">Observações</Label>
+            <Textarea
+              id="notes"
+              value={editedClient.notes}
+              onChange={handleEditInputChange}
+              placeholder="Adicione informações relevantes sobre este cliente"
+            />
+          </div>
+        </form>
+      );
+    } else {
+      // Modo de visualização - exibir detalhes
+      return (
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <Label>E-mail</Label>
+            <p className="text-sm">{selectedClient.email}</p>
+          </div>
+          <div className="space-y-1">
+            <Label>Telefone</Label>
+            <p className="text-sm">{selectedClient.phone}</p>
+          </div>
+          <div className="space-y-1">
+            <Label>Empresa</Label>
+            <p className="text-sm">{selectedClient.company}</p>
+          </div>
+          <div className="space-y-1">
+            <Label>Status</Label>
+            <p className="text-sm">
+              <Badge variant={selectedClient.status === "Ativo" ? "default" : (selectedClient.status === "Inativo" ? "destructive" : "outline")}>
+                {selectedClient.status}
+              </Badge>
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label>Grupo</Label>
+            <div className="flex items-center gap-2">
+              <p className="text-sm">{selectedClient.group || "Nenhum grupo atribuído"}</p>
+              <form onSubmit={handleUpdateGroup} className="flex items-center gap-2">
+                <Select value={newClientGroup} onValueChange={setNewClientGroup}>
+                  <SelectTrigger className="h-8 w-[180px]">
+                    <SelectValue placeholder="Alterar grupo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clientGroups.map(group => (
+                      <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button type="submit" size="sm" disabled={!newClientGroup}>
+                  Atribuir
+                </Button>
+              </form>
+            </div>
+          </div>
+        </div>
+      );
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Título e botões */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-4 sm:space-y-0">
         <h1 className="text-2xl font-bold">Clientes</h1>
         <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
@@ -523,49 +821,7 @@ const Clients = () => {
                     <TabsTrigger value="notes">Anotações</TabsTrigger>
                   </TabsList>
                   <TabsContent value="details">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <Label>E-mail</Label>
-                        <p className="text-sm">{selectedClient.email}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label>Telefone</Label>
-                        <p className="text-sm">{selectedClient.phone}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label>Empresa</Label>
-                        <p className="text-sm">{selectedClient.company}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label>Status</Label>
-                        <p className="text-sm">
-                          <Badge variant={selectedClient.status === "Ativo" ? "default" : (selectedClient.status === "Inativo" ? "destructive" : "outline")}>
-                            {selectedClient.status}
-                          </Badge>
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label>Grupo</Label>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm">{selectedClient.group || "Nenhum grupo atribuído"}</p>
-                          <form onSubmit={handleUpdateGroup} className="flex items-center gap-2">
-                            <Select value={newClientGroup} onValueChange={setNewClientGroup}>
-                              <SelectTrigger className="h-8 w-[180px]">
-                                <SelectValue placeholder="Alterar grupo" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {clientGroups.map(group => (
-                                  <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <Button type="submit" size="sm" disabled={!newClientGroup}>
-                              Atribuir
-                            </Button>
-                          </form>
-                        </div>
-                      </div>
-                    </div>
+                    {renderClientDetails()}
                   </TabsContent>
                   <TabsContent value="opportunities">
                     <p className="text-sm text-muted-foreground text-center py-6">
@@ -580,21 +836,41 @@ const Clients = () => {
                     <p className="text-sm text-muted-foreground text-center py-6">
                       Nenhuma tarefa encontrada para este cliente.
                     </p>
-                    <Button className="w-full">
+                    <Button className="w-full" onClick={handleAddTask}>
                       <Plus className="mr-2 h-4 w-4" />
                       Adicionar Tarefa
                     </Button>
                   </TabsContent>
                   <TabsContent value="notes">
-                    <Textarea className="mb-4" placeholder="Adicione uma nota sobre este cliente..." />
-                    <Button>Salvar Nota</Button>
+                    <Textarea 
+                      className="mb-4" 
+                      placeholder="Adicione uma nota sobre este cliente..." 
+                      value={noteContent}
+                      onChange={(e) => setNoteContent(e.target.value)}
+                    />
+                    <Button onClick={handleSaveNote}>Salvar Nota</Button>
                   </TabsContent>
                 </Tabs>
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
-                    Fechar
-                  </Button>
-                  <Button>Editar Cliente</Button>
+                  {isEditMode ? (
+                    <>
+                      <Button variant="outline" onClick={handleCancelEdit}>
+                        Cancelar
+                      </Button>
+                      <Button onClick={handleSaveEdit}>
+                        Salvar Alterações
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
+                        Fechar
+                      </Button>
+                      <Button onClick={handleEditClient}>
+                        Editar Cliente
+                      </Button>
+                    </>
+                  )}
                 </DialogFooter>
               </DialogContent>
             )}
@@ -733,6 +1009,15 @@ const Clients = () => {
                           <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Ações</DropdownMenuLabel>
                             <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedClient(client);
+                              handleEditClient();
+                              setIsViewDialogOpen(true);
+                            }}>
+                              <FileText className="h-4 w-4 mr-2" />
+                              Editar Cliente
+                            </DropdownMenuItem>
                             <DropdownMenuItem>
                               <UserPlus className="h-4 w-4 mr-2" />
                               Adicionar Oportunidade
