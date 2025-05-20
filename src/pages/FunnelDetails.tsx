@@ -43,6 +43,17 @@ type Deal = {
   funnelId: string;
 };
 
+type Client = {
+  id: string;
+  name: string;
+  company?: string;
+  email?: string;
+  phone?: string;
+  status?: string;
+  notes?: string;
+  createdAt: string;
+};
+
 type Rule = {
   id: string;
   type: "date" | "status" | "source";
@@ -101,12 +112,47 @@ const initialDeals: Deal[] = [
   }
 ];
 
+// Mock de dados para clientes
+const mockClients: Client[] = [
+  {
+    id: "C001",
+    name: "ABC Tecnologia",
+    company: "ABC Tecnologia Ltda",
+    email: "contato@abctecnologia.com",
+    phone: "(11) 98765-4321",
+    status: "Ativo",
+    notes: "Cliente desde 2022",
+    createdAt: "10/01/2022"
+  },
+  {
+    id: "C002",
+    name: "Construtora XYZ",
+    company: "XYZ Construções S.A.",
+    email: "contato@xyzconstr.com",
+    phone: "(11) 91234-5678",
+    status: "Ativo",
+    notes: "Grande potencial para projetos",
+    createdAt: "05/03/2022"
+  },
+  {
+    id: "C003",
+    name: "Lima & Associados",
+    company: "Lima & Associados Advocacia",
+    email: "contato@limaadv.com",
+    phone: "(11) 97777-8888",
+    status: "Ativo",
+    notes: "Escritório de advocacia",
+    createdAt: "15/06/2022"
+  }
+];
+
 const FunnelDetails: React.FC = () => {
   const { funnelId } = useParams<{ funnelId: string }>();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("kanban");
   const [funnel, setFunnel] = useState<SalesFunnel | null>(null);
   const [deals, setDeals] = useState<Deal[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
@@ -133,6 +179,9 @@ const FunnelDetails: React.FC = () => {
       if (funnelId === "funnel-1") {
         setFunnel(initialFunnel);
         setDeals(initialDeals);
+        
+        // Se for um funil de clientes, carregar os clientes
+        setClients(mockClients);
       }
       
       // Carregar status de leads do Supabase
@@ -193,6 +242,162 @@ const FunnelDetails: React.FC = () => {
       console.log("Aplicando regras automaticamente:", rules);
     }
   }, [rules, funnel?.type]);
+
+  const renderContent = () => {
+    if (funnel?.type === "clients") {
+      return (
+        <TabsContent value="kanban" className="space-y-6">
+          {/* Visão Kanban para Clientes */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {funnel.stages.slice(0, 3).map((stage) => (
+              <Card key={stage.id}>
+                <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
+                  <div className="flex justify-between items-center">
+                    <CardTitle className="text-sm">{stage.name}</CardTitle>
+                    <Badge variant="outline" className="text-white border-white">
+                      {stage.id === "stage-1" ? clients.length : 0}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-2 space-y-2">
+                  {stage.id === "stage-1" ? (
+                    clients.map(client => (
+                      <Card key={client.id} className="cursor-pointer hover:shadow-md">
+                        <CardContent className="p-3">
+                          <p className="font-medium">{client.name}</p>
+                          <div className="flex justify-between items-center text-xs text-muted-foreground mt-2">
+                            <span>{client.company || "Empresa"}</span>
+                            <span>{client.status}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))
+                  ) : (
+                    <p className="text-center text-sm text-muted-foreground py-4">
+                      Nenhum cliente neste estágio
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+      );
+    } else {
+      return (
+        <TabsContent value="kanban" className="space-y-6">
+          {/* Visão Kanban para Negócios */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {funnel.stages.slice(0, 3).map((stage) => (
+              <Card key={stage.id}>
+                <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
+                  <div className="flex justify-between items-center">
+                    <CardTitle className="text-sm">{stage.name}</CardTitle>
+                    <Badge variant="outline" className="text-white border-white">
+                      {deals.filter(d => d.stage === stage.id).length}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-2 space-y-2">
+                  {deals
+                    .filter(deal => deal.stage === stage.id)
+                    .map(deal => (
+                      <Card key={deal.id} className="cursor-pointer hover:shadow-md">
+                        <CardContent className="p-3">
+                          <p className="font-medium">{deal.title}</p>
+                          <div className="flex justify-between items-center text-xs text-muted-foreground mt-2">
+                            <span>{deal.client}</span>
+                            <span>{deal.amount}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+      );
+    }
+  };
+
+  const renderListContent = () => {
+    if (funnel?.type === "clients") {
+      return (
+        <TabsContent value="list" className="space-y-4">
+          <Card>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="py-3 px-4 text-left font-medium">Nome</th>
+                      <th className="py-3 px-4 text-left font-medium">Empresa</th>
+                      <th className="py-3 px-4 text-left font-medium">Email</th>
+                      <th className="py-3 px-4 text-left font-medium">Telefone</th>
+                      <th className="py-3 px-4 text-left font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clients.map((client) => (
+                      <tr key={client.id} className="border-b hover:bg-muted/50 cursor-pointer">
+                        <td className="py-3 px-4">{client.name}</td>
+                        <td className="py-3 px-4">{client.company || "-"}</td>
+                        <td className="py-3 px-4">{client.email || "-"}</td>
+                        <td className="py-3 px-4">{client.phone || "-"}</td>
+                        <td className="py-3 px-4">{client.status || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      );
+    } else {
+      return (
+        <TabsContent value="list" className="space-y-4">
+          <Card>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="py-3 px-4 text-left font-medium">Título</th>
+                      <th className="py-3 px-4 text-left font-medium">Cliente</th>
+                      <th className="py-3 px-4 text-left font-medium">Valor</th>
+                      <th className="py-3 px-4 text-left font-medium">Estágio</th>
+                      <th className="py-3 px-4 text-left font-medium">Data</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deals.map((deal) => {
+                      const stage = funnel.stages.find(s => s.id === deal.stage);
+                      return (
+                        <tr key={deal.id} className="border-b hover:bg-muted/50 cursor-pointer">
+                          <td className="py-3 px-4">{deal.title}</td>
+                          <td className="py-3 px-4">{deal.client}</td>
+                          <td className="py-3 px-4">{deal.amount}</td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full ${stage?.color}`} />
+                              {stage?.name}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">{deal.dueDate}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      );
+    }
+  };
 
   if (!funnel) {
     return (
@@ -262,7 +467,7 @@ const FunnelDetails: React.FC = () => {
           
           <Button>
             <Plus className="h-4 w-4 mr-2" />
-            Adicionar Negócio
+            {funnel.type === "clients" ? "Adicionar Cliente" : "Adicionar Negócio"}
           </Button>
         </div>
       </div>
@@ -276,78 +481,7 @@ const FunnelDetails: React.FC = () => {
           <TabsTrigger value="list">Lista</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="kanban" className="space-y-6">
-          {/* Visão Kanban */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {funnel.stages.slice(0, 3).map((stage) => (
-              <Card key={stage.id}>
-                <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-sm">{stage.name}</CardTitle>
-                    <Badge variant="outline" className="text-white border-white">
-                      {deals.filter(d => d.stage === stage.id).length}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-2 space-y-2">
-                  {deals
-                    .filter(deal => deal.stage === stage.id)
-                    .map(deal => (
-                      <Card key={deal.id} className="cursor-pointer hover:shadow-md">
-                        <CardContent className="p-3">
-                          <p className="font-medium">{deal.title}</p>
-                          <div className="flex justify-between items-center text-xs text-muted-foreground mt-2">
-                            <span>{deal.client}</span>
-                            <span>{deal.amount}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="list" className="space-y-4">
-          {/* Visão de Lista */}
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="py-3 px-4 text-left font-medium">Título</th>
-                      <th className="py-3 px-4 text-left font-medium">Cliente</th>
-                      <th className="py-3 px-4 text-left font-medium">Valor</th>
-                      <th className="py-3 px-4 text-left font-medium">Estágio</th>
-                      <th className="py-3 px-4 text-left font-medium">Data</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {deals.map((deal) => {
-                      const stage = funnel.stages.find(s => s.id === deal.stage);
-                      return (
-                        <tr key={deal.id} className="border-b hover:bg-muted/50 cursor-pointer">
-                          <td className="py-3 px-4">{deal.title}</td>
-                          <td className="py-3 px-4">{deal.client}</td>
-                          <td className="py-3 px-4">{deal.amount}</td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-2 h-2 rounded-full ${stage?.color}`} />
-                              {stage?.name}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4">{deal.dueDate}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {activeTab === "kanban" ? renderContent() : renderListContent()}
       </Tabs>
     </div>
   );
