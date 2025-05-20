@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,77 +8,140 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import QRCodeScanner from "@/components/whatsapp/QRCodeScanner";
 import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
-import { supabase } from "@/integrations/supabase/client";
+import { whatsappService } from "@/services/whatsapp";
 
 export const WhatsAppSection = () => {
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const { user, profile, updateProfile } = useAuth();
   
   // Check current connection status on component mount
-  React.useEffect(() => {
-    if (profile?.whatsapp_connected) {
-      setConnectionStatus("connected");
-    }
-  }, [profile]);
-  
-  const handleConnect = async () => {
-    setConnectionStatus("connecting");
-    toast.info("Iniciando conexão", {
-      description: "Por favor, aguarde enquanto geramos o QR code...",
-    });
-    
-    // In a real implementation, this would call a backend API that uses Baileys
-    // For now, we'll simulate the QR code generation
-    setTimeout(() => {
-      setQrCode("https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=WhatsAppConnectionSimulated");
-      toast.info("QR Code gerado", {
-        description: "Escaneie o QR code com o seu WhatsApp",
-      });
-    }, 2000);
-  };
-  
-  const handleDisconnect = async () => {
-    setConnectionStatus("disconnected");
-    setQrCode(null);
-    
-    // Update user profile to indicate WhatsApp is disconnected
-    if (user) {
+  useEffect(() => {
+    const checkConnectionStatus = async () => {
       try {
-        await updateProfile({ whatsapp_connected: false });
-      } catch (error) {
-        console.error("Error updating WhatsApp connection status:", error);
-      }
-    }
-    
-    toast.success("Desconectado", {
-      description: "Conexão WhatsApp encerrada com sucesso",
-    });
-  };
-
-  // Simulate successful connection after QR code is shown
-  React.useEffect(() => {
-    if (qrCode && connectionStatus === "connecting") {
-      const timer = setTimeout(async () => {
-        setConnectionStatus("connected");
+        if (!user) return;
         
-        // Update user profile to indicate WhatsApp is connected
-        if (user) {
-          try {
-            await updateProfile({ whatsapp_connected: true });
-          } catch (error) {
-            console.error("Error updating WhatsApp connection status:", error);
-          }
+        // Check if profile has whatsapp_connected set to true
+        if (profile?.whatsapp_connected) {
+          setConnectionStatus("connected");
+          return;
         }
         
+        // Double check with the API
+        const status = await whatsappService.getStatus();
+        if (status.connected) {
+          setConnectionStatus("connected");
+          // Update local profile state if API says connected but profile doesn't reflect it
+          if (!profile?.whatsapp_connected) {
+            await updateProfile({ whatsapp_connected: true });
+          }
+        } else {
+          setConnectionStatus("disconnected");
+        }
+      } catch (error) {
+        console.error("Error checking connection status:", error);
+        toast.error("Erro ao verificar status da conexão", { 
+          description: "Não foi possível verificar o status da conexão WhatsApp." 
+        });
+      }
+    };
+    
+    checkConnectionStatus();
+  }, [user, profile, updateProfile]);
+  
+  const handleConnect = async () => {
+    try {
+      setIsLoading(true);
+      setConnectionStatus("connecting");
+      toast.info("Iniciando conexão", {
+        description: "Por favor, aguarde enquanto geramos o QR code...",
+      });
+      
+      const result = await whatsappService.connect();
+      
+      if (result.status === "connected") {
+        setConnectionStatus("connected");
+        setQrCode(null);
+        await updateProfile({ whatsapp_connected: true });
         toast.success("Conectado com sucesso!", {
           description: "Sua conta WhatsApp foi conectada",
         });
-      }, 10000); // Simulate 10 second connection time
-      
-      return () => clearTimeout(timer);
+      } else if (result.qrCode) {
+        setQrCode(result.qrCode);
+        toast.info("QR Code gerado", {
+          description: "Escaneie o QR code com o seu WhatsApp",
+        });
+      } else {
+        throw new Error("Falha ao gerar QR code");
+      }
+    } catch (error) {
+      console.error("Error connecting WhatsApp:", error);
+      toast.error("Erro na conexão", { 
+        description: "Ocorreu um erro ao tentar conectar o WhatsApp." 
+      });
+      setConnectionStatus("disconnected");
+    } finally {
+      setIsLoading(false);
     }
-  }, [qrCode, connectionStatus, user, updateProfile]);
+  };
+  
+  const handleDisconnect = async () => {
+    try {
+      setIsLoading(true);
+      
+      await whatsappService.disconnect();
+      setConnectionStatus("disconnected");
+      setQrCode(null);
+      
+      // Update user profile to indicate WhatsApp is disconnected
+      if (user) {
+        await updateProfile({ whatsapp_connected: false });
+      }
+      
+      toast.success("Desconectado", {
+        description: "Conexão WhatsApp encerrada com sucesso",
+      });
+    } catch (error) {
+      console.error("Error disconnecting WhatsApp:", error);
+      toast.error("Erro ao desconectar", {
+        description: "Ocorreu um erro ao tentar desconectar o WhatsApp."
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Poll for status changes when QR code is shown
+  useEffect(() => {
+    let intervalId: number;
+    
+    if (connectionStatus === "connecting" && qrCode) {
+      intervalId = window.setInterval(async () => {
+        try {
+          const status = await whatsappService.getStatus();
+          
+          if (status.connected || status.status === "connected") {
+            setConnectionStatus("connected");
+            setQrCode(null);
+            await updateProfile({ whatsapp_connected: true });
+            toast.success("Conectado com sucesso!", {
+              description: "Sua conta WhatsApp foi conectada",
+            });
+            clearInterval(intervalId);
+          }
+        } catch (error) {
+          console.error("Error polling status:", error);
+        }
+      }, 5000); // Check every 5 seconds
+    }
+    
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [connectionStatus, qrCode, updateProfile]);
 
   return (
     <div className="space-y-6">
@@ -102,8 +165,8 @@ export const WhatsAppSection = () => {
                 <p className="text-center text-muted-foreground mb-4">
                   Clique no botão abaixo para gerar um QR code e conectar o seu WhatsApp
                 </p>
-                <Button onClick={handleConnect}>
-                  Conectar WhatsApp
+                <Button onClick={handleConnect} disabled={isLoading}>
+                  {isLoading ? "Conectando..." : "Conectar WhatsApp"}
                 </Button>
               </div>
             ) : (

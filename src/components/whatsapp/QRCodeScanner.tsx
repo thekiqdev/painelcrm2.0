@@ -26,7 +26,11 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
       {qrCode && connectionStatus === "connecting" && (
         <div className="flex flex-col items-center gap-6">
           <div className="border-8 border-white rounded-lg shadow-lg">
-            <img src={qrCode} alt="QR Code para conexão WhatsApp" className="w-[250px] h-[250px]" />
+            <img 
+              src={`data:image/png;base64,${qrCode}`} 
+              alt="QR Code para conexão WhatsApp" 
+              className="w-[250px] h-[250px]" 
+            />
           </div>
           <div className="text-center max-w-sm">
             <h3 className="font-medium mb-2">Escaneie o código QR</h3>
