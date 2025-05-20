@@ -1,15 +1,14 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { KanbanSquare, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useNavigate } from "react-router-dom";
+import FunnelsList from "@/components/funnel/FunnelsList";
 
 type Deal = {
   id: string;
@@ -190,7 +189,7 @@ const Funnel = () => {
         <div className="flex flex-col sm:flex-row gap-2">
           <Dialog>
             <DialogTrigger asChild>
-              <Button>
+              <Button data-set-new-funnel-dialog>
                 <Plus className="mr-2 h-4 w-4" />
                 Novo Funil
               </Button>
@@ -276,85 +275,6 @@ const Funnel = () => {
           />
         </TabsContent>
       </Tabs>
-    </div>
-  );
-};
-
-// Componente separado para lista de funis
-interface FunnelsListProps {
-  funnels: SalesFunnel[];
-  activeFunnelId: string;
-  setActiveFunnelId: (id: string) => void;
-  handleViewFunnelDetails: (id: string) => void;
-  filteredDeals: Deal[];
-}
-
-const FunnelsList = ({ 
-  funnels, 
-  activeFunnelId, 
-  setActiveFunnelId, 
-  handleViewFunnelDetails,
-  filteredDeals
-}: FunnelsListProps) => {
-  if (funnels.length === 0) {
-    return (
-      <div className="bg-muted rounded-md flex items-center justify-center p-10">
-        <div className="text-center max-w-md">
-          <h2 className="text-xl font-medium mb-2">Nenhum funil encontrado</h2>
-          <p className="text-muted-foreground mb-4">
-            Você ainda não tem nenhum funil deste tipo. Crie um funil para começar a organizar seus negócios.
-          </p>
-          <Button onClick={() => document.querySelector<HTMLButtonElement>('[data-set-new-funnel-dialog]')?.click()}>
-            <Plus className="mr-2 h-4 w-4" />
-            Criar Novo Funil
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-muted rounded-md p-4">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
-        <h2 className="text-lg font-semibold">Selecione um funil</h2>
-        <span className="text-sm text-muted-foreground">{funnels.length} funis disponíveis</span>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {funnels.map((funnel) => {
-          return (
-            <Card 
-              key={funnel.id} 
-              className={`cursor-pointer transition-all ${activeFunnelId === funnel.id ? 'border-primary shadow-md' : 'hover:shadow-md'}`}
-              onClick={() => {
-                setActiveFunnelId(funnel.id);
-                handleViewFunnelDetails(funnel.id);
-              }}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="text-md">{funnel.name}</CardTitle>
-                    {funnel.isDefault && <Badge className="mt-1">Padrão</Badge>}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground line-clamp-2">{funnel.description}</p>
-                <div className="mt-3">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Estágios: {funnel.stages.length}</span>
-                    <span>Negócios: {filteredDeals.length}</span>
-                  </div>
-                </div>
-                <div className="flex justify-between items-center mt-3 text-xs text-muted-foreground">
-                  <span>Criado em {funnel.createdAt}</span>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
     </div>
   );
 };

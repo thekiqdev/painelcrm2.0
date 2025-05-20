@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ArrowLeft, ChevronRight, Plus, Settings } from "lucide-react";
 import RuleForm from "@/components/funnel/RuleForm";
 import { supabase } from "@/integrations/supabase/client";
@@ -108,6 +109,7 @@ const FunnelDetails: React.FC = () => {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
 
   // Opções de fontes para leads (poderia vir do banco de dados)
   const sourcesOptions = [
@@ -160,6 +162,16 @@ const FunnelDetails: React.FC = () => {
       };
 
       fetchLeadStatuses();
+      
+      // Simular carregamento de regras (no futuro isso viria do banco de dados)
+      setRules([
+        {
+          id: "rule-1",
+          type: "status",
+          operator: "equals",
+          value: "Novo"
+        }
+      ]);
     }
   }, [funnelId]);
 
@@ -172,6 +184,15 @@ const FunnelDetails: React.FC = () => {
     setRules(rules.filter(rule => rule.id !== id));
     toast.success("Regra removida com sucesso!");
   };
+
+  // Aplicar regras automaticamente (simulação)
+  useEffect(() => {
+    if (rules.length > 0 && funnel?.type === "leads") {
+      toast.info("Regras aplicadas automaticamente");
+      // Aqui seria a lógica para aplicar as regras nos leads
+      console.log("Aplicando regras automaticamente:", rules);
+    }
+  }, [rules, funnel?.type]);
 
   if (!funnel) {
     return (
@@ -198,10 +219,47 @@ const FunnelDetails: React.FC = () => {
         </div>
 
         <div className="flex gap-2">
-          <Button variant="outline">
-            <Settings className="h-4 w-4 mr-2" />
-            Configurações
-          </Button>
+          <Dialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Settings className="h-4 w-4 mr-2" />
+                Configurações
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>Configurações do Funil</DialogTitle>
+              </DialogHeader>
+              <Tabs defaultValue="general" className="mt-4">
+                <TabsList>
+                  <TabsTrigger value="general">Geral</TabsTrigger>
+                  <TabsTrigger value="stages">Estágios</TabsTrigger>
+                  <TabsTrigger value="rules">Regras</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="general" className="space-y-4 pt-4">
+                  <h3 className="text-lg font-medium">Informações Gerais</h3>
+                  <p>Configure as informações básicas do funil</p>
+                </TabsContent>
+                
+                <TabsContent value="stages" className="space-y-4 pt-4">
+                  <h3 className="text-lg font-medium">Estágios do Funil</h3>
+                  <p>Configure os estágios do seu funil</p>
+                </TabsContent>
+                
+                <TabsContent value="rules" className="pt-4">
+                  <RuleForm 
+                    leadStatuses={leadStatuses}
+                    sourcesOptions={sourcesOptions}
+                    onSaveRule={handleSaveRule}
+                    existingRules={rules}
+                    onRemoveRule={handleRemoveRule}
+                  />
+                </TabsContent>
+              </Tabs>
+            </DialogContent>
+          </Dialog>
+          
           <Button>
             <Plus className="h-4 w-4 mr-2" />
             Adicionar Negócio
@@ -216,7 +274,6 @@ const FunnelDetails: React.FC = () => {
         <TabsList>
           <TabsTrigger value="kanban">Kanban</TabsTrigger>
           <TabsTrigger value="list">Lista</TabsTrigger>
-          <TabsTrigger value="rules">Regras</TabsTrigger>
         </TabsList>
 
         <TabsContent value="kanban" className="space-y-6">
@@ -290,17 +347,6 @@ const FunnelDetails: React.FC = () => {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="rules">
-          {/* Visão de Regras */}
-          <RuleForm 
-            leadStatuses={leadStatuses}
-            sourcesOptions={sourcesOptions}
-            onSaveRule={handleSaveRule}
-            existingRules={rules}
-            onRemoveRule={handleRemoveRule}
-          />
         </TabsContent>
       </Tabs>
     </div>

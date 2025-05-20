@@ -23,8 +23,8 @@ const LeadHeader: React.FC<LeadHeaderProps> = ({
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Buscar leads..."
-            className="pl-8 w-full sm:w-[250px]"
+            placeholder="Buscar leads, empresas, fontes..."
+            className="pl-8 w-full sm:w-[280px]"
             value={searchTerm}
             onChange={onSearchChange}
           />
