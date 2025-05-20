@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,12 +34,27 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter } from "lucide-react";
+import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, CalendarIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import * as z from "zod";
+import { format } from "date-fns";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
+
+// Schema de validação para as tarefas
+const taskSchema = z.object({
+  title: z.string().min(3, "Título deve ter pelo menos 3 caracteres"),
+  description: z.string().optional(),
+  due_date: z.date().optional(),
+  status: z.string().default("Pendente"),
+});
 
 const Clients = () => {
   const [clients, setClients] = useState<any[]>([]);
@@ -57,6 +73,9 @@ const Clients = () => {
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
   const [noteContent, setNoteContent] = useState("");
+  const [clientTasks, setClientTasks] = useState<any[]>([]);
+  const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
+  const [tabSelected, setTabSelected] = useState("details");
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -78,6 +97,16 @@ const Clients = () => {
     status: "",
     group_id: "",
     notes: ""
+  });
+
+  // Form para adicionar nova tarefa
+  const taskForm = useForm<z.infer<typeof taskSchema>>({
+    resolver: zodResolver(taskSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      status: "Pendente",
+    },
   });
 
   // Carregar clientes e grupos do Supabase
@@ -128,6 +157,30 @@ const Clients = () => {
 
     fetchData();
   }, []);
+
+  // Carregar tarefas do cliente selecionado
+  useEffect(() => {
+    const fetchClientTasks = async () => {
+      if (!selectedClient) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from("client_tasks")
+          .select("*")
+          .eq("client_id", selectedClient.id)
+          .order("due_date", { ascending: true });
+        
+        if (error) throw error;
+        
+        setClientTasks(data || []);
+      } catch (error) {
+        console.error("Erro ao carregar tarefas:", error);
+        toast.error("Erro ao carregar tarefas do cliente.");
+      }
+    };
+    
+    fetchClientTasks();
+  }, [selectedClient]);
 
   const handleSort = (field: string) => {
     if (field === sortField) {
@@ -183,6 +236,7 @@ const Clients = () => {
     setNoteContent(client.notes || "");
     setIsEditMode(false);
     setIsViewDialogOpen(true);
+    setTabSelected("details");
   };
   
   const handleEditClient = () => {
@@ -433,17 +487,81 @@ const Clients = () => {
       toast.error(`Erro ao salvar anotação: ${error.message}`);
     }
   };
-  
-  // Função para criar uma nova tarefa para o cliente
-  const handleAddTask = async () => {
+
+  // Adicionar tarefa para o cliente
+  const handleAddTask = async (values: z.infer<typeof taskSchema>) => {
     if (!selectedClient) return;
     
-    // Aqui seria implementada a lógica para adicionar uma tarefa
-    // que se integra com o sistema de tarefas do projeto
-    toast.info("Funcionalidade de adicionar tarefa será implementada em breve.");
-    
-    // Na implementação real, essa tarefa deveria ser adicionada à tabela de tarefas
-    // e relacionada ao cliente atual
+    try {
+      const { data, error } = await supabase
+        .from("client_tasks")
+        .insert({
+          client_id: selectedClient.id,
+          title: values.title,
+          description: values.description || "",
+          due_date: values.due_date,
+          status: values.status
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      // Adicionar a nova tarefa à lista
+      setClientTasks([...clientTasks, data]);
+      
+      toast.success("Tarefa adicionada com sucesso!");
+      setIsAddTaskDialogOpen(false);
+      taskForm.reset();
+    } catch (error: any) {
+      console.error("Erro ao adicionar tarefa:", error);
+      toast.error(`Erro ao adicionar tarefa: ${error.message}`);
+    }
+  };
+
+  // Atualizar status da tarefa
+  const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
+    try {
+      const { error } = await supabase
+        .from("client_tasks")
+        .update({ status: newStatus })
+        .eq("id", taskId);
+      
+      if (error) throw error;
+      
+      // Atualizar tarefa na lista local
+      const updatedTasks = clientTasks.map(task => {
+        if (task.id === taskId) {
+          return { ...task, status: newStatus };
+        }
+        return task;
+      });
+      
+      setClientTasks(updatedTasks);
+      toast.success("Status da tarefa atualizado!");
+    } catch (error: any) {
+      console.error("Erro ao atualizar status da tarefa:", error);
+      toast.error(`Erro ao atualizar tarefa: ${error.message}`);
+    }
+  };
+
+  // Excluir tarefa
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      const { error } = await supabase
+        .from("client_tasks")
+        .delete()
+        .eq("id", taskId);
+      
+      if (error) throw error;
+      
+      // Remover tarefa da lista local
+      setClientTasks(clientTasks.filter(task => task.id !== taskId));
+      toast.success("Tarefa excluída com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao excluir tarefa:", error);
+      toast.error(`Erro ao excluir tarefa: ${error.message}`);
+    }
   };
 
   const SortIcon = ({ field }: { field: string }) => {
@@ -675,6 +793,78 @@ const Clients = () => {
     }
   };
 
+  const renderTasksTab = () => {
+    if (clientTasks.length === 0) {
+      return (
+        <div className="text-center py-6">
+          <p className="text-sm text-muted-foreground mb-4">
+            Nenhuma tarefa encontrada para este cliente.
+          </p>
+          <Button onClick={() => setIsAddTaskDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Adicionar Tarefa
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-medium">Tarefas</h3>
+          <Button onClick={() => setIsAddTaskDialogOpen(true)} size="sm">
+            <Plus className="mr-2 h-4 w-4" />
+            Nova Tarefa
+          </Button>
+        </div>
+        <div className="space-y-2">
+          {clientTasks.map(task => (
+            <Card key={task.id} className="p-4">
+              <div className="flex justify-between">
+                <div>
+                  <h4 className="font-medium">{task.title}</h4>
+                  {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
+                  {task.due_date && (
+                    <div className="flex items-center text-xs text-muted-foreground mt-2">
+                      <CalendarIcon className="h-3 w-3 mr-1" />
+                      {format(new Date(task.due_date), "dd/MM/yyyy")}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-start space-x-2">
+                  <Select
+                    value={task.status}
+                    onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
+                  >
+                    <SelectTrigger className="h-8 w-[120px]">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Pendente">Pendente</SelectItem>
+                      <SelectItem value="Em andamento">Em andamento</SelectItem>
+                      <SelectItem value="Concluída">Concluída</SelectItem>
+                      <SelectItem value="Cancelada">Cancelada</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteTask(task.id);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Título e botões */}
@@ -803,6 +993,125 @@ const Clients = () => {
             </DialogContent>
           </Dialog>
 
+          {/* Dialog para adicionar nova tarefa */}
+          <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Adicionar Tarefa</DialogTitle>
+                <DialogDescription>
+                  Crie uma nova tarefa para {selectedClient?.name}.
+                </DialogDescription>
+              </DialogHeader>
+              <Form {...taskForm}>
+                <form onSubmit={taskForm.handleSubmit(handleAddTask)} className="space-y-4">
+                  <FormField
+                    control={taskForm.control}
+                    name="title"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Título</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Digite o título da tarefa" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  
+                  <FormField
+                    control={taskForm.control}
+                    name="description"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Descrição</FormLabel>
+                        <FormControl>
+                          <Textarea 
+                            {...field} 
+                            placeholder="Descreva os detalhes da tarefa"
+                            value={field.value || ""}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  
+                  <FormField
+                    control={taskForm.control}
+                    name="due_date"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Data de vencimento</FormLabel>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={
+                                  "w-full pl-3 text-left font-normal flex justify-between items-center"
+                                }
+                              >
+                                {field.value ? (
+                                  format(field.value, "dd/MM/yyyy")
+                                ) : (
+                                  <span>Selecionar data</span>
+                                )}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value}
+                              onSelect={field.onChange}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  
+                  <FormField
+                    control={taskForm.control}
+                    name="status"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Status</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione o status" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="Pendente">Pendente</SelectItem>
+                            <SelectItem value="Em andamento">Em andamento</SelectItem>
+                            <SelectItem value="Concluída">Concluída</SelectItem>
+                            <SelectItem value="Cancelada">Cancelada</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  
+                  <DialogFooter className="mt-6">
+                    <Button type="button" variant="outline" onClick={() => setIsAddTaskDialogOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit">Salvar Tarefa</Button>
+                  </DialogFooter>
+                </form>
+              </Form>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
             {selectedClient && (
               <DialogContent className="max-w-3xl">
@@ -813,7 +1122,7 @@ const Clients = () => {
                   </DialogTitle>
                   <DialogDescription>{selectedClient.company}</DialogDescription>
                 </DialogHeader>
-                <Tabs defaultValue="details" className="w-full">
+                <Tabs value={tabSelected} onValueChange={setTabSelected} className="w-full">
                   <TabsList className="grid grid-cols-4 mb-4">
                     <TabsTrigger value="details">Detalhes</TabsTrigger>
                     <TabsTrigger value="opportunities">Oportunidades</TabsTrigger>
@@ -833,22 +1142,18 @@ const Clients = () => {
                     </Button>
                   </TabsContent>
                   <TabsContent value="tasks">
-                    <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma tarefa encontrada para este cliente.
-                    </p>
-                    <Button className="w-full" onClick={handleAddTask}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Adicionar Tarefa
-                    </Button>
+                    {renderTasksTab()}
                   </TabsContent>
                   <TabsContent value="notes">
-                    <Textarea 
-                      className="mb-4" 
-                      placeholder="Adicione uma nota sobre este cliente..." 
-                      value={noteContent}
-                      onChange={(e) => setNoteContent(e.target.value)}
-                    />
-                    <Button onClick={handleSaveNote}>Salvar Nota</Button>
+                    <div className="space-y-4">
+                      <Textarea 
+                        className="mb-4 min-h-[150px]" 
+                        placeholder="Adicione uma nota sobre este cliente..." 
+                        value={noteContent}
+                        onChange={(e) => setNoteContent(e.target.value)}
+                      />
+                      <Button onClick={handleSaveNote}>Salvar Anotações</Button>
+                    </div>
                   </TabsContent>
                 </Tabs>
                 <DialogFooter>
@@ -1017,6 +1322,15 @@ const Clients = () => {
                             }}>
                               <FileText className="h-4 w-4 mr-2" />
                               Editar Cliente
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedClient(client);
+                              setTabSelected("tasks");
+                              setIsViewDialogOpen(true);
+                            }}>
+                              <Plus className="h-4 w-4 mr-2" />
+                              Adicionar Tarefa
                             </DropdownMenuItem>
                             <DropdownMenuItem>
                               <UserPlus className="h-4 w-4 mr-2" />
