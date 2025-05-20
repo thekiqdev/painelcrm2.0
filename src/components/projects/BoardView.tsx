@@ -33,6 +33,8 @@ interface BoardViewProps {
   onProjectClick?: (project: Project) => void;
   onAddProject?: () => void;
   onMoveProject?: (projectId: string, newListId: string) => void;
+  // For task drag and drop
+  onMoveTask?: (taskId: string, sourceListId: string, targetListId: string) => void;
 }
 
 export function BoardView({
@@ -48,7 +50,9 @@ export function BoardView({
   isProjectView = false,
   onProjectClick,
   onAddProject,
-  onMoveProject
+  onMoveProject,
+  // Task drag and drop props
+  onMoveTask
 }: BoardViewProps) {
   // Calculate project progress
   const calculateProgress = (project: Project): number => {
@@ -76,6 +80,13 @@ export function BoardView({
     e.dataTransfer.setData("projectId", projectId);
   };
 
+  // Handle task drag start
+  const handleTaskDragStart = (e: React.DragEvent<HTMLDivElement>, taskId: string, listId: string) => {
+    e.dataTransfer.setData("taskId", taskId);
+    e.dataTransfer.setData("sourceListId", listId);
+    e.stopPropagation(); // Prevent parent elements from also handling this event
+  };
+
   // Handle drop zone
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -84,9 +95,19 @@ export function BoardView({
   // Handle project drop
   const handleDrop = (e: React.DragEvent<HTMLDivElement>, listId: string) => {
     e.preventDefault();
+    
+    // Check if we're dropping a project
     const projectId = e.dataTransfer.getData("projectId");
-    if (onMoveProject) {
+    if (projectId && onMoveProject) {
       onMoveProject(projectId, listId);
+      return;
+    }
+    
+    // Check if we're dropping a task
+    const taskId = e.dataTransfer.getData("taskId");
+    const sourceListId = e.dataTransfer.getData("sourceListId");
+    if (taskId && sourceListId && onMoveTask && sourceListId !== listId) {
+      onMoveTask(taskId, sourceListId, listId);
     }
   };
 
@@ -163,6 +184,23 @@ export function BoardView({
     </Card>
   );
 
+  // Wrap task card with drag functionality
+  const renderDraggableTaskCard = (task: Task, listId: string) => (
+    <div
+      key={task.id} 
+      draggable
+      onDragStart={(e) => handleTaskDragStart(e, task.id, listId)}
+      className="mb-3 last:mb-0"
+    >
+      <TaskCard 
+        task={task}
+        listId={listId}
+        onClick={() => onTaskClick(task, listId)}
+        onToggleStatus={() => onToggleTaskStatus(listId, task.id)}
+      />
+    </div>
+  );
+
   return (
     <div className="flex-1 h-full">
       <div className="flex gap-4 h-full overflow-x-auto pb-6">
@@ -171,7 +209,7 @@ export function BoardView({
             key={list.id} 
             className="flex-shrink-0 w-80 bg-muted/30 rounded-md overflow-hidden shadow-sm"
             onDragOver={handleDragOver}
-            onDrop={(e) => isProjectView && onMoveProject ? handleDrop(e, list.id) : null}
+            onDrop={(e) => handleDrop(e, list.id)}
           >
             <div className="p-2 bg-muted/50">
               <div className="flex items-center justify-between">
@@ -213,15 +251,7 @@ export function BoardView({
               ) : (
                 // Task view (normal board)
                 <>
-                  {list.tasks.map(task => (
-                    <TaskCard 
-                      key={task.id}
-                      task={task}
-                      listId={list.id}
-                      onClick={() => onTaskClick(task, list.id)}
-                      onToggleStatus={() => onToggleTaskStatus(list.id, task.id)}
-                    />
-                  ))}
+                  {list.tasks.map(task => renderDraggableTaskCard(task, list.id))}
                 </>
               )}
               <Button 

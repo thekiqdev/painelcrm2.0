@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid } from "lucide-react";
+import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 // Importações de componentes
 import { ProjectsListView } from "@/components/projects/ProjectsListView";
@@ -44,6 +46,7 @@ const Projects = () => {
     { id: "review", name: "Revisão", tasks: [], order: 2 },
     { id: "done", name: "Concluído", tasks: [], order: 3 },
   ]);
+  const [hideCompletedTasks, setHideCompletedTasks] = useState(false);
 
   // Estados de diálogos
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
@@ -57,6 +60,7 @@ const Projects = () => {
   const [newChecklistItemText, setNewChecklistItemText] = useState("");
   const [newTagText, setNewTagText] = useState("");
   const [tagsInput, setTagsInput] = useState<string[]>([]);
+  const [editingTask, setEditingTask] = useState(false);
 
   // Funções para gestão de projetos
   const handleCreateProject = (event: React.FormEvent, data: ProjectFormData) => {
@@ -269,6 +273,65 @@ const Projects = () => {
     toast.success("Tarefa criada com sucesso!");
   };
 
+  // Move task between lists
+  const moveTask = (taskId: string, sourceListId: string, targetListId: string) => {
+    if (!selectedProject) return;
+    
+    // Get task from source list
+    const sourceList = selectedProject.lists.find(list => list.id === sourceListId);
+    if (!sourceList) return;
+    
+    const taskToMove = sourceList.tasks.find(task => task.id === taskId);
+    if (!taskToMove) return;
+    
+    // Update the task status based on target list
+    const targetList = selectedProject.lists.find(list => list.id === targetListId);
+    if (!targetList) return;
+    
+    // Map list IDs to task statuses
+    let newStatus: TaskStatus = taskToMove.status;
+    
+    // Find the target list's name or position to determine appropriate status
+    // This is a simple heuristic and might need adjustment
+    const targetListName = targetList.name.toLowerCase();
+    if (targetListName.includes("concluído") || targetListName.includes("done") || targetListName.includes("completed")) {
+      newStatus = "completed";
+    } else if (targetListName.includes("revisão") || targetListName.includes("review")) {
+      newStatus = "review";
+    } else if (targetListName.includes("andamento") || targetListName.includes("progress")) {
+      newStatus = "in-progress";
+    } else if (targetListName.includes("fazer") || targetListName.includes("todo")) {
+      newStatus = "todo";
+    }
+    
+    const updatedTask = { ...taskToMove, status: newStatus };
+    
+    // Create updated project
+    const updatedProject = {
+      ...selectedProject,
+      lists: selectedProject.lists.map(list => {
+        if (list.id === sourceListId) {
+          return {
+            ...list,
+            tasks: list.tasks.filter(task => task.id !== taskId)
+          };
+        } else if (list.id === targetListId) {
+          return {
+            ...list,
+            tasks: [...list.tasks, updatedTask]
+          };
+        }
+        return list;
+      })
+    };
+    
+    // Update state
+    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+    setSelectedProject(updatedProject);
+    
+    toast.success(`Tarefa movida para ${targetList.name}`);
+  };
+
   const toggleTaskStatus = (listId: string, taskId: string) => {
     if (!selectedProject) return;
     
@@ -337,6 +400,47 @@ const Projects = () => {
     }
     
     toast.success("Tarefa excluída com sucesso!");
+  };
+
+  // Função para atualizar uma tarefa existente
+  const updateTask = (listId: string, taskId: string, updatedTaskData: Partial<Task>) => {
+    if (!selectedProject) return;
+    
+    const updatedProject = {
+      ...selectedProject,
+      lists: selectedProject.lists.map(list => {
+        if (list.id !== listId) return list;
+        
+        return {
+          ...list,
+          tasks: list.tasks.map(task => {
+            if (task.id !== taskId) return task;
+            
+            return {
+              ...task,
+              ...updatedTaskData
+            };
+          })
+        };
+      })
+    };
+    
+    // Atualizar states
+    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+    setSelectedProject(updatedProject);
+    
+    // Atualizar a tarefa selecionada, se estiver aberta no modal
+    if (selectedTask && selectedTask.task.id === taskId) {
+      const updatedList = updatedProject.lists.find(list => list.id === listId);
+      if (updatedList) {
+        const updatedTask = updatedList.tasks.find(task => task.id === taskId);
+        if (updatedTask) {
+          setSelectedTask({task: updatedTask, listId});
+        }
+      }
+    }
+    
+    toast.success("Tarefa atualizada com sucesso!");
   };
 
   // Funções para gestão do checklist
@@ -474,6 +578,7 @@ const Projects = () => {
   // Funções utilitárias
   const openTaskDetail = (task: Task, listId: string) => {
     setSelectedTask({task, listId});
+    setEditingTask(false);
     setTaskDetailOpen(true);
   };
 
@@ -484,6 +589,16 @@ const Projects = () => {
     );
     setProjects(newProjects);
     setSelectedProject(updatedProject);
+  };
+
+  // Filtrar tarefas concluídas se a opção estiver habilitada
+  const getFilteredLists = (lists: ProjectList[]) => {
+    if (!hideCompletedTasks) return lists;
+    
+    return lists.map(list => ({
+      ...list,
+      tasks: list.tasks.filter(task => task.status !== "completed")
+    }));
   };
 
   // Renderização condicional da interface principal
@@ -499,6 +614,9 @@ const Projects = () => {
         </div>
       );
     }
+
+    // Filtrar listas conforme necessário
+    const filteredLists = getFilteredLists(selectedProject.lists);
 
     return (
       <div>
@@ -532,6 +650,17 @@ const Projects = () => {
             </div>
           </div>
         
+          <div className="mb-4 flex items-center">
+            <div className="flex items-center space-x-2">
+              <Switch 
+                id="hide-completed" 
+                checked={hideCompletedTasks}
+                onCheckedChange={setHideCompletedTasks}
+              />
+              <Label htmlFor="hide-completed">Ocultar tarefas concluídas</Label>
+            </div>
+          </div>
+
           <div className="mb-6">
             <Tabs 
               defaultValue="board" 
@@ -564,7 +693,7 @@ const Projects = () => {
               
               <TabsContent value="board">
                 <BoardView 
-                  lists={selectedProject.lists}
+                  lists={filteredLists}
                   onToggleTaskStatus={toggleTaskStatus}
                   onTaskClick={openTaskDetail}
                   onAddTask={(listId) => {
@@ -577,12 +706,13 @@ const Projects = () => {
                   }}
                   onDeleteList={deleteList}
                   onAddList={() => setNewListDialogOpen(true)}
+                  onMoveTask={moveTask}
                 />
               </TabsContent>
               
               <TabsContent value="list">
                 <TaskListView 
-                  lists={selectedProject.lists}
+                  lists={filteredLists}
                   onToggleTaskStatus={toggleTaskStatus}
                   onTaskClick={openTaskDetail}
                 />
@@ -752,6 +882,9 @@ const Projects = () => {
         onDeleteChecklistItem={deleteChecklistItem}
         newChecklistItemText={newChecklistItemText}
         setNewChecklistItemText={setNewChecklistItemText}
+        editMode={editingTask}
+        setEditMode={setEditingTask}
+        onUpdateTask={updateTask}
       />
     </div>
   );

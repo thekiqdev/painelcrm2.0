@@ -62,6 +62,9 @@ export function CalendarView({ project, onTaskClick }: CalendarViewProps) {
                 color: 'var(--primary)'
               }
             }}
+            modifiersClassNames={{
+              hasTasks: "bg-primary/20 text-primary font-bold"
+            }}
           />
         </CardContent>
       </Card>
