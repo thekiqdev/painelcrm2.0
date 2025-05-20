@@ -33,7 +33,7 @@ export const whatsappService = {
     return await response.json();
   },
   
-  connectEvolution: async (apiKey: string, instanceId?: string) => {
+  connectEvolution: async (apiKey: string, instanceId: string, instanceName: string, webhookUrl?: string) => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {
       throw new Error("Não autenticado");
@@ -48,7 +48,7 @@ export const whatsappService = {
         "Authorization": `Bearer ${session.access_token}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ apiKey, instanceId })
+      body: JSON.stringify({ apiKey, instanceId, instanceName, webhookUrl })
     });
     
     if (!response.ok) {

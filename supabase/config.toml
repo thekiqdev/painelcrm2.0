@@ -1,35 +1,8 @@
 
-project_id = "meoatixglqaxnzzovuez"
-
-[api]
-enabled = true
-port = 54321
-schemas = ["public", "storage", "graphql_public"]
-
-[db]
-port = 54322
-
-[studio]
-enabled = true
-port = 54323
-api_url = "http://localhost:54321"
-
-[inbucket]
-enabled = true
-port = 54324
-
-[storage]
-enabled = true
-
-[auth]
-enabled = true
-port = 9999
-
-[realtime]
-enabled = true
+project_id = "nome-do-projeto-supabase"
 
 [functions.whatsapp-connection]
 verify_jwt = true
 
-[functions]
-port = 9000
+[functions.evolution-webhook]
+verify_jwt = false

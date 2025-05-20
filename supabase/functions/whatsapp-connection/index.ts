@@ -58,6 +58,77 @@ serve(async (req) => {
   const action = url.pathname.split("/").pop() || "";
   
   if (req.method === "POST") {
+    // Nova rota para conexão via Evolution API com nome da instância
+    if (action === "connect-evolution") {
+      try {
+        // Obter dados do corpo da requisição
+        const requestData = await req.json();
+        const { apiKey, instanceId, instanceName, webhookUrl } = requestData;
+        
+        if (!apiKey || !instanceId || !instanceName) {
+          return new Response(
+            JSON.stringify({ error: "API Key, ID e Nome da Instância são obrigatórios" }),
+            { 
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+              status: 400 
+            }
+          );
+        }
+        
+        console.log(`Conectando via Evolution API para usuário ${userId}`);
+        console.log(`Instância: ${instanceName} (${instanceId})`);
+        console.log(`Webhook URL configurada: ${webhookUrl || 'Nenhuma'}`);
+        
+        // Em uma implementação real, você conectaria à Evolution API aqui
+        // usando os dados fornecidos (apiKey, instanceId, instanceName, webhookUrl)
+        
+        // Armazenar status da conexão
+        activeConnections[userId] = true;
+        
+        // Atualizar perfil do usuário
+        await supabaseClient.from("profiles")
+          .update({ whatsapp_connected: true })
+          .eq("id", userId);
+          
+        // Atualizar status da conexão
+        await supabaseClient.from("whatsapp_connections")
+          .upsert({
+            user_id: userId,
+            status: "connected",
+            provider: "evolution",
+            updated_at: new Date().toISOString(),
+            config_data: { 
+              apiKey: `${apiKey.substring(0, 5)}...`, // Armazenar apenas parte da chave por segurança
+              instanceId,
+              instanceName,
+              hasWebhook: !!webhookUrl
+            }
+          });
+          
+        return new Response(
+          JSON.stringify({
+            status: "connected",
+            provider: "evolution",
+            instanceName,
+            instanceId
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200
+          }
+        );
+      } catch (err) {
+        console.error("Erro ao conectar com Evolution API:", err);
+        return new Response(
+          JSON.stringify({ error: "Falha ao conectar com Evolution API" }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 500
+          }
+        );
+      }
+    } 
+    
     // Nova rota para conexão via whatsapp-web.js
     if (action === "connect-webjs") {
       try {
@@ -98,62 +169,6 @@ serve(async (req) => {
         console.error("Erro ao gerar QR code via Web.js:", err);
         return new Response(
           JSON.stringify({ error: "Falha ao conectar com whatsapp-web.js" }),
-          {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-            status: 500
-          }
-        );
-      }
-    } else if (action === "connect-evolution") {
-      try {
-        // Obter dados do corpo da requisição
-        const requestData = await req.json();
-        const { apiKey, instanceId } = requestData;
-        
-        if (!apiKey) {
-          return new Response(
-            JSON.stringify({ error: "API Key da Evolution é obrigatória" }),
-            { 
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-              status: 400 
-            }
-          );
-        }
-        
-        // Em uma implementação real, você conectaria à Evolution API aqui
-        console.log(`Conectando via Evolution API com chave: ${apiKey.substring(0, 3)}***`);
-        
-        // Armazenar status da conexão
-        activeConnections[userId] = true;
-        
-        // Atualizar perfil do usuário
-        await supabaseClient.from("profiles")
-          .update({ whatsapp_connected: true })
-          .eq("id", userId);
-          
-        // Atualizar status da conexão
-        await supabaseClient.from("whatsapp_connections")
-          .upsert({
-            user_id: userId,
-            status: "connected",
-            provider: "evolution",
-            updated_at: new Date().toISOString()
-          });
-          
-        return new Response(
-          JSON.stringify({
-            status: "connected",
-            provider: "evolution"
-          }),
-          {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-            status: 200
-          }
-        );
-      } catch (err) {
-        console.error("Erro ao conectar com Evolution API:", err);
-        return new Response(
-          JSON.stringify({ error: "Falha ao conectar com Evolution API" }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
             status: 500

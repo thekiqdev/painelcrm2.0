@@ -31,6 +31,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [connectionType, setConnectionType] = useState<ConnectionType>("qrcode");
   const [evolutionApiKey, setEvolutionApiKey] = useState("");
   const [evolutionInstanceId, setEvolutionInstanceId] = useState("");
+  const [evolutionInstanceName, setEvolutionInstanceName] = useState("");
+  const [evolutionWebhookUrl, setEvolutionWebhookUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   const handleSubmit = (e: React.FormEvent) => {
@@ -43,6 +45,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       configData = {
         apiKey: evolutionApiKey,
         instanceId: evolutionInstanceId,
+        instanceName: evolutionInstanceName,
+        webhookUrl: evolutionWebhookUrl
       };
     }
     
@@ -53,7 +57,16 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setConnectionType("qrcode");
     setEvolutionApiKey("");
     setEvolutionInstanceId("");
+    setEvolutionInstanceName("");
+    setEvolutionWebhookUrl("");
     setIsSubmitting(false);
+  };
+
+  const generateWebhookUrl = () => {
+    const baseUrl = window.location.origin;
+    const sanitizedName = connectionName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const webhookUrl = `${baseUrl}/api/evolution-webhook/${sanitizedName}`;
+    setEvolutionWebhookUrl(webhookUrl);
   };
 
   return (
@@ -132,13 +145,48 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     </div>
                     
                     <div className="grid gap-2">
-                      <Label htmlFor="evolutionInstanceId">ID da Instância (opcional)</Label>
+                      <Label htmlFor="evolutionInstanceName">Nome da Instância</Label>
+                      <Input
+                        id="evolutionInstanceName"
+                        placeholder="Nome da instância (ex: whatsapp)"
+                        value={evolutionInstanceName}
+                        onChange={(e) => setEvolutionInstanceName(e.target.value)}
+                        required={connectionType === "evolution"}
+                      />
+                    </div>
+                    
+                    <div className="grid gap-2">
+                      <Label htmlFor="evolutionInstanceId">ID da Instância</Label>
                       <Input
                         id="evolutionInstanceId"
-                        placeholder="ID da instância (se aplicável)"
+                        placeholder="ID da instância"
                         value={evolutionInstanceId}
                         onChange={(e) => setEvolutionInstanceId(e.target.value)}
+                        required={connectionType === "evolution"}
                       />
+                    </div>
+                    
+                    <div className="grid gap-2">
+                      <Label htmlFor="evolutionWebhookUrl">URL do Webhook (para receber mensagens)</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="evolutionWebhookUrl"
+                          placeholder="URL do webhook para receber notificações"
+                          value={evolutionWebhookUrl}
+                          onChange={(e) => setEvolutionWebhookUrl(e.target.value)}
+                        />
+                        <Button 
+                          type="button" 
+                          variant="outline" 
+                          onClick={generateWebhookUrl}
+                          disabled={!connectionName}
+                        >
+                          Gerar
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Esta URL deve ser configurada na Evolution API para receber eventos e mensagens.
+                      </p>
                     </div>
                   </div>
                 </TabsContent>
@@ -150,7 +198,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             <Button variant="outline" type="button" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={isSubmitting || !connectionName}>
+            <Button type="submit" disabled={isSubmitting || !connectionName || (connectionType === "evolution" && (!evolutionApiKey || !evolutionInstanceName || !evolutionInstanceId))}>
               {isSubmitting ? "Adicionando..." : "Adicionar Conexão"}
             </Button>
           </DialogFooter>

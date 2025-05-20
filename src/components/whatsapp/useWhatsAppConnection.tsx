@@ -77,8 +77,18 @@ export const useWhatsAppConnection = () => {
       let result;
       
       if (connection.type === "evolution") {
-        const { apiKey, instanceId } = connection.configData || {};
-        result = await whatsappService.connectEvolution(apiKey || "demo-key", instanceId);
+        const { apiKey, instanceId, instanceName, webhookUrl } = connection.configData || {};
+        
+        if (!apiKey || !instanceId || !instanceName) {
+          throw new Error("Configurações da Evolution API incompletas. Verifique API Key, ID e Nome da Instância.");
+        }
+        
+        result = await whatsappService.connectEvolution(
+          apiKey, 
+          instanceId, 
+          instanceName, 
+          webhookUrl
+        );
       } else if (connection.type === "webjs") {
         result = await whatsappService.connectWebJS();
       } else {
@@ -111,7 +121,7 @@ export const useWhatsAppConnection = () => {
     } catch (error) {
       console.error("Error connecting WhatsApp:", error);
       toast.error("Erro na conexão", { 
-        description: "Ocorreu um erro ao tentar conectar o WhatsApp." 
+        description: error instanceof Error ? error.message : "Ocorreu um erro ao tentar conectar o WhatsApp." 
       });
       setConnectionStatus("disconnected");
     } finally {
