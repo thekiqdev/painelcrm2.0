@@ -78,7 +78,6 @@ const PaginationPrevious = ({
   <button
     onClick={onClick}
     aria-label="Go to previous page"
-    size="default"
     className={cn(
       buttonVariants({ variant: "ghost", size: "default" }), 
       "gap-1 pl-2.5", 
@@ -100,7 +99,6 @@ const PaginationNext = ({
   <button
     onClick={onClick}
     aria-label="Go to next page"
-    size="default"
     className={cn(
       buttonVariants({ variant: "ghost", size: "default" }), 
       "gap-1 pr-2.5", 
