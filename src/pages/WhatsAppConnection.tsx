@@ -17,6 +17,7 @@ const WhatsAppConnection = () => {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<string>("");
   const [instanceId, setInstanceId] = useState<string>("");
+  const [instanceName, setInstanceName] = useState<string>("");
   const [apiProvider, setApiProvider] = useState<"default" | "evolution" | "webjs">("default");
   const { toast } = useToast();
   
@@ -34,7 +35,7 @@ const WhatsAppConnection = () => {
           description: "Usando as credenciais fornecidas para conectar...",
         });
         
-        const result = await whatsappService.connectEvolution(apiKey, instanceId);
+        const result = await whatsappService.connectEvolution(apiKey, instanceId, instanceName);
         
         if (result.status === "connected") {
           setConnectionStatus("connected");
@@ -269,6 +270,16 @@ const WhatsAppConnection = () => {
                       />
                     </div>
                     
+                    <div className="space-y-2">
+                      <Label htmlFor="instanceName">Nome da Instância</Label>
+                      <Input 
+                        id="instanceName" 
+                        placeholder="Nome da sua instância Evolution" 
+                        value={instanceName}
+                        onChange={(e) => setInstanceName(e.target.value)}
+                      />
+                    </div>
+                    
                     <Alert className="mt-2">
                       <AlertDescription>
                         Para obter suas credenciais da Evolution API, você precisa ter uma conta ativa no serviço.
@@ -282,7 +293,7 @@ const WhatsAppConnection = () => {
                             setApiProvider("evolution");
                             handleConnect();
                           }}
-                          disabled={!apiKey}
+                          disabled={!apiKey || !instanceName}
                         >
                           Conectar via Evolution API
                         </Button>
