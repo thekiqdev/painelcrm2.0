@@ -1,41 +1,16 @@
 
 import React, { useState, useEffect } from "react";
-import { Badge } from "@/components/ui/badge";
+import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, ChevronRight, Plus, Settings } from "lucide-react";
+import RuleForm from "@/components/funnel/RuleForm";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Avatar } from "@/components/ui/avatar";
-import { 
-  Plus, 
-  MoreHorizontal, 
-  Calendar, 
-  DollarSign, 
-  ArrowLeft, 
-  BarChart,
-  KanbanSquare,
-  Move
-} from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
-type Deal = {
-  id: string;
-  title: string;
-  client: string;
-  amount: string;
-  probability: number;
-  dueDate: string;
-  stage: string;
-  funnelId: string;
-};
-
+// Definição de tipos
 type FunnelStage = {
   id: string;
   name: string;
@@ -56,58 +31,42 @@ type SalesFunnel = {
   stages: FunnelStage[];
 };
 
-// Initial example funnels with different types - this would come from your API/database
-const initialFunnels: SalesFunnel[] = [
-  {
-    id: "funnel-1",
-    name: "Funil de Clientes Padrão",
-    description: "Funil de vendas padrão para clientes",
-    type: "clients",
-    isDefault: true,
-    createdAt: "15/05/2023",
-    stages: [
-      { id: "stage-1", name: "Prospecção", color: "bg-blue-500", order: 0, funnelId: "funnel-1" },
-      { id: "stage-2", name: "Qualificação", color: "bg-purple-500", order: 1, funnelId: "funnel-1" },
-      { id: "stage-3", name: "Proposta", color: "bg-amber-500", order: 2, funnelId: "funnel-1" },
-      { id: "stage-4", name: "Negociação", color: "bg-green-500", order: 3, funnelId: "funnel-1" },
-      { id: "stage-5", name: "Fechado", color: "bg-emerald-500", order: 4, funnelId: "funnel-1" },
-      { id: "stage-6", name: "Perdido", color: "bg-red-500", order: 5, funnelId: "funnel-1" }
-    ]
-  },
-  {
-    id: "funnel-2",
-    name: "Funil de Leads Website",
-    description: "Funil para leads da campanha de website",
-    type: "leads",
-    isDefault: false,
-    createdAt: "20/06/2023",
-    stages: [
-      { id: "stage-7", name: "Novo Lead", color: "bg-blue-500", order: 0, funnelId: "funnel-2" },
-      { id: "stage-8", name: "Contato", color: "bg-purple-500", order: 1, funnelId: "funnel-2" },
-      { id: "stage-9", name: "Qualificado", color: "bg-green-500", order: 2, funnelId: "funnel-2" },
-      { id: "stage-10", name: "Convertido", color: "bg-emerald-500", order: 3, funnelId: "funnel-2" },
-      { id: "stage-11", name: "Rejeitado", color: "bg-red-500", order: 4, funnelId: "funnel-2" }
-    ]
-  },
-  {
-    id: "funnel-3",
-    name: "Funil de Propostas",
-    description: "Funil para gerenciar propostas comerciais",
-    type: "proposals",
-    isDefault: false,
-    createdAt: "01/07/2023",
-    stages: [
-      { id: "stage-12", name: "Nova", color: "bg-blue-500", order: 0, funnelId: "funnel-3" },
-      { id: "stage-13", name: "Em Elaboração", color: "bg-purple-500", order: 1, funnelId: "funnel-3" },
-      { id: "stage-14", name: "Enviada", color: "bg-amber-500", order: 2, funnelId: "funnel-3" },
-      { id: "stage-15", name: "Em Análise", color: "bg-green-500", order: 3, funnelId: "funnel-3" },
-      { id: "stage-16", name: "Aceita", color: "bg-emerald-500", order: 4, funnelId: "funnel-3" },
-      { id: "stage-17", name: "Recusada", color: "bg-red-500", order: 5, funnelId: "funnel-3" }
-    ]
-  }
-];
+type Deal = {
+  id: string;
+  title: string;
+  client: string;
+  amount: string;
+  probability: number;
+  dueDate: string;
+  stage: string;
+  funnelId: string;
+};
 
-// Example deals data - this would come from your API/database
+type Rule = {
+  id: string;
+  type: "date" | "status" | "source";
+  operator: string;
+  value: string | Date;
+};
+
+// Mock de dados para exemplo
+const initialFunnel: SalesFunnel = {
+  id: "funnel-1",
+  name: "Funil de Clientes Padrão",
+  description: "Funil de vendas padrão para clientes",
+  type: "clients",
+  isDefault: true,
+  createdAt: "15/05/2023",
+  stages: [
+    { id: "stage-1", name: "Prospecção", color: "bg-blue-500", order: 0, funnelId: "funnel-1" },
+    { id: "stage-2", name: "Qualificação", color: "bg-purple-500", order: 1, funnelId: "funnel-1" },
+    { id: "stage-3", name: "Proposta", color: "bg-amber-500", order: 2, funnelId: "funnel-1" },
+    { id: "stage-4", name: "Negociação", color: "bg-green-500", order: 3, funnelId: "funnel-1" },
+    { id: "stage-5", name: "Fechado", color: "bg-emerald-500", order: 4, funnelId: "funnel-1" },
+    { id: "stage-6", name: "Perdido", color: "bg-red-500", order: 5, funnelId: "funnel-1" }
+  ]
+};
+
 const initialDeals: Deal[] = [
   {
     id: "D001",
@@ -138,264 +97,212 @@ const initialDeals: Deal[] = [
     dueDate: "10/07/2023",
     stage: "stage-2",
     funnelId: "funnel-1"
-  },
-  {
-    id: "D004",
-    title: "Renovação de Licenças",
-    client: "Tech Solutions",
-    amount: "R$ 12.500,00",
-    probability: 90,
-    dueDate: "30/06/2023",
-    stage: "stage-3",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D005",
-    title: "Desenvolvimento de Website",
-    client: "Consultoria Global",
-    amount: "R$ 35.000,00",
-    probability: 60,
-    dueDate: "15/07/2023",
-    stage: "stage-4",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D006",
-    title: "Expansão de Servidor",
-    client: "Supermercados Sul",
-    amount: "R$ 18.000,00",
-    probability: 95,
-    dueDate: "01/07/2023",
-    stage: "stage-5",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D007",
-    title: "Lead Campanha Email",
-    client: "Loja Virtual",
-    amount: "R$ 30.000,00",
-    probability: 80,
-    dueDate: "25/11/2023",
-    stage: "stage-7",
-    funnelId: "funnel-2"
   }
 ];
 
-const FunnelDetails = () => {
-  const navigate = useNavigate();
+const FunnelDetails: React.FC = () => {
   const { funnelId } = useParams<{ funnelId: string }>();
-  const [deals, setDeals] = useState<Deal[]>(initialDeals);
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("kanban");
   const [funnel, setFunnel] = useState<SalesFunnel | null>(null);
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
 
+  // Opções de fontes para leads (poderia vir do banco de dados)
+  const sourcesOptions = [
+    "Direto", 
+    "Website", 
+    "Indicação", 
+    "Google", 
+    "Facebook", 
+    "Instagram", 
+    "LinkedIn", 
+    "Email Marketing",
+    "WhatsApp",
+    "Outro"
+  ];
+
+  // Carregar dados do funil
   useEffect(() => {
-    // In a real app, this would be an API call
-    const selectedFunnel = initialFunnels.find(f => f.id === funnelId);
-    if (selectedFunnel) {
-      setFunnel(selectedFunnel);
-    } else {
-      // Redirect if funnel not found
-      navigate('/funnel');
-      toast.error("Funil não encontrado");
-    }
-  }, [funnelId, navigate]);
-
-  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, dealId: string) => {
-    e.dataTransfer.setData("dealId", dealId);
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>, stageId: string) => {
-    e.preventDefault();
-    const dealId = e.dataTransfer.getData("dealId");
+    if (funnelId) {
+      // Aqui poderia fazer uma requisição ao backend
+      // Por enquanto estamos usando dados mock
+      if (funnelId === "funnel-1") {
+        setFunnel(initialFunnel);
+        setDeals(initialDeals);
+      }
+      
+      // Carregar status de leads do Supabase
+      const fetchLeadStatuses = async () => {
+        try {
+          const { data, error } = await supabase
+            .from("lead_statuses")
+            .select("*")
+            .order("name");
     
-    setDeals(prev => 
-      prev.map(deal => {
-        if (deal.id === dealId) {
-          const stage = funnel?.stages.find(s => s.id === stageId);
-          if (stage) {
-            toast.success(`Negócio movido para ${stage.name}`);
-            return { ...deal, stage: stageId };
+          if (error) throw error;
+          
+          if (data && data.length > 0) {
+            setLeadStatuses(data);
+          } else {
+            // Status padrão se não houver nenhum cadastrado
+            setLeadStatuses([
+              { id: "1", name: "Novo", color: "#6E56CF" },
+              { id: "2", name: "Em contato", color: "#F59E0B" },
+              { id: "3", name: "Qualificado", color: "#10B981" },
+              { id: "4", name: "Perdido", color: "#EF4444" }
+            ]);
           }
+        } catch (error: any) {
+          console.error("Erro ao buscar status:", error.message);
         }
-        return deal;
-      })
-    );
-  };
+      };
 
-  const handleViewDeal = (dealId: string, stageId: string) => {
-    if (funnel?.type === 'proposals') {
-      navigate(`/funnel/${funnelId}/stage/${stageId}/proposal/${dealId}`);
-    } else {
-      toast.info("Visualização detalhada disponível apenas para propostas");
+      fetchLeadStatuses();
     }
+  }, [funnelId]);
+
+  const handleSaveRule = (rule: Rule) => {
+    setRules([...rules, rule]);
+    toast.success("Regra adicionada com sucesso!");
   };
 
-  // Filter deals for this funnel
-  const filteredDeals = deals.filter(deal => deal.funnelId === funnelId);
+  const handleRemoveRule = (id: string) => {
+    setRules(rules.filter(rule => rule.id !== id));
+    toast.success("Regra removida com sucesso!");
+  };
 
   if (!funnel) {
-    return <div className="flex items-center justify-center h-64">Carregando...</div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p>Carregando detalhes do funil...</p>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => navigate('/funnel')}>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => navigate("/funnel")}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold">{funnel.name}</h1>
-            <p className="text-sm text-muted-foreground">{funnel.description}</p>
-          </div>
+          <h1 className="text-2xl font-bold">{funnel.name}</h1>
+          {funnel.isDefault && <Badge>Padrão</Badge>}
         </div>
-        
+
         <div className="flex gap-2">
           <Button variant="outline">
-            <BarChart className="mr-2 h-4 w-4" />
-            Relatórios
-          </Button>
-          <Button variant="outline">
-            <KanbanSquare className="mr-2 h-4 w-4" />
-            Gerenciar Estágios
-          </Button>
-          <Button variant="outline">
-            <Move className="mr-2 h-4 w-4" />
-            Regras
+            <Settings className="h-4 w-4 mr-2" />
+            Configurações
           </Button>
           <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            {funnel.type === 'proposals' ? 'Nova Proposta' : 
-             funnel.type === 'leads' ? 'Novo Lead' : 'Novo Negócio'}
+            <Plus className="h-4 w-4 mr-2" />
+            Adicionar Negócio
           </Button>
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-b pb-3">
-        <div className="flex items-center gap-2">
-          <Badge variant="outline">
-            {funnel.type === "clients" && "Clientes"}
-            {funnel.type === "leads" && "Leads"}
-            {funnel.type === "proposals" && "Propostas"}
-            {funnel.type === "contracts" && "Contratos"}
-          </Badge>
-          <span className="text-sm text-muted-foreground">
-            Criado em {funnel.createdAt}
-          </span>
-        </div>
-        <Badge variant="outline">
-          {filteredDeals.length} {funnel.type === 'proposals' ? 'propostas' : 'negócios'}
-        </Badge>
-      </div>
+      <p className="text-muted-foreground">{funnel.description}</p>
 
-      {/* Kanban Board */}
-      <div className="grid grid-cols-1 gap-4">
-        <div className="grid grid-cols-1 lg:grid-cols-6 gap-4">
-          {funnel.stages.sort((a, b) => a.order - b.order).map((stage) => {
-            const stageDeals = filteredDeals.filter((deal) => deal.stage === stage.id);
-            const stageTotal = stageDeals.reduce((sum, deal) => {
-              const amount = parseFloat(deal.amount.replace("R$ ", "").replace(".", "").replace(",", "."));
-              return sum + amount;
-            }, 0);
-            
-            return (
-              <Card 
-                key={stage.id}
-                className="col-span-1"
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, stage.id)}
-              >
-                <CardHeader className={`${stage.color} text-white p-3 rounded-t-lg flex flex-row items-center justify-between`}>
-                  <div>
-                    <CardTitle className="text-sm font-medium">{stage.name}</CardTitle>
-                    <p className="text-xs opacity-90">{stageDeals.length} {funnel.type === 'proposals' ? 'propostas' : 'negócios'}</p>
-                  </div>
-                  <div className="flex items-center">
-                    <Badge variant="secondary" className="bg-white/20 hover:bg-white/30 text-white">
-                      R$ {stageTotal.toLocaleString('pt-BR')}
+      {/* Tabs */}
+      <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList>
+          <TabsTrigger value="kanban">Kanban</TabsTrigger>
+          <TabsTrigger value="list">Lista</TabsTrigger>
+          <TabsTrigger value="rules">Regras</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="kanban" className="space-y-6">
+          {/* Visão Kanban */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {funnel.stages.slice(0, 3).map((stage) => (
+              <Card key={stage.id}>
+                <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
+                  <div className="flex justify-between items-center">
+                    <CardTitle className="text-sm">{stage.name}</CardTitle>
+                    <Badge variant="outline" className="text-white border-white">
+                      {deals.filter(d => d.stage === stage.id).length}
                     </Badge>
                   </div>
                 </CardHeader>
-                <CardContent className="p-3 max-h-[60vh] overflow-y-auto">
-                  {stageDeals.length === 0 ? (
-                    <div className="text-center py-8 text-sm text-muted-foreground border border-dashed rounded-md">
-                      Nenhum {funnel.type === 'proposals' ? 'proposta' : 'negócio'} neste estágio
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {stageDeals.map((deal) => (
-                        <div
-                          key={deal.id}
-                          className="bg-white rounded-lg border shadow-sm p-3 cursor-move hover:shadow-md transition-shadow"
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, deal.id)}
-                          onClick={() => handleViewDeal(deal.id, stage.id)}
-                        >
-                          <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-medium text-sm">{deal.title}</h3>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                <Button variant="ghost" size="icon" className="h-6 w-6">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleViewDeal(deal.id, stage.id);
-                                }}>
-                                  Visualizar Detalhes
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>Editar</DropdownMenuItem>
-                                <DropdownMenuItem>Mover para Estágio</DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive">
-                                  Excluir
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                <CardContent className="p-2 space-y-2">
+                  {deals
+                    .filter(deal => deal.stage === stage.id)
+                    .map(deal => (
+                      <Card key={deal.id} className="cursor-pointer hover:shadow-md">
+                        <CardContent className="p-3">
+                          <p className="font-medium">{deal.title}</p>
+                          <div className="flex justify-between items-center text-xs text-muted-foreground mt-2">
+                            <span>{deal.client}</span>
+                            <span>{deal.amount}</span>
                           </div>
-                          <p className="text-sm text-gray-500 mb-2">{deal.client}</p>
-                          <div className="flex items-center justify-between text-sm">
-                            <div className="flex items-center">
-                              <DollarSign className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
-                              <span>{deal.amount}</span>
-                            </div>
-                            <div className="flex items-center">
-                              <Calendar className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
-                              <span>{deal.dueDate}</span>
-                            </div>
-                          </div>
-                          <div className="mt-3 flex items-center justify-between">
-                            <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-green-500 rounded-full"
-                                style={{ width: `${deal.probability}%` }}
-                              />
-                            </div>
-                            <span className="text-xs">{deal.probability}%</span>
-                          </div>
-                          <div className="mt-3 flex items-center">
-                            <Avatar className="h-6 w-6 mr-1">
-                              <div className="bg-blue-500 h-full w-full flex items-center justify-center text-xs font-medium text-white">CS</div>
-                            </Avatar>
-                            <span className="text-xs text-muted-foreground">Carlos Silva</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        </CardContent>
+                      </Card>
+                    ))}
                 </CardContent>
               </Card>
-            );
-          })}
-        </div>
-      </div>
+            ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="list" className="space-y-4">
+          {/* Visão de Lista */}
+          <Card>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="py-3 px-4 text-left font-medium">Título</th>
+                      <th className="py-3 px-4 text-left font-medium">Cliente</th>
+                      <th className="py-3 px-4 text-left font-medium">Valor</th>
+                      <th className="py-3 px-4 text-left font-medium">Estágio</th>
+                      <th className="py-3 px-4 text-left font-medium">Data</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deals.map((deal) => {
+                      const stage = funnel.stages.find(s => s.id === deal.stage);
+                      return (
+                        <tr key={deal.id} className="border-b hover:bg-muted/50 cursor-pointer">
+                          <td className="py-3 px-4">{deal.title}</td>
+                          <td className="py-3 px-4">{deal.client}</td>
+                          <td className="py-3 px-4">{deal.amount}</td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full ${stage?.color}`} />
+                              {stage?.name}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">{deal.dueDate}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="rules">
+          {/* Visão de Regras */}
+          <RuleForm 
+            leadStatuses={leadStatuses}
+            sourcesOptions={sourcesOptions}
+            onSaveRule={handleSaveRule}
+            existingRules={rules}
+            onRemoveRule={handleRemoveRule}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

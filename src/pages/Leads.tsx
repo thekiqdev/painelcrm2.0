@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,6 +56,7 @@ const leadFormSchema = z.object({
   email: z.string().email({ message: "E-mail inválido" }).optional().or(z.literal("")),
   phone: z.string().optional(),
   status: z.string(),
+  source: z.string(),
   notes: z.string().optional(),
 });
 
@@ -99,6 +99,7 @@ const Leads = () => {
       email: "",
       phone: "",
       status: "Novo",
+      source: "Direto",
       notes: "",
     },
   });
@@ -112,6 +113,7 @@ const Leads = () => {
       email: "",
       phone: "",
       status: "Novo",
+      source: "Direto",
       notes: "",
     },
   });
@@ -238,6 +240,7 @@ const Leads = () => {
       email: lead.email || "",
       phone: lead.phone || "",
       status: lead.status,
+      source: lead.source || "Direto",
       notes: lead.notes || "",
     });
     setIsEditDialogOpen(true);
@@ -254,6 +257,7 @@ const Leads = () => {
         email: values.email || null,
         phone: values.phone || null,
         status: values.status,
+        source: values.source,
         notes: values.notes || null,
       };
 
@@ -293,6 +297,7 @@ const Leads = () => {
         email: values.email || null,
         phone: values.phone || null,
         status: values.status,
+        source: values.source,
         notes: values.notes || null,
       };
 
@@ -570,36 +575,69 @@ const Leads = () => {
                       />
                     </div>
 
-                    <FormField
-                      control={leadForm.control}
-                      name="status"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Status</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Selecione o status" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {leadStatuses.map(status => (
-                                <SelectItem key={status.id} value={status.name}>
-                                  <div className="flex items-center">
-                                    <div 
-                                      className="w-3 h-3 rounded-full mr-2" 
-                                      style={{ backgroundColor: status.color }}
-                                    />
-                                    {status.name}
-                                  </div>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={leadForm.control}
+                        name="status"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Status</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecione o status" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {leadStatuses.map(status => (
+                                  <SelectItem key={status.id} value={status.name}>
+                                    <div className="flex items-center">
+                                      <div 
+                                        className="w-3 h-3 rounded-full mr-2" 
+                                        style={{ backgroundColor: status.color }}
+                                      />
+                                      {status.name}
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      
+                      {/* Novo campo de Fonte */}
+                      <FormField
+                        control={leadForm.control}
+                        name="source"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Fonte</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecione a fonte" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="Direto">Direto</SelectItem>
+                                <SelectItem value="Website">Website</SelectItem>
+                                <SelectItem value="Indicação">Indicação</SelectItem>
+                                <SelectItem value="Google">Google</SelectItem>
+                                <SelectItem value="Facebook">Facebook</SelectItem>
+                                <SelectItem value="Instagram">Instagram</SelectItem>
+                                <SelectItem value="LinkedIn">LinkedIn</SelectItem>
+                                <SelectItem value="Email Marketing">Email Marketing</SelectItem>
+                                <SelectItem value="WhatsApp">WhatsApp</SelectItem>
+                                <SelectItem value="Outro">Outro</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
                     <FormField
                       control={leadForm.control}
@@ -700,36 +738,69 @@ const Leads = () => {
                       />
                     </div>
 
-                    <FormField
-                      control={editLeadForm.control}
-                      name="status"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Status</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Selecione o status" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {leadStatuses.map(status => (
-                                <SelectItem key={status.id} value={status.name}>
-                                  <div className="flex items-center">
-                                    <div 
-                                      className="w-3 h-3 rounded-full mr-2" 
-                                      style={{ backgroundColor: status.color }}
-                                    />
-                                    {status.name}
-                                  </div>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={editLeadForm.control}
+                        name="status"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Status</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecione o status" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {leadStatuses.map(status => (
+                                  <SelectItem key={status.id} value={status.name}>
+                                    <div className="flex items-center">
+                                      <div 
+                                        className="w-3 h-3 rounded-full mr-2" 
+                                        style={{ backgroundColor: status.color }}
+                                      />
+                                      {status.name}
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      
+                      {/* Campo de Fonte no formulário de edição */}
+                      <FormField
+                        control={editLeadForm.control}
+                        name="source"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Fonte</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecione a fonte" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="Direto">Direto</SelectItem>
+                                <SelectItem value="Website">Website</SelectItem>
+                                <SelectItem value="Indicação">Indicação</SelectItem>
+                                <SelectItem value="Google">Google</SelectItem>
+                                <SelectItem value="Facebook">Facebook</SelectItem>
+                                <SelectItem value="Instagram">Instagram</SelectItem>
+                                <SelectItem value="LinkedIn">LinkedIn</SelectItem>
+                                <SelectItem value="Email Marketing">Email Marketing</SelectItem>
+                                <SelectItem value="WhatsApp">WhatsApp</SelectItem>
+                                <SelectItem value="Outro">Outro</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
                     <FormField
                       control={editLeadForm.control}
@@ -857,6 +928,11 @@ const Leads = () => {
                             {selectedLead.status}
                           </Badge>
                         </p>
+                      </div>
+                      {/* Adicionando campo de fonte na visualização */}
+                      <div className="space-y-1">
+                        <Label>Fonte</Label>
+                        <p className="text-sm">{selectedLead.source || "Direto"}</p>
                       </div>
                     </div>
                     <div className="mt-6">
@@ -1109,7 +1185,7 @@ const Leads = () => {
                   </div>
                 </TableHead>
                 <TableHead>E-mail</TableHead>
-                <TableHead>Telefone</TableHead>
+                <TableHead>Fonte</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Ações</TableHead>
               </TableRow>
@@ -1132,7 +1208,7 @@ const Leads = () => {
                     </TableCell>
                     <TableCell>{lead.company || "-"}</TableCell>
                     <TableCell>{lead.email || "-"}</TableCell>
-                    <TableCell>{lead.phone || "-"}</TableCell>
+                    <TableCell>{lead.source || "Direto"}</TableCell>
                     <TableCell>
                       <Badge 
                         variant="outline"
