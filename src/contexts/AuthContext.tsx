@@ -182,7 +182,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Update existing step
         await supabase
           .from('registration_steps')
-          .update({ completed, updated_at: new Date() })
+          .update({ 
+            completed, 
+            updated_at: new Date().toISOString() // Fix: Convert Date to string
+          })
           .eq('id', existingStep.id);
       } else {
         // Create new step
