@@ -65,6 +65,37 @@ export const whatsappService = {
     return await response.json();
   },
   
+  connectWebJS: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error("Não autenticado");
+    }
+    
+    // Endpoint para conexão usando whatsapp-web.js
+    const endpoint = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-connection/connect-webjs`;
+    
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${session.access_token}`,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Error response:", errorText);
+      try {
+        const error = JSON.parse(errorText);
+        throw new Error(error.error || "Falha ao conectar WhatsApp via Web.js");
+      } catch (e) {
+        throw new Error("Falha ao conectar WhatsApp: " + errorText.substring(0, 100));
+      }
+    }
+    
+    return await response.json();
+  },
+  
   disconnect: async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {

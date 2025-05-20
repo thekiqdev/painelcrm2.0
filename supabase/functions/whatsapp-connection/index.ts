@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.3";
 import * as qrcode from "https://deno.land/x/qrcode@v2.0.0/mod.ts";
@@ -59,8 +58,53 @@ serve(async (req) => {
   const action = url.pathname.split("/").pop() || "";
   
   if (req.method === "POST") {
-    // Rota para conectar Evolution API
-    if (action === "connect-evolution") {
+    // Nova rota para conexão via whatsapp-web.js
+    if (action === "connect-webjs") {
+      try {
+        console.log(`Conectando via whatsapp-web.js para o usuário: ${userId}`);
+        
+        // Gerar um identificador de conexão único
+        const connectionId = crypto.randomUUID();
+        const connectionCode = `whatsapp-connection-webjs-${userId}-${connectionId}`;
+        
+        // Gerar QR code contendo o código de conexão
+        const qrCodeData = await generateQRCode(connectionCode);
+        
+        // Armazenar status da conexão ativa
+        activeConnections[userId] = true;
+        
+        // Salvar QR code e status no Supabase
+        await supabaseClient.from("whatsapp_connections")
+          .upsert({
+            user_id: userId,
+            qr_code: qrCodeData,
+            status: "awaiting_scan",
+            provider: "webjs",
+            updated_at: new Date().toISOString()
+          });
+          
+        return new Response(
+          JSON.stringify({
+            status: "connecting",
+            qrCode: qrCodeData,
+            provider: "webjs"
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200
+          }
+        );
+      } catch (err) {
+        console.error("Erro ao gerar QR code via Web.js:", err);
+        return new Response(
+          JSON.stringify({ error: "Falha ao conectar com whatsapp-web.js" }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 500
+          }
+        );
+      }
+    } else if (action === "connect-evolution") {
       try {
         // Obter dados do corpo da requisição
         const requestData = await req.json();
@@ -166,6 +210,41 @@ serve(async (req) => {
             JSON.stringify({
               status: "connected",
               provider: "evolution"
+            }),
+            {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+              status: 200
+            }
+          );
+        } else if (provider === "webjs") {
+          // Conexão via whatsapp-web.js
+          console.log(`Conectando via whatsapp-web.js para o usuário: ${userId}`);
+        
+          // Gerar um identificador de conexão único
+          const connectionId = crypto.randomUUID();
+          const connectionCode = `whatsapp-connection-webjs-${userId}-${connectionId}`;
+          
+          // Gerar QR code contendo o código de conexão
+          const qrCodeData = await generateQRCode(connectionCode);
+          
+          // Armazenar status da conexão ativa
+          activeConnections[userId] = true;
+          
+          // Salvar QR code e status no Supabase
+          await supabaseClient.from("whatsapp_connections")
+            .upsert({
+              user_id: userId,
+              qr_code: qrCodeData,
+              status: "awaiting_scan",
+              provider: "webjs",
+              updated_at: new Date().toISOString()
+            });
+            
+          return new Response(
+            JSON.stringify({
+              status: "connecting",
+              qrCode: qrCodeData,
+              provider: "webjs"
             }),
             {
               headers: { ...corsHeaders, "Content-Type": "application/json" },

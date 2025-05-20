@@ -10,79 +10,149 @@ import QRCodeScanner from "@/components/whatsapp/QRCodeScanner";
 import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { whatsappService } from "@/services/whatsapp";
 
 const WhatsAppConnection = () => {
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<string>("");
   const [instanceId, setInstanceId] = useState<string>("");
-  const [apiProvider, setApiProvider] = useState<"default" | "evolution">("default");
+  const [apiProvider, setApiProvider] = useState<"default" | "evolution" | "webjs">("default");
   const { toast } = useToast();
   
   const handleConnect = async () => {
     setConnectionStatus("connecting");
     toast({
       title: "Iniciando conexão",
-      description: "Por favor, aguarde enquanto geramos o QR code...",
+      description: "Por favor, aguarde enquanto processamos sua solicitação...",
     });
     
-    if (apiProvider === "evolution" && apiKey) {
-      // Simulação da conexão com a Evolution API
+    try {
+      if (apiProvider === "evolution" && apiKey) {
+        toast({
+          title: "Conectando via Evolution API",
+          description: "Usando as credenciais fornecidas para conectar...",
+        });
+        
+        const result = await whatsappService.connectEvolution(apiKey, instanceId);
+        
+        if (result.status === "connected") {
+          setConnectionStatus("connected");
+          toast({
+            title: "Conectado com sucesso!",
+            description: "Sua conta WhatsApp foi conectada via Evolution API",
+          });
+        }
+      } else if (apiProvider === "webjs") {
+        toast({
+          title: "Conectando via WhatsApp Web.js",
+          description: "Gerando QR code para conexão...",
+        });
+        
+        const result = await whatsappService.connectWebJS();
+        
+        if (result.status === "connecting" && result.qrCode) {
+          setQrCode(result.qrCode);
+          toast({
+            title: "QR Code gerado",
+            description: "Escaneie o QR code com o seu WhatsApp",
+          });
+        } else if (result.status === "connected") {
+          setConnectionStatus("connected");
+          setQrCode(null);
+          toast({
+            title: "Conectado com sucesso!",
+            description: "Sua conta WhatsApp foi conectada via WhatsApp Web.js",
+          });
+        }
+      } else {
+        // Conexão padrão via QR Code
+        const result = await whatsappService.connect({ provider: apiProvider });
+        
+        if (result.status === "connecting" && result.qrCode) {
+          setQrCode(result.qrCode);
+          toast({
+            title: "QR Code gerado",
+            description: "Escaneie o QR code com o seu WhatsApp",
+          });
+        } else if (result.status === "connected") {
+          setConnectionStatus("connected");
+          setQrCode(null);
+          toast({
+            title: "Conectado com sucesso!",
+            description: "Sua conta WhatsApp foi conectada",
+          });
+        } else {
+          throw new Error("Resposta inesperada do servidor");
+        }
+      }
+    } catch (error) {
+      console.error("Erro ao conectar:", error);
+      setConnectionStatus("disconnected");
       toast({
-        title: "Conectando via Evolution API",
-        description: "Usando as credenciais fornecidas para conectar...",
+        title: "Erro na conexão",
+        description: error instanceof Error ? error.message : "Ocorreu um erro ao tentar conectar",
+        variant: "destructive",
       });
-      
-      // Em uma implementação real, chamaríamos a Evolution API aqui
-      setTimeout(() => {
-        setConnectionStatus("connected");
-        toast({
-          title: "Conectado com sucesso!",
-          description: "Sua conta WhatsApp foi conectada via Evolution API",
-        });
-      }, 2000);
-    } else {
-      // Modo de simulação para demonstração
-      setTimeout(() => {
-        // Base64 de um QR code de exemplo
-        const sampleQRCode = "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";
-        setQrCode(sampleQRCode);
-        toast({
-          title: "QR Code gerado",
-          description: "Escaneie o QR code com o seu WhatsApp",
-        });
-      }, 2000);
     }
   };
   
-  const handleDisconnect = () => {
-    setConnectionStatus("disconnected");
-    setQrCode(null);
-    toast({
-      title: "Desconectado",
-      description: "Conexão WhatsApp encerrada com sucesso",
-    });
+  const handleDisconnect = async () => {
+    try {
+      await whatsappService.disconnect();
+      setConnectionStatus("disconnected");
+      setQrCode(null);
+      toast({
+        title: "Desconectado",
+        description: "Conexão WhatsApp encerrada com sucesso",
+      });
+    } catch (error) {
+      console.error("Erro ao desconectar:", error);
+      toast({
+        title: "Erro ao desconectar",
+        description: "Ocorreu um erro ao tentar desconectar o WhatsApp.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleConfirmConnection = () => {
-    setConnectionStatus("connected");
-    setQrCode(null);
-    toast({
-      title: "Conectado com sucesso!",
-      description: "Sua conta WhatsApp foi conectada manualmente",
-    });
+  const handleConfirmConnection = async () => {
+    try {
+      await whatsappService.confirmConnection();
+      setConnectionStatus("connected");
+      setQrCode(null);
+      toast({
+        title: "Conectado com sucesso!",
+        description: "Sua conta WhatsApp foi confirmada manualmente",
+      });
+    } catch (error) {
+      console.error("Erro ao confirmar conexão:", error);
+      toast({
+        title: "Erro na confirmação",
+        description: "Ocorreu um erro ao tentar confirmar a conexão WhatsApp.",
+        variant: "destructive",
+      });
+    }
   };
 
   // Simulate successful connection after QR code is shown
   useEffect(() => {
     if (qrCode && connectionStatus === "connecting") {
-      const timer = setTimeout(() => {
-        setConnectionStatus("connected");
-        toast({
-          title: "Conectado com sucesso!",
-          description: "Sua conta WhatsApp foi conectada",
-        });
-      }, 10000); // Simulate 10 second connection time
+      const timer = setTimeout(async () => {
+        try {
+          const status = await whatsappService.getStatus();
+          if (status.connected || status.status === "connected") {
+            setConnectionStatus("connected");
+            setQrCode(null);
+            toast({
+              title: "Conectado com sucesso!",
+              description: "Sua conta WhatsApp foi conectada",
+            });
+          }
+        } catch (error) {
+          console.error("Erro ao verificar status:", error);
+        }
+      }, 10000); // Verifica a cada 10 segundos
       
       return () => clearTimeout(timer);
     }
@@ -108,6 +178,7 @@ const WhatsAppConnection = () => {
             <Tabs defaultValue="qrcode" className="mb-6">
               <TabsList className="mb-4">
                 <TabsTrigger value="qrcode">Via QR Code</TabsTrigger>
+                <TabsTrigger value="webjs">Via WhatsApp Web.js</TabsTrigger>
                 <TabsTrigger value="evolution">Via Evolution API</TabsTrigger>
               </TabsList>
               
@@ -119,7 +190,12 @@ const WhatsAppConnection = () => {
                       <p className="text-center text-muted-foreground mb-4">
                         Clique no botão abaixo para gerar um QR code e conectar o seu WhatsApp
                       </p>
-                      <Button onClick={handleConnect}>
+                      <Button 
+                        onClick={() => {
+                          setApiProvider("default");
+                          handleConnect();
+                        }}
+                      >
                         Conectar WhatsApp
                       </Button>
                     </div>
@@ -131,6 +207,42 @@ const WhatsAppConnection = () => {
                       onConfirmConnection={handleConfirmConnection} 
                     />
                   )}
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="webjs">
+                <div className="flex flex-col gap-4">
+                  <div className="space-y-4">
+                    <Alert className="mt-2">
+                      <AlertDescription>
+                        O WhatsApp Web.js é uma biblioteca cliente para WhatsApp Web que não requer uma API externa.
+                      </AlertDescription>
+                    </Alert>
+                    
+                    <div className="flex justify-center mt-4">
+                      {connectionStatus === "disconnected" ? (
+                        <Button 
+                          onClick={() => {
+                            setApiProvider("webjs");
+                            handleConnect();
+                          }}
+                        >
+                          Conectar via WhatsApp Web.js
+                        </Button>
+                      ) : connectionStatus === "connecting" ? (
+                        <QRCodeScanner 
+                          qrCode={qrCode} 
+                          connectionStatus={connectionStatus} 
+                          onDisconnect={handleDisconnect} 
+                          onConfirmConnection={handleConfirmConnection} 
+                        />
+                      ) : (
+                        <Button variant="destructive" onClick={handleDisconnect}>
+                          Desconectar
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </TabsContent>
               
