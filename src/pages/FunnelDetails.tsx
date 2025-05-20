@@ -4,170 +4,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, ChevronRight, Plus, Settings, Tag, MoveHorizontal, User } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { ArrowLeft, ChevronRight, Plus, Settings, Tag, MoveHorizontal, User, Edit, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { 
+  Menubar,
+  MenubarContent,
+  MenubarItem,
+  MenubarMenu,
+  MenubarSeparator,
+  MenubarTrigger,
+} from "@/components/ui/menubar";
 import RuleForm from "@/components/funnel/RuleForm";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
-
-// Definição de tipos
-type FunnelStage = {
-  id: string;
-  name: string;
-  color: string;
-  order: number;
-  funnelId: string;
-};
-
-type FunnelType = "clients" | "leads" | "proposals" | "contracts";
-
-type SalesFunnel = {
-  id: string;
-  name: string;
-  description: string;
-  type: FunnelType;
-  isDefault: boolean;
-  createdAt: string;
-  stages: FunnelStage[];
-};
-
-type Deal = {
-  id: string;
-  title: string;
-  client: string;
-  amount: string;
-  probability: number;
-  dueDate: string;
-  stage: string;
-  funnelId: string;
-};
-
-type ClientTag = {
-  id: string;
-  name: string;
-  color: string;
-};
-
-type Client = {
-  id: string;
-  name: string;
-  company?: string;
-  email?: string;
-  phone?: string;
-  status?: string;
-  notes?: string;
-  createdAt: string;
-  stage?: string;
-  tags?: ClientTag[];
-};
-
-type Rule = {
-  id: string;
-  type: "date" | "status" | "source";
-  operator: string;
-  value: string | Date;
-};
-
-// Mock de dados para exemplo
-const initialFunnel: SalesFunnel = {
-  id: "funnel-1",
-  name: "Funil de Clientes Padrão",
-  description: "Funil de vendas padrão para clientes",
-  type: "clients",
-  isDefault: true,
-  createdAt: "15/05/2023",
-  stages: [
-    { id: "stage-1", name: "Prospecção", color: "bg-blue-500", order: 0, funnelId: "funnel-1" },
-    { id: "stage-2", name: "Qualificação", color: "bg-purple-500", order: 1, funnelId: "funnel-1" },
-    { id: "stage-3", name: "Proposta", color: "bg-amber-500", order: 2, funnelId: "funnel-1" },
-    { id: "stage-4", name: "Negociação", color: "bg-green-500", order: 3, funnelId: "funnel-1" },
-    { id: "stage-5", name: "Fechado", color: "bg-emerald-500", order: 4, funnelId: "funnel-1" },
-    { id: "stage-6", name: "Perdido", color: "bg-red-500", order: 5, funnelId: "funnel-1" }
-  ]
-};
-
-// Adicionar tags de exemplo
-const clientTags: ClientTag[] = [
-  { id: "tag-1", name: "VIP", color: "#F97316" }, // Bright Orange
-  { id: "tag-2", name: "Recorrente", color: "#8B5CF6" }, // Vivid Purple
-  { id: "tag-3", name: "Novo", color: "#0EA5E9" }, // Ocean Blue
-  { id: "tag-4", name: "Potencial", color: "#10B981" }, // Emerald Green
-  { id: "tag-5", name: "Em Risco", color: "#EF4444" }, // Red
-];
-
-// Mock de dados para clientes com tags e estágio
-const mockClients: Client[] = [
-  {
-    id: "C001",
-    name: "ABC Tecnologia",
-    company: "ABC Tecnologia Ltda",
-    email: "contato@abctecnologia.com",
-    phone: "(11) 98765-4321",
-    status: "Ativo",
-    notes: "Cliente desde 2022",
-    createdAt: "10/01/2022",
-    stage: "stage-1",
-    tags: [clientTags[0], clientTags[2]]
-  },
-  {
-    id: "C002",
-    name: "Construtora XYZ",
-    company: "XYZ Construções S.A.",
-    email: "contato@xyzconstr.com",
-    phone: "(11) 91234-5678",
-    status: "Ativo",
-    notes: "Grande potencial para projetos",
-    createdAt: "05/03/2022",
-    stage: "stage-1",
-    tags: [clientTags[3]]
-  },
-  {
-    id: "C003",
-    name: "Lima & Associados",
-    company: "Lima & Associados Advocacia",
-    email: "contato@limaadv.com",
-    phone: "(11) 97777-8888",
-    status: "Ativo",
-    notes: "Escritório de advocacia",
-    createdAt: "15/06/2022",
-    stage: "stage-1",
-    tags: [clientTags[1]]
-  }
-];
-
-const initialDeals: Deal[] = [
-  {
-    id: "D001",
-    title: "Implementação de Sistema ERP",
-    client: "ABC Tecnologia",
-    amount: "R$ 58.000,00",
-    probability: 20,
-    dueDate: "15/06/2023",
-    stage: "stage-1",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D002",
-    title: "Projeto de Marketing Digital",
-    client: "Construtora XYZ",
-    amount: "R$ 25.000,00",
-    probability: 50,
-    dueDate: "28/06/2023",
-    stage: "stage-1",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D003",
-    title: "Consultoria Estratégica",
-    client: "Lima & Associados",
-    amount: "R$ 45.000,00",
-    probability: 75,
-    dueDate: "10/07/2023",
-    stage: "stage-2",
-    funnelId: "funnel-1"
-  }
-];
 
 const FunnelDetails: React.FC = () => {
   const { funnelId } = useParams<{ funnelId: string }>();
@@ -182,218 +35,166 @@ const FunnelDetails: React.FC = () => {
   const [draggedClientId, setDraggedClientId] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showClientDetailsDialog, setShowClientDetailsDialog] = useState(false);
+  
+  // New states for funnel settings
+  const [settingsTab, setSettingsTab] = useState("general");
+  const [editingFunnelName, setEditingFunnelName] = useState("");
+  const [editingFunnelDescription, setEditingFunnelDescription] = useState("");
+  const [editingStage, setEditingStage] = useState<FunnelStage | null>(null);
+  const [showEditStageDialog, setShowEditStageDialog] = useState(false);
+  const [showAddStageDialog, setShowAddStageDialog] = useState(false);
+  const [newStageName, setNewStageName] = useState("");
+  const [newStageColor, setNewStageColor] = useState("bg-blue-500");
 
-  // Opções de fontes para leads (poderia vir do banco de dados)
-  const sourcesOptions = [
-    "Direto", 
-    "Website", 
-    "Indicação", 
-    "Google", 
-    "Facebook", 
-    "Instagram", 
-    "LinkedIn", 
-    "Email Marketing",
-    "WhatsApp",
-    "Outro"
+  // Available colors for stages
+  const stageColors = [
+    { name: "Blue", value: "bg-blue-500" },
+    { name: "Purple", value: "bg-purple-500" },
+    { name: "Amber", value: "bg-amber-500" },
+    { name: "Green", value: "bg-green-500" },
+    { name: "Emerald", value: "bg-emerald-500" },
+    { name: "Red", value: "bg-red-500" },
+    { name: "Sky", value: "bg-sky-500" },
+    { name: "Indigo", value: "bg-indigo-500" },
+    { name: "Pink", value: "bg-pink-500" }
   ];
 
-  // Carregar dados do funil
+  // Check if funnelId is valid and load funnel data
   useEffect(() => {
     if (funnelId) {
-      // Aqui poderia fazer uma requisição ao backend
-      // Por enquanto estamos usando dados mock
+      // Fetch funnel data from the backend or use mock data
+      // For now, we will use mock data
       if (funnelId === "funnel-1") {
         setFunnel(initialFunnel);
         setDeals(initialDeals);
-        
-        // Se for um funil de clientes, carregar os clientes
         setClients(mockClients);
       }
-      
-      // Carregar status de leads do Supabase
-      const fetchLeadStatuses = async () => {
-        try {
-          const { data, error } = await supabase
-            .from("lead_statuses")
-            .select("*")
-            .order("name");
-    
-          if (error) throw error;
-          
-          if (data && data.length > 0) {
-            setLeadStatuses(data);
-          } else {
-            // Status padrão se não houver nenhum cadastrado
-            setLeadStatuses([
-              { id: "1", name: "Novo", color: "#6E56CF" },
-              { id: "2", name: "Em contato", color: "#F59E0B" },
-              { id: "3", name: "Qualificado", color: "#10B981" },
-              { id: "4", name: "Perdido", color: "#EF4444" }
-            ]);
-          }
-        } catch (error: any) {
-          console.error("Erro ao buscar status:", error.message);
-        }
-      };
-
-      fetchLeadStatuses();
-      
-      // Simular carregamento de regras (no futuro isso viria do banco de dados)
-      setRules([
-        {
-          id: "rule-1",
-          type: "status",
-          operator: "equals",
-          value: "Novo"
-        }
-      ]);
     }
   }, [funnelId]);
 
-  // Função para lidar com o início do drag de um cliente
-  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, clientId: string) => {
-    setDraggedClientId(clientId);
-    e.dataTransfer.setData("clientId", clientId);
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  // Função para permitir o drop
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  };
-
-  // Função para lidar com o drop de um cliente em um estágio
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>, stageId: string) => {
-    e.preventDefault();
-    const clientId = e.dataTransfer.getData("clientId");
-    
-    if (clientId) {
-      // Atualizar o estágio do cliente
-      setClients(prevClients => 
-        prevClients.map(client => 
-          client.id === clientId ? { ...client, stage: stageId } : client
-        )
-      );
-
-      toast.success("Cliente movido com sucesso!");
-    }
-  };
-
-  const handleSaveRule = (rule: Rule) => {
-    setRules([...rules, rule]);
-    toast.success("Regra adicionada com sucesso!");
-  };
-
-  const handleRemoveRule = (id: string) => {
-    setRules(rules.filter(rule => rule.id !== id));
-    toast.success("Regra removida com sucesso!");
-  };
-
-  const handleClientClick = (client: Client) => {
-    setSelectedClient(client);
-    setShowClientDetailsDialog(true);
-  };
-
-  const handleAddTagToClient = (clientId: string, tagId: string) => {
-    const tag = clientTags.find(t => t.id === tagId);
-    if (!tag) return;
-
-    setClients(prevClients =>
-      prevClients.map(client => {
-        if (client.id === clientId) {
-          const updatedTags = [...(client.tags || []), tag];
-          return { ...client, tags: updatedTags };
-        }
-        return client;
-      })
-    );
-
-    // Also update the selected client if it's the one being modified
-    if (selectedClient && selectedClient.id === clientId) {
-      const updatedTags = [...(selectedClient.tags || []), tag];
-      setSelectedClient({ ...selectedClient, tags: updatedTags });
-    }
-  };
-
-  const handleRemoveTagFromClient = (clientId: string, tagId: string) => {
-    setClients(prevClients =>
-      prevClients.map(client => {
-        if (client.id === clientId) {
-          const updatedTags = (client.tags || []).filter(tag => tag.id !== tagId);
-          return { ...client, tags: updatedTags };
-        }
-        return client;
-      })
-    );
-
-    // Also update the selected client if it's the one being modified
-    if (selectedClient && selectedClient.id === clientId) {
-      const updatedTags = (selectedClient.tags || []).filter(tag => tag.id !== tagId);
-      setSelectedClient({ ...selectedClient, tags: updatedTags });
-    }
-  };
-  
-  // Aplicar regras automaticamente (simulação)
+  // Initialize funnel editing state when funnel data loads
   useEffect(() => {
-    if (rules.length > 0 && funnel?.type === "leads") {
-      toast.info("Regras aplicadas automaticamente");
-      // Aqui seria a lógica para aplicar as regras nos leads
-      console.log("Aplicando regras automaticamente:", rules);
+    if (funnel) {
+      setEditingFunnelName(funnel.name);
+      setEditingFunnelDescription(funnel.description);
     }
-  }, [rules, funnel?.type]);
+  }, [funnel]);
 
-  // Renderizar cliente no card com mais informações e tags
-  const renderClientCard = (client: Client) => (
-    <Card 
-      key={client.id} 
-      className="cursor-pointer hover:shadow-md mb-2"
-      draggable
-      onDragStart={(e) => handleDragStart(e, client.id)}
-      onClick={() => handleClientClick(client)}
-    >
-      <CardContent className="p-3">
-        <div className="font-medium">{client.name}</div>
-        
-        {client.company && (
-          <div className="text-xs text-muted-foreground mt-1">
-            {client.company}
-          </div>
-        )}
-        
-        {client.email && (
-          <div className="text-xs flex items-center gap-1 mt-1">
-            <span className="text-muted-foreground">Email:</span> {client.email}
-          </div>
-        )}
-        
-        {client.phone && (
-          <div className="text-xs flex items-center gap-1 mt-1">
-            <span className="text-muted-foreground">Tel:</span> {client.phone}
-          </div>
-        )}
-        
-        <div className="flex items-center justify-between mt-2">
-          <div className="text-xs text-muted-foreground">
-            {client.status}
-          </div>
-          
-          <div className="flex flex-wrap gap-1 justify-end">
-            {client.tags?.map(tag => (
-              <Badge
-                key={tag.id}
-                className="text-xs px-1.5 py-0"
-                style={{ backgroundColor: tag.color, color: "white" }}
-              >
-                {tag.name}
-              </Badge>
-            ))}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  // Save funnel general settings
+  const handleSaveFunnelGeneralSettings = () => {
+    if (funnel) {
+      setFunnel({
+        ...funnel,
+        name: editingFunnelName,
+        description: editingFunnelDescription
+      });
+      toast.success("Configurações gerais salvas com sucesso!");
+    }
+  };
 
+  // Add a new stage to the funnel
+  const handleAddStage = () => {
+    if (!funnel || !newStageName.trim()) return;
+    
+    const newStageId = `stage-${Date.now()}`;
+    
+    const newStage: FunnelStage = {
+      id: newStageId,
+      name: newStageName,
+      color: newStageColor,
+      order: funnel.stages.length,
+      funnelId: funnel.id
+    };
+    
+    setFunnel({
+      ...funnel,
+      stages: [...funnel.stages, newStage]
+    });
+    
+    setNewStageName("");
+    setNewStageColor("bg-blue-500");
+    setShowAddStageDialog(false);
+    
+    toast.success("Estágio adicionado com sucesso!");
+  };
+
+  // Save edited stage
+  const handleSaveStage = () => {
+    if (!funnel || !editingStage) return;
+    
+    setFunnel({
+      ...funnel,
+      stages: funnel.stages.map(stage => 
+        stage.id === editingStage.id ? editingStage : stage
+      )
+    });
+    
+    setEditingStage(null);
+    setShowEditStageDialog(false);
+    
+    toast.success("Estágio atualizado com sucesso!");
+  };
+
+  // Delete a stage
+  const handleDeleteStage = (stageId: string) => {
+    if (!funnel) return;
+    
+    const hasItems = funnel.type === "clients" 
+      ? clients.some(client => client.stage === stageId)
+      : deals.some(deal => deal.stage === stageId);
+    
+    if (hasItems) {
+      toast.error("Não é possível excluir um estágio que contém itens");
+      return;
+    }
+    
+    const filteredStages = funnel.stages.filter(stage => stage.id !== stageId);
+    const reorderedStages = filteredStages.map((stage, index) => ({
+      ...stage,
+      order: index
+    }));
+    
+    setFunnel({
+      ...funnel,
+      stages: reorderedStages
+    });
+    
+    toast.success("Estágio excluído com sucesso!");
+  };
+
+  // Move a stage up or down in the order
+  const handleMoveStage = (stageId: string, direction: 'up' | 'down') => {
+    if (!funnel) return;
+    
+    const stageIndex = funnel.stages.findIndex(stage => stage.id === stageId);
+    if (stageIndex === -1) return;
+    
+    if (
+      (direction === 'up' && stageIndex === 0) || 
+      (direction === 'down' && stageIndex === funnel.stages.length - 1)
+    ) {
+      return;
+    }
+    
+    const newStages = [...funnel.stages];
+    
+    const targetIndex = direction === 'up' ? stageIndex - 1 : stageIndex + 1;
+    [newStages[stageIndex], newStages[targetIndex]] = [newStages[targetIndex], newStages[stageIndex]];
+    
+    const reorderedStages = newStages.map((stage, index) => ({
+      ...stage,
+      order: index
+    }));
+    
+    setFunnel({
+      ...funnel,
+      stages: reorderedStages
+    });
+    
+    toast.success("Ordem dos estágios atualizada!");
+  };
+
+  // Render the content based on the active settings tab
   const renderContent = () => {
     if (funnel?.type === "clients") {
       return (
@@ -434,7 +235,6 @@ const FunnelDetails: React.FC = () => {
     } else {
       return (
         <TabsContent value="kanban" className="space-y-6">
-          {/* Visão Kanban para Negócios */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {funnel.stages.slice(0, 3).map((stage) => (
               <Card key={stage.id}>
@@ -469,6 +269,7 @@ const FunnelDetails: React.FC = () => {
     }
   };
 
+  // Render the list content
   const renderListContent = () => {
     if (funnel?.type === "clients") {
       return (
@@ -583,7 +384,7 @@ const FunnelDetails: React.FC = () => {
               <DialogHeader>
                 <DialogTitle>Configurações do Funil</DialogTitle>
               </DialogHeader>
-              <Tabs defaultValue="general" className="mt-4">
+              <Tabs value={settingsTab} onValueChange={setSettingsTab} className="mt-4">
                 <TabsList>
                   <TabsTrigger value="general">Geral</TabsTrigger>
                   <TabsTrigger value="stages">Estágios</TabsTrigger>
@@ -593,12 +394,127 @@ const FunnelDetails: React.FC = () => {
                 
                 <TabsContent value="general" className="space-y-4 pt-4">
                   <h3 className="text-lg font-medium">Informações Gerais</h3>
-                  <p>Configure as informações básicas do funil</p>
+                  <div className="space-y-4">
+                    <div className="grid w-full items-center gap-1.5">
+                      <Label htmlFor="funnelName">Nome do Funil</Label>
+                      <Input 
+                        id="funnelName" 
+                        value={editingFunnelName}
+                        onChange={(e) => setEditingFunnelName(e.target.value)}
+                        placeholder="Digite o nome do funil"
+                      />
+                    </div>
+                    <div className="grid w-full items-center gap-1.5">
+                      <Label htmlFor="funnelDescription">Descrição</Label>
+                      <Textarea 
+                        id="funnelDescription" 
+                        value={editingFunnelDescription}
+                        onChange={(e) => setEditingFunnelDescription(e.target.value)}
+                        placeholder="Digite uma descrição para o funil"
+                        rows={3}
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <Button onClick={handleSaveFunnelGeneralSettings}>
+                        Salvar Alterações
+                      </Button>
+                    </div>
+                  </div>
                 </TabsContent>
                 
-                <TabsContent value="stages" className="space-y-4 pt-4">
-                  <h3 className="text-lg font-medium">Estágios do Funil</h3>
-                  <p>Configure os estágios do seu funil</p>
+                <TabsContent value="stages" className="pt-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-medium">Estágios do Funil</h3>
+                      <Button onClick={() => setShowAddStageDialog(true)} size="sm">
+                        <Plus className="h-4 w-4 mr-1" />
+                        Adicionar Estágio
+                      </Button>
+                    </div>
+                    
+                    <div className="border rounded-md">
+                      {funnel.stages.length > 0 ? (
+                        <div className="divide-y">
+                          {funnel.stages.map((stage) => (
+                            <div 
+                              key={stage.id} 
+                              className="p-3 flex items-center justify-between"
+                            >
+                              <div className="flex items-center gap-2">
+                                <div 
+                                  className={`w-4 h-4 rounded-full ${stage.color}`}
+                                />
+                                <span className="font-medium">{stage.name}</span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => handleMoveStage(stage.id, 'up')}
+                                  disabled={stage.order === 0}
+                                >
+                                  <svg 
+                                    xmlns="http://www.w3.org/2000/svg" 
+                                    width="16" 
+                                    height="16" 
+                                    viewBox="0 0 24 24" 
+                                    fill="none" 
+                                    stroke="currentColor" 
+                                    strokeWidth="2" 
+                                    strokeLinecap="round" 
+                                    strokeLinejoin="round"
+                                  >
+                                    <path d="m18 15-6-6-6 6"/>
+                                  </svg>
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => handleMoveStage(stage.id, 'down')}
+                                  disabled={stage.order === funnel.stages.length - 1}
+                                >
+                                  <svg 
+                                    xmlns="http://www.w3.org/2000/svg" 
+                                    width="16" 
+                                    height="16" 
+                                    viewBox="0 0 24 24" 
+                                    fill="none" 
+                                    stroke="currentColor" 
+                                    strokeWidth="2" 
+                                    strokeLinecap="round" 
+                                    strokeLinejoin="round"
+                                  >
+                                    <path d="m6 9 6 6 6-6"/>
+                                  </svg>
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => {
+                                    setEditingStage(stage);
+                                    setShowEditStageDialog(true);
+                                  }}
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => handleDeleteStage(stage.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4 text-center text-muted-foreground">
+                          Nenhum estágio definido para este funil
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </TabsContent>
                 
                 <TabsContent value="rules" className="pt-4">
@@ -628,7 +544,7 @@ const FunnelDetails: React.FC = () => {
                           </div>
                           <div className="flex items-center gap-2">
                             <Button variant="ghost" size="sm">
-                              <Tag className="h-4 w-4 mr-1" />
+                              <Edit className="h-4 w-4 mr-1" />
                               Editar
                             </Button>
                           </div>
@@ -682,6 +598,92 @@ const FunnelDetails: React.FC = () => {
         onAddTag={handleAddTagToClient}
         onRemoveTag={handleRemoveTagFromClient}
       />
+
+      {/* Add Stage Dialog */}
+      <Dialog open={showAddStageDialog} onOpenChange={setShowAddStageDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Adicionar Estágio</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-1 gap-2">
+              <Label htmlFor="stageName">Nome do Estágio</Label>
+              <Input
+                id="stageName"
+                value={newStageName}
+                onChange={(e) => setNewStageName(e.target.value)}
+                placeholder="Digite o nome do estágio"
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-2">
+              <Label>Cor</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {stageColors.map((color) => (
+                  <div 
+                    key={color.value}
+                    className={`h-8 rounded-md cursor-pointer border-2 ${color.value} ${
+                      newStageColor === color.value ? 'border-black' : 'border-transparent'
+                    }`}
+                    onClick={() => setNewStageColor(color.value)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddStageDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleAddStage}>
+              Adicionar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Stage Dialog */}
+      <Dialog open={showEditStageDialog} onOpenChange={setShowEditStageDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Editar Estágio</DialogTitle>
+          </DialogHeader>
+          {editingStage && (
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-1 gap-2">
+                <Label htmlFor="editStageName">Nome do Estágio</Label>
+                <Input
+                  id="editStageName"
+                  value={editingStage.name}
+                  onChange={(e) => setEditingStage({ ...editingStage, name: e.target.value })}
+                  placeholder="Digite o nome do estágio"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                <Label>Cor</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {stageColors.map((color) => (
+                    <div 
+                      key={color.value}
+                      className={`h-8 rounded-md cursor-pointer border-2 ${color.value} ${
+                        editingStage.color === color.value ? 'border-black' : 'border-transparent'
+                      }`}
+                      onClick={() => setEditingStage({ ...editingStage, color: color.value })}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditStageDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveStage}>
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
