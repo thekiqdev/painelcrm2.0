@@ -8,3 +8,15 @@ export interface SettingsMenuItemProps {
 export interface SettingsSectionProps {
   handleSave?: (e: React.FormEvent) => void;
 }
+
+export type ConnectionStatus = "disconnected" | "connecting" | "connected";
+
+export type ConnectionType = "qrcode" | "evolution" | "webjs";
+
+export interface Connection {
+  id: string;
+  name: string;
+  type: ConnectionType;
+  status: ConnectionStatus;
+  configData?: any;
+}

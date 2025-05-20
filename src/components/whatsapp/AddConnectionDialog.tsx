@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InfoIcon } from "lucide-react";
+import { ConnectionType } from "@/components/settings/types";
 
 interface AddConnectionDialogProps {
   isOpen: boolean;
@@ -27,7 +28,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   onAddConnection,
 }) => {
   const [connectionName, setConnectionName] = useState("");
-  const [connectionType, setConnectionType] = useState<"qrcode" | "evolution" | "webjs">("qrcode");
+  const [connectionType, setConnectionType] = useState<ConnectionType>("qrcode");
   const [evolutionApiKey, setEvolutionApiKey] = useState("");
   const [evolutionInstanceId, setEvolutionInstanceId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);

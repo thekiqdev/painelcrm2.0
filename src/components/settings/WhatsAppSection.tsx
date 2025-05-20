@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,23 +10,16 @@ import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
 import { whatsappService } from "@/services/whatsapp";
 import AddConnectionDialog from "@/components/whatsapp/AddConnectionDialog";
 import { Plus, QrCode } from "lucide-react";
-
-type Connection = {
-  id: string;
-  name: string;
-  type: "qrcode" | "evolution" | "webjs";
-  status: "disconnected" | "connecting" | "connected";
-  configData?: any;
-};
+import { Connection, ConnectionStatus as ConnectionStatusType, ConnectionType } from "./types";
 
 export const WhatsAppSection = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [activeConnection, setActiveConnection] = useState<Connection | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatusType>("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [connectionMethod, setConnectionMethod] = useState<"qrcode" | "evolution" | "webjs">("qrcode");
+  const [connectionMethod, setConnectionMethod] = useState<ConnectionType>("qrcode");
   const { user, profile, updateProfile } = useAuth();
   
   // Check current connection status on component mount
@@ -68,7 +60,7 @@ export const WhatsAppSection = () => {
     const newConnection: Connection = {
       id: `conn_${Date.now()}`,
       name: connectionName,
-      type: connectionType as "qrcode" | "evolution" | "webjs",
+      type: connectionType as ConnectionType,
       status: "disconnected",
       configData
     };
