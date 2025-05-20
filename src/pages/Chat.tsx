@@ -42,13 +42,21 @@ const Chat = () => {
     // Check WhatsApp connection status from Supabase
     const checkConnectionStatus = async () => {
       try {
-        const { data } = await supabase
+        if (!user) return;
+        
+        const { data, error } = await supabase
           .from('profiles')
           .select('whatsapp_connected')
-          .eq('id', user?.id)
+          .eq('id', user.id)
           .single();
         
-        if (data && data.whatsapp_connected) {
+        if (error) {
+          console.error("Error checking WhatsApp connection:", error);
+          setConnectionStatus("disconnected");
+          return;
+        }
+        
+        if (data && data.whatsapp_connected === true) {
           setConnectionStatus("connected");
           // Load mock conversations only if WhatsApp is connected
           loadMockData();

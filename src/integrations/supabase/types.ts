@@ -18,6 +18,7 @@ export type Database = {
           last_name: string | null
           registration_complete: boolean | null
           updated_at: string
+          whatsapp_connected: boolean | null
           whatsapp_number: string
         }
         Insert: {
@@ -28,6 +29,7 @@ export type Database = {
           last_name?: string | null
           registration_complete?: boolean | null
           updated_at?: string
+          whatsapp_connected?: boolean | null
           whatsapp_number: string
         }
         Update: {
@@ -38,6 +40,7 @@ export type Database = {
           last_name?: string | null
           registration_complete?: boolean | null
           updated_at?: string
+          whatsapp_connected?: boolean | null
           whatsapp_number?: string
         }
         Relationships: []
