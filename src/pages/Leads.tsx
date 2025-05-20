@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -35,51 +36,122 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useForm, FormProvider, useFormContext } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 
-// Dados de exemplo - apenas leads
-const leads = [
-  {
-    id: "LD-001",
-    name: "Maria Oliveira",
-    company: "Construtora XYZ",
-    email: "maria@xyz.com",
-    phone: "(11) 91234-5678",
-    status: "Novo",
-  },
-  {
-    id: "LD-002",
-    name: "Ana Pereira",
-    company: "Consultoria Global",
-    email: "ana@consultoriaglobal.com",
-    phone: "(31) 98877-6655",
-    status: "Em contato",
-  },
-  {
-    id: "LD-003",
-    name: "Paulo Henrique",
-    company: "Tech Digital",
-    email: "paulo@techdigital.com",
-    phone: "(21) 98765-4321",
-    status: "Qualificado",
-  },
-  {
-    id: "LD-004",
-    name: "Julia Mendes",
-    company: "Arquitetura JM",
-    email: "julia@arquiteturajm.com",
-    phone: "(41) 97654-3210",
-    status: "Novo",
-  }
-];
+// Esquemas de validação com Zod
+const leadFormSchema = z.object({
+  name: z.string().min(2, { message: "Nome é obrigatório" }),
+  company: z.string().optional(),
+  email: z.string().email({ message: "E-mail inválido" }).optional().or(z.literal("")),
+  phone: z.string().optional(),
+  status: z.string(),
+  notes: z.string().optional(),
+});
+
+const taskFormSchema = z.object({
+  title: z.string().min(3, { message: "Título é obrigatório" }),
+  description: z.string().optional(),
+  due_date: z.date().optional().nullable(),
+  status: z.string(),
+});
+
+const noteFormSchema = z.object({
+  content: z.string().min(1, { message: "Conteúdo é obrigatório" }),
+});
+
+type LeadFormValues = z.infer<typeof leadFormSchema>;
+type TaskFormValues = z.infer<typeof taskFormSchema>;
+type NoteFormValues = z.infer<typeof noteFormSchema>;
 
 const Leads = () => {
+  const [leads, setLeads] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<any>(null);
   const [sortField, setSortField] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [leadTasks, setLeadTasks] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState("details");
+  
+  // Form para adicionar novo lead
+  const leadForm = useForm<LeadFormValues>({
+    resolver: zodResolver(leadFormSchema),
+    defaultValues: {
+      name: "",
+      company: "",
+      email: "",
+      phone: "",
+      status: "Novo",
+      notes: "",
+    },
+  });
 
+  // Form para adicionar tarefa
+  const taskForm = useForm<TaskFormValues>({
+    resolver: zodResolver(taskFormSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      due_date: null,
+      status: "Pendente",
+    },
+  });
+
+  // Form para adicionar nota
+  const noteForm = useForm<NoteFormValues>({
+    resolver: zodResolver(noteFormSchema),
+    defaultValues: {
+      content: "",
+    },
+  });
+
+  // Obter leads do Supabase
+  const fetchLeads = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("leads")
+        .select("*")
+        .order(sortField, { ascending: sortDirection === "asc" });
+
+      if (error) throw error;
+      setLeads(data || []);
+    } catch (error: any) {
+      console.error("Erro ao buscar leads:", error.message);
+      toast.error("Não foi possível carregar os leads");
+    }
+  };
+
+  // Buscar tarefas quando um lead é selecionado
+  const fetchLeadTasks = async (leadId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("lead_tasks")
+        .select("*")
+        .eq("lead_id", leadId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setLeadTasks(data || []);
+    } catch (error: any) {
+      console.error("Erro ao buscar tarefas:", error.message);
+      toast.error("Não foi possível carregar as tarefas");
+    }
+  };
+
+  // Ordenar leads
   const handleSort = (field: string) => {
     if (field === sortField) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -89,32 +161,127 @@ const Leads = () => {
     }
   };
 
-  const sortedLeads = [...leads].sort((a: any, b: any) => {
-    if (sortDirection === "asc") {
-      return a[sortField] > b[sortField] ? 1 : -1;
-    } else {
-      return a[sortField] < b[sortField] ? 1 : -1;
-    }
-  });
-
-  const filteredLeads = sortedLeads.filter((lead) => {
+  // Filtrar leads
+  const filteredLeads = leads.filter((lead) => {
     return (
       lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.email.toLowerCase().includes(searchTerm.toLowerCase())
+      (lead.company && lead.company.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (lead.email && lead.email.toLowerCase().includes(searchTerm.toLowerCase()))
     );
   });
 
-  const handleViewLead = (lead: any) => {
+  // Visualizar detalhes do lead
+  const handleViewLead = async (lead: any) => {
     setSelectedLead(lead);
     setIsViewDialogOpen(true);
+    setActiveTab("details");
+    await fetchLeadTasks(lead.id);
   };
 
-  const handleAddLead = (e: React.FormEvent) => {
-    e.preventDefault();
-    toast.success("Lead adicionado com sucesso!");
-    setIsAddDialogOpen(false);
+  // Adicionar novo lead
+  const handleAddLead = async (values: LeadFormValues) => {
+    try {
+      const { data, error } = await supabase
+        .from("leads")
+        .insert([values])
+        .select();
+
+      if (error) throw error;
+
+      toast.success("Lead adicionado com sucesso!");
+      setIsAddDialogOpen(false);
+      leadForm.reset();
+      fetchLeads();
+    } catch (error: any) {
+      console.error("Erro ao adicionar lead:", error.message);
+      toast.error("Não foi possível adicionar o lead");
+    }
   };
+
+  // Adicionar tarefa ao lead
+  const handleAddTask = async (values: TaskFormValues) => {
+    if (!selectedLead) return;
+    
+    try {
+      // Convertendo o objeto Date para string no formato ISO
+      const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
+      
+      const { data, error } = await supabase
+        .from("lead_tasks")
+        .insert({
+          lead_id: selectedLead.id,
+          title: values.title,
+          description: values.description || "",
+          due_date: formattedDueDate,
+          status: values.status
+        })
+        .select();
+
+      if (error) throw error;
+
+      toast.success("Tarefa adicionada com sucesso!");
+      taskForm.reset();
+      fetchLeadTasks(selectedLead.id);
+      setActiveTab("tasks");
+    } catch (error: any) {
+      console.error("Erro ao adicionar tarefa:", error.message);
+      toast.error("Não foi possível adicionar a tarefa");
+    }
+  };
+
+  // Salvar nota (atualizar o lead)
+  const handleSaveNote = async (values: NoteFormValues) => {
+    if (!selectedLead) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("leads")
+        .update({ notes: values.content })
+        .eq("id", selectedLead.id)
+        .select();
+
+      if (error) throw error;
+
+      toast.success("Nota salva com sucesso!");
+      setSelectedLead({ ...selectedLead, notes: values.content });
+    } catch (error: any) {
+      console.error("Erro ao salvar nota:", error.message);
+      toast.error("Não foi possível salvar a nota");
+    }
+  };
+
+  // Atualizar status da tarefa
+  const updateTaskStatus = async (taskId: string, newStatus: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("lead_tasks")
+        .update({ status: newStatus })
+        .eq("id", taskId)
+        .select();
+
+      if (error) throw error;
+
+      toast.success("Status atualizado com sucesso!");
+      fetchLeadTasks(selectedLead.id);
+    } catch (error: any) {
+      console.error("Erro ao atualizar status:", error.message);
+      toast.error("Não foi possível atualizar o status");
+    }
+  };
+
+  // Efeito para carregar leads quando componente montar ou critérios de ordenação mudarem
+  useEffect(() => {
+    fetchLeads();
+  }, [sortField, sortDirection]);
+
+  // Efeito para preparar o formulário de notas quando o lead selecionado mudar
+  useEffect(() => {
+    if (selectedLead && selectedLead.notes) {
+      noteForm.setValue("content", selectedLead.notes);
+    } else {
+      noteForm.setValue("content", "");
+    }
+  }, [selectedLead, activeTab]);
 
   const SortIcon = ({ field }: { field: string }) => {
     if (field !== sortField) return null;
@@ -127,6 +294,16 @@ const Leads = () => {
       case "Em contato": return "secondary";
       case "Qualificado": return "default";
       case "Perdido": return "destructive";
+      default: return "outline";
+    }
+  };
+
+  const getTaskStatusVariant = (status: string) => {
+    switch (status) {
+      case "Pendente": return "outline";
+      case "Em andamento": return "secondary";
+      case "Concluído": return "default";
+      case "Cancelado": return "destructive";
       default: return "outline";
     }
   };
@@ -160,56 +337,117 @@ const Leads = () => {
                   Preencha os dados para adicionar um novo lead ao sistema.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleAddLead}>
-                <div className="grid gap-6 py-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Nome</Label>
-                      <Input id="name" placeholder="Nome completo" required />
+              <Form {...leadForm}>
+                <form onSubmit={leadForm.handleSubmit(handleAddLead)}>
+                  <div className="grid gap-6 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={leadForm.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nome</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Nome completo" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={leadForm.control}
+                        name="company"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Empresa</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Nome da empresa" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="company">Empresa</Label>
-                      <Input id="company" placeholder="Nome da empresa" />
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={leadForm.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>E-mail</FormLabel>
+                            <FormControl>
+                              <Input type="email" placeholder="email@exemplo.com" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={leadForm.control}
+                        name="phone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Telefone</FormLabel>
+                            <FormControl>
+                              <Input placeholder="(00) 00000-0000" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     </div>
+
+                    <FormField
+                      control={leadForm.control}
+                      name="status"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Status</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione o status" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="Novo">Novo</SelectItem>
+                              <SelectItem value="Em contato">Em contato</SelectItem>
+                              <SelectItem value="Qualificado">Qualificado</SelectItem>
+                              <SelectItem value="Perdido">Perdido</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={leadForm.control}
+                      name="notes"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Observações</FormLabel>
+                          <FormControl>
+                            <Textarea 
+                              placeholder="Adicione informações relevantes sobre este lead" 
+                              className="min-h-[100px]" 
+                              {...field} 
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="email">E-mail</Label>
-                      <Input id="email" type="email" placeholder="email@exemplo.com" required />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="phone">Telefone</Label>
-                      <Input id="phone" placeholder="(00) 00000-0000" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="status">Status</Label>
-                      <Select defaultValue="new">
-                        <SelectTrigger id="status">
-                          <SelectValue placeholder="Selecione" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="new">Novo</SelectItem>
-                          <SelectItem value="contacted">Em contato</SelectItem>
-                          <SelectItem value="qualified">Qualificado</SelectItem>
-                          <SelectItem value="lost">Perdido</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="notes">Observações</Label>
-                    <Textarea id="notes" placeholder="Adicione informações relevantes sobre este lead" />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit">Salvar Lead</Button>
-                </DialogFooter>
-              </form>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit">Salvar Lead</Button>
+                  </DialogFooter>
+                </form>
+              </Form>
             </DialogContent>
           </Dialog>
 
@@ -223,26 +461,26 @@ const Leads = () => {
                   </DialogTitle>
                   <DialogDescription>{selectedLead.company}</DialogDescription>
                 </DialogHeader>
-                <Tabs defaultValue="details" className="w-full">
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                   <TabsList className="grid grid-cols-4 mb-4">
                     <TabsTrigger value="details">Detalhes</TabsTrigger>
-                    <TabsTrigger value="opportunities">Oportunidades</TabsTrigger>
                     <TabsTrigger value="tasks">Tarefas</TabsTrigger>
                     <TabsTrigger value="notes">Anotações</TabsTrigger>
+                    <TabsTrigger value="opportunities">Oportunidades</TabsTrigger>
                   </TabsList>
                   <TabsContent value="details">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <Label>E-mail</Label>
-                        <p className="text-sm">{selectedLead.email}</p>
+                        <p className="text-sm">{selectedLead.email || "Não informado"}</p>
                       </div>
                       <div className="space-y-1">
                         <Label>Telefone</Label>
-                        <p className="text-sm">{selectedLead.phone}</p>
+                        <p className="text-sm">{selectedLead.phone || "Não informado"}</p>
                       </div>
                       <div className="space-y-1">
                         <Label>Empresa</Label>
-                        <p className="text-sm">{selectedLead.company}</p>
+                        <p className="text-sm">{selectedLead.company || "Não informado"}</p>
                       </div>
                       <div className="space-y-1">
                         <Label>Status</Label>
@@ -254,6 +492,174 @@ const Leads = () => {
                       </div>
                     </div>
                   </TabsContent>
+                  
+                  <TabsContent value="tasks">
+                    <div className="space-y-4">
+                      <Form {...taskForm}>
+                        <form onSubmit={taskForm.handleSubmit(handleAddTask)} className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <FormField
+                              control={taskForm.control}
+                              name="title"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Título</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="Título da tarefa" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={taskForm.control}
+                              name="status"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Status</FormLabel>
+                                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                    <FormControl>
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Selecione" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="Pendente">Pendente</SelectItem>
+                                      <SelectItem value="Em andamento">Em andamento</SelectItem>
+                                      <SelectItem value="Concluído">Concluído</SelectItem>
+                                      <SelectItem value="Cancelado">Cancelado</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <FormField
+                            control={taskForm.control}
+                            name="description"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Descrição</FormLabel>
+                                <FormControl>
+                                  <Textarea placeholder="Descreva a tarefa" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={taskForm.control}
+                            name="due_date"
+                            render={({ field }) => (
+                              <FormItem className="flex flex-col">
+                                <FormLabel>Data de vencimento</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="date"
+                                    value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
+                                    onChange={(e) => {
+                                      const value = e.target.value ? new Date(e.target.value) : null;
+                                      field.onChange(value);
+                                    }}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <Button type="submit" className="w-full">
+                            <Plus className="mr-2 h-4 w-4" />
+                            Adicionar Tarefa
+                          </Button>
+                        </form>
+                      </Form>
+
+                      <div className="space-y-2 mt-6">
+                        <h3 className="text-lg font-medium">Tarefas existentes</h3>
+                        {leadTasks.length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-6">
+                            Nenhuma tarefa encontrada para este lead.
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {leadTasks.map((task) => (
+                              <Card key={task.id}>
+                                <CardContent className="p-4">
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <h4 className="font-medium">{task.title}</h4>
+                                      <p className="text-sm text-muted-foreground">{task.description}</p>
+                                      {task.due_date && (
+                                        <p className="text-xs mt-1">
+                                          Vencimento: {new Date(task.due_date).toLocaleDateString()}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                      <Badge variant={getTaskStatusVariant(task.status)}>{task.status}</Badge>
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button variant="ghost" size="icon">
+                                            <MoreVertical className="h-4 w-4" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end">
+                                          <DropdownMenuLabel>Ações</DropdownMenuLabel>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Pendente")}>
+                                            Marcar como Pendente
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Em andamento")}>
+                                            Marcar como Em andamento
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Concluído")}>
+                                            Marcar como Concluído
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem onClick={() => updateTaskStatus(task.id, "Cancelado")}>
+                                            Marcar como Cancelado
+                                          </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="notes">
+                    <Form {...noteForm}>
+                      <form onSubmit={noteForm.handleSubmit(handleSaveNote)}>
+                        <FormField
+                          control={noteForm.control}
+                          name="content"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Anotações sobre o lead</FormLabel>
+                              <FormControl>
+                                <Textarea 
+                                  className="min-h-[200px]" 
+                                  placeholder="Adicione informações importantes sobre este lead..." 
+                                  {...field} 
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <Button className="mt-4">Salvar Anotações</Button>
+                      </form>
+                    </Form>
+                  </TabsContent>
+
                   <TabsContent value="opportunities">
                     <p className="text-sm text-muted-foreground text-center py-6">
                       Nenhuma oportunidade encontrada para este lead.
@@ -263,25 +669,11 @@ const Leads = () => {
                       Adicionar Oportunidade
                     </Button>
                   </TabsContent>
-                  <TabsContent value="tasks">
-                    <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma tarefa encontrada para este lead.
-                    </p>
-                    <Button className="w-full">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Adicionar Tarefa
-                    </Button>
-                  </TabsContent>
-                  <TabsContent value="notes">
-                    <Textarea className="mb-4" placeholder="Adicione uma nota sobre este lead..." />
-                    <Button>Salvar Nota</Button>
-                  </TabsContent>
                 </Tabs>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
                     Fechar
                   </Button>
-                  <Button>Editar Lead</Button>
                 </DialogFooter>
               </DialogContent>
             )}
@@ -343,9 +735,9 @@ const Leads = () => {
                 filteredLeads.map((lead) => (
                   <TableRow key={lead.id} className="cursor-pointer" onClick={() => handleViewLead(lead)}>
                     <TableCell>{lead.name}</TableCell>
-                    <TableCell>{lead.company}</TableCell>
-                    <TableCell>{lead.email}</TableCell>
-                    <TableCell>{lead.phone}</TableCell>
+                    <TableCell>{lead.company || "-"}</TableCell>
+                    <TableCell>{lead.email || "-"}</TableCell>
+                    <TableCell>{lead.phone || "-"}</TableCell>
                     <TableCell>
                       <Badge variant={getStatusVariant(lead.status)}>
                         {lead.status}
