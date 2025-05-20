@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import {
   Dialog,
@@ -32,7 +31,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [evolutionApiKey, setEvolutionApiKey] = useState("");
   const [evolutionInstanceId, setEvolutionInstanceId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
+  
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
