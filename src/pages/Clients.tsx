@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -493,13 +492,16 @@ const Clients = () => {
     if (!selectedClient) return;
     
     try {
+      // Convertendo o objeto Date para string no formato ISO
+      const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
+      
       const { data, error } = await supabase
         .from("client_tasks")
         .insert({
           client_id: selectedClient.id,
           title: values.title,
           description: values.description || "",
-          due_date: values.due_date,
+          due_date: formattedDueDate,
           status: values.status
         })
         .select()
