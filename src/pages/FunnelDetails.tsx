@@ -9,6 +9,7 @@ import { ArrowLeft, ChevronRight, Plus, Settings, Tag, MoveHorizontal, User } fr
 import RuleForm from "@/components/funnel/RuleForm";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
 
 // Definição de tipos
 type FunnelStage = {
@@ -179,6 +180,8 @@ const FunnelDetails: React.FC = () => {
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [draggedClientId, setDraggedClientId] = useState<string | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [showClientDetailsDialog, setShowClientDetailsDialog] = useState(false);
 
   // Opções de fontes para leads (poderia vir do banco de dados)
   const sourcesOptions = [
@@ -287,6 +290,50 @@ const FunnelDetails: React.FC = () => {
     toast.success("Regra removida com sucesso!");
   };
 
+  const handleClientClick = (client: Client) => {
+    setSelectedClient(client);
+    setShowClientDetailsDialog(true);
+  };
+
+  const handleAddTagToClient = (clientId: string, tagId: string) => {
+    const tag = clientTags.find(t => t.id === tagId);
+    if (!tag) return;
+
+    setClients(prevClients =>
+      prevClients.map(client => {
+        if (client.id === clientId) {
+          const updatedTags = [...(client.tags || []), tag];
+          return { ...client, tags: updatedTags };
+        }
+        return client;
+      })
+    );
+
+    // Also update the selected client if it's the one being modified
+    if (selectedClient && selectedClient.id === clientId) {
+      const updatedTags = [...(selectedClient.tags || []), tag];
+      setSelectedClient({ ...selectedClient, tags: updatedTags });
+    }
+  };
+
+  const handleRemoveTagFromClient = (clientId: string, tagId: string) => {
+    setClients(prevClients =>
+      prevClients.map(client => {
+        if (client.id === clientId) {
+          const updatedTags = (client.tags || []).filter(tag => tag.id !== tagId);
+          return { ...client, tags: updatedTags };
+        }
+        return client;
+      })
+    );
+
+    // Also update the selected client if it's the one being modified
+    if (selectedClient && selectedClient.id === clientId) {
+      const updatedTags = (selectedClient.tags || []).filter(tag => tag.id !== tagId);
+      setSelectedClient({ ...selectedClient, tags: updatedTags });
+    }
+  };
+  
   // Aplicar regras automaticamente (simulação)
   useEffect(() => {
     if (rules.length > 0 && funnel?.type === "leads") {
@@ -303,6 +350,7 @@ const FunnelDetails: React.FC = () => {
       className="cursor-pointer hover:shadow-md mb-2"
       draggable
       onDragStart={(e) => handleDragStart(e, client.id)}
+      onClick={() => handleClientClick(client)}
     >
       <CardContent className="p-3">
         <div className="font-medium">{client.name}</div>
@@ -624,6 +672,16 @@ const FunnelDetails: React.FC = () => {
 
         {activeTab === "kanban" ? renderContent() : renderListContent()}
       </Tabs>
+
+      {/* Client Details Dialog */}
+      <ClientDetailsDialog 
+        isOpen={showClientDetailsDialog}
+        onClose={() => setShowClientDetailsDialog(false)}
+        client={selectedClient}
+        availableTags={clientTags}
+        onAddTag={handleAddTagToClient}
+        onRemoveTag={handleRemoveTagFromClient}
+      />
     </div>
   );
 };
