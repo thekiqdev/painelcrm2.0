@@ -3,7 +3,7 @@ import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
-import { Connection, ConnectionStatusType } from "@/components/settings/types";
+import { Connection, ConnectionStatus } from "@/components/settings/types";
 import QRCodeScanner from "@/components/whatsapp/QRCodeScanner";
 import ConnectionsList from "@/components/whatsapp/ConnectionsList";
 
@@ -11,7 +11,7 @@ interface ConnectionPanelProps {
   connections: Connection[];
   activeConnection: Connection | null;
   qrCode: string | null;
-  connectionStatus: ConnectionStatusType;
+  connectionStatus: ConnectionStatus;
   isLoading: boolean;
   onAddConnectionClick: () => void;
   handleConnect: (connection: Connection) => void;

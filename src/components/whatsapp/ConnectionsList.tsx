@@ -3,7 +3,7 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Plus } from "lucide-react";
-import { Connection, ConnectionStatusType } from "@/components/settings/types";
+import { Connection, ConnectionStatus } from "@/components/settings/types";
 
 interface ConnectionsListProps {
   connections: Connection[];
