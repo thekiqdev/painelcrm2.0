@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { useLocation, NavLink } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -119,6 +119,22 @@ const Nav = () => {
                   <NavLink to="/tasks" className={getNavClass}>
                     <ClipboardCheck className="mr-2 h-5 w-5" />
                     {!collapsed && <span>Tarefas</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        
+        <SidebarGroup>
+          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink to="/whatsapp" className={getNavClass}>
+                    <MessageSquare className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>WhatsApp</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
