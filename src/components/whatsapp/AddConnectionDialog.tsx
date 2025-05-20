@@ -1,3 +1,4 @@
+
 import React, { useState } from "react";
 import {
   Dialog,
@@ -13,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InfoIcon } from "lucide-react";
-import { ConnectionType } from "@/components/settings/types";
+import { ConnectionType, ConnectionStatus } from "@/components/settings/types";
 
 interface AddConnectionDialogProps {
   isOpen: boolean;

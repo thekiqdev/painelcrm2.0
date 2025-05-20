@@ -62,7 +62,7 @@ export const WhatsAppSection = () => {
       id: `conn_${Date.now()}`,
       name: connectionName,
       type: connectionType as ConnectionType,
-      status: "disconnected", // This is already of type ConnectionStatusType
+      status: "disconnected" as ConnectionStatusType,
       configData
     };
     
@@ -139,7 +139,7 @@ export const WhatsAppSection = () => {
       // Update connection status in the list if there's an active connection
       if (activeConnection) {
         const updatedConnections = connections.map(c => 
-          c.id === activeConnection.id ? { ...c, status: "disconnected" } : c
+          c.id === activeConnection.id ? { ...c, status: "disconnected" as ConnectionStatusType } : c
         );
         setConnections(updatedConnections);
         setActiveConnection(null);
@@ -178,7 +178,7 @@ export const WhatsAppSection = () => {
       // Update connection status in the list if there's an active connection
       if (activeConnection) {
         const updatedConnections = connections.map(c => 
-          c.id === activeConnection.id ? { ...c, status: "connected" } : c
+          c.id === activeConnection.id ? { ...c, status: "connected" as ConnectionStatusType } : c
         );
         setConnections(updatedConnections);
       }
@@ -212,7 +212,7 @@ export const WhatsAppSection = () => {
             // Update connection status in the list if there's an active connection
             if (activeConnection) {
               const updatedConnections = connections.map(c => 
-                c.id === activeConnection.id ? { ...c, status: "connected" } : c
+                c.id === activeConnection.id ? { ...c, status: "connected" as ConnectionStatusType } : c
               );
               setConnections(updatedConnections);
             }
