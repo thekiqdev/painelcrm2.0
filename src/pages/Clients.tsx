@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -325,7 +324,7 @@ const Clients = () => {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="group">Grupo</Label>
-                      <Select defaultValue="">
+                      <Select defaultValue="none">
                         <SelectTrigger id="group">
                           <SelectValue placeholder="Selecione um grupo" />
                         </SelectTrigger>
@@ -460,12 +459,12 @@ const Clients = () => {
         </Tabs>
 
         <div className="flex items-center gap-2">
-          <Select value={selectedGroup || ""} onValueChange={(value) => setSelectedGroup(value || null)}>
+          <Select value={selectedGroup || "all"} onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Filtrar por grupo" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Todos os grupos</SelectItem>
+              <SelectItem value="all">Todos os grupos</SelectItem>
               {clientGroups.map(group => (
                 <SelectItem key={group} value={group}>{group}</SelectItem>
               ))}
