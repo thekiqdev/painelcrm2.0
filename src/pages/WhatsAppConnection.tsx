@@ -41,6 +41,15 @@ const WhatsAppConnection = () => {
     });
   };
 
+  const handleConfirmConnection = () => {
+    setConnectionStatus("connected");
+    setQrCode(null);
+    toast({
+      title: "Conectado com sucesso!",
+      description: "Sua conta WhatsApp foi conectada manualmente",
+    });
+  };
+
   // Simulate successful connection after QR code is shown
   useEffect(() => {
     if (qrCode && connectionStatus === "connecting") {
@@ -88,6 +97,7 @@ const WhatsAppConnection = () => {
                 qrCode={qrCode} 
                 connectionStatus={connectionStatus} 
                 onDisconnect={handleDisconnect} 
+                onConfirmConnection={handleConfirmConnection} 
               />
             )}
           </CardContent>
