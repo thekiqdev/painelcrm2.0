@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { useLocation, NavLink } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -19,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -27,7 +27,6 @@ interface AppLayoutProps {
 const Nav = () => {
   const location = useLocation();
   const { state } = useSidebar();
-  // Use state instead of collapsed
   const collapsed = state === "collapsed";
   
   const getNavClass = ({ isActive }: { isActive: boolean }) => 
@@ -208,6 +207,15 @@ const Nav = () => {
 };
 
 const Header = () => {
+  const { user, profile, signOut } = useAuth();
+  const initials = profile ? 
+    (profile.first_name?.charAt(0) || '') + (profile.last_name?.charAt(0) || '') : 
+    'U';
+  
+  const displayName = profile ? 
+    `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : 
+    'Usuário';
+
   return (
     <header className="h-16 border-b flex items-center justify-between px-4">
       <div className="flex items-center">
@@ -244,9 +252,11 @@ const Header = () => {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="flex items-center gap-2">
               <Avatar className="h-8 w-8">
-                <div className="bg-crm-primary text-white h-full w-full flex items-center justify-center font-medium">AU</div>
+                <div className="bg-crm-primary text-white h-full w-full flex items-center justify-center font-medium">
+                  {initials || 'U'}
+                </div>
               </Avatar>
-              <span className="hidden md:inline font-medium">Admin User</span>
+              <span className="hidden md:inline font-medium">{displayName}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -261,8 +271,9 @@ const Header = () => {
               <span>Configurações</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => window.location.href = '/'}>
-              Sair
+            <DropdownMenuItem onClick={signOut}>
+              <LogOut className="mr-2 h-4 w-4" />
+              <span>Sair</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

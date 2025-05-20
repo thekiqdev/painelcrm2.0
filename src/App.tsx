@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./contexts/AuthContext";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Dashboard from "./pages/Dashboard";
@@ -23,34 +24,101 @@ import Register from "./pages/Register";
 import WhatsAppConnection from "./pages/WhatsAppConnection";
 import AppLayout from "./layouts/AppLayout";
 import AuthLayout from "./layouts/AuthLayout";
+import AuthWhatsApp from "./pages/AuthWhatsApp";
+import RegistrationSteps from "./pages/Registration/RegistrationSteps";
+import AuthGuard from "./components/AuthGuard";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
-      <Sonner />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/login" element={<AuthLayout><Login /></AuthLayout>} />
-          <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
-          <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
-          <Route path="/clients" element={<AppLayout><Clients /></AppLayout>} />
-          <Route path="/leads" element={<AppLayout><Leads /></AppLayout>} />
-          <Route path="/funnel" element={<AppLayout><Funnel /></AppLayout>} />
-          <Route path="/projects" element={<AppLayout><Projects /></AppLayout>} />
-          <Route path="/tasks" element={<AppLayout><Tasks /></AppLayout>} />
-          <Route path="/products" element={<AppLayout><Products /></AppLayout>} />
-          <Route path="/proposals" element={<AppLayout><Proposals /></AppLayout>} />
-          <Route path="/contracts" element={<AppLayout><Contracts /></AppLayout>} />
-          <Route path="/billing" element={<AppLayout><Billing /></AppLayout>} />
-          <Route path="/finance" element={<AppLayout><Finance /></AppLayout>} />
-          <Route path="/whatsapp" element={<AppLayout><WhatsAppConnection /></AppLayout>} />
-          <Route path="/settings" element={<AppLayout><Settings /></AppLayout>} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <AuthProvider>
+          <Toaster />
+          <Sonner />
+          <Routes>
+            <Route path="/" element={<AuthWhatsApp />} />
+            <Route path="/register/steps" element={
+              <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/">
+                <AuthLayout>
+                  <RegistrationSteps />
+                </AuthLayout>
+              </AuthGuard>
+            } />
+            <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
+            <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
+            
+            {/* Protected routes */}
+            <Route path="/dashboard" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Dashboard /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/clients" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Clients /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/leads" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Leads /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/funnel" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Funnel /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projects" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Projects /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/tasks" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Tasks /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/products" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Products /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Proposals /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Contracts /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/billing" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Billing /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/finance" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Finance /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/whatsapp" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><WhatsAppConnection /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/settings" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Settings /></AppLayout>
+              </AuthGuard>
+            } />
+            
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
