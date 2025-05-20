@@ -20,6 +20,7 @@ import Finance from "./pages/Finance";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import WhatsAppConnection from "./pages/WhatsAppConnection";
 import AppLayout from "./layouts/AppLayout";
 import AuthLayout from "./layouts/AuthLayout";
 
@@ -46,6 +47,7 @@ const App = () => (
           <Route path="/contracts" element={<AppLayout><Contracts /></AppLayout>} />
           <Route path="/billing" element={<AppLayout><Billing /></AppLayout>} />
           <Route path="/finance" element={<AppLayout><Finance /></AppLayout>} />
+          <Route path="/whatsapp" element={<AppLayout><WhatsAppConnection /></AppLayout>} />
           <Route path="/settings" element={<AppLayout><Settings /></AppLayout>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
