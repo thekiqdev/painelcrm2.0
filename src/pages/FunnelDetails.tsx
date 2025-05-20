@@ -21,6 +21,29 @@ import RuleForm from "@/components/funnel/RuleForm";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
+import { 
+  SalesFunnel, 
+  Deal, 
+  Client, 
+  Rule, 
+  FunnelStage 
+} from "@/components/funnel/types";
+import { 
+  initialFunnel, 
+  initialDeals, 
+  mockClients, 
+  clientTags, 
+  rules, 
+  sourcesOptions 
+} from "@/components/funnel/mockData";
+import { 
+  handleDragOver, 
+  handleDrop, 
+  handleAddTagToClient, 
+  handleRemoveTagFromClient, 
+  handleSaveRule, 
+  handleRemoveRule 
+} from "@/components/funnel/utils";
 
 const FunnelDetails: React.FC = () => {
   const { funnelId } = useParams<{ funnelId: string }>();
@@ -79,6 +102,55 @@ const FunnelDetails: React.FC = () => {
       setEditingFunnelDescription(funnel.description);
     }
   }, [funnel]);
+
+  // Render client card function
+  const renderClientCard = (client: Client) => {
+    return (
+      <Card 
+        key={client.id} 
+        className="cursor-pointer hover:shadow-md"
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData("clientId", client.id);
+          setDraggedClientId(client.id);
+        }}
+        onClick={() => {
+          setSelectedClient(client);
+          setShowClientDetailsDialog(true);
+        }}
+      >
+        <CardContent className="p-3">
+          <div className="flex flex-col gap-1">
+            <p className="font-medium">{client.name}</p>
+            {client.company && <p className="text-xs text-muted-foreground">{client.company}</p>}
+            {client.email && <p className="text-xs text-muted-foreground">{client.email}</p>}
+            {client.phone && <p className="text-xs text-muted-foreground">{client.phone}</p>}
+            {client.status && <p className="text-xs font-medium">{client.status}</p>}
+            
+            {/* Display client tags */}
+            {client.tags && client.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {client.tags.map(tagId => {
+                  const tag = clientTags.find(t => t.id === tagId);
+                  if (!tag) return null;
+                  
+                  return (
+                    <Badge 
+                      key={tag.id}
+                      style={{ backgroundColor: tag.color, color: "#fff" }}
+                      className="text-xs"
+                    >
+                      {tag.name}
+                    </Badge>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   // Save funnel general settings
   const handleSaveFunnelGeneralSettings = () => {
@@ -193,6 +265,21 @@ const FunnelDetails: React.FC = () => {
     
     toast.success("Ordem dos estágios atualizada!");
   };
+  
+  // Process the drop event to move a client between stages
+  const handleClientDrop = (result: { clientId: string, stageId: string }) => {
+    const { clientId, stageId } = result;
+    
+    if (!clientId || !stageId) return;
+    
+    setClients(prevClients => 
+      prevClients.map(client => 
+        client.id === clientId ? { ...client, stage: stageId } : client
+      )
+    );
+    
+    setDraggedClientId(null);
+  };
 
   // Render the content based on the active settings tab
   const renderContent = () => {
@@ -207,7 +294,10 @@ const FunnelDetails: React.FC = () => {
                 <Card 
                   key={stage.id}
                   onDragOver={handleDragOver}
-                  onDrop={(e) => handleDrop(e, stage.id)}
+                  onDrop={(e) => {
+                    const result = handleDrop(e, stage.id);
+                    handleClientDrop(result);
+                  }}
                 >
                   <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
                     <div className="flex justify-between items-center">
@@ -269,7 +359,6 @@ const FunnelDetails: React.FC = () => {
     }
   };
 
-  // Render the list content
   const renderListContent = () => {
     if (funnel?.type === "clients") {
       return (
@@ -595,8 +684,20 @@ const FunnelDetails: React.FC = () => {
         onClose={() => setShowClientDetailsDialog(false)}
         client={selectedClient}
         availableTags={clientTags}
-        onAddTag={handleAddTagToClient}
-        onRemoveTag={handleRemoveTagFromClient}
+        onAddTag={(client, tagId) => {
+          const updatedClient = handleAddTagToClient(client, tagId);
+          setClients(prevClients => 
+            prevClients.map(c => c.id === client.id ? updatedClient : c)
+          );
+          setSelectedClient(updatedClient);
+        }}
+        onRemoveTag={(client, tagId) => {
+          const updatedClient = handleRemoveTagFromClient(client, tagId);
+          setClients(prevClients => 
+            prevClients.map(c => c.id === client.id ? updatedClient : c)
+          );
+          setSelectedClient(updatedClient);
+        }}
       />
 
       {/* Add Stage Dialog */}
