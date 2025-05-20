@@ -1,5 +1,5 @@
 
-import { SalesFunnel, Deal, Client, ClientTag, Rule } from './types';
+import { SalesFunnel, Deal, Client, ClientTag, Rule, SourceOption } from './types';
 
 // Initial example funnel
 export const initialFunnel: SalesFunnel = {
@@ -83,7 +83,8 @@ export const mockClients: Client[] = [
     phone: "(11) 98765-4321", 
     status: "Ativo", 
     stage: "stage-1",
-    tags: ["client-tag-1", "client-tag-3"]
+    tags: ["client-tag-1", "client-tag-3"],
+    createdAt: "2023-05-15"
   },
   { 
     id: "C002", 
@@ -93,7 +94,8 @@ export const mockClients: Client[] = [
     phone: "(11) 91234-5678", 
     status: "Potencial", 
     stage: "stage-1",
-    tags: ["client-tag-2"]
+    tags: ["client-tag-2"],
+    createdAt: "2023-05-20"
   },
   { 
     id: "C003", 
@@ -103,7 +105,8 @@ export const mockClients: Client[] = [
     phone: "(21) 99876-5432", 
     status: "Em Negociação", 
     stage: "stage-2",
-    tags: []
+    tags: [],
+    createdAt: "2023-06-01"
   },
   { 
     id: "C004", 
@@ -113,7 +116,8 @@ export const mockClients: Client[] = [
     phone: "(11) 97777-8888", 
     status: "Ativo", 
     stage: "stage-3",
-    tags: ["client-tag-1"]
+    tags: ["client-tag-1"],
+    createdAt: "2023-06-15"
   },
 ];
 
@@ -128,7 +132,7 @@ export const clientTags: ClientTag[] = [
 export const rules: Rule[] = [];
 
 // Sources options for rule creation
-export const sourcesOptions = [
+export const sourcesOptions: SourceOption[] = [
   { value: "website", label: "Website" },
   { value: "social", label: "Redes Sociais" },
   { value: "referral", label: "Indicação" },

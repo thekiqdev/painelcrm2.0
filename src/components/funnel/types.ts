@@ -46,6 +46,8 @@ export interface Client {
   status?: string;
   stage: string;
   tags?: string[];
+  notes?: string;
+  createdAt?: string;
 }
 
 export interface Rule {
@@ -66,4 +68,9 @@ export interface RuleAction {
   id: string;
   type: string;
   value: string;
+}
+
+export interface SourceOption {
+  value: string;
+  label: string;
 }

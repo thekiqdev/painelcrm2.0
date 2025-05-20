@@ -1,5 +1,5 @@
 
-import { Client } from './types';
+import { Client, Rule } from './types';
 
 // Drag and drop handlers
 export const handleDragOver = (e: React.DragEvent) => {
@@ -41,7 +41,7 @@ export const handleRemoveTagFromClient = (client: Client, tagId: string): Client
 };
 
 // Rules handlers
-export const handleSaveRule = (rule: any) => {
+export const handleSaveRule = (rule: Rule): Rule => {
   console.log("Save rule:", rule);
   return rule;
 };

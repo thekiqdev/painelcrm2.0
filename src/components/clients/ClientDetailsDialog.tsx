@@ -15,25 +15,7 @@ import { Plus, Tag, Edit } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
-
-type ClientTag = {
-  id: string;
-  name: string;
-  color: string;
-};
-
-type Client = {
-  id: string;
-  name: string;
-  company?: string;
-  email?: string;
-  phone?: string;
-  status?: string;
-  notes?: string;
-  createdAt: string;
-  stage?: string;
-  tags?: ClientTag[];
-};
+import { Client, ClientTag } from "@/components/funnel/types";
 
 interface ClientDetailsDialogProps {
   isOpen: boolean;
@@ -41,8 +23,8 @@ interface ClientDetailsDialogProps {
   client: Client | null;
   availableTags: ClientTag[];
   onEditClient?: (client: Client) => void;
-  onAddTag: (clientId: string, tagId: string) => void;
-  onRemoveTag: (clientId: string, tagId: string) => void;
+  onAddTag: (client: Client, tagId: string) => void;
+  onRemoveTag: (client: Client, tagId: string) => void;
 }
 
 const ClientDetailsDialog: React.FC<ClientDetailsDialogProps> = ({
@@ -60,16 +42,16 @@ const ClientDetailsDialog: React.FC<ClientDetailsDialogProps> = ({
 
   // Filter out tags that are already assigned to the client
   const unassignedTags = availableTags.filter(
-    availableTag => !client.tags?.some(clientTag => clientTag.id === availableTag.id)
+    availableTag => !client.tags?.some(tagId => tagId === availableTag.id)
   );
 
   const handleAddTag = (tagId: string) => {
-    onAddTag(client.id, tagId);
+    onAddTag(client, tagId);
     toast.success("Tag adicionada com sucesso!");
   };
 
   const handleRemoveTag = (tagId: string) => {
-    onRemoveTag(client.id, tagId);
+    onRemoveTag(client, tagId);
     toast.success("Tag removida com sucesso!");
   };
 
@@ -129,17 +111,22 @@ const ClientDetailsDialog: React.FC<ClientDetailsDialogProps> = ({
                 <Label>Tags</Label>
                 <div className="flex flex-wrap gap-2 mt-2">
                   {client.tags && client.tags.length > 0 ? (
-                    client.tags.map(tag => (
-                      <Badge
-                        key={tag.id}
-                        className="px-2 py-1 flex items-center gap-1 cursor-pointer"
-                        style={{ backgroundColor: tag.color, color: "white" }}
-                        onClick={() => handleRemoveTag(tag.id)}
-                      >
-                        {tag.name}
-                        <span className="ml-1 text-xs">&times;</span>
-                      </Badge>
-                    ))
+                    client.tags.map(tagId => {
+                      const tag = availableTags.find(t => t.id === tagId);
+                      if (!tag) return null;
+                      
+                      return (
+                        <Badge
+                          key={tag.id}
+                          className="px-2 py-1 flex items-center gap-1 cursor-pointer"
+                          style={{ backgroundColor: tag.color, color: "white" }}
+                          onClick={() => handleRemoveTag(tag.id)}
+                        >
+                          {tag.name}
+                          <span className="ml-1 text-xs">&times;</span>
+                        </Badge>
+                      );
+                    })
                   ) : (
                     <p className="text-sm text-muted-foreground">Nenhuma tag atribuída</p>
                   )}

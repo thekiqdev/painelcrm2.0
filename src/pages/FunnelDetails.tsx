@@ -26,7 +26,8 @@ import {
   Deal, 
   Client, 
   Rule, 
-  FunnelStage 
+  FunnelStage,
+  SourceOption
 } from "@/components/funnel/types";
 import { 
   initialFunnel, 
