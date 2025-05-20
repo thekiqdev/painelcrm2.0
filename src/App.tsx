@@ -21,7 +21,7 @@ import Finance from "./pages/Finance";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
-import WhatsAppConnection from "./pages/WhatsAppConnection";
+import Chat from "./pages/Chat";
 import AppLayout from "./layouts/AppLayout";
 import AuthLayout from "./layouts/AuthLayout";
 import AuthWhatsApp from "./pages/AuthWhatsApp";
@@ -105,9 +105,9 @@ const App = () => (
                 <AppLayout><Finance /></AppLayout>
               </AuthGuard>
             } />
-            <Route path="/whatsapp" element={
+            <Route path="/chat" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><WhatsAppConnection /></AppLayout>
+                <AppLayout><Chat /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/settings" element={

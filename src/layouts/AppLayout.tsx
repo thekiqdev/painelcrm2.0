@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { useLocation, NavLink } from 'react-router-dom';
 import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut } from 'lucide-react';
@@ -131,9 +132,9 @@ const Nav = () => {
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <NavLink to="/whatsapp" className={getNavClass}>
+                  <NavLink to="/chat" className={getNavClass}>
                     <MessageSquare className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>WhatsApp</span>}
+                    {!collapsed && <span>Chat</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>

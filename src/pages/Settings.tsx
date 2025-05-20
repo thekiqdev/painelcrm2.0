@@ -1,7 +1,7 @@
 
 import React, { useState } from "react";
 import { toast } from "sonner";
-import { Building, Users, Globe, CreditCard, Bell, Settings as SettingsIcon, Shield } from "lucide-react";
+import { Building, Users, Globe, CreditCard, Bell, Settings as SettingsIcon, Shield, MessageSquare } from "lucide-react";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { CompanyDataSection } from "@/components/settings/CompanyDataSection";
 import { UsersSection } from "@/components/settings/UsersSection";
@@ -11,6 +11,7 @@ import { BillingSection } from "@/components/settings/BillingSection";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
 import { PreferencesSection } from "@/components/settings/PreferencesSection";
 import { SecuritySection } from "@/components/settings/SecuritySection";
+import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
 import { SettingsMenuItemProps } from "@/components/settings/types";
 
 const Settings = () => {
@@ -24,6 +25,7 @@ const Settings = () => {
   // Define the settings menu items
   const settingsMenuItems: SettingsMenuItemProps[] = [
     { id: "company", label: "Dados da Empresa", icon: <Building className="mr-2 h-5 w-5" /> },
+    { id: "whatsapp", label: "WhatsApp", icon: <MessageSquare className="mr-2 h-5 w-5" /> },
     { id: "users", label: "Usuários & Permissões", icon: <Users className="mr-2 h-5 w-5" /> },
     { id: "collaborators", label: "Colaboradores", icon: <Users className="mr-2 h-5 w-5" /> },
     { id: "domain", label: "Domínio e URLs", icon: <Globe className="mr-2 h-5 w-5" /> },
@@ -38,6 +40,8 @@ const Settings = () => {
     switch (activeSettingsTab) {
       case "company":
         return <CompanyDataSection handleSave={handleSave} />;
+      case "whatsapp":
+        return <WhatsAppSection />;
       case "users":
         return <UsersSection />;
       case "collaborators":
