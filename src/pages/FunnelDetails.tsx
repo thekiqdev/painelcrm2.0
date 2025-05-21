@@ -21,8 +21,17 @@ import {
   handleAddTagToClient, 
   handleRemoveTagFromClient, 
   handleSaveRule, 
-  handleRemoveRule 
+  handleRemoveRule,
+  updateClientStage 
 } from "@/components/funnel/utils";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 // Interface for Supabase client object
 interface SupabaseClient {
@@ -314,21 +323,13 @@ const FunnelDetails: React.FC = () => {
     setDraggedClientId(null);
     
     // Also update in database to persist the change
-    try {
-      const { error } = await supabase
-        .from('clients')
-        .update({ funnel_stage: stageId })
-        .eq('id', clientId);
-        
-      if (error) {
-        console.error('Error updating client stage:', error);
-        toast.error("Erro ao atualizar estágio do cliente");
-      } else {
-        toast.success("Cliente movido com sucesso");
-      }
-    } catch (error) {
+    const { success, error } = await updateClientStage(clientId, stageId);
+    
+    if (!success) {
       console.error('Error updating client stage:', error);
       toast.error("Erro ao atualizar estágio do cliente");
+    } else {
+      toast.success("Cliente movido com sucesso");
     }
   };
 
@@ -360,7 +361,7 @@ const FunnelDetails: React.FC = () => {
     setRules(prev => prev.filter(r => r.id !== ruleId));
   };
   
-  // Render the content based on the active settings tab
+  // Render the Kanban content
   const renderContent = () => {
     if (loading) {
       return (
@@ -452,34 +453,108 @@ const FunnelDetails: React.FC = () => {
     if (funnel?.type === "clients") {
       return (
         <TabsContent value="list" className="space-y-4">
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="py-3 px-4 text-left font-medium">Nome</th>
-                      <th className="py-3 px-4 text-left font-medium">Empresa</th>
-                      <th className="py-3 px-4 text-left font-medium">Email</th>
-                      <th className="py-3 px-4 text-left font-medium">Telefone</th>
-                      <th className="py-3 px-4 text-left font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {clients.map((client) => (
-                      <tr key={client.id} className="border-b hover:bg-muted/50 cursor-pointer">
-                        <td className="py-3 px-4">{client.name}</td>
-                        <td className="py-3 px-4">{client.company || "-"}</td>
-                        <td className="py-3 px-4">{client.email || "-"}</td>
-                        <td className="py-3 px-4">{client.phone || "-"}</td>
-                        <td className="py-3 px-4">{client.status || "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="space-y-6">
+            {funnel.stages.map((stage) => {
+              const stageClients = clients.filter(client => client.stage === stage.id);
+              
+              return (
+                <Card key={stage.id} className="overflow-hidden">
+                  <CardHeader className={`${stage.color} text-white py-2 px-4`}>
+                    <div className="flex justify-between items-center">
+                      <CardTitle className="text-sm">{stage.name}</CardTitle>
+                      <Badge variant="outline" className="text-white border-white">
+                        {stageClients.length}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  
+                  <CardContent className="p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Nome</TableHead>
+                          <TableHead>Empresa</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Telefone</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="w-[100px]">Ações</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {stageClients.length > 0 ? (
+                          stageClients.map((client) => (
+                            <TableRow 
+                              key={client.id} 
+                              className="cursor-pointer hover:bg-muted/50"
+                              draggable
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData("clientId", client.id);
+                                setDraggedClientId(client.id);
+                              }}
+                              onClick={() => {
+                                setSelectedClient(client);
+                                setShowClientDetailsDialog(true);
+                              }}
+                            >
+                              <TableCell>{client.name}</TableCell>
+                              <TableCell>{client.company || "-"}</TableCell>
+                              <TableCell>{client.email || "-"}</TableCell>
+                              <TableCell>{client.phone || "-"}</TableCell>
+                              <TableCell>{client.status || "-"}</TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedClient(client);
+                                      setShowClientDetailsDialog(true);
+                                    }}
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  
+                                  {funnel.stages.length > 1 && (
+                                    <select 
+                                      className="p-1 text-xs rounded border"
+                                      value={client.stage}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onChange={(e) => {
+                                        const newStageId = e.target.value;
+                                        if (newStageId !== client.stage) {
+                                          handleClientDrop({ 
+                                            clientId: client.id, 
+                                            stageId: newStageId 
+                                          });
+                                        }
+                                      }}
+                                    >
+                                      {funnel.stages.map(s => (
+                                        <option key={s.id} value={s.id}>
+                                          Mover para {s.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
+                              Nenhum cliente neste estágio
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         </TabsContent>
       );
     } else {
