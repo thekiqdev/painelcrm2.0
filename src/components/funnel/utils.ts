@@ -43,8 +43,10 @@ export const handleRemoveTagFromClient = (client: Client, tagId: string): Client
 // Rules handlers
 export const handleSaveRule = (rule: Rule): void => {
   console.log("Save rule:", rule);
+  // Aqui podemos implementar a lógica para salvar a regra no banco de dados
 };
 
-export const handleRemoveRule = (ruleId: string) => {
+export const handleRemoveRule = (ruleId: string): void => {
   console.log("Remove rule:", ruleId);
+  // Aqui podemos implementar a lógica para remover a regra do banco de dados
 };

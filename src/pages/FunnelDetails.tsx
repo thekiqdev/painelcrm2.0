@@ -30,11 +30,10 @@ import {
   SourceOption
 } from "@/components/funnel/types";
 import { 
-  initialFunnel, 
+  initialFunnel,
   initialDeals, 
-  mockClients, 
   clientTags, 
-  rules, 
+  rules,
   sourcesOptions 
 } from "@/components/funnel/mockData";
 import { 
@@ -59,6 +58,7 @@ const FunnelDetails: React.FC = () => {
   const [draggedClientId, setDraggedClientId] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showClientDetailsDialog, setShowClientDetailsDialog] = useState(false);
+  const [loading, setLoading] = useState(true);
   
   // New states for funnel settings
   const [settingsTab, setSettingsTab] = useState("general");
@@ -85,15 +85,52 @@ const FunnelDetails: React.FC = () => {
 
   // Check if funnelId is valid and load funnel data
   useEffect(() => {
-    if (funnelId) {
-      // Fetch funnel data from the backend or use mock data
-      // For now, we will use mock data
-      if (funnelId === "funnel-1") {
-        setFunnel(initialFunnel);
-        setDeals(initialDeals);
-        setClients(mockClients);
+    const fetchFunnelData = async () => {
+      setLoading(true);
+      
+      if (funnelId) {
+        try {
+          // For now, use mockup funnel structure
+          if (funnelId === "funnel-1") {
+            setFunnel(initialFunnel);
+            setDeals(initialDeals);
+            
+            // Fetch real clients from Supabase
+            const { data: clientsData, error } = await supabase
+              .from('clients')
+              .select('*');
+              
+            if (error) {
+              console.error('Error fetching clients:', error);
+              toast.error("Erro ao carregar os clientes");
+            } else if (clientsData) {
+              // Map Supabase clients to the Client type expected by the funnel
+              const mappedClients: Client[] = clientsData.map(client => ({
+                id: client.id,
+                name: client.name,
+                company: client.company || undefined,
+                email: client.email || undefined,
+                phone: client.phone || undefined,
+                status: client.status || undefined,
+                stage: client.stage || initialFunnel.stages[0].id, // Default to first stage if not set
+                tags: [], // Initialize with empty tags
+                notes: client.notes || undefined,
+                createdAt: client.created_at || new Date().toISOString()
+              }));
+              
+              setClients(mappedClients);
+            }
+          }
+        } catch (error) {
+          console.error('Error loading funnel data:', error);
+          toast.error("Erro ao carregar o funil");
+        } finally {
+          setLoading(false);
+        }
       }
-    }
+    };
+    
+    fetchFunnelData();
   }, [funnelId]);
 
   // Initialize funnel editing state when funnel data loads
@@ -268,11 +305,12 @@ const FunnelDetails: React.FC = () => {
   };
   
   // Process the drop event to move a client between stages
-  const handleClientDrop = (result: { clientId: string, stageId: string }) => {
+  const handleClientDrop = async (result: { clientId: string, stageId: string }) => {
     const { clientId, stageId } = result;
     
     if (!clientId || !stageId) return;
     
+    // Update local state
     setClients(prevClients => 
       prevClients.map(client => 
         client.id === clientId ? { ...client, stage: stageId } : client
@@ -280,6 +318,24 @@ const FunnelDetails: React.FC = () => {
     );
     
     setDraggedClientId(null);
+    
+    // Also update in database to persist the change
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({ stage: stageId })
+        .eq('id', clientId);
+        
+      if (error) {
+        console.error('Error updating client stage:', error);
+        toast.error("Erro ao atualizar estágio do cliente");
+      } else {
+        toast.success("Cliente movido com sucesso");
+      }
+    } catch (error) {
+      console.error('Error updating client stage:', error);
+      toast.error("Erro ao atualizar estágio do cliente");
+    }
   };
 
   // Client tag handlers
@@ -312,6 +368,16 @@ const FunnelDetails: React.FC = () => {
   
   // Render the content based on the active settings tab
   const renderContent = () => {
+    if (loading) {
+      return (
+        <TabsContent value="kanban" className="space-y-6">
+          <div className="flex items-center justify-center h-64">
+            <p>Carregando clientes...</p>
+          </div>
+        </TabsContent>
+      );
+    }
+    
     if (funnel?.type === "clients") {
       return (
         <TabsContent value="kanban" className="space-y-6">
@@ -685,9 +751,9 @@ const FunnelDetails: React.FC = () => {
             </DialogContent>
           </Dialog>
           
-          <Button>
+          <Button onClick={() => navigate('/clients')}>
             <Plus className="h-4 w-4 mr-2" />
-            {funnel.type === "clients" ? "Adicionar Cliente" : "Adicionar Negócio"}
+            Adicionar Cliente
           </Button>
         </div>
       </div>
