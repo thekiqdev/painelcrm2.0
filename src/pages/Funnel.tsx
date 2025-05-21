@@ -120,9 +120,9 @@ const initialDeals: Deal[] = [
   }
 ];
 
-// List of source options
+// List of source options - fixing the empty value issue here
 const sourceOptions = [
-  { value: "", label: "Todas as fontes" },
+  { value: "all", label: "Todas as fontes" },  // Changed from empty string to "all"
   { value: "Website", label: "Website" },
   { value: "Indicação", label: "Indicação" },
   { value: "Mídia Social", label: "Mídia Social" },
@@ -144,7 +144,9 @@ const Funnel = () => {
   // Date range filter
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
-  const [selectedSource, setSelectedSource] = useState<string>("");
+  
+  // Updated the initial selectedSource value to match our new "all" value
+  const [selectedSource, setSelectedSource] = useState<string>("all");
   
   // New funnel form state
   const [newFunnelName, setNewFunnelName] = useState("");
@@ -192,10 +194,10 @@ const Funnel = () => {
     toast.info(`Filtrando por data: ${startDate ? format(startDate, 'dd/MM/yyyy') : 'Início'} até ${endDate ? format(endDate, 'dd/MM/yyyy') : 'Hoje'}`);
   };
 
-  // Handle source filter changes
+  // Updated handler to handle the "all" value instead of empty string
   const handleSourceFilter = (source: string) => {
     setSelectedSource(source);
-    toast.info(`Filtrando por fonte: ${source || 'Todas'}`);
+    toast.info(`Filtrando por fonte: ${source === "all" ? 'Todas' : source}`);
   };
 
   // Handle form submission
