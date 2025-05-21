@@ -15,6 +15,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import LeadFormFields from "./LeadFormFields";
 import { Save } from "lucide-react";
+import { withUserId } from "@/utils/auth-helpers";
 
 const leadFormSchema = z.object({
   name: z.string().min(2, { message: "Nome é obrigatório" }),
@@ -71,6 +72,13 @@ const LeadEditDialog: React.FC<LeadEditDialogProps> = ({
     }
   }, [lead, editLeadForm]);
 
+  const handleSubmit = async (values: LeadFormValues) => {
+    const dataWithUserId = await withUserId(values);
+    if (dataWithUserId) {
+      onSave(dataWithUserId);
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
@@ -81,7 +89,7 @@ const LeadEditDialog: React.FC<LeadEditDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
         <Form {...editLeadForm}>
-          <form onSubmit={editLeadForm.handleSubmit(onSave)}>
+          <form onSubmit={editLeadForm.handleSubmit(handleSubmit)}>
             <div className="grid gap-6 py-4">
               <LeadFormFields form={editLeadForm} leadStatuses={leadStatuses} />
               <DialogFooter>

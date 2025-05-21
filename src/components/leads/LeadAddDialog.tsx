@@ -14,6 +14,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import LeadFormFields from "./LeadFormFields";
+import { withUserId } from "@/utils/auth-helpers";
 
 const leadFormSchema = z.object({
   name: z.string().min(2, { message: "Nome é obrigatório" }),
@@ -53,6 +54,13 @@ const LeadAddDialog: React.FC<LeadAddDialogProps> = ({
     },
   });
 
+  const handleSubmit = async (values: LeadFormValues) => {
+    const dataWithUserId = await withUserId(values);
+    if (dataWithUserId) {
+      onSave(dataWithUserId);
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
@@ -63,7 +71,7 @@ const LeadAddDialog: React.FC<LeadAddDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
         <Form {...leadForm}>
-          <form onSubmit={leadForm.handleSubmit(onSave)}>
+          <form onSubmit={leadForm.handleSubmit(handleSubmit)}>
             <div className="grid gap-6 py-4">
               <LeadFormFields form={leadForm} leadStatuses={leadStatuses} />
               <DialogFooter>

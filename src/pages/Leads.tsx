@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useAuth } from "@/contexts/AuthContext";
+import { withUserId } from "@/utils/auth-helpers";
 
 // Import our refactored components
 import LeadHeader from "@/components/leads/LeadHeader";
@@ -58,6 +60,7 @@ const Leads = () => {
   const [activeTab, setActiveTab] = useState("details");
   const [activeStatusFilter, setActiveStatusFilter] = useState("all");
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
+  const { user } = useAuth();
 
   // Forms
   const noteForm = useForm<NoteFormValues>({
@@ -173,12 +176,10 @@ const Leads = () => {
 
     try {
       const leadData = {
-        name: values.name,
+        ...values,
         company: values.company || null,
         email: values.email || null,
         phone: values.phone || null,
-        status: values.status,
-        source: values.source,
         notes: values.notes || null,
       };
 
@@ -211,15 +212,13 @@ const Leads = () => {
   // Add new lead
   const handleAddLead = async (values: LeadFormValues) => {
     try {
-      // Make sure the values object meets the type requirements of Supabase
+      // Valores já contém user_id adicionado pela função withUserId
       const leadData = {
-        name: values.name,
+        ...values,
         company: values.company || null,
         email: values.email || null,
         phone: values.phone || null,
-        status: values.status,
-        source: values.source,
-        notes: values.notes || null,
+        notes: values.notes || null
       };
 
       const { data, error } = await supabase
@@ -240,7 +239,7 @@ const Leads = () => {
 
   // Add task to lead
   const handleAddTask = async (values: TaskFormValues) => {
-    if (!selectedLead) return;
+    if (!selectedLead || !user) return;
     
     try {
       // Converting Date to ISO string
@@ -253,7 +252,8 @@ const Leads = () => {
           title: values.title,
           description: values.description || "",
           due_date: formattedDueDate,
-          status: values.status
+          status: values.status,
+          user_id: user.id
         })
         .select();
 
@@ -296,7 +296,7 @@ const Leads = () => {
 
   // Convert lead to client
   const handleConvertToClient = async () => {
-    if (!selectedLead) return;
+    if (!selectedLead || !user) return;
 
     try {
       // Create client from lead data
@@ -308,7 +308,8 @@ const Leads = () => {
           email: selectedLead.email,
           phone: selectedLead.phone,
           notes: selectedLead.notes,
-          status: "Ativo"
+          status: "Ativo",
+          user_id: user.id
         })
         .select();
 
@@ -327,7 +328,8 @@ const Leads = () => {
               title: task.title,
               description: task.description,
               due_date: task.due_date,
-              status: task.status
+              status: task.status,
+              user_id: user.id
             });
         }
       }

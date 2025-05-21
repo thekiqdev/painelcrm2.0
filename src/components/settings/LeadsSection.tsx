@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PlusCircle, Trash2, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface LeadStatus {
   id: string;
@@ -20,6 +21,7 @@ export const LeadsSection = ({ handleSave }: { handleSave: (e: React.FormEvent) 
   const [newStatusName, setNewStatusName] = useState("");
   const [newStatusColor, setNewStatusColor] = useState("#4C7CFF");
   const [isLoading, setIsLoading] = useState(true);
+  const { user } = useAuth();
 
   // Fetch lead statuses
   const fetchLeadStatuses = async () => {
@@ -48,12 +50,18 @@ export const LeadsSection = ({ handleSave }: { handleSave: (e: React.FormEvent) 
       return;
     }
 
+    if (!user) {
+      toast.error("Usuário não autenticado");
+      return;
+    }
+
     try {
       const { data, error } = await supabase
         .from("lead_statuses")
         .insert({
           name: newStatusName.trim(),
           color: newStatusColor,
+          user_id: user.id
         })
         .select();
 
