@@ -1,5 +1,4 @@
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus } from "lucide-react";
@@ -255,26 +254,24 @@ const Funnel = () => {
       );
       
       if (result.success && result.data) {
-        // Add the new funnel to the state
+        // First update state
         const updatedFunnels = [...funnels, result.data];
         setFunnels(updatedFunnels);
+        setActiveFunnelId(result.data.id);
+        setActiveTab(result.data.type);
         
-        // Reset form fields
+        // Reset form and close dialog
         setNewFunnelName("");
         setNewFunnelDesc("");
-        
-        // Close the dialog
         setDialogOpen(false);
         
         // Show success message
         toast.success("Funil criado com sucesso!");
         
-        // Set the active funnel to the new one
-        setActiveFunnelId(result.data.id);
-        setActiveTab(result.data.type);
-        
-        // Navigate to the new funnel details page
-        navigate(`/funnel/${result.data.id}`);
+        // Then navigate
+        setTimeout(() => {
+          navigate(`/funnel/${result.data.id}`);
+        }, 100);
       } else {
         toast.error("Erro ao criar o funil. Tente novamente.");
       }
@@ -373,7 +370,7 @@ const Funnel = () => {
       </div>
 
       {/* Tabs para tipos de funis */}
-      <Tabs defaultValue="clients" value={activeTab} onValueChange={(value) => setActiveTab(value as FunnelType)}>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as FunnelType)}>
         <TabsList className="mb-4">
           <TabsTrigger value="clients">Clientes</TabsTrigger>
           <TabsTrigger value="leads">Leads</TabsTrigger>

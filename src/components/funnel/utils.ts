@@ -72,7 +72,10 @@ export const createFunnel = async (funnel: Omit<SalesFunnel, "id" | "createdAt" 
   try {
     // Generate unique IDs
     const funnelId = `funnel-${Date.now()}`;
-    const formattedDate = new Date().toLocaleDateString('pt-BR');
+    
+    // Format the date correctly for display in Brazilian format
+    const today = new Date();
+    const formattedDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
 
     // Create a new funnel with stages
     const newFunnel: SalesFunnel = {
@@ -87,8 +90,7 @@ export const createFunnel = async (funnel: Omit<SalesFunnel, "id" | "createdAt" 
       }))
     };
     
-    // Here we would save the funnel to the database
-    // For now, we'll just console log and return the new funnel
+    // Log the created funnel and return success
     console.log("Created new funnel:", newFunnel);
     
     return { success: true, data: newFunnel };
