@@ -242,41 +242,47 @@ const Funnel = () => {
       ];
     }
     
-    // Create the new funnel
-    const result = await createFunnel(
-      {
-        name: newFunnelName,
-        description: newFunnelDesc,
-        type: newFunnelType,
-        isDefault: false,
-      },
-      defaultStages
-    );
-    
-    setIsSubmitting(false);
-    
-    if (result.success && result.data) {
-      // Add the new funnel to the state
-      setFunnels([...funnels, result.data]);
+    try {
+      // Create the new funnel
+      const result = await createFunnel(
+        {
+          name: newFunnelName,
+          description: newFunnelDesc,
+          type: newFunnelType,
+          isDefault: false,
+        },
+        defaultStages
+      );
       
-      // Reset form fields
-      setNewFunnelName("");
-      setNewFunnelDesc("");
-      
-      // Close the dialog
-      setDialogOpen(false);
-      
-      // Show success message
-      toast.success("Funil criado com sucesso!");
-      
-      // Set the active funnel to the new one
-      setActiveFunnelId(result.data.id);
-      setActiveTab(result.data.type);
-      
-      // Navigate to the new funnel details page
-      navigate(`/funnel/${result.data.id}`);
-    } else {
+      if (result.success && result.data) {
+        // Add the new funnel to the state
+        const updatedFunnels = [...funnels, result.data];
+        setFunnels(updatedFunnels);
+        
+        // Reset form fields
+        setNewFunnelName("");
+        setNewFunnelDesc("");
+        
+        // Close the dialog
+        setDialogOpen(false);
+        
+        // Show success message
+        toast.success("Funil criado com sucesso!");
+        
+        // Set the active funnel to the new one
+        setActiveFunnelId(result.data.id);
+        setActiveTab(result.data.type);
+        
+        // Navigate to the new funnel details page
+        navigate(`/funnel/${result.data.id}`);
+      } else {
+        toast.error("Erro ao criar o funil. Tente novamente.");
+      }
+    } catch (error) {
+      console.error("Error creating funnel:", error);
       toast.error("Erro ao criar o funil. Tente novamente.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -367,7 +373,7 @@ const Funnel = () => {
       </div>
 
       {/* Tabs para tipos de funis */}
-      <Tabs defaultValue="clients" onValueChange={(value) => setActiveTab(value as FunnelType)}>
+      <Tabs defaultValue="clients" value={activeTab} onValueChange={(value) => setActiveTab(value as FunnelType)}>
         <TabsList className="mb-4">
           <TabsTrigger value="clients">Clientes</TabsTrigger>
           <TabsTrigger value="leads">Leads</TabsTrigger>

@@ -70,25 +70,25 @@ export const updateClientStage = async (clientId: string, stageId: string) => {
 // Create a new funnel
 export const createFunnel = async (funnel: Omit<SalesFunnel, "id" | "createdAt" | "stages">, stages: Omit<FunnelStage, "id" | "funnelId" | "order">[]) => {
   try {
-    // Format the date in dd/MM/yyyy format
-    const today = new Date();
-    const formattedDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+    // Generate unique IDs
+    const funnelId = `funnel-${Date.now()}`;
+    const formattedDate = new Date().toLocaleDateString('pt-BR');
 
-    // Create a new funnel
+    // Create a new funnel with stages
     const newFunnel: SalesFunnel = {
       ...funnel,
-      id: `funnel-${Date.now()}`, // Generate a temporary ID (would be replaced with UUID in real DB)
+      id: funnelId,
       createdAt: formattedDate,
       stages: stages.map((stage, index) => ({
         ...stage,
-        id: `stage-${Date.now()}-${index}`, // Generate a temporary ID
+        id: `stage-${Date.now()}-${index}`,
         order: index,
-        funnelId: `funnel-${Date.now()}` // The same ID as the funnel
+        funnelId: funnelId
       }))
     };
     
     // Here we would save the funnel to the database
-    // For now, we'll just return the new funnel to be added to the state
+    // For now, we'll just console log and return the new funnel
     console.log("Created new funnel:", newFunnel);
     
     return { success: true, data: newFunnel };
