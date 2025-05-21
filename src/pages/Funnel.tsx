@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus } from "lucide-react";
+import { Plus, Calendar, Filter } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useNavigate } from "react-router-dom";
 import FunnelsList from "@/components/funnel/FunnelsList";
-import { createFunnel } from "@/components/funnel/utils";
+import { createFunnel, fetchFunnels } from "@/components/funnel/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 type Deal = {
   id: string;
@@ -23,14 +27,6 @@ type Deal = {
   funnelId: string;
 };
 
-type FunnelStage = {
-  id: string;
-  name: string;
-  color: string;
-  order: number;
-  funnelId: string;
-};
-
 type FunnelType = "clients" | "leads" | "proposals" | "contracts";
 
 type SalesFunnel = {
@@ -40,59 +36,15 @@ type SalesFunnel = {
   type: FunnelType;
   isDefault: boolean;
   createdAt: string;
-  stages: FunnelStage[];
+  source?: string;
+  stages: {
+    id: string;
+    name: string;
+    color: string;
+    order: number;
+    funnelId: string;
+  }[];
 };
-
-// Initial example funnels with different types
-const initialFunnels: SalesFunnel[] = [
-  {
-    id: "funnel-1",
-    name: "Funil de Clientes Padrão",
-    description: "Funil de vendas padrão para clientes",
-    type: "clients",
-    isDefault: true,
-    createdAt: "15/05/2023",
-    stages: [
-      { id: "stage-1", name: "Prospecção", color: "bg-blue-500", order: 0, funnelId: "funnel-1" },
-      { id: "stage-2", name: "Qualificação", color: "bg-purple-500", order: 1, funnelId: "funnel-1" },
-      { id: "stage-3", name: "Proposta", color: "bg-amber-500", order: 2, funnelId: "funnel-1" },
-      { id: "stage-4", name: "Negociação", color: "bg-green-500", order: 3, funnelId: "funnel-1" },
-      { id: "stage-5", name: "Fechado", color: "bg-emerald-500", order: 4, funnelId: "funnel-1" },
-      { id: "stage-6", name: "Perdido", color: "bg-red-500", order: 5, funnelId: "funnel-1" }
-    ]
-  },
-  {
-    id: "funnel-2",
-    name: "Funil de Leads Website",
-    description: "Funil para leads da campanha de website",
-    type: "leads",
-    isDefault: false,
-    createdAt: "20/06/2023",
-    stages: [
-      { id: "stage-7", name: "Novo Lead", color: "bg-blue-500", order: 0, funnelId: "funnel-2" },
-      { id: "stage-8", name: "Contato", color: "bg-purple-500", order: 1, funnelId: "funnel-2" },
-      { id: "stage-9", name: "Qualificado", color: "bg-green-500", order: 2, funnelId: "funnel-2" },
-      { id: "stage-10", name: "Convertido", color: "bg-emerald-500", order: 3, funnelId: "funnel-2" },
-      { id: "stage-11", name: "Rejeitado", color: "bg-red-500", order: 4, funnelId: "funnel-2" }
-    ]
-  },
-  {
-    id: "funnel-3",
-    name: "Funil de Propostas",
-    description: "Funil para gerenciar propostas comerciais",
-    type: "proposals",
-    isDefault: false,
-    createdAt: "01/07/2023",
-    stages: [
-      { id: "stage-12", name: "Nova", color: "bg-blue-500", order: 0, funnelId: "funnel-3" },
-      { id: "stage-13", name: "Em Elaboração", color: "bg-purple-500", order: 1, funnelId: "funnel-3" },
-      { id: "stage-14", name: "Enviada", color: "bg-amber-500", order: 2, funnelId: "funnel-3" },
-      { id: "stage-15", name: "Em Análise", color: "bg-green-500", order: 3, funnelId: "funnel-3" },
-      { id: "stage-16", name: "Aceita", color: "bg-emerald-500", order: 4, funnelId: "funnel-3" },
-      { id: "stage-17", name: "Recusada", color: "bg-red-500", order: 5, funnelId: "funnel-3" }
-    ]
-  }
-];
 
 // Example deals data
 const initialDeals: Deal[] = [
@@ -168,26 +120,82 @@ const initialDeals: Deal[] = [
   }
 ];
 
+// List of source options
+const sourceOptions = [
+  { value: "", label: "Todas as fontes" },
+  { value: "Website", label: "Website" },
+  { value: "Indicação", label: "Indicação" },
+  { value: "Mídia Social", label: "Mídia Social" },
+  { value: "Email Marketing", label: "Email Marketing" },
+  { value: "Google", label: "Google" },
+  { value: "Evento", label: "Evento" },
+  { value: "Outros", label: "Outros" }
+];
+
 const Funnel = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<FunnelType>("clients");
-  const [funnels, setFunnels] = useState<SalesFunnel[]>(initialFunnels);
+  const [funnels, setFunnels] = useState<SalesFunnel[]>([]);
   const [deals, setDeals] = useState<Deal[]>(initialDeals);
-  const [activeFunnelId, setActiveFunnelId] = useState<string>(funnels[0]?.id || "");
+  const [activeFunnelId, setActiveFunnelId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Date range filter
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [selectedSource, setSelectedSource] = useState<string>("");
   
   // New funnel form state
   const [newFunnelName, setNewFunnelName] = useState("");
   const [newFunnelDesc, setNewFunnelDesc] = useState("");
   const [newFunnelType, setNewFunnelType] = useState<FunnelType>("clients");
+  const [newFunnelSource, setNewFunnelSource] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    loadFunnels();
+  }, []);
+
+  const loadFunnels = async () => {
+    setIsLoading(true);
+    try {
+      const result = await fetchFunnels();
+      if (result.success && result.data) {
+        setFunnels(result.data);
+        // Set active funnel to the first one if available
+        if (result.data.length > 0) {
+          setActiveFunnelId(result.data[0].id);
+        }
+      } else {
+        toast.error("Erro ao carregar funis");
+      }
+    } catch (error) {
+      console.error("Error loading funnels:", error);
+      toast.error("Erro ao carregar funis");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Filtrar funis pelo tipo ativo
   const funnelsByType = funnels.filter(f => f.type === activeTab);
-  const activeFunnel = funnels.find(f => f.id === activeFunnelId) || funnels[0];
+  const activeFunnel = funnels.find(f => f.id === activeFunnelId) || (funnels.length > 0 ? funnels[0] : null);
 
   const handleViewFunnelDetails = (funnelId: string) => {
     navigate(`/funnel/${funnelId}`);
+  };
+
+  // Handle date filter changes
+  const handleDateFilter = () => {
+    // Implementation would filter clients based on date range
+    toast.info(`Filtrando por data: ${startDate ? format(startDate, 'dd/MM/yyyy') : 'Início'} até ${endDate ? format(endDate, 'dd/MM/yyyy') : 'Hoje'}`);
+  };
+
+  // Handle source filter changes
+  const handleSourceFilter = (source: string) => {
+    setSelectedSource(source);
+    toast.info(`Filtrando por fonte: ${source || 'Todas'}`);
   };
 
   // Handle form submission
@@ -249,6 +257,7 @@ const Funnel = () => {
           description: newFunnelDesc,
           type: newFunnelType,
           isDefault: false,
+          source: newFunnelSource || undefined,
         },
         defaultStages
       );
@@ -263,6 +272,7 @@ const Funnel = () => {
         // Reset form and close dialog
         setNewFunnelName("");
         setNewFunnelDesc("");
+        setNewFunnelSource("");
         setDialogOpen(false);
         
         // Show success message
@@ -271,7 +281,7 @@ const Funnel = () => {
         // Then navigate
         setTimeout(() => {
           navigate(`/funnel/${result.data.id}`);
-        }, 100);
+        }, 300);
       } else {
         toast.error("Erro ao criar o funil. Tente novamente.");
       }
@@ -289,6 +299,57 @@ const Funnel = () => {
         <h1 className="text-2xl font-bold">Funil de Vendas</h1>
 
         <div className="flex flex-col sm:flex-row gap-2">
+          {/* Filters */}
+          <div className="flex gap-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Filtrar por Data
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <div className="p-4 space-y-4">
+                  <div>
+                    <Label>Data Inicial</Label>
+                    <CalendarComponent
+                      mode="single"
+                      selected={startDate}
+                      onSelect={setStartDate}
+                      locale={ptBR}
+                      className="rounded-md border mt-2"
+                    />
+                  </div>
+                  <div>
+                    <Label>Data Final</Label>
+                    <CalendarComponent
+                      mode="single"
+                      selected={endDate}
+                      onSelect={setEndDate}
+                      locale={ptBR}
+                      className="rounded-md border mt-2"
+                    />
+                  </div>
+                  <Button className="w-full" onClick={handleDateFilter}>Aplicar Filtro</Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            <Select value={selectedSource} onValueChange={handleSourceFilter}>
+              <SelectTrigger className="w-[180px]">
+                <div className="flex items-center">
+                  <Filter className="h-4 w-4 mr-2" />
+                  <SelectValue placeholder="Fonte" />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                {sourceOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button data-set-new-funnel-dialog>
@@ -338,6 +399,24 @@ const Funnel = () => {
                   </div>
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
+                      <Label htmlFor="source">Fonte</Label>
+                      <Select 
+                        value={newFunnelSource} 
+                        onValueChange={(value) => setNewFunnelSource(value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione a fonte" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {sourceOptions.slice(1).map(option => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="space-y-2">
                       <Label htmlFor="description">Descrição</Label>
                       <Textarea 
                         id="description" 
@@ -378,43 +457,52 @@ const Funnel = () => {
           <TabsTrigger value="contracts">Contratos</TabsTrigger>
         </TabsList>
 
-        {/* Conteúdo para todos os tipos de funis */}
-        <TabsContent value="clients" className="space-y-4">
-          <FunnelsList 
-            funnels={funnelsByType} 
-            activeFunnelId={activeFunnelId}
-            setActiveFunnelId={setActiveFunnelId}
-            handleViewFunnelDetails={handleViewFunnelDetails}
-            filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
-          />
-        </TabsContent>
-        <TabsContent value="leads" className="space-y-4">
-          <FunnelsList 
-            funnels={funnelsByType} 
-            activeFunnelId={activeFunnelId}
-            setActiveFunnelId={setActiveFunnelId}
-            handleViewFunnelDetails={handleViewFunnelDetails}
-            filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
-          />
-        </TabsContent>
-        <TabsContent value="proposals" className="space-y-4">
-          <FunnelsList 
-            funnels={funnelsByType} 
-            activeFunnelId={activeFunnelId}
-            setActiveFunnelId={setActiveFunnelId}
-            handleViewFunnelDetails={handleViewFunnelDetails}
-            filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
-          />
-        </TabsContent>
-        <TabsContent value="contracts" className="space-y-4">
-          <FunnelsList 
-            funnels={funnelsByType} 
-            activeFunnelId={activeFunnelId}
-            setActiveFunnelId={setActiveFunnelId}
-            handleViewFunnelDetails={handleViewFunnelDetails}
-            filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
-          />
-        </TabsContent>
+        {/* Loading state */}
+        {isLoading ? (
+          <div className="bg-muted rounded-md p-8 flex items-center justify-center">
+            <p className="text-muted-foreground">Carregando funis...</p>
+          </div>
+        ) : (
+          <>
+            {/* Conteúdo para todos os tipos de funis */}
+            <TabsContent value="clients" className="space-y-4">
+              <FunnelsList 
+                funnels={funnelsByType} 
+                activeFunnelId={activeFunnelId}
+                setActiveFunnelId={setActiveFunnelId}
+                handleViewFunnelDetails={handleViewFunnelDetails}
+                filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
+              />
+            </TabsContent>
+            <TabsContent value="leads" className="space-y-4">
+              <FunnelsList 
+                funnels={funnelsByType} 
+                activeFunnelId={activeFunnelId}
+                setActiveFunnelId={setActiveFunnelId}
+                handleViewFunnelDetails={handleViewFunnelDetails}
+                filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
+              />
+            </TabsContent>
+            <TabsContent value="proposals" className="space-y-4">
+              <FunnelsList 
+                funnels={funnelsByType} 
+                activeFunnelId={activeFunnelId}
+                setActiveFunnelId={setActiveFunnelId}
+                handleViewFunnelDetails={handleViewFunnelDetails}
+                filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
+              />
+            </TabsContent>
+            <TabsContent value="contracts" className="space-y-4">
+              <FunnelsList 
+                funnels={funnelsByType} 
+                activeFunnelId={activeFunnelId}
+                setActiveFunnelId={setActiveFunnelId}
+                handleViewFunnelDetails={handleViewFunnelDetails}
+                filteredDeals={deals.filter(deal => deal.funnelId === activeFunnelId)}
+              />
+            </TabsContent>
+          </>
+        )}
       </Tabs>
     </div>
   );

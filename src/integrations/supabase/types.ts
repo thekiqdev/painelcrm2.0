@@ -82,6 +82,7 @@ export type Database = {
           name: string
           notes: string | null
           phone: string | null
+          source: string | null
           status: string | null
           updated_at: string | null
         }
@@ -95,6 +96,7 @@ export type Database = {
           name: string
           notes?: string | null
           phone?: string | null
+          source?: string | null
           status?: string | null
           updated_at?: string | null
         }
@@ -108,6 +110,7 @@ export type Database = {
           name?: string
           notes?: string | null
           phone?: string | null
+          source?: string | null
           status?: string | null
           updated_at?: string | null
         }
@@ -117,6 +120,44 @@ export type Database = {
             columns: ["group_id"]
             isOneToOne: false
             referencedRelation: "client_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      funnel_stages: {
+        Row: {
+          color: string
+          created_at: string | null
+          funnel_id: string
+          id: string
+          name: string
+          order_position: number
+          updated_at: string | null
+        }
+        Insert: {
+          color: string
+          created_at?: string | null
+          funnel_id: string
+          id?: string
+          name: string
+          order_position: number
+          updated_at?: string | null
+        }
+        Update: {
+          color?: string
+          created_at?: string | null
+          funnel_id?: string
+          id?: string
+          name?: string
+          order_position?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "funnel_stages_funnel_id_fkey"
+            columns: ["funnel_id"]
+            isOneToOne: false
+            referencedRelation: "sales_funnels"
             referencedColumns: ["id"]
           },
         ]
@@ -285,6 +326,39 @@ export type Database = {
           step_name?: string
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      sales_funnels: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          is_default: boolean | null
+          name: string
+          source: string | null
+          type: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_default?: boolean | null
+          name: string
+          source?: string | null
+          type: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_default?: boolean | null
+          name?: string
+          source?: string | null
+          type?: string
+          updated_at?: string | null
         }
         Relationships: []
       }
