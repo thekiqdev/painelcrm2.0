@@ -66,3 +66,4 @@ export const updateClientStage = async (clientId: string, stageId: string) => {
     return { success: false, error };
   }
 };
+

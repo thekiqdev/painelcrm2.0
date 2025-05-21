@@ -458,7 +458,15 @@ const FunnelDetails: React.FC = () => {
               const stageClients = clients.filter(client => client.stage === stage.id);
               
               return (
-                <Card key={stage.id} className="overflow-hidden">
+                <Card 
+                  key={stage.id} 
+                  className="overflow-hidden"
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => {
+                    const result = handleDrop(e, stage.id);
+                    handleClientDrop(result);
+                  }}
+                >
                   <CardHeader className={`${stage.color} text-white py-2 px-4`}>
                     <div className="flex justify-between items-center">
                       <CardTitle className="text-sm">{stage.name}</CardTitle>
@@ -477,7 +485,6 @@ const FunnelDetails: React.FC = () => {
                           <TableHead>Email</TableHead>
                           <TableHead>Telefone</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="w-[100px]">Ações</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -501,49 +508,11 @@ const FunnelDetails: React.FC = () => {
                               <TableCell>{client.email || "-"}</TableCell>
                               <TableCell>{client.phone || "-"}</TableCell>
                               <TableCell>{client.status || "-"}</TableCell>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
-                                  <Button 
-                                    variant="ghost" 
-                                    size="sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedClient(client);
-                                      setShowClientDetailsDialog(true);
-                                    }}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                  
-                                  {funnel.stages.length > 1 && (
-                                    <select 
-                                      className="p-1 text-xs rounded border"
-                                      value={client.stage}
-                                      onClick={(e) => e.stopPropagation()}
-                                      onChange={(e) => {
-                                        const newStageId = e.target.value;
-                                        if (newStageId !== client.stage) {
-                                          handleClientDrop({ 
-                                            clientId: client.id, 
-                                            stageId: newStageId 
-                                          });
-                                        }
-                                      }}
-                                    >
-                                      {funnel.stages.map(s => (
-                                        <option key={s.id} value={s.id}>
-                                          Mover para {s.name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  )}
-                                </div>
-                              </TableCell>
                             </TableRow>
                           ))
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
+                            <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
                               Nenhum cliente neste estágio
                             </TableCell>
                           </TableRow>
@@ -829,12 +798,10 @@ const FunnelDetails: React.FC = () => {
       <p className="text-muted-foreground">{funnel.description}</p>
 
       {/* Indica que é possível mover clientes entre colunas */}
-      {funnel.type === "clients" && activeTab === "kanban" && (
-        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-          <MoveHorizontal className="h-4 w-4" />
-          <span>Arraste os cards para mover os clientes entre estágios</span>
-        </div>
-      )}
+      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+        <MoveHorizontal className="h-4 w-4" />
+        <span>Arraste os cards ou as linhas da tabela para mover os clientes entre estágios</span>
+      </div>
 
       {/* Tabs */}
       <Tabs defaultValue={activeTab} onValueChange={setActiveTab} className="w-full">
