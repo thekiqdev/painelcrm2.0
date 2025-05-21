@@ -17,6 +17,7 @@ export interface SalesFunnel {
   type: FunnelType;
   isDefault: boolean;
   createdAt: string;
+  source?: string;
   stages: FunnelStage[];
 }
 
@@ -48,6 +49,7 @@ export interface Client {
   tags?: string[];
   notes?: string;
   createdAt?: string;
+  source?: string;
 }
 
 export interface Rule {

@@ -204,7 +204,7 @@ export const updateFunnel = async (funnel: SalesFunnel) => {
         type: funnel.type,
         is_default: funnel.isDefault,
         source: funnel.source,
-        updated_at: new Date()
+        updated_at: new Date().toISOString()
       })
       .eq('id', funnel.id);
 
