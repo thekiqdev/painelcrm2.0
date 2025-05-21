@@ -1,5 +1,6 @@
 
 import { Client, Rule } from './types';
+import { supabase } from '@/integrations/supabase/client';
 
 // Drag and drop handlers
 export const handleDragOver = (e: React.DragEvent) => {
