@@ -43,6 +43,8 @@ import * as z from "zod";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { withUserId } from "@/utils/auth-helpers";
+import { addClient, addClientTask } from "@/utils/clients-helpers";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -354,41 +356,37 @@ const Clients = () => {
     e.preventDefault();
     
     try {
-      // Inserir novo cliente no Supabase
-      const { data, error } = await supabase
-        .from("clients")
-        .insert({
-          name: newClient.name,
-          company: newClient.company,
-          email: newClient.email,
-          phone: newClient.phone,
-          status: newClient.status,
-          group_id: newClient.group_id || null,
-          notes: newClient.notes
-        })
-        .select(`
-          *,
-          client_groups (id, name)
-        `)
-        .single();
+      const result = await addClient({
+        name: newClient.name,
+        company: newClient.company,
+        email: newClient.email,
+        phone: newClient.phone,
+        status: newClient.status,
+        group_id: newClient.group_id || null,
+        notes: newClient.notes
+      });
       
-      if (error) throw error;
+      if (!result.success) {
+        throw new Error(result.error?.message || "Erro ao adicionar cliente");
+      }
       
-      // Formatar o cliente adicionado
-      const addedClient = {
-        id: data.id,
-        name: data.name,
-        company: data.company,
-        email: data.email,
-        phone: data.phone,
-        status: data.status,
-        group: data.client_groups?.name || "",
-        group_id: data.group_id,
-        notes: data.notes
+      const addedClient = result.data?.[0];
+      
+      // Format the client data for the list
+      const formattedClient = {
+        id: addedClient.id,
+        name: addedClient.name,
+        company: addedClient.company,
+        email: addedClient.email,
+        phone: addedClient.phone,
+        status: addedClient.status,
+        group: clientGroups.find(g => g.id === addedClient.group_id)?.name || "",
+        group_id: addedClient.group_id,
+        notes: addedClient.notes
       };
       
-      // Adicionar o novo cliente à lista
-      setClients([...clients, addedClient]);
+      // Add the new client to the list
+      setClients([...clients, formattedClient]);
       
       toast.success("Cliente adicionado com sucesso!");
       setIsAddDialogOpen(false);
@@ -495,22 +493,20 @@ const Clients = () => {
       // Convertendo o objeto Date para string no formato ISO
       const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
       
-      const { data, error } = await supabase
-        .from("client_tasks")
-        .insert({
-          client_id: selectedClient.id,
-          title: values.title,
-          description: values.description || "",
-          due_date: formattedDueDate,
-          status: values.status
-        })
-        .select()
-        .single();
-      
-      if (error) throw error;
+      const result = await addClientTask({
+        client_id: selectedClient.id,
+        title: values.title,
+        description: values.description || "",
+        due_date: formattedDueDate,
+        status: values.status
+      });
+
+      if (!result.success) {
+        throw new Error(result.error?.message || "Erro ao adicionar tarefa");
+      }
       
       // Adicionar a nova tarefa à lista
-      setClientTasks([...clientTasks, data]);
+      setClientTasks([...clientTasks, result.data?.[0]]);
       
       toast.success("Tarefa adicionada com sucesso!");
       setIsAddTaskDialogOpen(false);
@@ -518,51 +514,6 @@ const Clients = () => {
     } catch (error: any) {
       console.error("Erro ao adicionar tarefa:", error);
       toast.error(`Erro ao adicionar tarefa: ${error.message}`);
-    }
-  };
-
-  // Atualizar status da tarefa
-  const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
-    try {
-      const { error } = await supabase
-        .from("client_tasks")
-        .update({ status: newStatus })
-        .eq("id", taskId);
-      
-      if (error) throw error;
-      
-      // Atualizar tarefa na lista local
-      const updatedTasks = clientTasks.map(task => {
-        if (task.id === taskId) {
-          return { ...task, status: newStatus };
-        }
-        return task;
-      });
-      
-      setClientTasks(updatedTasks);
-      toast.success("Status da tarefa atualizado!");
-    } catch (error: any) {
-      console.error("Erro ao atualizar status da tarefa:", error);
-      toast.error(`Erro ao atualizar tarefa: ${error.message}`);
-    }
-  };
-
-  // Excluir tarefa
-  const handleDeleteTask = async (taskId: string) => {
-    try {
-      const { error } = await supabase
-        .from("client_tasks")
-        .delete()
-        .eq("id", taskId);
-      
-      if (error) throw error;
-      
-      // Remover tarefa da lista local
-      setClientTasks(clientTasks.filter(task => task.id !== taskId));
-      toast.success("Tarefa excluída com sucesso!");
-    } catch (error: any) {
-      console.error("Erro ao excluir tarefa:", error);
-      toast.error(`Erro ao excluir tarefa: ${error.message}`);
     }
   };
 

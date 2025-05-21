@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
@@ -245,16 +244,21 @@ const Leads = () => {
       // Converting Date to ISO string
       const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
       
+      const taskData = await withUserId({
+        lead_id: selectedLead.id,
+        title: values.title,
+        description: values.description || "",
+        due_date: formattedDueDate,
+        status: values.status
+      });
+      
+      if (!taskData) {
+        throw new Error("Usuário não autenticado");
+      }
+      
       const { data, error } = await supabase
         .from("lead_tasks")
-        .insert({
-          lead_id: selectedLead.id,
-          title: values.title,
-          description: values.description || "",
-          due_date: formattedDueDate,
-          status: values.status,
-          user_id: user.id
-        })
+        .insert(taskData)
         .select();
 
       if (error) throw error;
@@ -300,37 +304,45 @@ const Leads = () => {
 
     try {
       // Create client from lead data
-      const { data: clientData, error: clientError } = await supabase
+      const clientData = await withUserId({
+        name: selectedLead.name,
+        company: selectedLead.company,
+        email: selectedLead.email,
+        phone: selectedLead.phone,
+        notes: selectedLead.notes,
+        status: "Ativo"
+      });
+      
+      if (!clientData) {
+        throw new Error("Usuário não autenticado");
+      }
+      
+      const { data: newClient, error: clientError } = await supabase
         .from("clients")
-        .insert({
-          name: selectedLead.name,
-          company: selectedLead.company,
-          email: selectedLead.email,
-          phone: selectedLead.phone,
-          notes: selectedLead.notes,
-          status: "Ativo",
-          user_id: user.id
-        })
+        .insert(clientData)
         .select();
 
       if (clientError) throw clientError;
 
       // Transfer lead tasks to client
-      if (leadTasks.length > 0 && clientData && clientData[0]) {
-        const clientId = clientData[0].id;
+      if (leadTasks.length > 0 && newClient && newClient[0]) {
+        const clientId = newClient[0].id;
         
         // Convert tasks
         for (const task of leadTasks) {
+          const taskData = await withUserId({
+            client_id: clientId,
+            title: task.title,
+            description: task.description,
+            due_date: task.due_date,
+            status: task.status
+          });
+          
+          if (!taskData) continue;
+          
           await supabase
             .from("client_tasks")
-            .insert({
-              client_id: clientId,
-              title: task.title,
-              description: task.description,
-              due_date: task.due_date,
-              status: task.status,
-              user_id: user.id
-            });
+            .insert(taskData);
         }
       }
 
