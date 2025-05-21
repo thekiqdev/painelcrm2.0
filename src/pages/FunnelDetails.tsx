@@ -5,45 +5,32 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { ArrowLeft, ChevronRight, Plus, Settings, Tag, MoveHorizontal, User, Edit, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Settings, MoveHorizontal, Edit, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { 
-  Menubar,
-  MenubarContent,
-  MenubarItem,
-  MenubarMenu,
-  MenubarSeparator,
-  MenubarTrigger,
-} from "@/components/ui/menubar";
 import RuleForm from "@/components/funnel/RuleForm";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
-import { 
-  SalesFunnel, 
-  Deal, 
-  Client, 
-  Rule, 
-  FunnelStage,
-  SourceOption
-} from "@/components/funnel/types";
-import { 
-  initialFunnel,
-  initialDeals, 
-  clientTags, 
-  rules,
-  sourcesOptions 
-} from "@/components/funnel/mockData";
-import { 
-  handleDragOver, 
-  handleDrop, 
-  handleAddTagToClient, 
-  handleRemoveTagFromClient, 
-  handleSaveRule, 
-  handleRemoveRule 
-} from "@/components/funnel/utils";
+import { SalesFunnel, Deal, Client, Rule, FunnelStage } from "@/components/funnel/types";
+import { initialFunnel, initialDeals, clientTags, rules, sourcesOptions } from "@/components/funnel/mockData";
+import { handleDragOver, handleDrop, handleAddTagToClient, handleRemoveTagFromClient, handleSaveRule, handleRemoveRule } from "@/components/funnel/utils";
+
+// Interface for Supabase client object
+interface SupabaseClient {
+  id: string;
+  name: string;
+  company: string | null;
+  email: string | null;
+  phone: string | null;
+  status: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  group_id: string | null;
+  funnel_stage?: string;
+}
 
 const FunnelDetails: React.FC = () => {
   const { funnelId } = useParams<{ funnelId: string }>();
@@ -105,17 +92,17 @@ const FunnelDetails: React.FC = () => {
               toast.error("Erro ao carregar os clientes");
             } else if (clientsData) {
               // Map Supabase clients to the Client type expected by the funnel
-              const mappedClients: Client[] = clientsData.map(client => ({
+              const mappedClients: Client[] = clientsData.map((client: SupabaseClient) => ({
                 id: client.id,
                 name: client.name,
                 company: client.company || undefined,
                 email: client.email || undefined,
                 phone: client.phone || undefined,
                 status: client.status || undefined,
-                stage: client.stage || initialFunnel.stages[0].id, // Default to first stage if not set
-                tags: [], // Initialize with empty tags
+                stage: client.funnel_stage || initialFunnel.stages[0].id,
+                tags: [],
                 notes: client.notes || undefined,
-                createdAt: client.created_at || new Date().toISOString()
+                createdAt: client.created_at
               }));
               
               setClients(mappedClients);
@@ -323,7 +310,7 @@ const FunnelDetails: React.FC = () => {
     try {
       const { error } = await supabase
         .from('clients')
-        .update({ stage: stageId })
+        .update({ funnel_stage: stageId })
         .eq('id', clientId);
         
       if (error) {
@@ -381,8 +368,8 @@ const FunnelDetails: React.FC = () => {
     if (funnel?.type === "clients") {
       return (
         <TabsContent value="kanban" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {funnel.stages.slice(0, 3).map((stage) => {
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {funnel.stages.map((stage) => {
               const stageClients = clients.filter(client => client.stage === stage.id);
               
               return (
@@ -420,8 +407,8 @@ const FunnelDetails: React.FC = () => {
     } else {
       return (
         <TabsContent value="kanban" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {funnel.stages.slice(0, 3).map((stage) => (
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {funnel.stages.map((stage) => (
               <Card key={stage.id}>
                 <CardHeader className={`${stage.color} text-white rounded-t-lg py-2 px-3`}>
                   <div className="flex justify-between items-center">
@@ -532,7 +519,6 @@ const FunnelDetails: React.FC = () => {
     }
   };
 
-  // Tabs content for Rules
   const renderRulesContent = () => (
     <RuleForm 
       leadStatuses={leadStatuses}
