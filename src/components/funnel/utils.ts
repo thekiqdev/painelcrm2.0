@@ -1,5 +1,5 @@
 
-import { Client, Rule } from './types';
+import { Client, Rule, SalesFunnel, FunnelStage } from './types';
 import { supabase } from '@/integrations/supabase/client';
 
 // Drag and drop handlers
@@ -67,3 +67,33 @@ export const updateClientStage = async (clientId: string, stageId: string) => {
   }
 };
 
+// Create a new funnel
+export const createFunnel = async (funnel: Omit<SalesFunnel, "id" | "createdAt" | "stages">, stages: Omit<FunnelStage, "id" | "funnelId" | "order">[]) => {
+  try {
+    // Format the date in dd/MM/yyyy format
+    const today = new Date();
+    const formattedDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+
+    // Create a new funnel
+    const newFunnel: SalesFunnel = {
+      ...funnel,
+      id: `funnel-${Date.now()}`, // Generate a temporary ID (would be replaced with UUID in real DB)
+      createdAt: formattedDate,
+      stages: stages.map((stage, index) => ({
+        ...stage,
+        id: `stage-${Date.now()}-${index}`, // Generate a temporary ID
+        order: index,
+        funnelId: `funnel-${Date.now()}` // The same ID as the funnel
+      }))
+    };
+    
+    // Here we would save the funnel to the database
+    // For now, we'll just return the new funnel to be added to the state
+    console.log("Created new funnel:", newFunnel);
+    
+    return { success: true, data: newFunnel };
+  } catch (error) {
+    console.error("Error creating funnel:", error);
+    return { success: false, error };
+  }
+};

@@ -1,14 +1,17 @@
+
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useNavigate } from "react-router-dom";
 import FunnelsList from "@/components/funnel/FunnelsList";
+import { createFunnel } from "@/components/funnel/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "sonner";
 
 type Deal = {
   id: string;
@@ -172,6 +175,13 @@ const Funnel = () => {
   const [funnels, setFunnels] = useState<SalesFunnel[]>(initialFunnels);
   const [deals, setDeals] = useState<Deal[]>(initialDeals);
   const [activeFunnelId, setActiveFunnelId] = useState<string>(funnels[0]?.id || "");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  
+  // New funnel form state
+  const [newFunnelName, setNewFunnelName] = useState("");
+  const [newFunnelDesc, setNewFunnelDesc] = useState("");
+  const [newFunnelType, setNewFunnelType] = useState<FunnelType>("clients");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Filtrar funis pelo tipo ativo
   const funnelsByType = funnels.filter(f => f.type === activeTab);
@@ -181,13 +191,102 @@ const Funnel = () => {
     navigate(`/funnel/${funnelId}`);
   };
 
+  // Handle form submission
+  const handleCreateFunnel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!newFunnelName.trim()) {
+      toast.error("O nome do funil é obrigatório");
+      return;
+    }
+    
+    setIsSubmitting(true);
+    
+    // Define default stages based on funnel type
+    let defaultStages = [];
+    
+    if (newFunnelType === "clients") {
+      defaultStages = [
+        { name: "Prospecção", color: "bg-blue-500" },
+        { name: "Qualificação", color: "bg-purple-500" },
+        { name: "Proposta", color: "bg-amber-500" },
+        { name: "Negociação", color: "bg-green-500" },
+        { name: "Fechado", color: "bg-emerald-500" },
+        { name: "Perdido", color: "bg-red-500" }
+      ];
+    } else if (newFunnelType === "leads") {
+      defaultStages = [
+        { name: "Novo Lead", color: "bg-blue-500" },
+        { name: "Contato", color: "bg-purple-500" },
+        { name: "Qualificado", color: "bg-green-500" },
+        { name: "Convertido", color: "bg-emerald-500" },
+        { name: "Rejeitado", color: "bg-red-500" }
+      ];
+    } else if (newFunnelType === "proposals") {
+      defaultStages = [
+        { name: "Nova", color: "bg-blue-500" },
+        { name: "Em Elaboração", color: "bg-purple-500" },
+        { name: "Enviada", color: "bg-amber-500" },
+        { name: "Em Análise", color: "bg-green-500" },
+        { name: "Aceita", color: "bg-emerald-500" },
+        { name: "Recusada", color: "bg-red-500" }
+      ];
+    } else if (newFunnelType === "contracts") {
+      defaultStages = [
+        { name: "Novo Contrato", color: "bg-blue-500" },
+        { name: "Em Elaboração", color: "bg-purple-500" },
+        { name: "Em Análise", color: "bg-amber-500" },
+        { name: "Assinatura", color: "bg-green-500" },
+        { name: "Concluído", color: "bg-emerald-500" },
+        { name: "Cancelado", color: "bg-red-500" }
+      ];
+    }
+    
+    // Create the new funnel
+    const result = await createFunnel(
+      {
+        name: newFunnelName,
+        description: newFunnelDesc,
+        type: newFunnelType,
+        isDefault: false,
+      },
+      defaultStages
+    );
+    
+    setIsSubmitting(false);
+    
+    if (result.success && result.data) {
+      // Add the new funnel to the state
+      setFunnels([...funnels, result.data]);
+      
+      // Reset form fields
+      setNewFunnelName("");
+      setNewFunnelDesc("");
+      
+      // Close the dialog
+      setDialogOpen(false);
+      
+      // Show success message
+      toast.success("Funil criado com sucesso!");
+      
+      // Set the active funnel to the new one
+      setActiveFunnelId(result.data.id);
+      setActiveTab(result.data.type);
+      
+      // Navigate to the new funnel details page
+      navigate(`/funnel/${result.data.id}`);
+    } else {
+      toast.error("Erro ao criar o funil. Tente novamente.");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-2xl font-bold">Funil de Vendas</h1>
 
         <div className="flex flex-col sm:flex-row gap-2">
-          <Dialog>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button data-set-new-funnel-dialog>
                 <Plus className="mr-2 h-4 w-4" />
@@ -201,26 +300,65 @@ const Funnel = () => {
                   Preencha os detalhes para criar um novo funil
                 </DialogDescription>
               </DialogHeader>
-              <form>
+              <form onSubmit={handleCreateFunnel}>
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="title">Título</Label>
-                      <Input id="title" placeholder="Ex: Funil de Vendas" required />
+                      <Input 
+                        id="title" 
+                        placeholder="Ex: Funil de Vendas" 
+                        value={newFunnelName}
+                        onChange={(e) => setNewFunnelName(e.target.value)}
+                        required 
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="type">Tipo</Label>
+                      <Select 
+                        value={newFunnelType} 
+                        onValueChange={(value) => setNewFunnelType(value as FunnelType)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione o tipo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="clients">Clientes</SelectItem>
+                          <SelectItem value="leads">Leads</SelectItem>
+                          <SelectItem value="proposals">Propostas</SelectItem>
+                          <SelectItem value="contracts">Contratos</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="description">Descrição</Label>
-                      <Textarea id="description" placeholder="Descreva o funil..." />
+                      <Textarea 
+                        id="description" 
+                        placeholder="Descreva o funil..." 
+                        value={newFunnelDesc}
+                        onChange={(e) => setNewFunnelDesc(e.target.value)}
+                      />
                     </div>
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button type="button" variant="outline">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setDialogOpen(false)}
+                  >
                     Cancelar
                   </Button>
-                  <Button type="submit">Criar Funil</Button>
+                  <Button 
+                    type="submit" 
+                    disabled={isSubmitting || !newFunnelName.trim()}
+                  >
+                    {isSubmitting ? 'Criando...' : 'Criar Funil'}
+                  </Button>
                 </DialogFooter>
               </form>
             </DialogContent>
