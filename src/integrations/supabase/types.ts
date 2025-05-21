@@ -76,6 +76,7 @@ export type Database = {
           company: string | null
           created_at: string | null
           email: string | null
+          funnel_stage: string | null
           group_id: string | null
           id: string
           name: string
@@ -88,6 +89,7 @@ export type Database = {
           company?: string | null
           created_at?: string | null
           email?: string | null
+          funnel_stage?: string | null
           group_id?: string | null
           id?: string
           name: string
@@ -100,6 +102,7 @@ export type Database = {
           company?: string | null
           created_at?: string | null
           email?: string | null
+          funnel_stage?: string | null
           group_id?: string | null
           id?: string
           name?: string

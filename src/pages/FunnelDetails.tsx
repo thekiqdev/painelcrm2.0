@@ -15,7 +15,14 @@ import { toast } from "sonner";
 import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
 import { SalesFunnel, Deal, Client, Rule, FunnelStage } from "@/components/funnel/types";
 import { initialFunnel, initialDeals, clientTags, rules, sourcesOptions } from "@/components/funnel/mockData";
-import { handleDragOver, handleDrop, handleAddTagToClient, handleRemoveTagFromClient, handleSaveRule, handleRemoveRule } from "@/components/funnel/utils";
+import { 
+  handleDragOver, 
+  handleDrop, 
+  handleAddTagToClient, 
+  handleRemoveTagFromClient, 
+  handleSaveRule, 
+  handleRemoveRule 
+} from "@/components/funnel/utils";
 
 // Interface for Supabase client object
 interface SupabaseClient {
@@ -29,7 +36,7 @@ interface SupabaseClient {
   created_at: string;
   updated_at: string;
   group_id: string | null;
-  funnel_stage?: string;
+  funnel_stage?: string | null;
 }
 
 const FunnelDetails: React.FC = () => {
@@ -69,7 +76,7 @@ const FunnelDetails: React.FC = () => {
     { name: "Indigo", value: "bg-indigo-500" },
     { name: "Pink", value: "bg-pink-500" }
   ];
-
+  
   // Check if funnelId is valid and load funnel data
   useEffect(() => {
     const fetchFunnelData = async () => {

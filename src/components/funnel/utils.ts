@@ -43,10 +43,25 @@ export const handleRemoveTagFromClient = (client: Client, tagId: string): Client
 // Rules handlers
 export const handleSaveRule = (rule: Rule): void => {
   console.log("Save rule:", rule);
-  // Aqui podemos implementar a lógica para salvar a regra no banco de dados
+  // Here we can implement logic to save the rule to the database
 };
 
 export const handleRemoveRule = (ruleId: string): void => {
   console.log("Remove rule:", ruleId);
-  // Aqui podemos implementar a lógica para remover a regra do banco de dados
+  // Here we can implement logic to remove the rule from the database
+};
+
+// Update client stage in Supabase
+export const updateClientStage = async (clientId: string, stageId: string) => {
+  try {
+    const { error } = await supabase
+      .from('clients')
+      .update({ funnel_stage: stageId })
+      .eq('id', clientId);
+      
+    return { success: !error, error };
+  } catch (error) {
+    console.error("Error updating client stage:", error);
+    return { success: false, error };
+  }
 };
