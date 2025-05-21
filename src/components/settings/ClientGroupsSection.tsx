@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { SettingsSectionProps } from "./types";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave }) => {
   const [groups, setGroups] = useState<any[]>([]);
@@ -40,6 +41,7 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const { user } = useAuth();
 
   // Carregar grupos do Supabase
   useEffect(() => {
@@ -91,10 +93,17 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
     
     if (newGroupName.trim()) {
       try {
+        if (!user) {
+          throw new Error("Usuário não autenticado");
+        }
+        
         // Inserir novo grupo no Supabase
         const { data, error } = await supabase
           .from("client_groups")
-          .insert({ name: newGroupName.trim() })
+          .insert({ 
+            name: newGroupName.trim(),
+            user_id: user.id // Adicionando o user_id
+          })
           .select()
           .single();
           

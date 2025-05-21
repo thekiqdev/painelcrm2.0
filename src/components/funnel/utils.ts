@@ -70,6 +70,12 @@ export const updateClientStage = async (clientId: string, stageId: string) => {
 // Create a new funnel
 export const createFunnel = async (funnel: Omit<SalesFunnel, "id" | "createdAt" | "stages">, stages: Omit<FunnelStage, "id" | "funnelId" | "order">[]) => {
   try {
+    // Get current user ID
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("Usuário não autenticado");
+    }
+
     // Format the date correctly for display in Brazilian format
     const today = new Date();
     const formattedDate = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
@@ -82,7 +88,8 @@ export const createFunnel = async (funnel: Omit<SalesFunnel, "id" | "createdAt" 
         description: funnel.description,
         type: funnel.type,
         is_default: funnel.isDefault,
-        source: funnel.source || null
+        source: funnel.source || null,
+        user_id: user.id // Adicionando o user_id
       })
       .select('id')
       .single();
@@ -97,7 +104,8 @@ export const createFunnel = async (funnel: Omit<SalesFunnel, "id" | "createdAt" 
       name: stage.name,
       color: stage.color,
       funnel_id: funnelData.id,
-      order_position: index
+      order_position: index,
+      user_id: user.id // Adicionando o user_id para cada estágio
     }));
 
     const { data: stagesData, error: stagesError } = await supabase
