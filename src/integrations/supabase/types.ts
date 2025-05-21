@@ -15,18 +15,21 @@ export type Database = {
           id: string
           name: string
           updated_at: string | null
+          user_id: string
         }
         Insert: {
           created_at?: string | null
           id?: string
           name: string
           updated_at?: string | null
+          user_id: string
         }
         Update: {
           created_at?: string | null
           id?: string
           name?: string
           updated_at?: string | null
+          user_id?: string
         }
         Relationships: []
       }
@@ -40,6 +43,7 @@ export type Database = {
           status: string | null
           title: string
           updated_at: string | null
+          user_id: string
         }
         Insert: {
           client_id: string
@@ -50,6 +54,7 @@ export type Database = {
           status?: string | null
           title: string
           updated_at?: string | null
+          user_id: string
         }
         Update: {
           client_id?: string
@@ -60,6 +65,7 @@ export type Database = {
           status?: string | null
           title?: string
           updated_at?: string | null
+          user_id?: string
         }
         Relationships: [
           {
@@ -85,6 +91,7 @@ export type Database = {
           source: string | null
           status: string | null
           updated_at: string | null
+          user_id: string
         }
         Insert: {
           company?: string | null
@@ -99,6 +106,7 @@ export type Database = {
           source?: string | null
           status?: string | null
           updated_at?: string | null
+          user_id: string
         }
         Update: {
           company?: string | null
@@ -113,6 +121,7 @@ export type Database = {
           source?: string | null
           status?: string | null
           updated_at?: string | null
+          user_id?: string
         }
         Relationships: [
           {
@@ -133,6 +142,7 @@ export type Database = {
           name: string
           order_position: number
           updated_at: string | null
+          user_id: string
         }
         Insert: {
           color: string
@@ -142,6 +152,7 @@ export type Database = {
           name: string
           order_position: number
           updated_at?: string | null
+          user_id: string
         }
         Update: {
           color?: string
@@ -151,6 +162,7 @@ export type Database = {
           name?: string
           order_position?: number
           updated_at?: string | null
+          user_id?: string
         }
         Relationships: [
           {
@@ -169,6 +181,7 @@ export type Database = {
           id: string
           name: string
           updated_at: string
+          user_id: string
         }
         Insert: {
           color?: string
@@ -176,6 +189,7 @@ export type Database = {
           id?: string
           name: string
           updated_at?: string
+          user_id: string
         }
         Update: {
           color?: string
@@ -183,6 +197,7 @@ export type Database = {
           id?: string
           name?: string
           updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -196,6 +211,7 @@ export type Database = {
           status: string | null
           title: string
           updated_at: string | null
+          user_id: string
         }
         Insert: {
           created_at?: string | null
@@ -206,6 +222,7 @@ export type Database = {
           status?: string | null
           title: string
           updated_at?: string | null
+          user_id: string
         }
         Update: {
           created_at?: string | null
@@ -216,6 +233,7 @@ export type Database = {
           status?: string | null
           title?: string
           updated_at?: string | null
+          user_id?: string
         }
         Relationships: [
           {
@@ -239,6 +257,7 @@ export type Database = {
           source: string
           status: string | null
           updated_at: string | null
+          user_id: string
         }
         Insert: {
           company?: string | null
@@ -251,6 +270,7 @@ export type Database = {
           source?: string
           status?: string | null
           updated_at?: string | null
+          user_id: string
         }
         Update: {
           company?: string | null
@@ -263,6 +283,7 @@ export type Database = {
           source?: string
           status?: string | null
           updated_at?: string | null
+          user_id?: string
         }
         Relationships: []
       }
@@ -339,6 +360,7 @@ export type Database = {
           source: string | null
           type: string
           updated_at: string | null
+          user_id: string
         }
         Insert: {
           created_at?: string | null
@@ -349,6 +371,7 @@ export type Database = {
           source?: string | null
           type: string
           updated_at?: string | null
+          user_id: string
         }
         Update: {
           created_at?: string | null
@@ -359,6 +382,7 @@ export type Database = {
           source?: string | null
           type?: string
           updated_at?: string | null
+          user_id?: string
         }
         Relationships: []
       }
@@ -385,6 +409,33 @@ export type Database = {
           qr_code?: string | null
           status?: string
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      whatsapp_webhook_events: {
+        Row: {
+          connection_name: string
+          created_at: string
+          event_data: Json
+          id: string
+          processed: boolean | null
+          user_id: string
+        }
+        Insert: {
+          connection_name: string
+          created_at?: string
+          event_data: Json
+          id?: string
+          processed?: boolean | null
+          user_id: string
+        }
+        Update: {
+          connection_name?: string
+          created_at?: string
+          event_data?: Json
+          id?: string
+          processed?: boolean | null
           user_id?: string
         }
         Relationships: []

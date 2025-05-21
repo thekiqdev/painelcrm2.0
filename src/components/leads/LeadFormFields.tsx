@@ -1,8 +1,10 @@
+
 import React from "react";
 import { FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface LeadFormFieldsProps {
   form: any;
@@ -10,6 +12,15 @@ interface LeadFormFieldsProps {
 }
 
 const LeadFormFields: React.FC<LeadFormFieldsProps> = ({ form, leadStatuses }) => {
+  const { user } = useAuth();
+  
+  // Garantir que o user_id seja definido corretamente no formulário
+  React.useEffect(() => {
+    if (user && form.getValues("user_id") === undefined) {
+      form.setValue("user_id", user.id);
+    }
+  }, [user, form]);
+  
   return (
     <>
       <div className="grid grid-cols-2 gap-4">
@@ -150,6 +161,9 @@ const LeadFormFields: React.FC<LeadFormFieldsProps> = ({ form, leadStatuses }) =
           </FormItem>
         )}
       />
+      
+      {/* Campo oculto para o user_id */}
+      <input type="hidden" {...form.register("user_id")} />
     </>
   );
 };
