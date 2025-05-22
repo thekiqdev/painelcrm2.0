@@ -16,36 +16,7 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
-
-type Deal = {
-  id: string;
-  title: string;
-  client: string;
-  amount: string;
-  probability: number;
-  dueDate: string;
-  stage: string;
-  funnelId: string;
-};
-
-type FunnelType = "clients" | "leads" | "proposals" | "contracts";
-
-type SalesFunnel = {
-  id: string;
-  name: string;
-  description: string;
-  type: FunnelType;
-  isDefault: boolean;
-  createdAt: string;
-  source?: string;
-  stages: {
-    id: string;
-    name: string;
-    color: string;
-    order: number;
-    funnelId: string;
-  }[];
-};
+import { FunnelType, SalesFunnel, Deal } from "@/components/funnel/types";
 
 // Example deals data
 const initialDeals: Deal[] = [
@@ -141,7 +112,7 @@ const Funnel = () => {
   const [activeFunnelId, setActiveFunnelId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const { user } = useAuth(); // Adicionando o uso do contexto de autenticação
+  const { user } = useAuth();
   
   // Date range filter
   const [startDate, setStartDate] = useState<Date | null>(null);
@@ -280,7 +251,7 @@ const Funnel = () => {
         const updatedFunnels = [...funnels, result.data];
         setFunnels(updatedFunnels);
         setActiveFunnelId(result.data.id);
-        setActiveTab(result.data.type);
+        setActiveTab(result.data.type as FunnelType);
         
         // Reset form and close dialog
         setNewFunnelName("");

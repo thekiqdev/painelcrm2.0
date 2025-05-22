@@ -1,7 +1,9 @@
+
 // Precisamos criar este arquivo se não existir ou atualizar se existir
 // para garantir que todas as operações de funnel filtrem por user_id
 import { supabase } from "@/integrations/supabase/client";
 import { withUserId } from "@/utils/auth-helpers";
+import { FunnelStage, SalesFunnel, Client } from "./types";
 
 // Interface para os dados do funil
 export interface FunnelData {
@@ -17,6 +19,28 @@ export interface StageData {
   name: string;
   color: string;
 }
+
+// Função para mapear dados do Supabase para nossa interface SalesFunnel
+export const mapSupabaseToSalesFunnel = (data: any[]): SalesFunnel[] => {
+  if (!data || !Array.isArray(data)) return [];
+  
+  return data.map(item => ({
+    id: item.id,
+    name: item.name,
+    description: item.description || '',
+    type: item.type,
+    isDefault: item.is_default || false,
+    createdAt: item.created_at,
+    source: item.source || undefined,
+    stages: Array.isArray(item.stages) ? item.stages.map((stage: any) => ({
+      id: stage.id,
+      name: stage.name,
+      color: stage.color,
+      order: stage.order_position,
+      funnelId: stage.funnel_id
+    })) : []
+  }));
+};
 
 // Buscar funis do usuário atual
 export const fetchFunnels = async () => {
@@ -36,7 +60,7 @@ export const fetchFunnels = async () => {
       .order("created_at", { ascending: false });
 
     if (error) throw error;
-    return { success: true, data };
+    return { success: true, data: mapSupabaseToSalesFunnel(data) };
   } catch (error: any) {
     console.error("Erro ao buscar funis:", error.message);
     return { success: false, error, data: [] };
@@ -96,11 +120,71 @@ export const createFunnel = async (funnelData: FunnelData, stages: StageData[]) 
       
     if (fetchError) throw fetchError;
     
-    return { success: true, data: completeFunnel };
+    return { 
+      success: true, 
+      data: mapSupabaseToSalesFunnel([completeFunnel])[0]
+    };
   } catch (error: any) {
     console.error("Erro ao criar funil:", error.message);
     return { success: false, error };
   }
 };
 
-// Adicione mais funções conforme necessário
+// Funções para gerenciar eventos de drag and drop
+export const handleDragOver = (e: React.DragEvent) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+};
+
+export const handleDrop = (e: React.DragEvent, stageId: string) => {
+  e.preventDefault();
+  const clientId = e.dataTransfer.getData("clientId");
+  return { clientId, stageId };
+};
+
+// Funções para gerenciar tags de clientes
+export const handleAddTagToClient = (client: Client, tagId: string): Client => {
+  const newTags = client.tags ? [...client.tags, tagId] : [tagId];
+  return { ...client, tags: newTags };
+};
+
+export const handleRemoveTagFromClient = (client: Client, tagId: string): Client => {
+  const newTags = client.tags ? client.tags.filter(id => id !== tagId) : [];
+  return { ...client, tags: newTags };
+};
+
+// Funções para gerenciar regras
+export interface Rule {
+  id: string;
+  name: string;
+  conditions: any[];
+  actions: any[];
+}
+
+export const handleSaveRule = (rule: Rule) => {
+  console.log("Salvando regra:", rule);
+  // Implementar lógica para salvar regra no Supabase
+  return true;
+};
+
+export const handleRemoveRule = (ruleId: string) => {
+  console.log("Removendo regra:", ruleId);
+  // Implementar lógica para remover regra do Supabase
+  return true;
+};
+
+// Função para atualizar o estágio de um cliente
+export const updateClientStage = async (clientId: string, stageId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("clients")
+      .update({ funnel_stage: stageId })
+      .eq("id", clientId);
+      
+    if (error) throw error;
+    return { success: true, data };
+  } catch (error: any) {
+    console.error("Erro ao atualizar estágio do cliente:", error.message);
+    return { success: false, error };
+  }
+};
