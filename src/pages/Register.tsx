@@ -1,4 +1,3 @@
-
 import React from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -8,9 +7,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Register = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [name, setName] = React.useState("");
   const [lastName, setLastName] = React.useState("");
   const [company, setCompany] = React.useState("");
@@ -19,6 +20,13 @@ const Register = () => {
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [agreeTerms, setAgreeTerms] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  // Se o usuário já estiver autenticado, redireciona para a página de passos
+  React.useEffect(() => {
+    if (user) {
+      navigate('/register/steps');
+    }
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,14 +64,23 @@ const Register = () => {
       });
       
       if (error) {
-        toast.error(error.message);
+        console.error("Erro ao registrar:", error);
+        
+        // Verificar se o erro é de usuário já existente
+        if (error.message.includes("already registered") || error.message.includes("already exists")) {
+          toast.error("Este e-mail já está cadastrado. Por favor, tente fazer login.");
+          setTimeout(() => navigate("/login"), 2000);
+          return;
+        }
+        
+        toast.error(error.message || "Ocorreu um erro ao criar sua conta");
         return;
       }
       
       toast.success("Conta criada com sucesso!");
       // Redirecionar para o passo de registro completo
       navigate("/register/steps");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro ao registrar:", error);
       toast.error("Ocorreu um erro ao criar sua conta");
     } finally {

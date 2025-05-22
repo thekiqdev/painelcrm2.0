@@ -23,9 +23,17 @@ const RegistrationSteps = () => {
   const [companyName, setCompanyName] = useState('');
 
   useEffect(() => {
+    // Se o usuário não estiver autenticado, redireciona para a página inicial
+    if (!user) {
+      navigate('/');
+      return;
+    }
+    
     // Redirect to dashboard if registration is already complete
     if (registrationComplete) {
+      toast.success('Seu cadastro já está completo!');
       navigate('/dashboard');
+      return;
     }
     
     // Load saved profile data
@@ -34,7 +42,7 @@ const RegistrationSteps = () => {
       setLastName(profile.last_name || '');
       setCompanyName(profile.company_name || '');
     }
-  }, [profile, registrationComplete, navigate]);
+  }, [profile, registrationComplete, navigate, user]);
 
   // Switch to next step
   const goToNextStep = () => {
@@ -53,6 +61,12 @@ const RegistrationSteps = () => {
     setIsLoading(true);
     
     try {
+      if (!firstName || !lastName) {
+        toast.error('Por favor, preencha seu nome e sobrenome');
+        setIsLoading(false);
+        return;
+      }
+      
       await updateProfile({ 
         first_name: firstName,
         last_name: lastName
@@ -73,6 +87,12 @@ const RegistrationSteps = () => {
     setIsLoading(true);
     
     try {
+      if (!companyName) {
+        toast.error('Por favor, informe o nome da empresa');
+        setIsLoading(false);
+        return;
+      }
+      
       await updateProfile({ 
         company_name: companyName,
         registration_complete: true
@@ -88,6 +108,7 @@ const RegistrationSteps = () => {
     }
   };
 
+  // Se o usuário não estiver autenticado, mostra mensagem para fazer login
   if (!user) {
     return (
       <div className="flex items-center justify-center h-full">

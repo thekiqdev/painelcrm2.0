@@ -26,7 +26,7 @@ export async function withUserId<T extends object>(data: T): Promise<T & { user_
   return { ...data, user_id: userId };
 }
 
-// Nova função para verificar se o usuário está autenticado
+// Função para verificar se o usuário está autenticado
 export async function isAuthenticated(): Promise<boolean> {
   const { data: { session } } = await supabase.auth.getSession();
   return !!session;
@@ -38,13 +38,43 @@ export async function getCurrentUserProfile() {
     const userId = await getCurrentUserId();
     if (!userId) return null;
     
-    const { data, error } = await supabase
+    // Primeira tentativa - buscar o perfil existente
+    let { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single();
       
-    if (error) {
+    // Se não encontrou perfil, cria um novo
+    if (error && error.code === 'PGRST116') {
+      // Perfil não existe, vamos criá-lo
+      const { error: insertError } = await supabase
+        .from('profiles')
+        .insert({ 
+          id: userId,
+          whatsapp_number: 'temporário', // Valor temporário para satisfazer a restrição de não-nulo
+          registration_complete: false 
+        });
+      
+      if (insertError) {
+        console.error('Erro ao criar perfil do usuário:', insertError);
+        return null;
+      }
+      
+      // Busca o perfil recém-criado
+      const { data: newProfile, error: newError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+        
+      if (newError) {
+        console.error('Erro ao obter perfil do usuário após criação:', newError);
+        return null;
+      }
+      
+      return newProfile;
+    } else if (error) {
       console.error('Erro ao obter perfil do usuário:', error);
       return null;
     }
