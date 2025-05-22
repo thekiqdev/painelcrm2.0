@@ -30,6 +30,8 @@ export const addClient = async (clientData: ClientData) => {
       throw new Error("Usuário não autenticado");
     }
     
+    console.log("Adicionando cliente com user_id:", dataWithUserId.user_id);
+    
     const { data, error } = await supabase
       .from("clients")
       .insert(dataWithUserId)
@@ -72,6 +74,8 @@ export const fetchUserClients = async () => {
       throw new Error("Usuário não autenticado");
     }
     
+    console.log("Buscando clientes do usuário:", userId);
+    
     const { data, error } = await supabase
       .from("clients")
       .select("*")
@@ -79,6 +83,8 @@ export const fetchUserClients = async () => {
       .order("name");
 
     if (error) throw error;
+    
+    console.log(`Encontrados ${data?.length || 0} clientes para o usuário ${userId}`);
     return { success: true, data };
   } catch (error: any) {
     console.error("Erro ao buscar clientes:", error.message);

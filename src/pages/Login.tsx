@@ -19,6 +19,7 @@ const Login = () => {
   // Se o usuário já estiver autenticado, redireciona
   useEffect(() => {
     if (user) {
+      console.log('Usuário já autenticado, redirecionando para dashboard');
       navigate('/dashboard');
     }
   }, [user, navigate]);
@@ -34,7 +35,9 @@ const Login = () => {
     setIsLoading(true);
     
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      console.log('Tentando login com email:', email);
+      
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password
       });
@@ -46,6 +49,7 @@ const Login = () => {
         return;
       }
       
+      console.log('Login bem-sucedido:', data);
       toast.success("Login realizado com sucesso!");
       // O redirecionamento será feito pelo AuthGuard após a detecção da mudança de estado
     } catch (error: any) {
@@ -79,7 +83,7 @@ const Login = () => {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="password">Senha</Label>
-              <Button variant="link" className="p-0 h-auto text-sm">
+              <Button variant="link" className="p-0 h-auto text-sm" type="button">
                 Esqueceu sua senha?
               </Button>
             </div>
