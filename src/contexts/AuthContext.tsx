@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Session, User } from '@supabase/supabase-js';
@@ -32,6 +31,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Set up auth state listener first
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        console.log('Auth state change event:', event);
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -65,6 +65,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchUserProfile = async (userId: string) => {
     try {
+      console.log('Fetching profile for user:', userId);
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -73,15 +74,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) {
         console.error('Error fetching user profile:', error);
+        
+        // If profile doesn't exist, create a new one
+        if (error.code === 'PGRST116') {
+          console.log('Profile not found, creating new one for user:', userId);
+          await createUserProfile(userId);
+          return;
+        }
+        
         setProfile(null);
         setRegistrationComplete(false);
         return;
       }
 
+      console.log('Profile fetched successfully:', data);
       setProfile(data);
       setRegistrationComplete(data.registration_complete || false);
     } catch (error) {
       console.error('Unexpected error fetching profile:', error);
+    }
+  };
+
+  const createUserProfile = async (userId: string) => {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const userMeta = userData.user?.user_metadata || {};
+      
+      // Insert a new profile
+      const { data, error } = await supabase
+        .from('profiles')
+        .insert({
+          id: userId,
+          whatsapp_number: userMeta.whatsapp_number || 'temporary',
+          registration_complete: false,
+          first_name: userMeta.name || '',
+          last_name: userMeta.lastName || ''
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error creating user profile:', error);
+        return;
+      }
+
+      console.log('New profile created:', data);
+      setProfile(data);
+      setRegistrationComplete(false);
+    } catch (error) {
+      console.error('Error creating user profile:', error);
     }
   };
 
@@ -145,12 +186,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      console.log('Updating profile for user:', user.id, 'with data:', data);
       const { error } = await supabase
         .from('profiles')
         .update(data)
         .eq('id', user.id);
 
       if (error) {
+        console.error('Error updating profile:', error);
         toast.error(error.message || 'Erro ao atualizar perfil');
         return;
       }
@@ -159,6 +202,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       fetchUserProfile(user.id);
       toast.success('Perfil atualizado com sucesso!');
     } catch (error: any) {
+      console.error('Error updating profile:', error);
       toast.error(error.message || 'Erro desconhecido');
     }
   };
@@ -169,6 +213,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast.error('Usuário não autenticado');
         return;
       }
+
+      console.log('Updating registration step:', step, 'to', completed, 'for user:', user.id);
 
       // Check if step exists
       const { data: existingStep } = await supabase
@@ -184,7 +230,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .from('registration_steps')
           .update({ 
             completed, 
-            updated_at: new Date().toISOString() // Fix: Convert Date to string
+            updated_at: new Date().toISOString()
           })
           .eq('id', existingStep.id);
       } else {

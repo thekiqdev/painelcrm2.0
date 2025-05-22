@@ -1,5 +1,4 @@
 
-// Mantemos o mesmo arquivo, mas vamos garantir que ele está fazendo seu trabalho corretamente
 import { supabase } from '@/integrations/supabase/client';
 
 export async function getCurrentUserId(): Promise<string | null> {
@@ -9,6 +8,7 @@ export async function getCurrentUserId(): Promise<string | null> {
       console.error('Erro ao obter usuário:', error);
       return null;
     }
+    console.log('Current user ID:', user.id);
     return user.id;
   } catch (error) {
     console.error('Erro ao obter usuário:', error);
@@ -38,6 +38,8 @@ export async function getCurrentUserProfile() {
     const userId = await getCurrentUserId();
     if (!userId) return null;
     
+    console.log('Getting profile for user:', userId);
+    
     // Primeira tentativa - buscar o perfil existente
     let { data, error } = await supabase
       .from('profiles')
@@ -47,38 +49,37 @@ export async function getCurrentUserProfile() {
       
     // Se não encontrou perfil, cria um novo
     if (error && error.code === 'PGRST116') {
+      console.log('Profile not found for user:', userId, 'creating new profile');
+      
+      const { data: userData } = await supabase.auth.getUser();
+      const userMeta = userData.user?.user_metadata || {};
+      
       // Perfil não existe, vamos criá-lo
-      const { error: insertError } = await supabase
+      const { data: newProfile, error: insertError } = await supabase
         .from('profiles')
         .insert({ 
           id: userId,
-          whatsapp_number: 'temporário', // Valor temporário para satisfazer a restrição de não-nulo
-          registration_complete: false 
-        });
+          whatsapp_number: userMeta.whatsapp_number || 'temporário', // Valor temporário para satisfazer a restrição de não-nulo
+          registration_complete: false,
+          first_name: userMeta.name || '',
+          last_name: userMeta.lastName || ''
+        })
+        .select()
+        .single();
       
       if (insertError) {
         console.error('Erro ao criar perfil do usuário:', insertError);
         return null;
       }
       
-      // Busca o perfil recém-criado
-      const { data: newProfile, error: newError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-        
-      if (newError) {
-        console.error('Erro ao obter perfil do usuário após criação:', newError);
-        return null;
-      }
-      
+      console.log('New profile created:', newProfile);
       return newProfile;
     } else if (error) {
       console.error('Erro ao obter perfil do usuário:', error);
       return null;
     }
     
+    console.log('Existing profile found:', data);
     return data;
   } catch (error) {
     console.error('Erro ao obter perfil do usuário:', error);

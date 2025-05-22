@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 
 const REGISTRATION_STEPS = ['personal_info', 'company_info'];
 
@@ -23,26 +24,43 @@ const RegistrationSteps = () => {
   const [companyName, setCompanyName] = useState('');
 
   useEffect(() => {
+    const checkAuthentication = async () => {
+      // Verificar se o usuário está autenticado
+      const { data } = await supabase.auth.getSession();
+      
+      if (!data.session) {
+        console.log('User not authenticated, redirecting to login');
+        toast.error('Você precisa estar autenticado para completar o cadastro');
+        navigate('/');
+        return;
+      }
+      
+      // Verificar se o cadastro já está completo
+      if (profile && profile.registration_complete) {
+        console.log('Registration already complete, redirecting to dashboard');
+        toast.success('Seu cadastro já está completo!');
+        navigate('/dashboard');
+        return;
+      }
+    };
+    
+    checkAuthentication();
+  }, [navigate, profile]);
+  
+  useEffect(() => {
     // Se o usuário não estiver autenticado, redireciona para a página inicial
     if (!user) {
-      navigate('/');
-      return;
-    }
-    
-    // Redirect to dashboard if registration is already complete
-    if (registrationComplete) {
-      toast.success('Seu cadastro já está completo!');
-      navigate('/dashboard');
       return;
     }
     
     // Load saved profile data
     if (profile) {
+      console.log('Loading profile data:', profile);
       setFirstName(profile.first_name || '');
       setLastName(profile.last_name || '');
       setCompanyName(profile.company_name || '');
     }
-  }, [profile, registrationComplete, navigate, user]);
+  }, [profile, user]);
 
   // Switch to next step
   const goToNextStep = () => {
@@ -67,6 +85,13 @@ const RegistrationSteps = () => {
         return;
       }
       
+      if (!user) {
+        toast.error('Usuário não autenticado');
+        navigate('/');
+        return;
+      }
+      
+      console.log('Updating personal info:', { first_name: firstName, last_name: lastName });
       await updateProfile({ 
         first_name: firstName,
         last_name: lastName
@@ -93,6 +118,13 @@ const RegistrationSteps = () => {
         return;
       }
       
+      if (!user) {
+        toast.error('Usuário não autenticado');
+        navigate('/');
+        return;
+      }
+      
+      console.log('Updating company info:', { company_name: companyName, registration_complete: true });
       await updateProfile({ 
         company_name: companyName,
         registration_complete: true
@@ -135,6 +167,9 @@ const RegistrationSteps = () => {
           <CardDescription>
             Preencha as informações para finalizar seu cadastro
           </CardDescription>
+          <div className="text-sm text-muted-foreground">
+            Usuário: {user.email}
+          </div>
         </CardHeader>
         <CardContent>
           <Tabs value={currentStep} onValueChange={setCurrentStep}>
