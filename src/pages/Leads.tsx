@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
@@ -71,11 +72,13 @@ const Leads = () => {
 
   // Fetch lead statuses from Supabase
   const fetchLeadStatuses = async () => {
+    if (!user) return;
+    
     try {
       const { data, error } = await supabase
         .from("lead_statuses")
         .select("*")
-        .eq("user_id", user?.id) // Filtrar por user_id
+        .eq("user_id", user.id)
         .order("name");
 
       if (error) throw error;
@@ -104,7 +107,7 @@ const Leads = () => {
       const { data, error } = await supabase
         .from("leads")
         .select("*")
-        .eq("user_id", user.id) // Filtrar por user_id
+        .eq("user_id", user.id)
         .order(sortField, { ascending: sortDirection === "asc" });
 
       if (error) throw error;
@@ -124,7 +127,7 @@ const Leads = () => {
         .from("lead_tasks")
         .select("*")
         .eq("lead_id", leadId)
-        .eq("user_id", user.id) // Filtrar por user_id
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -178,7 +181,7 @@ const Leads = () => {
 
   // Save edited lead
   const handleSaveEdit = async (values: LeadFormValues) => {
-    if (!selectedLead) return;
+    if (!selectedLead || !user) return;
 
     try {
       const leadData = {
@@ -193,6 +196,7 @@ const Leads = () => {
         .from("leads")
         .update(leadData)
         .eq("id", selectedLead.id)
+        .eq("user_id", user.id)
         .select();
 
       if (error) throw error;
@@ -287,13 +291,14 @@ const Leads = () => {
 
   // Save notes
   const handleSaveNote = async (values: NoteFormValues) => {
-    if (!selectedLead) return;
+    if (!selectedLead || !user) return;
 
     try {
       const { data, error } = await supabase
         .from("leads")
         .update({ notes: values.content })
         .eq("id", selectedLead.id)
+        .eq("user_id", user.id)
         .select();
 
       if (error) throw error;
@@ -363,7 +368,8 @@ const Leads = () => {
       await supabase
         .from("leads")
         .update({ status: "Convertido" })
-        .eq("id", selectedLead.id);
+        .eq("id", selectedLead.id)
+        .eq("user_id", user.id);
 
       toast.success("Lead convertido para cliente com sucesso!");
       setIsConvertDialogOpen(false);
@@ -377,11 +383,14 @@ const Leads = () => {
 
   // Update task status
   const updateTaskStatus = async (taskId: string, newStatus: string) => {
+    if (!user) return;
+    
     try {
       const { data, error } = await supabase
         .from("lead_tasks")
         .update({ status: newStatus })
         .eq("id", taskId)
+        .eq("user_id", user.id)
         .select();
 
       if (error) throw error;
