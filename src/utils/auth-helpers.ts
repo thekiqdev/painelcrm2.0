@@ -1,4 +1,5 @@
 
+// Mantemos o mesmo arquivo, mas vamos garantir que ele está fazendo seu trabalho corretamente
 import { supabase } from '@/integrations/supabase/client';
 
 export async function getCurrentUserId(): Promise<string | null> {

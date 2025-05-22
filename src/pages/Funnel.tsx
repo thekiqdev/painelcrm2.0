@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Deal = {
   id: string;
@@ -140,6 +141,7 @@ const Funnel = () => {
   const [activeFunnelId, setActiveFunnelId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const { user } = useAuth(); // Adicionando o uso do contexto de autenticação
   
   // Date range filter
   const [startDate, setStartDate] = useState<Date | null>(null);
@@ -156,10 +158,14 @@ const Funnel = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    loadFunnels();
-  }, []);
+    if (user) { // Só carrega os funis se o usuário estiver autenticado
+      loadFunnels();
+    }
+  }, [user]); // Adicionado user como dependência
 
   const loadFunnels = async () => {
+    if (!user) return; // Não carrega se não houver usuário
+    
     setIsLoading(true);
     try {
       const result = await fetchFunnels();
@@ -203,6 +209,11 @@ const Funnel = () => {
   // Handle form submission
   const handleCreateFunnel = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!user) {
+      toast.error("Você precisa estar logado para criar um funil");
+      return;
+    }
     
     if (!newFunnelName.trim()) {
       toast.error("O nome do funil é obrigatório");

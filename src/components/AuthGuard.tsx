@@ -1,4 +1,5 @@
 
+// Atualizando o AuthGuard para garantir que usuários não autenticados sejam redirecionados
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,7 +15,7 @@ interface AuthGuardProps {
 const AuthGuard: React.FC<AuthGuardProps> = ({
   children,
   requireAuth = true,
-  redirectTo = '/',
+  redirectTo = '/login',  // Alterando para '/login' em vez de '/'
   requireComplete = true,
 }) => {
   const { user, loading, registrationComplete } = useAuth();
