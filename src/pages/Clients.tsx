@@ -517,6 +517,46 @@ const Clients = () => {
     }
   };
 
+  const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
+    try {
+      const { error } = await supabase
+        .from("client_tasks")
+        .update({ status: newStatus })
+        .eq("id", taskId);
+      
+      if (error) throw error;
+      
+      // Update the task in the local list
+      setClientTasks(clientTasks.map(task => 
+        task.id === taskId ? { ...task, status: newStatus } : task
+      ));
+      
+      toast.success("Status da tarefa atualizado com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao atualizar status da tarefa:", error.message);
+      toast.error("Não foi possível atualizar o status da tarefa");
+    }
+  };
+  
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      const { error } = await supabase
+        .from("client_tasks")
+        .delete()
+        .eq("id", taskId);
+      
+      if (error) throw error;
+      
+      // Remove the task from the local list
+      setClientTasks(clientTasks.filter(task => task.id !== taskId));
+      
+      toast.success("Tarefa removida com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao remover tarefa:", error.message);
+      toast.error("Não foi possível remover a tarefa");
+    }
+  };
+
   const SortIcon = ({ field }: { field: string }) => {
     if (field !== sortField) return null;
     return sortDirection === "asc" ? <ArrowUp className="ml-1 h-4 w-4" /> : <ArrowDown className="ml-1 h-4 w-4" />;

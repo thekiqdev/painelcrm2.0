@@ -212,13 +212,19 @@ const Leads = () => {
   const handleAddLead = async (values: LeadFormValues) => {
     try {
       // Valores já contém user_id adicionado pela função withUserId
-      const leadData = {
-        ...values,
+      const leadData = await withUserId({
+        name: values.name,
         company: values.company || null,
         email: values.email || null,
         phone: values.phone || null,
+        status: values.status,
+        source: values.source,
         notes: values.notes || null
-      };
+      });
+      
+      if (!leadData) {
+        throw new Error("Usuário não autenticado");
+      }
 
       const { data, error } = await supabase
         .from("leads")
