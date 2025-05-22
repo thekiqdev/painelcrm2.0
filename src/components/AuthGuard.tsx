@@ -22,6 +22,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
   const location = useLocation();
 
   useEffect(() => {
+    // Não faça nada enquanto estamos carregando o estado de autenticação
     if (loading) return;
 
     console.log('AuthGuard check:', { 
@@ -32,31 +33,46 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       requireComplete
     });
 
-    // Rota atual é register/steps e estamos verificando se o usuário está autenticado
+    // Identifica as páginas especiais
     const isRegisterStepsPage = location.pathname === '/register/steps';
     const isRegisterPage = location.pathname === '/register';
+    const isLoginPage = location.pathname === '/login' || location.pathname === '/';
     
+    // Case 1: Usuário não está autenticado, mas a página requer autenticação
     if (requireAuth && !user) {
-      // Usuário não está autenticado e página requer autenticação
       console.log('User not authenticated, redirecting to:', redirectTo);
-      toast.error('Você precisa estar logado para acessar esta página');
+      if (!isLoginPage) { // Evita mensagens repetidas na página de login
+        toast.error('Você precisa estar logado para acessar esta página');
+      }
       navigate(redirectTo);
-    } else if (requireAuth && requireComplete && !registrationComplete && !isRegisterStepsPage) {
-      // Usuário está autenticado mas registro não está completo
-      // e não estamos na página de passos de registro
+      return;
+    }
+    
+    // Case 2: Usuário está autenticado mas registro não está completo e a página requer registro completo
+    if (requireAuth && requireComplete && user && !registrationComplete && !isRegisterStepsPage) {
       console.log('Registration not complete, redirecting to registration steps');
-      toast.info('Por favor, complete seu cadastro primeiro');
+      if (!isRegisterStepsPage) { // Evita mensagens repetidas na página de etapas
+        toast.info('Por favor, complete seu cadastro primeiro');
+      }
       navigate('/register/steps');
-    } else if (user && registrationComplete && isRegisterStepsPage) {
-      // Usuário já completou o registro mas está tentando acessar a página de passos
+      return;
+    }
+    
+    // Case 3: Usuário já completou o registro mas está na página de registro
+    if (user && registrationComplete && isRegisterStepsPage) {
       console.log('Registration already complete, redirecting to dashboard');
       toast.info('Seu cadastro já está completo');
       navigate('/dashboard');
-    } else if (user && isRegisterPage) {
-      // Usuário já está logado mas está tentando acessar a página de registro
-      console.log('User already logged in, redirecting to registration steps or dashboard');
-      navigate(registrationComplete ? '/dashboard' : '/register/steps');
+      return;
     }
+    
+    // Case 4: Usuário já está logado mas está tentando acessar a página de registro
+    if (user && (isRegisterPage || isLoginPage)) {
+      console.log('User already logged in, redirecting to appropriate page');
+      navigate(registrationComplete ? '/dashboard' : '/register/steps');
+      return;
+    }
+    
   }, [
     user, 
     loading, 
@@ -68,6 +84,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     location.pathname
   ]);
 
+  // Exibe um indicador de carregamento enquanto verificamos o estado de autenticação
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">

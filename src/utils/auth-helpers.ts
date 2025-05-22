@@ -86,3 +86,19 @@ export async function getCurrentUserProfile() {
     return null;
   }
 }
+
+// Nova função para limpar o estado da sessão
+export async function clearAuthState() {
+  try {
+    // Limpar armazenamento local relacionado à autenticação
+    localStorage.removeItem('supabase.auth.token');
+    
+    // Outras limpezas específicas se necessário
+    console.log('Auth state cleared');
+    
+    return true;
+  } catch (error) {
+    console.error('Erro ao limpar estado de autenticação:', error);
+    return false;
+  }
+}

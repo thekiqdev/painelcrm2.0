@@ -1,8 +1,10 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Session, User } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { clearAuthState } from '@/utils/auth-helpers';
 
 type AuthContextType = {
   session: Session | null;
@@ -32,6 +34,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         console.log('Auth state change event:', event);
+        
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -171,10 +174,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
+      // Limpar estado local primeiro
+      setProfile(null);
+      setRegistrationComplete(false);
+      setUser(null);
+      setSession(null);
+      
+      // Limpar armazenamento local relacionado à autenticação
+      await clearAuthState();
+      
+      // Então fazer logout do Supabase
       await supabase.auth.signOut();
+      
       toast.success('Logout realizado com sucesso!');
       navigate('/');
     } catch (error: any) {
+      console.error('Erro durante o logout:', error);
       toast.error(error.message || 'Erro ao fazer logout');
     }
   };
