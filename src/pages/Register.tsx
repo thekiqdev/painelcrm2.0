@@ -1,4 +1,3 @@
-
 import React, { useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -24,17 +23,10 @@ const Register = () => {
 
   // Se o usuário já estiver autenticado, redireciona
   useEffect(() => {
-    const checkUser = async () => {
-      const { data } = await supabase.auth.getSession();
-      
-      if (data.session) {
-        console.log('User already authenticated, redirecting from Register page');
-        navigate('/register/steps');
-      }
-    };
-    
-    checkUser();
-  }, [navigate]);
+    if (user) {
+      navigate('/register/steps');
+    }
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,24 +85,7 @@ const Register = () => {
         return;
       }
       
-      // Criar perfil para o usuário
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          id: data.user.id,
-          whatsapp_number: 'temporário', // Valor temporário
-          registration_complete: false,
-          first_name: name,
-          last_name: lastName,
-          company_name: company
-        });
-        
-      if (profileError) {
-        console.error("Erro ao criar perfil:", profileError);
-        toast.error("Conta criada, mas houve um erro ao configurar seu perfil");
-      } else {
-        toast.success("Conta criada com sucesso!");
-      }
+      toast.success("Conta criada com sucesso!");
       
       // Redirecionar para o passo de registro completo
       navigate("/register/steps");

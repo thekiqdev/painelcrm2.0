@@ -1,4 +1,3 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -41,15 +40,18 @@ const App = () => (
           <Sonner />
           <Routes>
             <Route path="/" element={<AuthWhatsApp />} />
+            
+            {/* Alterado: a página de registro não precisa de AuthGuard */}
+            <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
+            
             <Route path="/register/steps" element={
-              <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/">
+              <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
                 <AuthLayout>
                   <RegistrationSteps />
                 </AuthLayout>
               </AuthGuard>
             } />
             <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
-            <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
             
             {/* Protected routes */}
             <Route path="/dashboard" element={
@@ -57,6 +59,7 @@ const App = () => (
                 <AppLayout><Dashboard /></AppLayout>
               </AuthGuard>
             } />
+            
             <Route path="/clients" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Clients /></AppLayout>

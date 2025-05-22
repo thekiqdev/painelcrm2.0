@@ -38,6 +38,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     const isRegisterPage = location.pathname === '/register';
     const isLoginPage = location.pathname === '/login' || location.pathname === '/';
     
+    // Ignorar verificações de autenticação para a página de registro
+    if (isRegisterPage) {
+      return;
+    }
+    
     // Case 1: Usuário não está autenticado, mas a página requer autenticação
     if (requireAuth && !user) {
       console.log('User not authenticated, redirecting to:', redirectTo);
@@ -66,8 +71,8 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       return;
     }
     
-    // Case 4: Usuário já está logado mas está tentando acessar a página de registro ou login
-    if (user && (isRegisterPage || isLoginPage)) {
+    // Case 4: Usuário já está logado mas está tentando acessar a página de login
+    if (user && isLoginPage) {
       console.log('User already logged in, redirecting to appropriate page');
       navigate(registrationComplete ? '/dashboard' : '/register/steps');
       return;

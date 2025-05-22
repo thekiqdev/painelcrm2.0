@@ -31,7 +31,7 @@ const RegistrationSteps = () => {
       if (!data.session) {
         console.log('User not authenticated, redirecting to login');
         toast.error('Você precisa estar autenticado para completar o cadastro');
-        navigate('/');
+        navigate('/login');
         return;
       }
       
@@ -152,7 +152,7 @@ const RegistrationSteps = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button onClick={() => navigate('/')}>Ir para o login</Button>
+            <Button onClick={() => navigate('/login')}>Ir para o login</Button>
           </CardContent>
         </Card>
       </div>
