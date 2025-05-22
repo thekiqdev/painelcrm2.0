@@ -3,8 +3,9 @@ import React, { useState } from "react";
 import { Filter } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext"; // Importando o contexto de autenticação
 
-// List of source options
+// Lista de opções de fonte
 const sourceOptions = [
   { value: "all", label: "Todas as fontes" },
   { value: "Website", label: "Website" },
@@ -18,8 +19,14 @@ const sourceOptions = [
 
 export function SourceFilter() {
   const [selectedSource, setSelectedSource] = useState<string>("all");
+  const { user } = useAuth(); // Usando o hook de autenticação para garantir que temos o usuário logado
   
   const handleSourceFilter = (source: string) => {
+    if (!user) {
+      toast.error("Você precisa estar logado para filtrar dados");
+      return;
+    }
+    
     setSelectedSource(source);
     toast.info(`Filtrando por fonte: ${source === "all" ? 'Todas' : source}`);
   };
