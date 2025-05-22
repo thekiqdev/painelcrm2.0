@@ -75,6 +75,7 @@ const Leads = () => {
       const { data, error } = await supabase
         .from("lead_statuses")
         .select("*")
+        .eq("user_id", user?.id) // Filtrar por user_id
         .order("name");
 
       if (error) throw error;
@@ -97,10 +98,13 @@ const Leads = () => {
 
   // Fetch leads from Supabase
   const fetchLeads = async () => {
+    if (!user) return;
+    
     try {
       const { data, error } = await supabase
         .from("leads")
         .select("*")
+        .eq("user_id", user.id) // Filtrar por user_id
         .order(sortField, { ascending: sortDirection === "asc" });
 
       if (error) throw error;
@@ -113,11 +117,14 @@ const Leads = () => {
 
   // Fetch tasks for a selected lead
   const fetchLeadTasks = async (leadId: string) => {
+    if (!user) return;
+    
     try {
       const { data, error } = await supabase
         .from("lead_tasks")
         .select("*")
         .eq("lead_id", leadId)
+        .eq("user_id", user.id) // Filtrar por user_id
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -397,9 +404,11 @@ const Leads = () => {
 
   // Effect to load leads and statuses on mount or sort criteria change
   useEffect(() => {
-    fetchLeads();
-    fetchLeadStatuses();
-  }, [sortField, sortDirection]);
+    if (user) {
+      fetchLeads();
+      fetchLeadStatuses();
+    }
+  }, [sortField, sortDirection, user]);
 
   // Effect to update note form when selected lead changes
   useEffect(() => {

@@ -89,10 +89,16 @@ export const fetchUserClients = async () => {
 // Buscar tarefas de um cliente específico
 export const fetchClientTasks = async (clientId: string) => {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      throw new Error("Usuário não autenticado");
+    }
+    
     const { data, error } = await supabase
       .from("client_tasks")
       .select("*")
       .eq("client_id", clientId)
+      .eq("user_id", userId) // Filtrar por user_id também
       .order("created_at", { ascending: false });
 
     if (error) throw error;
@@ -100,5 +106,50 @@ export const fetchClientTasks = async (clientId: string) => {
   } catch (error: any) {
     console.error("Erro ao buscar tarefas do cliente:", error.message);
     return { success: false, error, data: [] };
+  }
+};
+
+// Atualizar status de tarefa
+export const updateClientTaskStatus = async (taskId: string, newStatus: string) => {
+  try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      throw new Error("Usuário não autenticado");
+    }
+    
+    const { data, error } = await supabase
+      .from("client_tasks")
+      .update({ status: newStatus })
+      .eq("id", taskId)
+      .eq("user_id", userId) // Garantir que a tarefa pertence ao usuário
+      .select();
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (error: any) {
+    console.error("Erro ao atualizar status da tarefa:", error.message);
+    return { success: false, error };
+  }
+};
+
+// Excluir tarefa
+export const deleteClientTask = async (taskId: string) => {
+  try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      throw new Error("Usuário não autenticado");
+    }
+    
+    const { error } = await supabase
+      .from("client_tasks")
+      .delete()
+      .eq("id", taskId)
+      .eq("user_id", userId); // Garantir que a tarefa pertence ao usuário
+
+    if (error) throw error;
+    return { success: true };
+  } catch (error: any) {
+    console.error("Erro ao excluir tarefa:", error.message);
+    return { success: false, error };
   }
 };

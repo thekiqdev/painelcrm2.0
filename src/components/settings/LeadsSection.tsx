@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PlusCircle, Trash2, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
+import { withUserId } from "@/utils/auth-helpers";
 
 interface LeadStatus {
   id: string;
@@ -25,11 +26,14 @@ export const LeadsSection = ({ handleSave }: { handleSave: (e: React.FormEvent) 
 
   // Fetch lead statuses
   const fetchLeadStatuses = async () => {
+    if (!user) return;
+    
     try {
       setIsLoading(true);
       const { data, error } = await supabase
         .from("lead_statuses")
         .select("*")
+        .eq("user_id", user.id) // Filtrar por user_id
         .order("name");
 
       if (error) throw error;
@@ -56,13 +60,18 @@ export const LeadsSection = ({ handleSave }: { handleSave: (e: React.FormEvent) 
     }
 
     try {
+      const statusData = await withUserId({
+        name: newStatusName.trim(),
+        color: newStatusColor
+      });
+      
+      if (!statusData) {
+        throw new Error("Usuário não autenticado");
+      }
+      
       const { data, error } = await supabase
         .from("lead_statuses")
-        .insert({
-          name: newStatusName.trim(),
-          color: newStatusColor,
-          user_id: user.id
-        })
+        .insert(statusData)
         .select();
 
       if (error) throw error;
@@ -79,11 +88,14 @@ export const LeadsSection = ({ handleSave }: { handleSave: (e: React.FormEvent) 
 
   // Delete status
   const handleDeleteStatus = async (id: string) => {
+    if (!user) return;
+    
     try {
       const { error } = await supabase
         .from("lead_statuses")
         .delete()
-        .eq("id", id);
+        .eq("id", id)
+        .eq("user_id", user.id); // Garantir que o status pertence ao usuário
 
       if (error) throw error;
 
@@ -97,8 +109,10 @@ export const LeadsSection = ({ handleSave }: { handleSave: (e: React.FormEvent) 
 
   // Load lead statuses on component mount
   useEffect(() => {
-    fetchLeadStatuses();
-  }, []);
+    if (user) {
+      fetchLeadStatuses();
+    }
+  }, [user]);
 
   return (
     <form onSubmit={handleSave} className="space-y-6">
