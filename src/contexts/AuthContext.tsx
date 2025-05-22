@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Session, User } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { clearAuthState } from '@/utils/auth-helpers';
+import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 
 type AuthContextType = {
   session: Session | null;
@@ -57,8 +57,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (session?.user) {
         fetchUserProfile(session.user.id);
+      } else {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => {
@@ -69,70 +70,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchUserProfile = async (userId: string) => {
     try {
       console.log('Fetching profile for user:', userId);
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        console.error('Error fetching user profile:', error);
-        
-        // If profile doesn't exist, create a new one
-        if (error.code === 'PGRST116') {
-          console.log('Profile not found, creating new one for user:', userId);
-          await createUserProfile(userId);
-          return;
-        }
-        
+      const profile = await getCurrentUserProfile();
+      
+      if (!profile) {
+        console.log('No profile found after attempt to create one');
         setProfile(null);
         setRegistrationComplete(false);
+        setLoading(false);
         return;
       }
 
-      console.log('Profile fetched successfully:', data);
-      setProfile(data);
-      setRegistrationComplete(data.registration_complete || false);
+      console.log('Profile loaded successfully:', profile);
+      setProfile(profile);
+      setRegistrationComplete(profile.registration_complete || false);
+      setLoading(false);
     } catch (error) {
       console.error('Unexpected error fetching profile:', error);
+      setLoading(false);
     }
   };
 
-  const createUserProfile = async (userId: string) => {
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      const userMeta = userData.user?.user_metadata || {};
-      
-      // Insert a new profile
-      const { data, error } = await supabase
-        .from('profiles')
-        .insert({
-          id: userId,
-          whatsapp_number: userMeta.whatsapp_number || 'temporary',
-          registration_complete: false,
-          first_name: userMeta.name || '',
-          last_name: userMeta.lastName || ''
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error creating user profile:', error);
-        return;
-      }
-
-      console.log('New profile created:', data);
-      setProfile(data);
-      setRegistrationComplete(false);
-    } catch (error) {
-      console.error('Error creating user profile:', error);
-    }
-  };
-
-  const signIn = async (whatsapp: string, password: string) => {
+  const signIn = async (email: string, password: string) => {
     try {
       const { error } = await supabase.auth.signInWithPassword({
-        email: `${whatsapp}@multicrm.app`, // Using whatsapp as unique email
+        email,
         password,
       });
 

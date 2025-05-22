@@ -41,10 +41,10 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     // Case 1: Usuário não está autenticado, mas a página requer autenticação
     if (requireAuth && !user) {
       console.log('User not authenticated, redirecting to:', redirectTo);
-      if (!isLoginPage) { // Evita mensagens repetidas na página de login
+      if (!isLoginPage && redirectTo !== location.pathname) { // Evita loops de redirecionamento
         toast.error('Você precisa estar logado para acessar esta página');
+        navigate(redirectTo);
       }
-      navigate(redirectTo);
       return;
     }
     
@@ -53,8 +53,8 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       console.log('Registration not complete, redirecting to registration steps');
       if (!isRegisterStepsPage) { // Evita mensagens repetidas na página de etapas
         toast.info('Por favor, complete seu cadastro primeiro');
+        navigate('/register/steps');
       }
-      navigate('/register/steps');
       return;
     }
     
@@ -66,7 +66,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       return;
     }
     
-    // Case 4: Usuário já está logado mas está tentando acessar a página de registro
+    // Case 4: Usuário já está logado mas está tentando acessar a página de registro ou login
     if (user && (isRegisterPage || isLoginPage)) {
       console.log('User already logged in, redirecting to appropriate page');
       navigate(registrationComplete ? '/dashboard' : '/register/steps');

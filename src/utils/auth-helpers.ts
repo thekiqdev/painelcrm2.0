@@ -47,35 +47,38 @@ export async function getCurrentUserProfile() {
       .eq('id', userId)
       .single();
       
-    // Se não encontrou perfil, cria um novo
-    if (error && error.code === 'PGRST116') {
-      console.log('Profile not found for user:', userId, 'creating new profile');
+    if (error) {
+      console.error('Erro ao obter perfil do usuário:', error);
       
-      const { data: userData } = await supabase.auth.getUser();
-      const userMeta = userData.user?.user_metadata || {};
-      
-      // Perfil não existe, vamos criá-lo
-      const { data: newProfile, error: insertError } = await supabase
-        .from('profiles')
-        .insert({ 
-          id: userId,
-          whatsapp_number: userMeta.whatsapp_number || 'temporário', // Valor temporário para satisfazer a restrição de não-nulo
-          registration_complete: false,
-          first_name: userMeta.name || '',
-          last_name: userMeta.lastName || ''
-        })
-        .select()
-        .single();
-      
-      if (insertError) {
-        console.error('Erro ao criar perfil do usuário:', insertError);
-        return null;
+      // Se o erro for que o perfil não existe, tentamos criá-lo
+      if (error.code === 'PGRST116') {
+        console.log('Profile not found for user:', userId, 'creating new profile');
+        
+        const { data: userData } = await supabase.auth.getUser();
+        const userMeta = userData.user?.user_metadata || {};
+        
+        // Perfil não existe, vamos criá-lo
+        const { data: newProfile, error: insertError } = await supabase
+          .from('profiles')
+          .insert({ 
+            id: userId,
+            whatsapp_number: userMeta.whatsapp_number || 'temporário', // Valor temporário
+            registration_complete: false,
+            first_name: userMeta.name || '',
+            last_name: userMeta.lastName || ''
+          })
+          .select()
+          .single();
+        
+        if (insertError) {
+          console.error('Erro ao criar perfil do usuário:', insertError);
+          return null;
+        }
+        
+        console.log('New profile created:', newProfile);
+        return newProfile;
       }
       
-      console.log('New profile created:', newProfile);
-      return newProfile;
-    } else if (error) {
-      console.error('Erro ao obter perfil do usuário:', error);
       return null;
     }
     
@@ -87,7 +90,7 @@ export async function getCurrentUserProfile() {
   }
 }
 
-// Nova função para limpar o estado da sessão
+// Função para limpar o estado da sessão
 export async function clearAuthState() {
   try {
     // Limpar armazenamento local relacionado à autenticação
