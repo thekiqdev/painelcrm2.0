@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   // Se o usuário já estiver autenticado, redireciona
-  React.useEffect(() => {
+  useEffect(() => {
     if (user) {
       navigate('/dashboard');
     }
@@ -42,6 +42,7 @@ const Login = () => {
       if (error) {
         console.error("Erro ao fazer login:", error);
         toast.error(error.message || "Falha no login. Verifique suas credenciais.");
+        setIsLoading(false);
         return;
       }
       
@@ -50,7 +51,6 @@ const Login = () => {
     } catch (error: any) {
       console.error("Erro ao fazer login:", error);
       toast.error(error.message || "Ocorreu um erro desconhecido");
-    } finally {
       setIsLoading(false);
     }
   };

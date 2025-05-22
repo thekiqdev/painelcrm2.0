@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,14 +7,24 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { FormEvent } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 const AuthWhatsApp = () => {
   const [whatsapp, setWhatsapp] = useState('');
   const [password, setPassword] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
-  const { signIn, signUp } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
+
+  // Check if user is already authenticated
+  useEffect(() => {
+    if (user) {
+      console.log('User already authenticated in AuthWhatsApp, redirecting');
+      navigate('/dashboard');
+    }
+  }, [user, navigate]);
 
   // Simple WhatsApp number validation (Brazil format)
   const isValidWhatsApp = (number: string) => {
@@ -47,21 +57,72 @@ const AuthWhatsApp = () => {
     const cleanWhatsApp = whatsapp.replace(/\D/g, '');
     
     if (!isValidWhatsApp(cleanWhatsApp)) {
-      alert('Por favor, insira um número de WhatsApp válido');
+      toast.error('Por favor, insira um número de WhatsApp válido');
       setIsLoading(false);
       return;
     }
 
     try {
       if (isLogin) {
-        await signIn(cleanWhatsApp, password);
-        navigate('/register/steps');
+        // For login, use email format based on WhatsApp number
+        const email = `${cleanWhatsApp}@multicrm.app`;
+        console.log('Attempting login with email:', email);
+        
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        
+        if (error) {
+          console.error('Login error:', error);
+          toast.error(error.message || 'Falha no login. Verifique suas credenciais.');
+          setIsLoading(false);
+          return;
+        }
+        
+        toast.success('Login realizado com sucesso!');
+        // Authenticated users are redirected by AuthGuard
       } else {
-        await signUp(cleanWhatsApp, password);
+        // For registration, create email based on WhatsApp number
+        const email = `${cleanWhatsApp}@multicrm.app`;
+        console.log('Attempting registration with email:', email);
+        
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              whatsapp_number: cleanWhatsApp,
+            }
+          }
+        });
+        
+        if (error) {
+          console.error('Registration error:', error);
+          
+          if (error.message.includes('already registered')) {
+            toast.error('Este WhatsApp já está cadastrado. Tente fazer login.');
+            setIsLogin(true);
+          } else {
+            toast.error(error.message || 'Falha no cadastro.');
+          }
+          
+          setIsLoading(false);
+          return;
+        }
+        
+        if (!data.user) {
+          toast.error('Ocorreu um erro ao criar sua conta.');
+          setIsLoading(false);
+          return;
+        }
+        
+        toast.success('Cadastro realizado com sucesso!');
         navigate('/register/steps');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Auth error:', error);
+      toast.error(error.message || 'Ocorreu um erro desconhecido');
     } finally {
       setIsLoading(false);
     }

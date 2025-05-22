@@ -90,8 +90,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (whatsapp: string, password: string) => {
     try {
+      // Convert WhatsApp number to email format
+      const email = `${whatsapp}@multicrm.app`;
+      
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -111,8 +114,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUp = async (whatsapp: string, password: string) => {
     try {
+      const email = `${whatsapp}@multicrm.app`;
+      
       const { error } = await supabase.auth.signUp({
-        email: `${whatsapp}@multicrm.app`, // Using whatsapp as unique email
+        email,
         password,
         options: {
           data: {
