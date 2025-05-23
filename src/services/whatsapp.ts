@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -33,58 +34,130 @@ export const whatsappService = {
     return await response.json();
   },
   
-  connectEvolution: async (instanceName: string, webhookUrl?: string) => {
+  // Método específico para Evolution API - Passo 1: Criar instância
+  createEvolutionInstance: async (instanceName: string, webhookUrl?: string) => {
     try {
-      // Obter a configuração ativa da Evolution API
+      console.log("Passo 1: Criando instância Evolution API:", instanceName);
+      
       const config = await evolutionApi.getActiveConfig();
       if (!config) {
         throw new Error("Nenhuma configuração da Evolution API encontrada. Configure primeiro em Configurações.");
       }
       
-      // Configurar credenciais da Evolution API
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      // Criar instância se não existir
-      let instanceData;
-      try {
-        instanceData = await evolutionApi.createInstance(instanceName, webhookUrl);
-      } catch (error) {
-        // Se a instância já existe, tentar conectar
-        console.log("Instância pode já existir, tentando conectar...");
-      }
-      
-      // Conectar à instância (gerar QR code)
-      const connectionResult = await evolutionApi.connectInstance(instanceName);
-      
-      // Salvar dados da conexão no Supabase
-      const { error: dbError } = await supabase
-        .from("whatsapp_connections")
-        .upsert({
-          user_id: (await supabase.auth.getUser()).data.user?.id,
-          status: connectionResult.qrcode ? "awaiting_scan" : "connected",
-          provider: "evolution",
-          config_data: {
-            instanceName,
-            serverUrl: config.api_url,
-            hasWebhook: !!webhookUrl
-          },
-          qr_code: connectionResult.qrcode?.base64 || null,
-          updated_at: new Date().toISOString()
-        });
-      
-      if (dbError) {
-        console.error("Erro ao salvar no banco:", dbError);
-      }
+      // Criar instância
+      const instanceData = await evolutionApi.createInstance(instanceName, webhookUrl);
+      console.log("Instância criada com sucesso:", instanceData);
       
       return {
-        status: connectionResult.qrcode ? "connecting" : "connected",
-        qrCode: connectionResult.qrcode?.base64,
-        provider: "evolution",
-        instanceName
+        success: true,
+        instanceName,
+        instanceData
       };
       
     } catch (error) {
-      console.error("Erro na conexão Evolution:", error);
+      console.error("Erro ao criar instância Evolution:", error);
+      throw error;
+    }
+  },
+
+  // Método específico para Evolution API - Passo 2: Obter QR Code
+  getEvolutionQRCode: async (instanceName: string) => {
+    try {
+      console.log("Passo 2: Obtendo QR Code para instância:", instanceName);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      // Primeiro tenta conectar para gerar QR code
+      const connectionResult = await evolutionApi.connectInstance(instanceName);
+      
+      if (connectionResult.qrcode?.base64) {
+        console.log("QR Code obtido com sucesso");
+        
+        // Salvar no banco de dados
+        const { error: dbError } = await supabase
+          .from("whatsapp_connections")
+          .upsert({
+            user_id: (await supabase.auth.getUser()).data.user?.id,
+            status: "awaiting_scan",
+            provider: "evolution",
+            config_data: {
+              instanceName,
+              serverUrl: config.api_url,
+            },
+            qr_code: connectionResult.qrcode.base64,
+            updated_at: new Date().toISOString()
+          });
+        
+        if (dbError) {
+          console.error("Erro ao salvar no banco:", dbError);
+        }
+        
+        return {
+          success: true,
+          qrCode: connectionResult.qrcode.base64,
+          status: "awaiting_scan"
+        };
+      } else {
+        throw new Error("QR Code não foi gerado");
+      }
+      
+    } catch (error) {
+      console.error("Erro ao obter QR code Evolution:", error);
+      throw error;
+    }
+  },
+
+  // Método específico para Evolution API - Passo 3: Verificar conexão
+  checkEvolutionConnection: async (instanceName: string) => {
+    try {
+      console.log("Passo 3: Verificando status da conexão:", instanceName);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      const status = await evolutionApi.getInstanceStatus(instanceName);
+      console.log("Status da instância:", status);
+      
+      if (status.instance.state === "open") {
+        // Conexão estabelecida com sucesso
+        const { error: dbError } = await supabase
+          .from("whatsapp_connections")
+          .upsert({
+            user_id: (await supabase.auth.getUser()).data.user?.id,
+            status: "connected",
+            provider: "evolution",
+            config_data: {
+              instanceName,
+              serverUrl: config.api_url,
+            },
+            qr_code: null, // Remove QR code após conexão
+            updated_at: new Date().toISOString()
+          });
+        
+        if (dbError) {
+          console.error("Erro ao atualizar no banco:", dbError);
+        }
+        
+        return {
+          success: true,
+          status: "connected"
+        };
+      } else {
+        return {
+          success: false,
+          status: status.instance.state
+        };
+      }
+      
+    } catch (error) {
+      console.error("Erro ao verificar conexão Evolution:", error);
       throw error;
     }
   },
@@ -201,84 +274,5 @@ export const whatsappService = {
     }
     
     return await response.json();
-  },
-
-  // Métodos específicos para Evolution API com configuração do banco
-  checkEvolutionStatus: async (instanceName: string) => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getInstanceStatus(instanceName);
-    } catch (error) {
-      console.error("Erro ao verificar status Evolution:", error);
-      throw error;
-    }
-  },
-
-  getEvolutionQRCode: async (instanceName: string) => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getQRCode(instanceName);
-    } catch (error) {
-      console.error("Erro ao obter QR code Evolution:", error);
-      throw error;
-    }
-  },
-
-  listEvolutionInstances: async () => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.listInstances();
-    } catch (error) {
-      console.error("Erro ao listar instâncias Evolution:", error);
-      throw error;
-    }
-  },
-
-  getEvolutionChats: async (instanceName: string) => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getChats(instanceName);
-    } catch (error) {
-      console.error("Erro ao obter conversas Evolution:", error);
-      throw error;
-    }
-  },
-
-  getEvolutionMessages: async (instanceName: string, remoteJid: string, limit: number = 50) => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getMessages(instanceName, remoteJid, limit);
-    } catch (error) {
-      console.error("Erro ao obter mensagens Evolution:", error);
-      throw error;
-    }
-  },
-
-  sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string) => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.sendMessage(instanceName, remoteJid, message);
-    } catch (error) {
-      console.error("Erro ao enviar mensagem Evolution:", error);
-      throw error;
-    }
   }
 };

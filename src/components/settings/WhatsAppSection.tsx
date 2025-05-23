@@ -16,6 +16,7 @@ export const WhatsAppSection = () => {
     activeConnection,
     connectionStatus,
     qrCode,
+    currentStep,
     isLoading,
     isDialogOpen,
     setIsDialogOpen,
@@ -44,6 +45,7 @@ export const WhatsAppSection = () => {
               activeConnection={activeConnection}
               qrCode={qrCode}
               connectionStatus={connectionStatus}
+              currentStep={currentStep}
               isLoading={isLoading}
               onAddConnectionClick={() => setIsDialogOpen(true)}
               handleConnect={handleConnect}

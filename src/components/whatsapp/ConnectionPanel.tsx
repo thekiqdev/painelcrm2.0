@@ -12,6 +12,7 @@ interface ConnectionPanelProps {
   activeConnection: Connection | null;
   qrCode: string | null;
   connectionStatus: ConnectionStatus;
+  currentStep?: "create" | "qrcode" | "connect";
   isLoading: boolean;
   onAddConnectionClick: () => void;
   handleConnect: (connection: Connection) => void;
@@ -24,6 +25,7 @@ const ConnectionPanel: React.FC<ConnectionPanelProps> = ({
   activeConnection,
   qrCode,
   connectionStatus,
+  currentStep,
   isLoading,
   onAddConnectionClick,
   handleConnect,
@@ -49,10 +51,11 @@ const ConnectionPanel: React.FC<ConnectionPanelProps> = ({
       </CardHeader>
       
       <CardContent>
-        {activeConnection && qrCode ? (
+        {activeConnection && (qrCode || connectionStatus === "connecting") ? (
           <QRCodeScanner 
             qrCode={qrCode} 
-            connectionStatus={connectionStatus} 
+            connectionStatus={connectionStatus}
+            currentStep={currentStep}
             onDisconnect={handleDisconnect}
             onConfirmConnection={handleConfirmConnection}
           />

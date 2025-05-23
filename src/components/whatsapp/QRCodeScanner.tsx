@@ -1,12 +1,13 @@
 
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle, Settings } from "lucide-react";
 import { ConnectionStatus } from "@/components/settings/types";
 
 interface QRCodeScannerProps {
   qrCode: string | null;
   connectionStatus: ConnectionStatus;
+  currentStep?: "create" | "qrcode" | "connect";
   onDisconnect: () => void;
   onConfirmConnection: () => void;
 }
@@ -14,19 +15,75 @@ interface QRCodeScannerProps {
 const QRCodeScanner: React.FC<QRCodeScannerProps> = ({ 
   qrCode, 
   connectionStatus,
+  currentStep = "create",
   onDisconnect,
   onConfirmConnection
 }) => {
+  
+  const renderStepIndicator = () => {
+    const steps = [
+      { key: "create", label: "Criar Instância", icon: Settings },
+      { key: "qrcode", label: "QR Code", icon: CheckCircle },
+      { key: "connect", label: "Conectar", icon: CheckCircle }
+    ];
+    
+    return (
+      <div className="flex items-center justify-center mb-6">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          const isActive = step.key === currentStep;
+          const isCompleted = steps.findIndex(s => s.key === currentStep) > index;
+          
+          return (
+            <React.Fragment key={step.key}>
+              <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
+                isActive 
+                  ? 'bg-primary text-primary-foreground' 
+                  : isCompleted 
+                    ? 'bg-green-100 text-green-800' 
+                    : 'bg-gray-100 text-gray-600'
+              }`}>
+                {isActive && connectionStatus === "connecting" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Icon className="h-4 w-4" />
+                )}
+                <span>{step.label}</span>
+              </div>
+              {index < steps.length - 1 && (
+                <div className={`w-8 h-0.5 mx-2 ${
+                  isCompleted ? 'bg-green-500' : 'bg-gray-300'
+                }`} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col items-center">
-      {connectionStatus === "connecting" && !qrCode && (
+      {/* Indicador de progresso */}
+      {connectionStatus === "connecting" && renderStepIndicator()}
+      
+      {connectionStatus === "connecting" && currentStep === "create" && (
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-16 w-16 animate-spin text-primary" />
-          <p>Gerando QR code, aguarde...</p>
+          <p className="text-center">Criando instância na Evolution API...</p>
+          <p className="text-sm text-muted-foreground">Aguarde enquanto configuramos sua conexão</p>
         </div>
       )}
       
-      {qrCode && connectionStatus === "connecting" && (
+      {connectionStatus === "connecting" && currentStep === "qrcode" && !qrCode && (
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-16 w-16 animate-spin text-primary" />
+          <p className="text-center">Gerando QR code...</p>
+          <p className="text-sm text-muted-foreground">Preparando código para escaneamento</p>
+        </div>
+      )}
+      
+      {qrCode && connectionStatus === "connecting" && currentStep === "qrcode" && (
         <div className="flex flex-col items-center gap-6">
           <div className="border-8 border-white rounded-lg shadow-lg">
             <img 
@@ -41,21 +98,27 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
               Abra o WhatsApp no seu celular, toque em Menu ou Configurações e selecione WhatsApp Web. 
               Aponte a câmera do seu celular para esta tela para capturar o código.
             </p>
-            <Button 
-              variant="default" 
-              onClick={onConfirmConnection} 
-              className="w-full mb-2"
-            >
-              Confirmar Conexão Manualmente
-            </Button>
-            <Button 
-              variant="outline" 
-              onClick={onDisconnect} 
-              className="w-full"
-            >
-              Cancelar
-            </Button>
+            <div className="space-y-2">
+              <p className="text-xs text-blue-600 font-medium">
+                ⏳ Aguardando escaneamento...
+              </p>
+              <Button 
+                variant="outline" 
+                onClick={onDisconnect} 
+                className="w-full"
+              >
+                Cancelar
+              </Button>
+            </div>
           </div>
+        </div>
+      )}
+      
+      {connectionStatus === "connecting" && currentStep === "connect" && (
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-16 w-16 animate-spin text-primary" />
+          <p className="text-center">Estabelecendo conexão...</p>
+          <p className="text-sm text-muted-foreground">QR Code escaneado, conectando ao WhatsApp</p>
         </div>
       )}
       
@@ -69,7 +132,7 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
           </div>
           <h2 className="text-xl font-medium">WhatsApp Conectado</h2>
           <p className="text-center text-muted-foreground mb-4">
-            Seu WhatsApp está conectado e pronto para uso.
+            Sua conexão Evolution API está ativa e pronta para uso.
           </p>
           <Button variant="destructive" onClick={onDisconnect}>Desconectar</Button>
         </div>
