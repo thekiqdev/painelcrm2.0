@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,15 +10,11 @@ import { EvolutionMessage } from "@/services/evolutionApi";
 
 interface EvolutionChatPanelProps {
   instanceName: string;
-  serverUrl: string;
-  apiKey: string;
   enabled: boolean;
 }
 
 const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
   instanceName,
-  serverUrl,
-  apiKey,
   enabled
 }) => {
   const [newMessage, setNewMessage] = useState("");
@@ -36,8 +31,6 @@ const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
     setActiveChat
   } = useEvolutionChat({
     instanceName,
-    serverUrl,
-    apiKey,
     enabled
   });
 

@@ -12,8 +12,6 @@ import { Label } from "@/components/ui/label";
 import { whatsappService } from "@/services/whatsapp";
 
 interface ConnectionConfig {
-  apiKey?: string;
-  instanceId?: string;
   instanceName?: string;
   webhookUrl?: string;
 }
@@ -21,8 +19,6 @@ interface ConnectionConfig {
 const WhatsAppConnection = () => {
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qrCode, setQrCode] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState<string>("");
-  const [instanceId, setInstanceId] = useState<string>("");
   const [instanceName, setInstanceName] = useState<string>("");
   const [webhookUrl, setWebhookUrl] = useState<string>("");
   const [apiProvider, setApiProvider] = useState<"default" | "evolution" | "webjs">("default");
@@ -36,7 +32,6 @@ const WhatsAppConnection = () => {
   const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
   const { toast } = useToast();
   
-  // Effect to load saved connections from localStorage
   useEffect(() => {
     const savedData = localStorage.getItem("whatsapp_connections");
     if (savedData) {
@@ -48,7 +43,6 @@ const WhatsAppConnection = () => {
     }
   }, []);
 
-  // Effect to save connections to localStorage when they change
   useEffect(() => {
     if (savedConnections.length > 0) {
       localStorage.setItem("whatsapp_connections", JSON.stringify(savedConnections));
@@ -63,13 +57,13 @@ const WhatsAppConnection = () => {
     });
     
     try {
-      if (apiProvider === "evolution" && apiKey) {
+      if (apiProvider === "evolution" && instanceName) {
         toast({
           title: "Conectando via Evolution API",
           description: "Usando as credenciais fornecidas para conectar...",
         });
         
-        const result = await whatsappService.connectEvolution(apiKey, instanceId, instanceName, webhookUrl);
+        const result = await whatsappService.connectEvolution(instanceName, webhookUrl);
         
         if (result.status === "connected") {
           setConnectionStatus("connected");
@@ -101,7 +95,6 @@ const WhatsAppConnection = () => {
           });
         }
       } else {
-        // Conexão padrão via QR Code
         const result = await whatsappService.connect({ provider: apiProvider });
         
         if (result.status === "connecting" && result.qrCode) {
@@ -170,15 +163,12 @@ const WhatsAppConnection = () => {
     }
   };
 
-  // Save connection information
   const handleSaveConnection = () => {
     const newConnection = {
       id: Date.now().toString(),
       name: instanceName || "Evolution API Connection",
       type: apiProvider,
       config: {
-        apiKey,
-        instanceId,
         instanceName,
         webhookUrl
       }
@@ -195,7 +185,6 @@ const WhatsAppConnection = () => {
     clearConnectionForm();
   };
   
-  // Update existing connection
   const handleUpdateConnection = () => {
     if (!selectedConnection) return;
     
@@ -205,8 +194,6 @@ const WhatsAppConnection = () => {
           ...conn,
           name: instanceName || conn.name,
           config: {
-            apiKey,
-            instanceId,
             instanceName,
             webhookUrl
           }
@@ -227,7 +214,6 @@ const WhatsAppConnection = () => {
     clearConnectionForm();
   };
   
-  // Delete a connection
   const handleDeleteConnection = (id: string) => {
     const updatedConnections = savedConnections.filter(conn => conn.id !== id);
     setSavedConnections(updatedConnections);
@@ -243,46 +229,35 @@ const WhatsAppConnection = () => {
     }
   };
   
-  // Edit a connection
   const handleEditConnection = (id: string) => {
     const connection = savedConnections.find(conn => conn.id === id);
     if (!connection) return;
     
     setApiProvider(connection.type as any);
-    setApiKey(connection.config.apiKey || "");
-    setInstanceId(connection.config.instanceId || "");
     setInstanceName(connection.config.instanceName || "");
     setWebhookUrl(connection.config.webhookUrl || "");
     setSelectedConnection(id);
     setIsEditing(true);
   };
   
-  // Connect using a saved connection
   const handleConnectSaved = (id: string) => {
     const connection = savedConnections.find(conn => conn.id === id);
     if (!connection) return;
     
     setApiProvider(connection.type as any);
-    setApiKey(connection.config.apiKey || "");
-    setInstanceId(connection.config.instanceId || "");
     setInstanceName(connection.config.instanceName || "");
     setWebhookUrl(connection.config.webhookUrl || "");
     
-    // After setting credentials, connect
     handleConnect();
   };
   
-  // Clear connection form
   const clearConnectionForm = () => {
-    setApiKey("");
-    setInstanceId("");
     setInstanceName("");
     setWebhookUrl("");
     setIsEditing(false);
     setSelectedConnection(null);
   };
 
-  // Simulate successful connection after QR code is shown
   useEffect(() => {
     if (qrCode && connectionStatus === "connecting") {
       const timer = setTimeout(async () => {
@@ -299,7 +274,7 @@ const WhatsAppConnection = () => {
         } catch (error) {
           console.error("Erro ao verificar status:", error);
         }
-      }, 10000); // Verifica a cada 10 segundos
+      }, 10000);
       
       return () => clearTimeout(timer);
     }
@@ -411,7 +386,7 @@ const WhatsAppConnection = () => {
                                 <div>
                                   <p className="font-medium">{conn.name}</p>
                                   <p className="text-sm text-muted-foreground">
-                                    {conn.config.instanceId ? `ID: ${conn.config.instanceId}` : "Sem ID"}
+                                    {conn.config.instanceName ? `Instância: ${conn.config.instanceName}` : "Sem instância"}
                                   </p>
                                 </div>
                                 <div className="flex gap-2">
@@ -448,26 +423,6 @@ const WhatsAppConnection = () => {
                     </h3>
                     
                     <div className="space-y-2">
-                      <Label htmlFor="apiKey">API Key da Evolution</Label>
-                      <Input 
-                        id="apiKey" 
-                        placeholder="Insira sua chave API da Evolution" 
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="instanceId">ID da Instância</Label>
-                      <Input 
-                        id="instanceId" 
-                        placeholder="ID da sua instância (se aplicável)" 
-                        value={instanceId}
-                        onChange={(e) => setInstanceId(e.target.value)}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
                       <Label htmlFor="instanceName">Nome da Instância</Label>
                       <Input 
                         id="instanceName" 
@@ -489,7 +444,7 @@ const WhatsAppConnection = () => {
                     
                     <Alert className="mt-2">
                       <AlertDescription>
-                        Para obter suas credenciais da Evolution API, você precisa ter uma conta ativa no serviço.
+                        Para usar a Evolution API, configure primeiro as credenciais em Configurações {">"} WhatsApp {">"} Evolution API.
                       </AlertDescription>
                     </Alert>
                     
@@ -504,7 +459,7 @@ const WhatsAppConnection = () => {
                           </Button>
                           <Button 
                             onClick={handleUpdateConnection}
-                            disabled={!apiKey || !instanceName}
+                            disabled={!instanceName}
                           >
                             Atualizar
                           </Button>
@@ -514,13 +469,13 @@ const WhatsAppConnection = () => {
                           <Button 
                             onClick={handleSaveConnection}
                             variant="outline"
-                            disabled={!apiKey || !instanceName}
+                            disabled={!instanceName}
                           >
                             Salvar Credenciais
                           </Button>
                           <Button 
                             onClick={handleConnect}
-                            disabled={!apiKey || !instanceName}
+                            disabled={!instanceName}
                           >
                             Conectar
                           </Button>

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Card,
@@ -29,10 +28,10 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { PlusCircle, Edit2, Trash2, Check, AlertTriangle } from "lucide-react";
-import { evolutionApi, EvolutionApiConfig } from "@/services/evolutionApi";
+import { evolutionApi, type EvolutionApiConfig } from "@/services/evolutionApi";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
-export const EvolutionApiConfig = () => {
+export const EvolutionApiConfigComponent = () => {
   const [configs, setConfigs] = useState<EvolutionApiConfig[]>([]);
   const [activeConfig, setActiveConfig] = useState<EvolutionApiConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -113,7 +112,6 @@ export const EvolutionApiConfig = () => {
     setIsLoading(true);
     try {
       if (selectedConfig) {
-        // Atualizar configuração existente
         await evolutionApi.updateConfig(selectedConfig.id, {
           name: configName,
           api_url: apiUrl,
@@ -121,7 +119,6 @@ export const EvolutionApiConfig = () => {
         });
         toast.success("Configuração atualizada com sucesso!");
       } else {
-        // Criar nova configuração
         await evolutionApi.saveConfig(configName, apiUrl, apiKey);
         toast.success("Configuração adicionada com sucesso!");
       }
@@ -248,7 +245,6 @@ export const EvolutionApiConfig = () => {
         </CardFooter>
       </Card>
       
-      {/* Modal para adicionar/editar configuração */}
       <Dialog open={isConfigModalOpen} onOpenChange={setIsConfigModalOpen}>
         <DialogContent>
           <DialogHeader>
@@ -306,7 +302,6 @@ export const EvolutionApiConfig = () => {
         </DialogContent>
       </Dialog>
       
-      {/* Diálogo de confirmação para excluir configuração */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -330,4 +325,4 @@ export const EvolutionApiConfig = () => {
   );
 };
 
-export default EvolutionApiConfig;
+export default EvolutionApiConfigComponent;

@@ -108,6 +108,7 @@ export const useWhatsAppConnection = () => {
     });
   };
   
+  // Fixed handleConnect function with correct parameters
   const handleConnect = async (connection: Connection) => {
     try {
       setActiveConnection(connection);
@@ -121,19 +122,13 @@ export const useWhatsAppConnection = () => {
       let result;
       
       if (connection.type === "evolution") {
-        const { apiKey, instanceId, instanceName, webhookUrl, serverUrl } = connection.configData || {};
+        const { instanceName } = connection.configData || {};
         
-        if (!apiKey || !instanceId || !instanceName || !serverUrl) {
-          throw new Error("Configurações da Evolution API incompletas. Verifique API Key, URL do servidor, ID e Nome da Instância.");
+        if (!instanceName) {
+          throw new Error("Configurações da Evolution API incompletas. Verifique o Nome da Instância.");
         }
         
-        result = await whatsappService.connectEvolution(
-          apiKey, 
-          instanceId, 
-          instanceName, 
-          webhookUrl,
-          serverUrl
-        );
+        result = await whatsappService.connectEvolution(instanceName);
       } else if (connection.type === "webjs") {
         result = await whatsappService.connectWebJS();
       } else {
@@ -244,16 +239,16 @@ export const useWhatsAppConnection = () => {
     }
   };
 
+  // Fixed useEffect for polling with correct function calls
   useEffect(() => {
     let intervalId: number;
     
     if (connectionStatus === "connecting" && qrCode) {
       intervalId = window.setInterval(async () => {
         try {
-          // Se for Evolution API, verificar status diretamente
           if (activeConnection?.type === "evolution" && activeConnection.configData) {
-            const { instanceName, serverUrl, apiKey } = activeConnection.configData;
-            const status = await whatsappService.checkEvolutionStatus(instanceName, serverUrl, apiKey);
+            const { instanceName } = activeConnection.configData;
+            const status = await whatsappService.checkEvolutionStatus(instanceName);
             
             if (status.instance.state === "open") {
               setConnectionStatus("connected");
@@ -274,7 +269,6 @@ export const useWhatsAppConnection = () => {
               clearInterval(intervalId);
             }
           } else {
-            // Verificação padrão para outros métodos
             const status = await whatsappService.getStatus();
             
             if (status.connected || status.status === "connected") {
