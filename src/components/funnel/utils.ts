@@ -45,21 +45,27 @@ export const mapSupabaseToSalesFunnel = (data: any[]): SalesFunnel[] => {
 // Buscar funis do usuário atual
 export const fetchFunnels = async () => {
   try {
-    const { data: session } = await supabase.auth.getSession();
+    const userId = await withUserId({});
     
-    if (!session.session?.user?.id) {
+    if (!userId) {
+      console.error("Erro ao buscar funis: Usuário não autenticado");
       return { success: false, error: "Usuário não autenticado", data: [] };
     }
     
-    const userId = session.session.user.id;
+    console.log("Buscando funis do usuário:", userId.user_id);
     
     const { data, error } = await supabase
       .from("sales_funnels")
       .select("*, stages:funnel_stages(*)")
-      .eq("user_id", userId)
+      .eq("user_id", userId.user_id)
       .order("created_at", { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error("Erro ao buscar funis:", error);
+      throw error;
+    }
+    
+    console.log(`Encontrados ${data?.length || 0} funis para o usuário ${userId.user_id}`);
     return { success: true, data: mapSupabaseToSalesFunnel(data) };
   } catch (error: any) {
     console.error("Erro ao buscar funis:", error.message);
@@ -73,8 +79,11 @@ export const createFunnel = async (funnelData: FunnelData, stages: StageData[]) 
     // Adicionar user_id aos dados do funil
     const dataWithUserId = await withUserId(funnelData);
     if (!dataWithUserId) {
+      console.error("Erro ao criar funil: Usuário não autenticado");
       throw new Error("Usuário não autenticado");
     }
+    
+    console.log("Criando funil para usuário:", dataWithUserId.user_id);
     
     // Inserir o funil
     const { data: newFunnel, error: funnelError } = await supabase
@@ -83,7 +92,17 @@ export const createFunnel = async (funnelData: FunnelData, stages: StageData[]) 
       .select()
       .single();
 
-    if (funnelError) throw funnelError;
+    if (funnelError) {
+      console.error("Erro ao inserir funil:", funnelError);
+      throw funnelError;
+    }
+    
+    if (!newFunnel || !newFunnel.id) {
+      console.error("Erro: Funil criado sem ID retornado");
+      throw new Error("Erro ao criar funil: ID não retornado");
+    }
+    
+    console.log("Funil criado com sucesso:", newFunnel.id);
     
     // Inserir os estágios
     if (stages.length > 0 && newFunnel) {
@@ -104,11 +123,16 @@ export const createFunnel = async (funnelData: FunnelData, stages: StageData[]) 
         }
       }
       
+      console.log(`Inserindo ${stagesWithUserId.length} estágios para o funil ${newFunnel.id}`);
+      
       const { error: stagesError } = await supabase
         .from("funnel_stages")
         .insert(stagesWithUserId);
 
-      if (stagesError) throw stagesError;
+      if (stagesError) {
+        console.error("Erro ao inserir estágios:", stagesError);
+        throw stagesError;
+      }
     }
     
     // Buscar o funil completo com os estágios
@@ -118,7 +142,12 @@ export const createFunnel = async (funnelData: FunnelData, stages: StageData[]) 
       .eq("id", newFunnel.id)
       .single();
       
-    if (fetchError) throw fetchError;
+    if (fetchError) {
+      console.error("Erro ao buscar funil completo:", fetchError);
+      throw fetchError;
+    }
+    
+    console.log("Funil completo carregado com sucesso");
     
     return { 
       success: true, 

@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { FunnelType, SalesFunnel, Deal } from "@/components/funnel/types";
 import { fetchFunnels, createFunnel } from "@/components/funnel/utils";
@@ -104,18 +103,25 @@ export function useFunnelData() {
   }, [user]); // Adicionado user como dependência
 
   const loadFunnels = async () => {
-    if (!user) return; // Não carrega se não houver usuário
+    if (!user) {
+      console.log("Não carregando funis pois não há usuário autenticado");
+      return;
+    }
     
     setIsLoading(true);
     try {
+      console.log("Iniciando carregamento de funis");
       const result = await fetchFunnels();
+      
       if (result.success && result.data) {
+        console.log(`Funis carregados com sucesso: ${result.data.length} funis encontrados`);
         setFunnels(result.data);
         // Set active funnel to the first one if available
         if (result.data.length > 0) {
           setActiveFunnelId(result.data[0].id);
         }
       } else {
+        console.error("Erro no resultado da busca de funis:", result.error);
         toast.error("Erro ao carregar funis");
       }
     } catch (error) {
@@ -187,6 +193,12 @@ export function useFunnelData() {
     }
     
     try {
+      console.log("Iniciando criação de funil:", {
+        name: newFunnelName,
+        type: newFunnelType,
+        source: newFunnelSource || undefined
+      });
+      
       // Create the new funnel
       const result = await createFunnel(
         {
@@ -200,6 +212,7 @@ export function useFunnelData() {
       );
       
       if (result.success && result.data) {
+        console.log("Funil criado com sucesso:", result.data);
         // First update state
         setFunnels([...funnels, result.data]);
         setActiveFunnelId(result.data.id);
@@ -219,6 +232,7 @@ export function useFunnelData() {
           navigate(`/funnel/${result.data.id}`);
         }, 300);
       } else {
+        console.error("Erro ao criar funil:", result.error);
         toast.error("Erro ao criar o funil. Tente novamente.");
       }
     } catch (error) {
