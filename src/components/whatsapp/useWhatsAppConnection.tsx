@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -108,6 +107,51 @@ export const useWhatsAppConnection = () => {
     toast.success("Conexão adicionada", { 
       description: `A conexão "${connectionName}" foi adicionada com sucesso.` 
     });
+  };
+
+  const handleDeleteConnection = async (connectionId: string) => {
+    try {
+      setIsLoading(true);
+      
+      const connectionToDelete = connections.find(c => c.id === connectionId);
+      if (!connectionToDelete) {
+        throw new Error("Conexão não encontrada");
+      }
+
+      // Se for uma conexão Evolution API, deletar na API também
+      if (connectionToDelete.type === "evolution" && connectionToDelete.configData?.instanceName) {
+        await whatsappService.deleteEvolutionInstance(connectionToDelete.configData.instanceName);
+      }
+
+      // Remover da lista local
+      const updatedConnections = connections.filter(c => c.id !== connectionId);
+      setConnections(updatedConnections);
+      
+      // Atualizar localStorage
+      localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+      
+      // Se a conexão ativa foi deletada, limpar
+      if (activeConnection?.id === connectionId) {
+        setActiveConnection(null);
+        setConnectionStatus("disconnected");
+        setQrCode(null);
+        
+        if (user) {
+          await updateProfile({ whatsapp_connected: false });
+        }
+      }
+
+      toast.success("Conexão excluída", {
+        description: "A conexão foi removida com sucesso da plataforma e da API",
+      });
+    } catch (error) {
+      console.error("Error deleting connection:", error);
+      toast.error("Erro ao excluir", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro ao excluir a conexão"
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   // Evolution API - Fluxo completo: Criar -> QR Code -> Conectar
@@ -359,6 +403,7 @@ export const useWhatsAppConnection = () => {
     handleAddConnection,
     handleConnect,
     handleDisconnect,
+    handleDeleteConnection,
     handleConfirmConnection
   };
 };

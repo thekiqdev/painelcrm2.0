@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -325,5 +324,41 @@ export const whatsappService = {
     }
     
     return await response.json();
-  }
+  },
+  // Método para deletar instância Evolution API
+  deleteEvolutionInstance: async (instanceName: string) => {
+    try {
+      console.log("Deletando instância Evolution API:", instanceName);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) {
+        throw new Error("Nenhuma configuração ativa encontrada");
+      }
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      // Deletar instância na API Evolution
+      await evolutionApi.deleteInstance(instanceName);
+      
+      // Remover do banco de dados local
+      const { error: dbError } = await supabase
+        .from("whatsapp_connections")
+        .delete()
+        .eq("config_data->>instanceName", instanceName)
+        .eq("user_id", (await supabase.auth.getUser()).data.user?.id);
+      
+      if (dbError) {
+        console.error("Erro ao remover do banco:", dbError);
+      }
+      
+      return {
+        success: true,
+        message: "Instância deletada com sucesso"
+      };
+      
+    } catch (error) {
+      console.error("Erro ao deletar instância Evolution:", error);
+      throw error;
+    }
+  },
 };

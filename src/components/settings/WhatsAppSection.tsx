@@ -22,6 +22,7 @@ export const WhatsAppSection = () => {
     handleAddConnection,
     handleConnect,
     handleDisconnect,
+    handleDeleteConnection,
     handleConfirmConnection
   } = useWhatsAppConnection();
 
@@ -48,6 +49,7 @@ export const WhatsAppSection = () => {
               onAddConnectionClick={() => setIsDialogOpen(true)}
               handleConnect={handleConnect}
               handleDisconnect={handleDisconnect}
+              handleDeleteConnection={handleDeleteConnection}
               handleConfirmConnection={handleConfirmConnection}
             />
             

@@ -371,6 +371,8 @@ class EvolutionApiService {
 
   // Deletar instância
   async deleteInstance(instanceName: string): Promise<void> {
+    console.log(`Deletando instância: ${instanceName}`);
+    
     const response = await fetch(`${this.baseUrl}/instance/delete/${instanceName}`, {
       method: "DELETE",
       headers: this.getHeaders(),
@@ -378,8 +380,11 @@ class EvolutionApiService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("Erro ao deletar instância:", errorText);
       throw new Error(`Erro ao deletar instância: ${errorText}`);
     }
+
+    console.log(`Instância ${instanceName} deletada com sucesso`);
   }
 
   // Logout da instância
