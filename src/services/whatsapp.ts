@@ -27,6 +27,15 @@ export const whatsappService = {
         const status = await evolutionApi.getInstanceStatus(instanceName);
         console.log("Instance already exists with status:", status);
         instanceExists = true;
+        
+        // Se a instância já existe e está aberta (conectada), retornar como conectado
+        if (status.instance.state === "open") {
+          return {
+            status: "connected",
+            provider: "evolution",
+            instanceName
+          };
+        }
       } catch (error) {
         console.log("Instance does not exist, will create new one");
         instanceExists = false;
@@ -68,35 +77,13 @@ export const whatsappService = {
         }
       }
       
-      // Agora tentar conectar à instância
-      console.log("Connecting to instance:", instanceName);
-      const connectionResult = await evolutionApi.connectInstance(instanceName);
-      console.log("Connection result:", connectionResult);
-      
-      // Salvar dados da conexão no Supabase
-      const { error: dbError } = await supabase
-        .from("whatsapp_connections")
-        .upsert({
-          user_id: (await supabase.auth.getUser()).data.user?.id,
-          status: connectionResult.qrcode ? "awaiting_scan" : "connected",
-          provider: "evolution",
-          config_data: {
-            instanceName,
-            serverUrl: config.api_url,
-          },
-          qr_code: connectionResult.qrcode?.base64 || null,
-          updated_at: new Date().toISOString()
-        });
-      
-      if (dbError) {
-        console.error("Erro ao salvar no banco:", dbError);
-      }
-      
+      // Retornar que a instância foi criada mas ainda não conectada
+      // O QR code será gerado em uma etapa separada
       return {
-        status: connectionResult.qrcode ? "connecting" : "connected",
-        qrCode: connectionResult.qrcode?.base64,
+        status: "disconnected", // Instância criada mas não conectada
         provider: "evolution",
-        instanceName
+        instanceName,
+        message: "Instância criada com sucesso. Clique em 'Conectar' para gerar o QR code."
       };
       
     } catch (error) {
@@ -204,7 +191,20 @@ export const whatsappService = {
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getQRCode(instanceName);
+      
+      // Primeiro, conectar à instância para gerar o QR code
+      console.log("Connecting to instance to generate QR code:", instanceName);
+      const connectionResult = await evolutionApi.connectInstance(instanceName);
+      console.log("Connection result:", connectionResult);
+      
+      if (connectionResult.qrcode?.base64) {
+        return {
+          qrcode: connectionResult.qrcode,
+          status: "connecting"
+        };
+      } else {
+        throw new Error("Falha ao gerar QR code");
+      }
     } catch (error) {
       console.error("Erro ao obter QR code Evolution:", error);
       throw error;

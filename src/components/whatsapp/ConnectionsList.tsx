@@ -11,6 +11,7 @@ interface ConnectionsListProps {
   connections: Connection[];
   isLoading: boolean;
   handleConnect: (connection: Connection) => void;
+  handleGenerateQRCode: (connection: Connection) => void;
   handleDisconnect: () => void;
   onAddConnectionClick: () => void;
 }
@@ -19,11 +20,11 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
   connections,
   isLoading,
   handleConnect,
+  handleGenerateQRCode,
   handleDisconnect,
   onAddConnectionClick,
 }) => {
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
-  const [isGeneratingQr, setIsGeneratingQr] = useState<string | null>(null);
 
   const handleDeleteConnection = async (connection: Connection, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -47,25 +48,6 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
       });
     } finally {
       setIsDeleting(null);
-    }
-  };
-
-  const handleGenerateQrCode = async (connection: Connection, event: React.MouseEvent) => {
-    event.stopPropagation();
-    
-    if (!connection.configData?.instanceName) return;
-    
-    setIsGeneratingQr(connection.id);
-    try {
-      await whatsappService.getEvolutionQRCode(connection.configData.instanceName);
-      handleConnect(connection);
-    } catch (error) {
-      console.error("Erro ao gerar QR code:", error);
-      toast.error("Erro ao gerar QR code", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    } finally {
-      setIsGeneratingQr(null);
     }
   };
 
@@ -217,17 +199,14 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                       {connection.status === "disconnected" && (
                         <Button 
                           size="sm" 
-                          onClick={(e) => handleGenerateQrCode(connection, e)}
-                          disabled={isGeneratingQr === connection.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleGenerateQRCode(connection);
+                          }}
+                          disabled={isLoading}
                         >
-                          {isGeneratingQr === connection.id ? (
-                            "Gerando..."
-                          ) : (
-                            <>
-                              <QrCode className="h-4 w-4 mr-2" />
-                              Conectar
-                            </>
-                          )}
+                          <QrCode className="h-4 w-4 mr-2" />
+                          Conectar
                         </Button>
                       )}
                       

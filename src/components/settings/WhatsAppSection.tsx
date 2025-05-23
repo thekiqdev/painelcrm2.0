@@ -17,6 +17,7 @@ export const WhatsAppSection = () => {
     qrCode,
     isLoading,
     handleConnect,
+    handleGenerateQRCode,
     handleDisconnect,
     handleConfirmConnection
   } = useWhatsAppConnection();
@@ -60,6 +61,7 @@ export const WhatsAppSection = () => {
               connections={connections}
               isLoading={isLoading}
               handleConnect={handleConnect}
+              handleGenerateQRCode={handleGenerateQRCode}
               handleDisconnect={handleDisconnect}
               onAddConnectionClick={() => setShowConnectionDialog(true)}
             />

@@ -87,10 +87,9 @@ export const useWhatsAppConnection = () => {
     try {
       setActiveConnection(connection);
       setIsLoading(true);
-      setConnectionStatus("connecting");
       
-      toast.info("Iniciando conexão", {
-        description: "Por favor, aguarde enquanto processamos sua solicitação...",
+      toast.info("Criando instância", {
+        description: "Por favor, aguarde enquanto criamos sua instância...",
       });
       
       const { instanceName } = connection.configData || {};
@@ -99,6 +98,7 @@ export const useWhatsAppConnection = () => {
         throw new Error("Nome da instância não fornecido");
       }
       
+      // Primeiro, criar/verificar a instância
       const result = await whatsappService.connectEvolution(instanceName);
       
       if (result.status === "connected") {
@@ -117,25 +117,70 @@ export const useWhatsAppConnection = () => {
         toast.success("Conectado com sucesso!", {
           description: "Sua conta WhatsApp foi conectada",
         });
-      } else if (result.qrCode) {
-        setQrCode(result.qrCode);
-        toast.info("QR Code gerado", {
-          description: "Escaneie o QR code com o seu WhatsApp",
-        });
+      } else {
+        // Instância criada mas não conectada ainda
+        setConnectionStatus("disconnected");
         
-        // Add connection to list
+        // Adicionar conexão à lista se não existir
         if (!connections.some(c => c.id === connection.id)) {
-          const updatedConnections = [...connections, connection];
+          const updatedConnections = [...connections, { ...connection, status: "disconnected" as ConnectionStatus }];
           setConnections(updatedConnections);
           localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
         }
-      } else {
-        throw new Error("Falha ao gerar QR code");
+        
+        toast.success("Instância criada!", {
+          description: "Agora você pode conectar escaneando o QR code",
+        });
       }
     } catch (error) {
       console.error("Error connecting WhatsApp:", error);
       toast.error("Erro na conexão", { 
         description: error instanceof Error ? error.message : "Ocorreu um erro ao tentar conectar o WhatsApp." 
+      });
+      setConnectionStatus("disconnected");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGenerateQRCode = async (connection: Connection) => {
+    try {
+      setIsLoading(true);
+      setConnectionStatus("connecting");
+      
+      toast.info("Gerando QR Code", {
+        description: "Por favor, aguarde...",
+      });
+      
+      const { instanceName } = connection.configData || {};
+      
+      if (!instanceName) {
+        throw new Error("Nome da instância não fornecido");
+      }
+      
+      const result = await whatsappService.getEvolutionQRCode(instanceName);
+      
+      if (result.qrcode?.base64) {
+        setQrCode(result.qrcode.base64);
+        setActiveConnection(connection);
+        
+        // Atualizar status da conexão para "connecting"
+        const updatedConnections = connections.map(c => 
+          c.id === connection.id ? { ...c, status: "connecting" as ConnectionStatus } : c
+        );
+        setConnections(updatedConnections);
+        localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+        
+        toast.info("QR Code gerado", {
+          description: "Escaneie o QR code com o seu WhatsApp",
+        });
+      } else {
+        throw new Error("Falha ao gerar QR code");
+      }
+    } catch (error) {
+      console.error("Error generating QR code:", error);
+      toast.error("Erro ao gerar QR code", { 
+        description: error instanceof Error ? error.message : "Ocorreu um erro ao gerar o QR code." 
       });
       setConnectionStatus("disconnected");
     } finally {
@@ -264,6 +309,7 @@ export const useWhatsAppConnection = () => {
     qrCode,
     isLoading,
     handleConnect,
+    handleGenerateQRCode,
     handleDisconnect,
     handleConfirmConnection
   };
