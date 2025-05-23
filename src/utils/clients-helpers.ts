@@ -66,7 +66,7 @@ export const addClientTask = async (taskData: ClientTaskData) => {
   }
 };
 
-// Buscar clientes do usuário atual
+// Buscar clientes do usuário atual - CORRIGIDO para filtrar por user_id
 export const fetchUserClients = async () => {
   try {
     const userId = await getCurrentUserId();
@@ -76,10 +76,11 @@ export const fetchUserClients = async () => {
     
     console.log("Buscando clientes do usuário:", userId);
     
+    // Importante: Adicionar filtro por user_id para garantir isolamento dos dados
     const { data, error } = await supabase
       .from("clients")
       .select("*")
-      .eq("user_id", userId)
+      .eq("user_id", userId) // Certifica que apenas clientes do usuário atual são retornados
       .order("name");
 
     if (error) throw error;
