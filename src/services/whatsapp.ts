@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -11,20 +10,35 @@ export const whatsappService = {
         throw new Error("Nenhuma configuração da Evolution API encontrada. Configure primeiro em Configurações.");
       }
       
+      console.log("Using Evolution API config:", {
+        url: config.api_url,
+        key: `${config.global_key.substring(0, 3)}...`,
+      });
+      
       // Configurar credenciais da Evolution API
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
       // Criar instância se não existir
       try {
-        await evolutionApi.createInstance(instanceName);
-        console.log("Instância criada com sucesso:", instanceName);
+        console.log("Attempting to create instance:", instanceName);
+        const createResult = await evolutionApi.createInstance(instanceName);
+        console.log("Instance created or exists:", createResult);
       } catch (error) {
-        // Se a instância já existe, apenas log
-        console.log("Instância pode já existir, tentando conectar...");
+        console.error("Error during instance creation:", error);
+        // Verificar se o erro é porque a instância já existe
+        if (error instanceof Error && !error.message.includes("already exists")) {
+          throw error; // Se for outro tipo de erro, propague-o
+        }
+        console.log("Instance may already exist, continuing with connection...");
       }
       
+      // Pequena pausa para garantir que a instância foi criada
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       // Conectar à instância (gerar QR code)
+      console.log("Connecting to instance:", instanceName);
       const connectionResult = await evolutionApi.connectInstance(instanceName);
+      console.log("Connection result:", connectionResult);
       
       // Salvar dados da conexão no Supabase
       const { error: dbError } = await supabase
@@ -120,11 +134,14 @@ export const whatsappService = {
   // Verificar status da instância Evolution
   checkEvolutionStatus: async (instanceName: string) => {
     try {
+      console.log("Checking status for instance:", instanceName);
       const config = await evolutionApi.getActiveConfig();
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getInstanceStatus(instanceName);
+      const status = await evolutionApi.getInstanceStatus(instanceName);
+      console.log("Instance status:", status);
+      return status;
     } catch (error) {
       console.error("Erro ao verificar status Evolution:", error);
       throw error;

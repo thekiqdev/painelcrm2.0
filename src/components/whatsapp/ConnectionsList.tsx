@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Plus, Edit, CheckCircle2 } from "lucide-react";
-import { Connection, ConnectionStatus } from "@/components/settings/types";
+import { Connection, ConnectionStatus } from "@/components/whatsapp/useWhatsAppConnection";
 
 interface ConnectionsListProps {
   connections: Connection[];

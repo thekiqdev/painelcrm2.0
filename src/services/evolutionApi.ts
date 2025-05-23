@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 
 export interface EvolutionInstance {
@@ -192,59 +191,87 @@ class EvolutionApiService {
 
   // Criar uma nova instância
   async createInstance(instanceName: string, webhookUrl?: string): Promise<EvolutionInstance> {
-    const response = await fetch(`${this.baseUrl}/instance/create`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        instanceName,
-        token: this.apiKey,
-        qrcode: true,
-        number: "",
-        webhook: webhookUrl,
-        webhook_by_events: false,
-        events: [
-          "APPLICATION_STARTUP",
-          "QRCODE_UPDATED",
-          "MESSAGES_UPSERT",
-          "MESSAGES_UPDATE",
-          "SEND_MESSAGE",
-          "CONTACTS_UPDATE",
-          "PRESENCE_UPDATE",
-          "CHATS_UPDATE",
-          "CONNECTION_UPDATE"
-        ]
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Erro ao criar instância: ${errorText}`);
-    }
-
-    const data = await response.json();
-    return {
+    console.log(`Creating instance: ${instanceName} with URL: ${this.baseUrl}/instance/create`);
+    
+    const requestBody = {
       instanceName,
-      instanceId: data.instance?.instanceId || instanceName,
-      status: "close",
-      serverUrl: this.baseUrl,
-      apiKey: this.apiKey,
-      ...data
+      token: this.apiKey,
+      qrcode: true,
+      number: "",
+      webhook: webhookUrl || "",
+      webhook_by_events: !!webhookUrl,
+      events: [
+        "APPLICATION_STARTUP",
+        "QRCODE_UPDATED",
+        "MESSAGES_UPSERT",
+        "MESSAGES_UPDATE",
+        "SEND_MESSAGE",
+        "CONTACTS_UPDATE",
+        "PRESENCE_UPDATE",
+        "CHATS_UPDATE",
+        "CONNECTION_UPDATE"
+      ]
     };
+    
+    console.log("Request payload:", JSON.stringify(requestBody));
+    
+    try {
+      const response = await fetch(`${this.baseUrl}/instance/create`, {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify(requestBody),
+      });
+
+      console.log("Create instance response status:", response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Error response:", errorText);
+        throw new Error(`Erro ao criar instância: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log("Create instance response:", data);
+      
+      return {
+        instanceName,
+        instanceId: data.instance?.instanceId || instanceName,
+        status: "close",
+        serverUrl: this.baseUrl,
+        apiKey: this.apiKey,
+        ...data
+      };
+    } catch (error) {
+      console.error("Error creating instance:", error);
+      throw error;
+    }
   }
 
   // Conectar instância (gerar QR code)
   async connectInstance(instanceName: string): Promise<{ qrcode?: { base64: string; code: string }; status: string }> {
-    const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
-      method: "GET",
-      headers: this.getHeaders(),
-    });
+    console.log(`Connecting to instance: ${instanceName} at URL: ${this.baseUrl}/instance/connect/${instanceName}`);
+    
+    try {
+      const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
+        method: "GET",
+        headers: this.getHeaders(),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Erro ao conectar instância: ${errorText}`);
+      console.log("Connect instance response status:", response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Connect instance error response:", errorText);
+        throw new Error(`Erro ao conectar instância: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log("Connect instance response data:", data);
+      return data;
+    } catch (error) {
+      console.error("Error connecting to instance:", error);
+      throw error;
     }
-
-    return await response.json();
   }
 
   // Obter status da instância
