@@ -481,8 +481,6 @@ const Chat = () => {
             <TabsContent value="evolution">
               <EvolutionChatPanel
                 instanceName={activeEvolutionConnection.configData?.instanceName || ""}
-                serverUrl={activeEvolutionConnection.configData?.serverUrl || ""}
-                apiKey={activeEvolutionConnection.configData?.apiKey || ""}
                 enabled={true}
               />
             </TabsContent>
