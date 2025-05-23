@@ -180,72 +180,53 @@ const DropdownMenuShortcut = ({
 }
 DropdownMenuShortcut.displayName = "DropdownMenuShortcut"
 
-// Adicionando componentes personalizados para abas dentro do dropdown menu
+// Components para as abas
+const DropdownMenuTabs = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement> & {
+    value: string;
+    onValueChange: (value: string) => void;
+  }
+>(({ className, children, value, onValueChange, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn("w-full", className)}
+    data-value={value}
+    {...props}
+  >
+    {React.Children.map(children, (child) => {
+      if (React.isValidElement(child)) {
+        return React.cloneElement(child, { value, onValueChange } as any);
+      }
+      return child;
+    })}
+  </div>
+));
+DropdownMenuTabs.displayName = "DropdownMenuTabs";
 
-type TabsProps = {
-  value: string
-  onValueChange: (value: string) => void
-}
-
-const DropdownMenuTabs: React.FC<React.PropsWithChildren<TabsProps>> = ({ 
-  children, 
-  value, 
-  onValueChange
-}) => {
-  return (
-    <div data-value={value} data-tabs role="tablist" className="dropdown-menu-tabs">
-      {React.Children.map(children, child => {
-        if (React.isValidElement(child)) {
-          return React.cloneElement(child as React.ReactElement<any>, {
-            currentValue: value,
-            onValueChange
-          });
-        }
-        return child;
-      })}
-    </div>
-  )
-}
-
-type TabProps = {
-  value: string
-  className?: string
-  currentValue?: string
-  onValueChange?: (value: string) => void
-}
-
-const DropdownMenuTab: React.FC<React.PropsWithChildren<TabProps>> = ({
-  children,
-  value,
-  className,
-  currentValue,
-  onValueChange
-}) => {
-  const isActive = currentValue === value;
-  
-  const handleClick = () => {
-    onValueChange?.(value);
-  };
-
-  return (
-    <button
-      type="button"
-      role="tab"
-      data-value={value}
-      data-state={isActive ? "active" : "inactive"}
-      className={cn(
-        "px-4 py-2 text-sm flex items-center gap-1",
-        isActive 
-          ? "font-medium border-b-2 border-primary text-primary" 
-          : "text-muted-foreground border-b-2 border-transparent",
-        className
-      )}
-      onClick={handleClick}
-    >
-      {children}
-    </button>
-  )
-}
+const DropdownMenuTab = React.forwardRef<
+  HTMLButtonElement,
+  React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    value: string;
+    onValueChange?: (value: string) => void;
+  }
+>(({ className, children, value: tabValue, value: currentValue, onValueChange, ...props }, ref) => (
+  <button
+    ref={ref}
+    className={cn(
+      "flex items-center justify-center px-3 py-2 text-sm font-medium transition-colors",
+      "hover:bg-accent hover:text-accent-foreground",
+      "focus:bg-accent focus:text-accent-foreground focus:outline-none",
+      currentValue === tabValue && "bg-accent text-accent-foreground",
+      className
+    )}
+    onClick={() => onValueChange?.(tabValue)}
+    {...props}
+  >
+    {children}
+  </button>
+));
+DropdownMenuTab.displayName = "DropdownMenuTab";
 
 export {
   DropdownMenu,

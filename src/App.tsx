@@ -1,3 +1,4 @@
+
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -28,6 +29,7 @@ import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
 import FunnelDetails from "./pages/FunnelDetails";
 import ProposalDetails from "./pages/ProposalDetails";
+import WhatsAppConnection from "./pages/WhatsAppConnection";
 
 const queryClient = new QueryClient();
 
@@ -41,7 +43,6 @@ const App = () => (
           <Routes>
             <Route path="/" element={<AuthWhatsApp />} />
             
-            {/* Alterado: a página de registro não precisa de AuthGuard */}
             <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
             
             <Route path="/register/steps" element={
@@ -53,7 +54,6 @@ const App = () => (
             } />
             <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
             
-            {/* Protected routes */}
             <Route path="/dashboard" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Dashboard /></AppLayout>
@@ -128,6 +128,11 @@ const App = () => (
             <Route path="/settings" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Settings /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/whatsapp" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><WhatsAppConnection /></AppLayout>
               </AuthGuard>
             } />
             

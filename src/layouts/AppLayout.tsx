@@ -1,3 +1,4 @@
+
 import React from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useTheme } from "next-themes";
@@ -17,13 +18,13 @@ import { Toaster } from "@/components/ui/sonner";
 import NotificationsMenu from "@/components/notifications/NotificationsMenu";
 
 const AppLayout = () => {
-  const { user, logout } = useAuth();
+  const { user, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
   const location = useLocation();
 
   const handleLogout = async () => {
     try {
-      await logout();
+      await signOut();
     } catch (error) {
       console.error("Error logging out:", error);
     }
@@ -57,7 +58,6 @@ const AppLayout = () => {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Theme Toggle Button */}
             <Button
               variant="ghost"
               size="icon"
@@ -71,10 +71,8 @@ const AppLayout = () => {
               )}
             </Button>
 
-            {/* Adicionar menu de notificações */}
             <NotificationsMenu />
 
-            {/* User Menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 flex items-center gap-2 px-0">

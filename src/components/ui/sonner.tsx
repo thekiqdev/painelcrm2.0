@@ -24,17 +24,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
           closeButton:
             "group-[.toast]:opacity-100 group-[.toast]:text-foreground group-[.toast]:absolute group-[.toast]:top-2 group-[.toast]:right-2"
         },
-        closeButton: true,
-        actionButton: {
-          label: "Fechar"
-        },
+        closeButton: true
       }}
       {...props}
-      closeButton={
-        <button className="rounded-full p-1 hover:bg-muted/80">
-          <X className="h-4 w-4" />
-        </button>
-      }
     />
   )
 }
