@@ -77,11 +77,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     }
     
     setIsSubmitting(true);
+    setCurrentStep("qrcode");
     
     try {
-      // Gerar nome da instância baseado no número
-      const generatedInstanceName = `whatsapp_${phoneNumber.replace(/\D/g, '')}`;
+      // Limpar caracteres especiais do nome da conexão para criar o instanceName
+      const cleanConnectionName = connectionName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+      const generatedInstanceName = `${cleanConnectionName}_${phoneNumber.replace(/\D/g, '')}`;
       setInstanceName(generatedInstanceName);
+      
+      console.log("Criando instância com nome:", generatedInstanceName);
       
       toast.info("Criando instância", {
         description: "Preparando conexão WhatsApp...",
@@ -92,37 +96,69 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       if (!config) throw new Error("Configuração não encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      await evolutionApi.createInstance(generatedInstanceName, phoneNumber);
+      const instanceResult = await evolutionApi.createInstance(generatedInstanceName, phoneNumber);
       
-      // Aguardar um pouco e obter QR code
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log("Instância criada:", instanceResult);
       
-      const qrResult = await evolutionApi.connectInstance(generatedInstanceName);
+      // Aguardar um pouco antes de tentar obter o QR code
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
-      if (qrResult.qrcode?.base64) {
-        setQrCode(qrResult.qrcode.base64);
-        setCurrentStep("qrcode");
-        
-        toast.success("QR Code gerado", {
-          description: "Escaneie o QR code com seu WhatsApp",
-        });
-        
-        // Iniciar verificação de conexão
-        startConnectionPolling(generatedInstanceName);
-      } else {
-        throw new Error("Falha ao gerar QR code");
+      // Tentar obter QR code
+      let qrResult;
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          console.log(`Tentativa ${attempts + 1} de obter QR code`);
+          qrResult = await evolutionApi.connectInstance(generatedInstanceName);
+          
+          if (qrResult.qrcode?.base64) {
+            console.log("QR Code obtido com sucesso");
+            setQrCode(qrResult.qrcode.base64);
+            
+            toast.success("QR Code gerado", {
+              description: "Escaneie o QR code com seu WhatsApp",
+            });
+            
+            // Iniciar verificação de conexão
+            startConnectionPolling(generatedInstanceName);
+            break;
+          } else {
+            console.log("QR Code não encontrado na resposta, tentando novamente...");
+            attempts++;
+            if (attempts < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          }
+        } catch (error) {
+          console.error(`Erro na tentativa ${attempts + 1}:`, error);
+          attempts++;
+          if (attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
       }
+      
+      if (!qrResult?.qrcode?.base64) {
+        throw new Error("Não foi possível gerar o QR code após várias tentativas");
+      }
+      
     } catch (error) {
       console.error("Erro ao criar instância:", error);
       toast.error("Erro ao criar conexão", {
         description: error instanceof Error ? error.message : "Ocorreu um erro"
       });
+      setCurrentStep("form");
+      setQrCode(null);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const startConnectionPolling = (instanceName: string) => {
+    console.log("Iniciando polling para instância:", instanceName);
+    
     const pollInterval = setInterval(async () => {
       try {
         const config = await evolutionApi.getActiveConfig();
@@ -130,6 +166,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         
         evolutionApi.setCredentials(config.api_url, config.global_key);
         const status = await evolutionApi.getInstanceStatus(instanceName);
+        
+        console.log("Status da instância:", status);
         
         if (status.instance.state === "open") {
           setCurrentStep("connected");

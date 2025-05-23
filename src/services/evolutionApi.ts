@@ -206,6 +206,12 @@ class EvolutionApiService {
   async createInstance(instanceName: string, phoneNumber: string, webhookUrl?: string): Promise<EvolutionInstance> {
     const formattedNumber = this.formatPhoneNumber(phoneNumber);
     
+    console.log("Criando instância com dados:", {
+      instanceName,
+      formattedNumber,
+      webhookUrl
+    });
+    
     const response = await fetch(`${this.baseUrl}/instance/create`, {
       method: "POST",
       headers: this.getHeaders(),
@@ -264,6 +270,8 @@ class EvolutionApiService {
 
   // Conectar instância (gerar QR code)
   async connectInstance(instanceName: string): Promise<{ qrcode?: { base64: string; code: string }; status: string }> {
+    console.log("Tentando conectar instância:", instanceName);
+    
     const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
       method: "GET",
       headers: this.getHeaders(),
@@ -277,6 +285,23 @@ class EvolutionApiService {
 
     const data = await response.json();
     console.log("Resposta da conexão de instância:", data);
+    
+    // Se não retornou QR code, tentar obter diretamente
+    if (!data.qrcode?.base64) {
+      console.log("QR code não encontrado na resposta, tentando endpoint específico...");
+      try {
+        const qrResponse = await this.getQRCode(instanceName);
+        if (qrResponse.qrcode?.base64) {
+          return {
+            qrcode: qrResponse.qrcode,
+            status: "connecting"
+          };
+        }
+      } catch (qrError) {
+        console.error("Erro ao obter QR code específico:", qrError);
+      }
+    }
+    
     return data;
   }
 
@@ -297,6 +322,8 @@ class EvolutionApiService {
 
   // Obter QR code da instância
   async getQRCode(instanceName: string): Promise<{ qrcode: { base64: string; code: string } }> {
+    console.log("Obtendo QR code para instância:", instanceName);
+    
     const response = await fetch(`${this.baseUrl}/instance/qrcode/${instanceName}`, {
       method: "GET",
       headers: this.getHeaders(),
@@ -304,10 +331,13 @@ class EvolutionApiService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("Erro ao obter QR code:", errorText);
       throw new Error(`Erro ao obter QR code: ${errorText}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log("Resposta do QR code:", data);
+    return data;
   }
 
   // Listar todas as instâncias
