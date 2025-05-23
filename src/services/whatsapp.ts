@@ -13,29 +13,62 @@ export const whatsappService = {
       console.log("Using Evolution API config:", {
         url: config.api_url,
         key: `${config.global_key.substring(0, 3)}...`,
+        instanceName
       });
       
       // Configurar credenciais da Evolution API
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      // Criar instância se não existir
+      // Primeiro, verificar se a instância já existe
+      console.log("Checking if instance exists:", instanceName);
+      let instanceExists = false;
+      
       try {
-        console.log("Attempting to create instance:", instanceName);
-        const createResult = await evolutionApi.createInstance(instanceName);
-        console.log("Instance created or exists:", createResult);
+        const status = await evolutionApi.getInstanceStatus(instanceName);
+        console.log("Instance already exists with status:", status);
+        instanceExists = true;
       } catch (error) {
-        console.error("Error during instance creation:", error);
-        // Verificar se o erro é porque a instância já existe
-        if (error instanceof Error && !error.message.includes("already exists")) {
-          throw error; // Se for outro tipo de erro, propague-o
-        }
-        console.log("Instance may already exist, continuing with connection...");
+        console.log("Instance does not exist, will create new one");
+        instanceExists = false;
       }
       
-      // Pequena pausa para garantir que a instância foi criada
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Criar instância apenas se não existir
+      if (!instanceExists) {
+        console.log("Creating new instance:", instanceName);
+        try {
+          const createResult = await evolutionApi.createInstance(instanceName);
+          console.log("Instance creation result:", createResult);
+          
+          // Aguardar um pouco para garantir que a instância foi criada
+          console.log("Waiting for instance to be ready...");
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Verificar se a instância foi criada com sucesso
+          let retries = 0;
+          const maxRetries = 5;
+          
+          while (retries < maxRetries) {
+            try {
+              const verifyStatus = await evolutionApi.getInstanceStatus(instanceName);
+              console.log(`Instance verification attempt ${retries + 1}:`, verifyStatus);
+              break;
+            } catch (verifyError) {
+              retries++;
+              console.log(`Instance verification failed, attempt ${retries}/${maxRetries}`);
+              if (retries < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              } else {
+                throw new Error(`Falha ao verificar se a instância ${instanceName} foi criada após ${maxRetries} tentativas`);
+              }
+            }
+          }
+        } catch (createError) {
+          console.error("Error creating instance:", createError);
+          throw new Error(`Falha ao criar instância: ${createError instanceof Error ? createError.message : 'Erro desconhecido'}`);
+        }
+      }
       
-      // Conectar à instância (gerar QR code)
+      // Agora tentar conectar à instância
       console.log("Connecting to instance:", instanceName);
       const connectionResult = await evolutionApi.connectInstance(instanceName);
       console.log("Connection result:", connectionResult);

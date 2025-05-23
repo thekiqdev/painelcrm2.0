@@ -195,14 +195,13 @@ class EvolutionApiService {
     
     const requestBody = {
       instanceName,
-      token: this.apiKey,
       qrcode: true,
-      number: "",
+      integration: "WHATSAPP-BAILEYS",
       webhook: webhookUrl || "",
       webhook_by_events: !!webhookUrl,
       events: [
         "APPLICATION_STARTUP",
-        "QRCODE_UPDATED",
+        "QRCODE_UPDATED", 
         "MESSAGES_UPSERT",
         "MESSAGES_UPDATE",
         "SEND_MESSAGE",
@@ -213,7 +212,7 @@ class EvolutionApiService {
       ]
     };
     
-    console.log("Request payload:", JSON.stringify(requestBody));
+    console.log("Request payload:", JSON.stringify(requestBody, null, 2));
     
     try {
       const response = await fetch(`${this.baseUrl}/instance/create`, {
@@ -227,6 +226,19 @@ class EvolutionApiService {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Error response:", errorText);
+        
+        // Verificar se o erro é porque a instância já existe
+        if (errorText.includes("already exists") || errorText.includes("já existe")) {
+          console.log("Instance already exists, this is OK");
+          return {
+            instanceName,
+            instanceId: instanceName,
+            status: "close",
+            serverUrl: this.baseUrl,
+            apiKey: this.apiKey,
+          };
+        }
+        
         throw new Error(`Erro ao criar instância: ${errorText}`);
       }
 
@@ -276,6 +288,8 @@ class EvolutionApiService {
 
   // Obter status da instância
   async getInstanceStatus(instanceName: string): Promise<{ instance: { state: string; status: string } }> {
+    console.log(`Getting status for instance: ${instanceName}`);
+    
     const response = await fetch(`${this.baseUrl}/instance/connectionState/${instanceName}`, {
       method: "GET",
       headers: this.getHeaders(),
@@ -283,13 +297,15 @@ class EvolutionApiService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("Get status error response:", errorText);
       throw new Error(`Erro ao obter status da instância: ${errorText}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log("Instance status response:", data);
+    return data;
   }
 
-  // Obter QR code da instância
   async getQRCode(instanceName: string): Promise<{ qrcode: { base64: string; code: string } }> {
     const response = await fetch(`${this.baseUrl}/instance/qrcode/${instanceName}`, {
       method: "GET",
@@ -304,7 +320,6 @@ class EvolutionApiService {
     return await response.json();
   }
 
-  // Listar todas as instâncias
   async listInstances(): Promise<string[]> {
     const response = await fetch(`${this.baseUrl}/instance/fetchInstances`, {
       method: "GET",
@@ -320,7 +335,6 @@ class EvolutionApiService {
     return data.instances || [];
   }
 
-  // Listar conversas
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
     const response = await fetch(`${this.baseUrl}/chat/findChats/${instanceName}`, {
       method: "GET",
@@ -335,7 +349,6 @@ class EvolutionApiService {
     return await response.json();
   }
 
-  // Obter mensagens de uma conversa
   async getMessages(instanceName: string, remoteJid: string, limit: number = 50): Promise<EvolutionMessage[]> {
     const response = await fetch(`${this.baseUrl}/chat/findMessages/${instanceName}`, {
       method: "POST",
@@ -357,7 +370,6 @@ class EvolutionApiService {
     return data.messages || [];
   }
 
-  // Enviar mensagem
   async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/message/sendText/${instanceName}`, {
       method: "POST",
@@ -378,7 +390,6 @@ class EvolutionApiService {
     return await response.json();
   }
 
-  // Deletar instância
   async deleteInstance(instanceName: string): Promise<void> {
     const response = await fetch(`${this.baseUrl}/instance/delete/${instanceName}`, {
       method: "DELETE",
@@ -391,7 +402,6 @@ class EvolutionApiService {
     }
   }
 
-  // Logout da instância
   async logoutInstance(instanceName: string): Promise<void> {
     const response = await fetch(`${this.baseUrl}/instance/logout/${instanceName}`, {
       method: "DELETE",
