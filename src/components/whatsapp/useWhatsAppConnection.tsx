@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -46,34 +45,27 @@ export const useWhatsAppConnection = () => {
       try {
         if (!user) return;
         
-        // Check if profile has whatsapp_connected set to true
         if (profile?.whatsapp_connected) {
           setConnectionStatus("connected");
           
-          // If we have a connected status but no active connection,
-          // try to find the last used connection from saved connections
           if (!activeConnection && connections.length > 0) {
             const connectedConnection = connections.find(c => c.status === "connected");
             if (connectedConnection) {
               setActiveConnection(connectedConnection);
             } else {
-              // If no connection is marked as connected, use the first one
               setActiveConnection(connections[0]);
             }
           }
           return;
         }
         
-        // Double check with the API
         const status = await whatsappService.getStatus();
         if (status.connected) {
           setConnectionStatus("connected");
-          // Update local profile state if API says connected but profile doesn't reflect it
           if (!profile?.whatsapp_connected) {
             await updateProfile({ whatsapp_connected: true });
           }
           
-          // Set active connection if available
           if (!activeConnection && connections.length > 0) {
             const connectedConnection = connections.find(c => c.status === "connected");
             if (connectedConnection) {
@@ -105,11 +97,9 @@ export const useWhatsAppConnection = () => {
     
     console.log("Adding new connection:", newConnection);
     
-    // Add new connection to the list
     const updatedConnections = [...connections, newConnection];
     setConnections(updatedConnections);
     
-    // Save to localStorage
     localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
     
     setIsDialogOpen(false);
@@ -131,22 +121,22 @@ export const useWhatsAppConnection = () => {
       let result;
       
       if (connection.type === "evolution") {
-        const { apiKey, instanceId, instanceName, webhookUrl } = connection.configData || {};
+        const { apiKey, instanceId, instanceName, webhookUrl, serverUrl } = connection.configData || {};
         
-        if (!apiKey || !instanceId || !instanceName) {
-          throw new Error("Configurações da Evolution API incompletas. Verifique API Key, ID e Nome da Instância.");
+        if (!apiKey || !instanceId || !instanceName || !serverUrl) {
+          throw new Error("Configurações da Evolution API incompletas. Verifique API Key, URL do servidor, ID e Nome da Instância.");
         }
         
         result = await whatsappService.connectEvolution(
           apiKey, 
           instanceId, 
           instanceName, 
-          webhookUrl
+          webhookUrl,
+          serverUrl
         );
       } else if (connection.type === "webjs") {
         result = await whatsappService.connectWebJS();
       } else {
-        // Default QR code method
         result = await whatsappService.connect();
       }
       
@@ -155,13 +145,11 @@ export const useWhatsAppConnection = () => {
         setQrCode(null);
         await updateProfile({ whatsapp_connected: true });
         
-        // Update connection status in the list
         const updatedConnections = connections.map(c => 
           c.id === connection.id ? { ...c, status: "connected" as ConnectionStatus } : c
         );
         setConnections(updatedConnections);
         
-        // Save updated connections to localStorage
         localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
         
         toast.success("Conectado com sucesso!", {
@@ -194,20 +182,17 @@ export const useWhatsAppConnection = () => {
       setConnectionStatus("disconnected");
       setQrCode(null);
       
-      // Update connection status in the list if there's an active connection
       if (activeConnection) {
         const updatedConnections = connections.map(c => 
           c.id === activeConnection.id ? { ...c, status: "disconnected" as ConnectionStatus } : c
         );
         setConnections(updatedConnections);
         
-        // Save updated connections to localStorage
         localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
         
         setActiveConnection(null);
       }
       
-      // Update user profile to indicate WhatsApp is disconnected
       if (user) {
         await updateProfile({ whatsapp_connected: false });
       }
@@ -237,14 +222,12 @@ export const useWhatsAppConnection = () => {
       setQrCode(null);
       await updateProfile({ whatsapp_connected: true });
       
-      // Update connection status in the list if there's an active connection
       if (activeConnection) {
         const updatedConnections = connections.map(c => 
           c.id === activeConnection.id ? { ...c, status: "connected" as ConnectionStatus } : c
         );
         setConnections(updatedConnections);
         
-        // Save updated connections to localStorage
         localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
       }
       
@@ -261,40 +244,62 @@ export const useWhatsAppConnection = () => {
     }
   };
 
-  // Poll for status changes when QR code is shown
   useEffect(() => {
     let intervalId: number;
     
     if (connectionStatus === "connecting" && qrCode) {
       intervalId = window.setInterval(async () => {
         try {
-          const status = await whatsappService.getStatus();
-          
-          if (status.connected || status.status === "connected") {
-            setConnectionStatus("connected");
-            setQrCode(null);
+          // Se for Evolution API, verificar status diretamente
+          if (activeConnection?.type === "evolution" && activeConnection.configData) {
+            const { instanceName, serverUrl, apiKey } = activeConnection.configData;
+            const status = await whatsappService.checkEvolutionStatus(instanceName, serverUrl, apiKey);
             
-            // Update connection status in the list if there's an active connection
-            if (activeConnection) {
-              const updatedConnections = connections.map(c => 
-                c.id === activeConnection.id ? { ...c, status: "connected" as ConnectionStatus } : c
-              );
-              setConnections(updatedConnections);
+            if (status.instance.state === "open") {
+              setConnectionStatus("connected");
+              setQrCode(null);
               
-              // Save updated connections to localStorage
-              localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+              if (activeConnection) {
+                const updatedConnections = connections.map(c => 
+                  c.id === activeConnection.id ? { ...c, status: "connected" as ConnectionStatus } : c
+                );
+                setConnections(updatedConnections);
+                localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+              }
+              
+              await updateProfile({ whatsapp_connected: true });
+              toast.success("Conectado com sucesso!", {
+                description: "Sua conta WhatsApp foi conectada",
+              });
+              clearInterval(intervalId);
             }
+          } else {
+            // Verificação padrão para outros métodos
+            const status = await whatsappService.getStatus();
             
-            await updateProfile({ whatsapp_connected: true });
-            toast.success("Conectado com sucesso!", {
-              description: "Sua conta WhatsApp foi conectada",
-            });
-            clearInterval(intervalId);
+            if (status.connected || status.status === "connected") {
+              setConnectionStatus("connected");
+              setQrCode(null);
+              
+              if (activeConnection) {
+                const updatedConnections = connections.map(c => 
+                  c.id === activeConnection.id ? { ...c, status: "connected" as ConnectionStatus } : c
+                );
+                setConnections(updatedConnections);
+                localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+              }
+              
+              await updateProfile({ whatsapp_connected: true });
+              toast.success("Conectado com sucesso!", {
+                description: "Sua conta WhatsApp foi conectada",
+              });
+              clearInterval(intervalId);
+            }
           }
         } catch (error) {
           console.error("Error polling status:", error);
         }
-      }, 5000); // Check every 5 seconds
+      }, 5000);
     }
     
     return () => {

@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/integrations/supabase/types";
 import { useNavigate } from "react-router-dom";
+import EvolutionChatPanel from "@/components/whatsapp/EvolutionChatPanel";
 
 interface Message {
   id: string;
@@ -34,6 +35,18 @@ type ProfileWithConnection = {
   whatsapp_connected: boolean | null;
 };
 
+interface Connection {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  configData?: {
+    apiKey?: string;
+    instanceName?: string;
+    serverUrl?: string;
+  };
+}
+
 const Chat = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -42,10 +55,9 @@ const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [activeEvolutionConnection, setActiveEvolutionConnection] = useState<Connection | null>(null);
 
-  // Mock data for demonstration - in real app these would come from Baileys API
   useEffect(() => {
-    // Check WhatsApp connection status from Supabase
     const checkConnectionStatus = async () => {
       try {
         if (!user) return;
@@ -62,12 +74,28 @@ const Chat = () => {
           return;
         }
         
-        // Cast the data to the correct type
         const profile = data as unknown as ProfileWithConnection;
         
         if (profile && profile.whatsapp_connected === true) {
           setConnectionStatus("connected");
-          // Load mock conversations only if WhatsApp is connected
+          
+          // Check for Evolution API connections
+          const savedConnections = localStorage.getItem('whatsapp_connections');
+          if (savedConnections) {
+            try {
+              const connections: Connection[] = JSON.parse(savedConnections);
+              const evolutionConnection = connections.find(c => 
+                c.type === "evolution" && c.status === "connected"
+              );
+              
+              if (evolutionConnection) {
+                setActiveEvolutionConnection(evolutionConnection);
+              }
+            } catch (error) {
+              console.error("Error loading connections:", error);
+            }
+          }
+          
           loadMockData();
         } else {
           setConnectionStatus("disconnected");
@@ -89,7 +117,7 @@ const Chat = () => {
           },
           lastMessage: "Quando meu pedido será enviado?",
           unreadCount: 3,
-          updatedAt: new Date(Date.now() - 1000 * 60 * 5), // 5 minutes ago
+          updatedAt: new Date(Date.now() - 1000 * 60 * 5),
         },
         {
           id: "2",
@@ -100,7 +128,7 @@ const Chat = () => {
           },
           lastMessage: "Obrigado pelo atendimento!",
           unreadCount: 0,
-          updatedAt: new Date(Date.now() - 1000 * 60 * 30), // 30 minutes ago
+          updatedAt: new Date(Date.now() - 1000 * 60 * 30),
         },
         {
           id: "3",
@@ -111,7 +139,7 @@ const Chat = () => {
           },
           lastMessage: "Preciso de ajuda com meu produto",
           unreadCount: 1,
-          updatedAt: new Date(Date.now() - 1000 * 60 * 60), // 1 hour ago
+          updatedAt: new Date(Date.now() - 1000 * 60 * 60),
         },
       ];
       
@@ -123,7 +151,6 @@ const Chat = () => {
     }
   }, [user]);
 
-  // Load messages when selecting a conversation
   useEffect(() => {
     if (activeConversation) {
       const mockMessages: Message[] = [
@@ -131,37 +158,36 @@ const Chat = () => {
           id: "1",
           content: "Olá, como posso ajudar?",
           sender: "user",
-          timestamp: new Date(Date.now() - 1000 * 60 * 60), // 1 hour ago
+          timestamp: new Date(Date.now() - 1000 * 60 * 60),
         },
         {
           id: "2",
           content: "Estou com um problema no meu pedido",
           sender: "customer",
-          timestamp: new Date(Date.now() - 1000 * 60 * 59), // 59 minutes ago
+          timestamp: new Date(Date.now() - 1000 * 60 * 59),
         },
         {
           id: "3",
           content: "Qual é o número do seu pedido?",
           sender: "user",
-          timestamp: new Date(Date.now() - 1000 * 60 * 55), // 55 minutes ago
+          timestamp: new Date(Date.now() - 1000 * 60 * 55),
         },
         {
           id: "4",
           content: "O número é #12345",
           sender: "customer",
-          timestamp: new Date(Date.now() - 1000 * 60 * 50), // 50 minutes ago
+          timestamp: new Date(Date.now() - 1000 * 60 * 50),
         },
         {
           id: "5",
           content: "Vou verificar para você agora mesmo.",
           sender: "user",
-          timestamp: new Date(Date.now() - 1000 * 60 * 45), // 45 minutes ago
+          timestamp: new Date(Date.now() - 1000 * 60 * 45),
         },
       ];
       
       setMessages(mockMessages);
       
-      // Mark conversation as read
       setConversations(prev =>
         prev.map(conv =>
           conv.id === activeConversation
@@ -177,7 +203,6 @@ const Chat = () => {
     
     if (!newMessage.trim()) return;
     
-    // Add new message to the conversation
     const newMsg: Message = {
       id: `new-${Date.now()}`,
       content: newMessage,
@@ -188,7 +213,6 @@ const Chat = () => {
     setMessages(prev => [...prev, newMsg]);
     setNewMessage("");
     
-    // In a real app, you would send this via the Baileys API
     console.log("Message to send:", newMessage);
   };
 
@@ -214,7 +238,6 @@ const Chat = () => {
   };
 
   const handleNavigateToSettings = () => {
-    // Navigate to settings page and indicate to open the WhatsApp tab
     navigate("/settings?tab=whatsapp");
   };
 
@@ -249,201 +272,222 @@ const Chat = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
-          <Card className="md:col-span-1 flex flex-col">
-            <CardHeader className="px-4 py-3 border-b">
-              <CardTitle className="text-base font-medium">Conversas</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0 flex-grow overflow-hidden">
-              <Tabs defaultValue="all" className="w-full h-full flex flex-col">
-                <TabsList className="grid grid-cols-3 mx-3 my-3">
-                  <TabsTrigger value="all">Todas</TabsTrigger>
-                  <TabsTrigger value="unread">Não lidas</TabsTrigger>
-                  <TabsTrigger value="archived">Arquivadas</TabsTrigger>
-                </TabsList>
-                <ScrollArea className="flex-grow">
-                  <TabsContent value="all" className="mt-0">
-                    <ul className="divide-y">
-                      {conversations.map((conversation) => (
-                        <li 
-                          key={conversation.id}
-                          className={`px-4 py-3 hover:bg-muted cursor-pointer ${
-                            activeConversation === conversation.id ? "bg-muted" : ""
-                          }`}
-                          onClick={() => setActiveConversation(conversation.id)}
-                        >
-                          <div className="flex items-start gap-3">
-                            <Avatar className="h-10 w-10 flex-shrink-0">
-                              <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                {conversation.customer.name.charAt(0)}
-                              </div>
-                            </Avatar>
-                            <div className="flex-grow min-w-0">
-                              <div className="flex items-baseline justify-between">
-                                <h3 className="font-medium text-sm truncate">
-                                  {conversation.customer.name}
-                                </h3>
-                                <span className="text-xs text-muted-foreground whitespace-nowrap ml-1">
-                                  {formatDate(conversation.updatedAt)}
-                                </span>
-                              </div>
-                              <p className="text-xs text-muted-foreground truncate">
-                                {conversation.lastMessage}
-                              </p>
-                            </div>
-                            {conversation.unreadCount > 0 && (
-                              <div className="ml-1 flex-shrink-0">
-                                <span className="bg-primary text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                                  {conversation.unreadCount}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </TabsContent>
-                  <TabsContent value="unread" className="mt-0">
-                    <ul className="divide-y">
-                      {conversations
-                        .filter(conv => conv.unreadCount > 0)
-                        .map((conversation) => (
-                          <li 
-                            key={conversation.id}
-                            className="px-4 py-3 hover:bg-muted cursor-pointer"
-                            onClick={() => setActiveConversation(conversation.id)}
-                          >
-                            {/* Same conversation item structure as above */}
-                            <div className="flex items-start gap-3">
-                              <Avatar className="h-10 w-10 flex-shrink-0">
-                                <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                  {conversation.customer.name.charAt(0)}
-                                </div>
-                              </Avatar>
-                              <div className="flex-grow min-w-0">
-                                <div className="flex items-baseline justify-between">
-                                  <h3 className="font-medium text-sm truncate">
-                                    {conversation.customer.name}
-                                  </h3>
-                                  <span className="text-xs text-muted-foreground whitespace-nowrap ml-1">
-                                    {formatDate(conversation.updatedAt)}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-muted-foreground truncate">
-                                  {conversation.lastMessage}
-                                </p>
-                              </div>
-                              <div className="ml-1 flex-shrink-0">
-                                <span className="bg-primary text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                                  {conversation.unreadCount}
-                                </span>
-                              </div>
-                            </div>
-                          </li>
-                        ))}
-                    </ul>
-                  </TabsContent>
-                  <TabsContent value="archived" className="mt-0">
-                    <div className="p-4 text-center text-muted-foreground">
-                      Nenhuma conversa arquivada
-                    </div>
-                  </TabsContent>
-                </ScrollArea>
-              </Tabs>
-            </CardContent>
-          </Card>
-
-          <Card className="md:col-span-2 flex flex-col">
-            {activeConversation ? (
-              <>
-                <CardHeader className="px-4 py-3 border-b flex-shrink-0">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-8 w-8">
-                        <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                          {conversations.find(c => c.id === activeConversation)?.customer.name.charAt(0)}
-                        </div>
-                      </Avatar>
-                      <div>
-                        <h3 className="font-medium text-sm">
-                          {conversations.find(c => c.id === activeConversation)?.customer.name}
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                          {conversations.find(c => c.id === activeConversation)?.customer.phone}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                        <UserCheck className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                        <Clock className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
-                  <ScrollArea className="flex-grow p-4">
-                    <div className="space-y-4">
-                      {messages.map((message) => (
-                        <div 
-                          key={message.id} 
-                          className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                        >
-                          <div 
-                            className={`max-w-[70%] rounded-lg p-3 ${
-                              message.sender === 'user' 
-                                ? 'bg-primary text-primary-foreground' 
-                                : 'bg-muted'
-                            }`}
-                          >
-                            <p className="text-sm">{message.content}</p>
-                            <div className={`text-xs mt-1 ${
-                              message.sender === 'user' 
-                                ? 'text-primary-foreground/70' 
-                                : 'text-muted-foreground'
-                            }`}>
-                              {formatTime(message.timestamp)}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                  <div className="p-3 border-t">
-                    <form onSubmit={handleSendMessage} className="flex gap-2">
-                      <Input 
-                        type="text"
-                        placeholder="Digite sua mensagem..."
-                        value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
-                        className="flex-grow"
-                      />
-                      <Button type="submit" size="icon">
-                        <Send className="h-4 w-4" />
-                      </Button>
-                    </form>
-                  </div>
-                </CardContent>
-              </>
-            ) : (
-              <div className="flex items-center justify-center h-full p-6 text-center">
-                <div>
-                  <div className="bg-muted rounded-full p-6 mx-auto mb-4 w-20 h-20 flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                  </div>
-                  <h3 className="font-medium mb-1">Nenhuma conversa selecionada</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Selecione uma conversa para começar a responder
-                  </p>
-                </div>
-              </div>
+        <Tabs defaultValue="mock" className="w-full">
+          <TabsList className="mb-4">
+            <TabsTrigger value="mock">Conversas Mock</TabsTrigger>
+            {activeEvolutionConnection && (
+              <TabsTrigger value="evolution">Evolution API</TabsTrigger>
             )}
-          </Card>
-        </div>
+          </TabsList>
+          
+          <TabsContent value="mock">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
+              <Card className="md:col-span-1 flex flex-col">
+                <CardHeader className="px-4 py-3 border-b">
+                  <CardTitle className="text-base font-medium">Conversas</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0 flex-grow overflow-hidden">
+                  <Tabs defaultValue="all" className="w-full h-full flex flex-col">
+                    <TabsList className="grid grid-cols-3 mx-3 my-3">
+                      <TabsTrigger value="all">Todas</TabsTrigger>
+                      <TabsTrigger value="unread">Não lidas</TabsTrigger>
+                      <TabsTrigger value="archived">Arquivadas</TabsTrigger>
+                    </TabsList>
+                    <ScrollArea className="flex-grow">
+                      <TabsContent value="all" className="mt-0">
+                        <ul className="divide-y">
+                          {conversations.map((conversation) => (
+                            <li 
+                              key={conversation.id}
+                              className={`px-4 py-3 hover:bg-muted cursor-pointer ${
+                                activeConversation === conversation.id ? "bg-muted" : ""
+                              }`}
+                              onClick={() => setActiveConversation(conversation.id)}
+                            >
+                              <div className="flex items-start gap-3">
+                                <Avatar className="h-10 w-10 flex-shrink-0">
+                                  <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
+                                    {conversation.customer.name.charAt(0)}
+                                  </div>
+                                </Avatar>
+                                <div className="flex-grow min-w-0">
+                                  <div className="flex items-baseline justify-between">
+                                    <h3 className="font-medium text-sm truncate">
+                                      {conversation.customer.name}
+                                    </h3>
+                                    <span className="text-xs text-muted-foreground whitespace-nowrap ml-1">
+                                      {formatDate(conversation.updatedAt)}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    {conversation.lastMessage}
+                                  </p>
+                                </div>
+                                {conversation.unreadCount > 0 && (
+                                  <div className="ml-1 flex-shrink-0">
+                                    <span className="bg-primary text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                                      {conversation.unreadCount}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </TabsContent>
+                      <TabsContent value="unread" className="mt-0">
+                        <ul className="divide-y">
+                          {conversations
+                            .filter(conv => conv.unreadCount > 0)
+                            .map((conversation) => (
+                              <li 
+                                key={conversation.id}
+                                className="px-4 py-3 hover:bg-muted cursor-pointer"
+                                onClick={() => setActiveConversation(conversation.id)}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <Avatar className="h-10 w-10 flex-shrink-0">
+                                    <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
+                                      {conversation.customer.name.charAt(0)}
+                                    </div>
+                                  </Avatar>
+                                  <div className="flex-grow min-w-0">
+                                    <div className="flex items-baseline justify-between">
+                                      <h3 className="font-medium text-sm truncate">
+                                        {conversation.customer.name}
+                                      </h3>
+                                      <span className="text-xs text-muted-foreground whitespace-nowrap ml-1">
+                                        {formatDate(conversation.updatedAt)}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground truncate">
+                                      {conversation.lastMessage}
+                                    </p>
+                                  </div>
+                                  <div className="ml-1 flex-shrink-0">
+                                    <span className="bg-primary text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                                      {conversation.unreadCount}
+                                    </span>
+                                  </div>
+                                </div>
+                              </li>
+                            ))}
+                        </ul>
+                      </TabsContent>
+                      <TabsContent value="archived" className="mt-0">
+                        <div className="p-4 text-center text-muted-foreground">
+                          Nenhuma conversa arquivada
+                        </div>
+                      </TabsContent>
+                    </ScrollArea>
+                  </Tabs>
+                </CardContent>
+              </Card>
+
+              <Card className="md:col-span-2 flex flex-col">
+                {activeConversation ? (
+                  <>
+                    <CardHeader className="px-4 py-3 border-b flex-shrink-0">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-8 w-8">
+                            <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
+                              {conversations.find(c => c.id === activeConversation)?.customer.name.charAt(0)}
+                            </div>
+                          </Avatar>
+                          <div>
+                            <h3 className="font-medium text-sm">
+                              {conversations.find(c => c.id === activeConversation)?.customer.name}
+                            </h3>
+                            <p className="text-xs text-muted-foreground">
+                              {conversations.find(c => c.id === activeConversation)?.customer.phone}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <UserCheck className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <Clock className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
+                      <ScrollArea className="flex-grow p-4">
+                        <div className="space-y-4">
+                          {messages.map((message) => (
+                            <div 
+                              key={message.id} 
+                              className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                            >
+                              <div 
+                                className={`max-w-[70%] rounded-lg p-3 ${
+                                  message.sender === 'user' 
+                                    ? 'bg-primary text-primary-foreground' 
+                                    : 'bg-muted'
+                                }`}
+                              >
+                                <p className="text-sm">{message.content}</p>
+                                <div className={`text-xs mt-1 ${
+                                  message.sender === 'user' 
+                                    ? 'text-primary-foreground/70' 
+                                    : 'text-muted-foreground'
+                                }`}>
+                                  {formatTime(message.timestamp)}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                      <div className="p-3 border-t">
+                        <form onSubmit={handleSendMessage} className="flex gap-2">
+                          <Input 
+                            type="text"
+                            placeholder="Digite sua mensagem..."
+                            value={newMessage}
+                            onChange={(e) => setNewMessage(e.target.value)}
+                            className="flex-grow"
+                          />
+                          <Button type="submit" size="icon">
+                            <Send className="h-4 w-4" />
+                          </Button>
+                        </form>
+                      </div>
+                    </CardContent>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center h-full p-6 text-center">
+                    <div>
+                      <div className="bg-muted rounded-full p-6 mx-auto mb-4 w-20 h-20 flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                      </div>
+                      <h3 className="font-medium mb-1">Nenhuma conversa selecionada</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Selecione uma conversa para começar a responder
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </div>
+          </TabsContent>
+          
+          {activeEvolutionConnection && (
+            <TabsContent value="evolution">
+              <EvolutionChatPanel
+                instanceName={activeEvolutionConnection.configData?.instanceName || ""}
+                serverUrl={activeEvolutionConnection.configData?.serverUrl || ""}
+                apiKey={activeEvolutionConnection.configData?.apiKey || ""}
+                enabled={true}
+              />
+            </TabsContent>
+          )}
+        </Tabs>
       )}
     </div>
   );

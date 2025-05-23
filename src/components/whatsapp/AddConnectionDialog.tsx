@@ -32,6 +32,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [evolutionApiKey, setEvolutionApiKey] = useState("");
   const [evolutionInstanceId, setEvolutionInstanceId] = useState("");
   const [evolutionInstanceName, setEvolutionInstanceName] = useState("");
+  const [evolutionServerUrl, setEvolutionServerUrl] = useState("");
   const [evolutionWebhookUrl, setEvolutionWebhookUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -46,6 +47,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         apiKey: evolutionApiKey,
         instanceId: evolutionInstanceId,
         instanceName: evolutionInstanceName,
+        serverUrl: evolutionServerUrl,
         webhookUrl: evolutionWebhookUrl
       };
     }
@@ -58,6 +60,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setEvolutionApiKey("");
     setEvolutionInstanceId("");
     setEvolutionInstanceName("");
+    setEvolutionServerUrl("");
     setEvolutionWebhookUrl("");
     setIsSubmitting(false);
   };
@@ -71,7 +74,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Adicionar Nova Conexão WhatsApp</DialogTitle>
           <DialogDescription>
@@ -132,6 +135,20 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                         Conecte usando a Evolution API (requer credenciais separadas)
                       </AlertDescription>
                     </Alert>
+                    
+                    <div className="grid gap-2">
+                      <Label htmlFor="evolutionServerUrl">URL do Servidor Evolution API</Label>
+                      <Input
+                        id="evolutionServerUrl"
+                        placeholder="https://api.evolution.com"
+                        value={evolutionServerUrl}
+                        onChange={(e) => setEvolutionServerUrl(e.target.value)}
+                        required={connectionType === "evolution"}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        URL base do seu servidor Evolution API
+                      </p>
+                    </div>
                     
                     <div className="grid gap-2">
                       <Label htmlFor="evolutionApiKey">API Key</Label>
@@ -198,7 +215,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             <Button variant="outline" type="button" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={isSubmitting || !connectionName || (connectionType === "evolution" && (!evolutionApiKey || !evolutionInstanceName || !evolutionInstanceId))}>
+            <Button type="submit" disabled={isSubmitting || !connectionName || (connectionType === "evolution" && (!evolutionApiKey || !evolutionInstanceName || !evolutionInstanceId || !evolutionServerUrl))}>
               {isSubmitting ? "Adicionando..." : "Adicionar Conexão"}
             </Button>
           </DialogFooter>

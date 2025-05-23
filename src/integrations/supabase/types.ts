@@ -581,11 +581,13 @@ export type Database = {
     }
     Functions: {
       has_permission: {
-        Args: {
-          profile_id: string
-          perm: Database["public"]["Enums"]["permission_type"]
-          user_id?: string
-        }
+        Args:
+          | {
+              profile_id: string
+              perm: Database["public"]["Enums"]["permission_type"]
+              user_id?: string
+            }
+          | { user_id: number; permission: string }
         Returns: boolean
       }
       is_profile_member: {
