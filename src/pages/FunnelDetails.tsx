@@ -14,7 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
 import { SalesFunnel, Deal, Client, Rule, FunnelStage } from "@/components/funnel/types";
-import { initialFunnel, initialDeals, clientTags, rules, sourcesOptions } from "@/components/funnel/mockData";
+import { clientTags, rules, sourcesOptions } from "@/components/funnel/mockData";
 import { 
   handleDragOver, 
   handleDrop, 
@@ -22,7 +22,8 @@ import {
   handleRemoveTagFromClient, 
   handleSaveRule, 
   handleRemoveRule,
-  updateClientStage 
+  updateClientStage,
+  mapSupabaseToSalesFunnel
 } from "@/components/funnel/utils";
 import {
   Table,
@@ -86,55 +87,86 @@ const FunnelDetails: React.FC = () => {
     { name: "Pink", value: "bg-pink-500" }
   ];
   
-  // Check if funnelId is valid and load funnel data
+  // Load funnel data from Supabase
   useEffect(() => {
     const fetchFunnelData = async () => {
+      if (!funnelId) {
+        console.error("Nenhum ID de funil fornecido");
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       
-      if (funnelId) {
-        try {
-          // For now, use mockup funnel structure
-          if (funnelId === "funnel-1") {
-            setFunnel(initialFunnel);
-            setDeals(initialDeals);
-            
-            // Fetch real clients from Supabase
-            const { data: clientsData, error } = await supabase
-              .from('clients')
-              .select('*');
-              
-            if (error) {
-              console.error('Error fetching clients:', error);
-              toast.error("Erro ao carregar os clientes");
-            } else if (clientsData) {
-              // Map Supabase clients to the Client type expected by the funnel
-              const mappedClients: Client[] = clientsData.map((client: SupabaseClient) => ({
-                id: client.id,
-                name: client.name,
-                company: client.company || undefined,
-                email: client.email || undefined,
-                phone: client.phone || undefined,
-                status: client.status || undefined,
-                stage: client.funnel_stage || initialFunnel.stages[0].id,
-                tags: [],
-                notes: client.notes || undefined,
-                createdAt: client.created_at
-              }));
-              
-              setClients(mappedClients);
-            }
-          }
-        } catch (error) {
-          console.error('Error loading funnel data:', error);
+      try {
+        console.log("Carregando funil:", funnelId);
+        
+        // Fetch funnel with stages
+        const { data: funnelData, error: funnelError } = await supabase
+          .from('sales_funnels')
+          .select('*, stages:funnel_stages(*)')
+          .eq('id', funnelId)
+          .single();
+          
+        if (funnelError) {
+          console.error('Erro ao carregar funil:', funnelError);
           toast.error("Erro ao carregar o funil");
-        } finally {
-          setLoading(false);
+          navigate('/funnel');
+          return;
         }
+        
+        if (!funnelData) {
+          console.error('Funil não encontrado');
+          toast.error("Funil não encontrado");
+          navigate('/funnel');
+          return;
+        }
+        
+        // Map to SalesFunnel interface
+        const mappedFunnel = mapSupabaseToSalesFunnel([funnelData])[0];
+        console.log("Funil carregado:", mappedFunnel);
+        setFunnel(mappedFunnel);
+        
+        // Fetch clients for this funnel (if it's a client funnel)
+        if (mappedFunnel.type === "clients") {
+          const { data: clientsData, error: clientsError } = await supabase
+            .from('clients')
+            .select('*');
+            
+          if (clientsError) {
+            console.error('Erro ao carregar clientes:', clientsError);
+            toast.error("Erro ao carregar os clientes");
+          } else if (clientsData) {
+            // Map Supabase clients to the Client type expected by the funnel
+            const mappedClients: Client[] = clientsData.map((client: SupabaseClient) => ({
+              id: client.id,
+              name: client.name,
+              company: client.company || undefined,
+              email: client.email || undefined,
+              phone: client.phone || undefined,
+              status: client.status || undefined,
+              stage: client.funnel_stage || (mappedFunnel.stages[0]?.id || ""),
+              tags: [],
+              notes: client.notes || undefined,
+              createdAt: client.created_at
+            }));
+            
+            console.log("Clientes carregados:", mappedClients.length);
+            setClients(mappedClients);
+          }
+        }
+        
+      } catch (error) {
+        console.error('Erro inesperado ao carregar funil:', error);
+        toast.error("Erro inesperado ao carregar o funil");
+        navigate('/funnel');
+      } finally {
+        setLoading(false);
       }
     };
     
     fetchFunnelData();
-  }, [funnelId]);
+  }, [funnelId, navigate]);
 
   // Initialize funnel editing state when funnel data loads
   useEffect(() => {
@@ -580,10 +612,23 @@ const FunnelDetails: React.FC = () => {
     />
   );
 
-  if (!funnel) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <p>Carregando detalhes do funil...</p>
+      </div>
+    );
+  }
+
+  if (!funnel) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-lg font-medium">Funil não encontrado</p>
+          <Button className="mt-4" onClick={() => navigate("/funnel")}>
+            Voltar para Funis
+          </Button>
+        </div>
       </div>
     );
   }
