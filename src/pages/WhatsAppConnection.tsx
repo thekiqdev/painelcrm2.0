@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { PhoneCall, QrCode, MessageSquare, Pencil } from "lucide-react";
+import { PhoneCall, QrCode, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -58,8 +58,8 @@ const WhatsAppConnection = () => {
     try {
       if (instanceName) {
         toast({
-          title: "Conectando via Evolution API",
-          description: "Usando as credenciais fornecidas para conectar...",
+          title: "Criando instância",
+          description: "Criando instância na Evolution API...",
         });
         
         const result = await whatsappService.connectEvolution(instanceName);
@@ -70,11 +70,12 @@ const WhatsAppConnection = () => {
             title: "Conectado com sucesso!",
             description: "Sua conta WhatsApp foi conectada via Evolution API",
           });
-        } else if (result.qrCode) {
-          setQrCode(result.qrCode);
+        } else if (result.status === "disconnected") {
+          // Instância criada mas não conectada, now generate QR code
+          setConnectionStatus("disconnected");
           toast({
-            title: "QR Code gerado",
-            description: "Escaneie o QR code com o seu WhatsApp",
+            title: "Instância criada!",
+            description: "Agora clique em 'Gerar QR Code' para conectar",
           });
         }
       } else {
@@ -86,6 +87,36 @@ const WhatsAppConnection = () => {
       toast({
         title: "Erro na conexão",
         description: error instanceof Error ? error.message : "Ocorreu um erro ao tentar conectar",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleGenerateQRCode = async () => {
+    try {
+      setConnectionStatus("connecting");
+      toast({
+        title: "Gerando QR Code",
+        description: "Por favor, aguarde...",
+      });
+      
+      const result = await whatsappService.getEvolutionQRCode(instanceName);
+      
+      if (result.qrcode?.base64) {
+        setQrCode(result.qrcode.base64);
+        toast({
+          title: "QR Code gerado",
+          description: "Escaneie o QR code com o seu WhatsApp",
+        });
+      } else {
+        throw new Error("Falha ao gerar QR code");
+      }
+    } catch (error) {
+      console.error("Erro ao gerar QR code:", error);
+      setConnectionStatus("disconnected");
+      toast({
+        title: "Erro ao gerar QR code",
+        description: error instanceof Error ? error.message : "Ocorreu um erro ao gerar o QR code.",
         variant: "destructive",
       });
     }
@@ -295,13 +326,24 @@ const WhatsAppConnection = () => {
               </Alert>
               
               <div className="flex justify-center gap-2 mt-4">
-                {connectionStatus === "disconnected" ? (
-                  <Button 
-                    onClick={handleConnect}
-                    disabled={!instanceName}
-                  >
-                    Conectar
-                  </Button>
+                {connectionStatus === "disconnected" && !qrCode ? (
+                  <div className="flex gap-2">
+                    <Button 
+                      onClick={handleConnect}
+                      disabled={!instanceName}
+                    >
+                      Criar Instância
+                    </Button>
+                    {instanceName && (
+                      <Button 
+                        onClick={handleGenerateQRCode}
+                        disabled={!instanceName}
+                        variant="outline"
+                      >
+                        Gerar QR Code
+                      </Button>
+                    )}
+                  </div>
                 ) : connectionStatus === "connecting" && qrCode ? (
                   <QRCodeScanner 
                     qrCode={qrCode} 
@@ -309,11 +351,11 @@ const WhatsAppConnection = () => {
                     onDisconnect={handleDisconnect} 
                     onConfirmConnection={handleConfirmConnection} 
                   />
-                ) : (
+                ) : connectionStatus === "connected" ? (
                   <Button variant="destructive" onClick={handleDisconnect}>
                     Desconectar
                   </Button>
-                )}
+                ) : null}
               </div>
             </div>
           </CardContent>
