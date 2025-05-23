@@ -33,7 +33,7 @@ const WhatsAppConnection = () => {
           onWebhookUrlChange={setWebhookUrl}
         />
         
-        <Card>
+        <Card className="md:col-span-2">
           <CardHeader>
             <CardTitle>Status da Conexão</CardTitle>
             <CardDescription>
@@ -43,23 +43,27 @@ const WhatsAppConnection = () => {
           
           <CardContent>
             <ConnectionStatus status={connectionStatus} />
+            
+            {/* Ações de conexão com QR Code */}
+            <WhatsAppConnectionActions
+              connectionStatus={connectionStatus}
+              qrCode={qrCode}
+              instanceName={instanceName}
+              onConnect={handleConnect}
+              onGenerateQRCode={handleGenerateQRCode}
+              onDisconnect={handleDisconnect}
+              onConfirmConnection={handleConfirmConnection}
+            />
           </CardContent>
         </Card>
       </div>
       
-      <div className="mt-6">
-        <WhatsAppConnectionActions
-          connectionStatus={connectionStatus}
-          qrCode={qrCode}
-          instanceName={instanceName}
-          onConnect={handleConnect}
-          onGenerateQRCode={handleGenerateQRCode}
-          onDisconnect={handleDisconnect}
-          onConfirmConnection={handleConfirmConnection}
-        />
-      </div>
-      
-      <WhatsAppResources connectionStatus={connectionStatus} />
+      {/* Mostrar recursos apenas quando conectado */}
+      {connectionStatus === "connected" && (
+        <div className="mt-6">
+          <WhatsAppResources connectionStatus={connectionStatus} />
+        </div>
+      )}
     </div>
   );
 };

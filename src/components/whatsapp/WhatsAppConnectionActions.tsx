@@ -3,10 +3,12 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import QRCodeScanner from "@/components/whatsapp/QRCodeScanner";
 import { toast } from "sonner";
-import { X, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+
+type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
 interface WhatsAppConnectionActionsProps {
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: ConnectionStatus;
   qrCode: string | null;
   instanceName: string;
   onConnect: () => void;
@@ -36,11 +38,7 @@ const WhatsAppConnectionActions: React.FC<WhatsAppConnectionActionsProps> = ({
       console.error("Erro ao gerar QR code:", error);
       setQrError(error instanceof Error ? error.message : "Erro desconhecido ao gerar QR code");
       toast.error("Erro ao gerar QR code", {
-        description: "Houve um problema ao tentar gerar o QR code",
-        action: {
-          label: "Fechar",
-          onClick: () => {}
-        }
+        description: "Houve um problema ao tentar gerar o QR code"
       });
     } finally {
       setIsGeneratingQR(false);
@@ -49,7 +47,7 @@ const WhatsAppConnectionActions: React.FC<WhatsAppConnectionActionsProps> = ({
 
   return (
     <div className="flex flex-col items-center gap-4 mt-4">
-      {connectionStatus === "disconnected" && !qrCode ? (
+      {connectionStatus === "disconnected" && !qrCode && (
         <div className="flex gap-2">
           <Button 
             onClick={onConnect}
@@ -74,23 +72,31 @@ const WhatsAppConnectionActions: React.FC<WhatsAppConnectionActionsProps> = ({
             </Button>
           )}
         </div>
-      ) : connectionStatus === "connecting" && qrCode ? (
+      )}
+      
+      {connectionStatus === "connecting" && qrCode && (
         <QRCodeScanner 
           qrCode={qrCode} 
           connectionStatus={connectionStatus} 
           onDisconnect={onDisconnect} 
           onConfirmConnection={onConfirmConnection} 
         />
-      ) : connectionStatus === "connected" ? (
+      )}
+      
+      {connectionStatus === "connected" && (
         <Button variant="destructive" onClick={onDisconnect}>
           Desconectar
         </Button>
-      ) : connectionStatus === "connecting" && !qrCode && isGeneratingQR ? (
+      )}
+      
+      {connectionStatus === "connecting" && !qrCode && isGeneratingQR && (
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-16 w-16 animate-spin text-primary" />
           <p>Gerando QR code, aguarde...</p>
         </div>
-      ) : qrError ? (
+      )}
+      
+      {qrError && (
         <div className="flex flex-col items-center gap-4">
           <div className="bg-red-50 border border-red-200 rounded-md p-4 text-red-800">
             <h4 className="font-medium mb-1">Erro ao gerar QR code</h4>
@@ -105,7 +111,7 @@ const WhatsAppConnectionActions: React.FC<WhatsAppConnectionActionsProps> = ({
             </Button>
           </div>
         </div>
-      ) : null}
+      )}
     </div>
   );
 };

@@ -2,7 +2,8 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
-import { ConnectionStatus } from "@/components/settings/types";
+
+type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
 interface QRCodeScannerProps {
   qrCode: string | null;

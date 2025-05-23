@@ -1,6 +1,6 @@
 
 import React from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "next-themes";
 import { Moon, Sun, Settings, User, LogOut, ChevronDown } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,7 +17,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Toaster } from "@/components/ui/sonner";
 import NotificationsMenu from "@/components/notifications/NotificationsMenu";
 
-const AppLayout = () => {
+const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
   const location = useLocation();
@@ -120,7 +120,7 @@ const AppLayout = () => {
       </header>
 
       <main className="container mx-auto py-6 px-4">
-        <Outlet />
+        {children}
       </main>
       
       <Toaster richColors />
