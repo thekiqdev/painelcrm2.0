@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 
 export interface EvolutionInstance {
@@ -190,7 +189,7 @@ class EvolutionApiService {
     }
   }
 
-  // Criar uma nova instância
+  // Criar uma nova instância com os parâmetros corretos da documentação
   async createInstance(instanceName: string, webhookUrl?: string): Promise<EvolutionInstance> {
     const response = await fetch(`${this.baseUrl}/instance/create`, {
       method: "POST",
@@ -200,8 +199,9 @@ class EvolutionApiService {
         token: this.apiKey,
         qrcode: true,
         number: "",
-        webhook: webhookUrl,
-        webhook_by_events: false,
+        integration: "WHATSAPP-BAILEYS",
+        webhook: webhookUrl || "",
+        webhook_by_events: true,
         events: [
           "APPLICATION_STARTUP",
           "QRCODE_UPDATED",
@@ -212,16 +212,31 @@ class EvolutionApiService {
           "PRESENCE_UPDATE",
           "CHATS_UPDATE",
           "CONNECTION_UPDATE"
-        ]
+        ],
+        reject_call: false,
+        msg_call: "",
+        groups_ignore: false,
+        always_online: false,
+        read_messages: false,
+        read_status: false,
+        websocket_enabled: false,
+        websocket_events: [],
+        rabbitmq_enabled: false,
+        rabbitmq_events: [],
+        sqs_enabled: false,
+        sqs_events: []
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("Erro detalhado ao criar instância:", errorText);
       throw new Error(`Erro ao criar instância: ${errorText}`);
     }
 
     const data = await response.json();
+    console.log("Resposta da criação de instância:", data);
+    
     return {
       instanceName,
       instanceId: data.instance?.instanceId || instanceName,
@@ -241,10 +256,13 @@ class EvolutionApiService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("Erro ao conectar instância:", errorText);
       throw new Error(`Erro ao conectar instância: ${errorText}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log("Resposta da conexão de instância:", data);
+    return data;
   }
 
   // Obter status da instância

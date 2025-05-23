@@ -34,7 +34,7 @@ export const WhatsAppSection = () => {
       <Tabs defaultValue="connections" value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="connections">Conexões</TabsTrigger>
-          <TabsTrigger value="evolution">Evolution API</TabsTrigger>
+          <TabsTrigger value="evolution">Configuração API</TabsTrigger>
           <TabsTrigger value="settings">Configurações Avançadas</TabsTrigger>
         </TabsList>
         

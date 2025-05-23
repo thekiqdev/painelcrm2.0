@@ -14,6 +14,20 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
   connectionStatus,
   activeConnection
 }) => {
+  
+  const getConnectionTypeDisplay = (type: string) => {
+    switch (type) {
+      case "evolution":
+        return "WhatsApp Web";
+      case "qrcode":
+        return "QR Code";
+      case "webjs":
+        return "WhatsApp Web.js";
+      default:
+        return "WhatsApp";
+    }
+  };
+  
   return (
     <Card>
       <CardHeader>
@@ -35,11 +49,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
             <div className="flex justify-between text-sm">
               <span>Tipo de conexão</span>
               <span className="font-medium">
-                {activeConnection.type === "evolution" 
-                  ? "Evolution API" 
-                  : activeConnection.type === "webjs"
-                    ? "WhatsApp Web.js"
-                    : "QR Code"}
+                {getConnectionTypeDisplay(activeConnection.type)}
               </span>
             </div>
             <Alert className="mt-4">

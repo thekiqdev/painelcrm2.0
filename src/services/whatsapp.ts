@@ -41,7 +41,7 @@ export const whatsappService = {
       
       const config = await evolutionApi.getActiveConfig();
       if (!config) {
-        throw new Error("Nenhuma configuração da Evolution API encontrada. Configure primeiro em Configurações.");
+        throw new Error("Nenhuma configuração encontrada. Configure primeiro em Configurações > Configuração API.");
       }
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
@@ -74,6 +74,7 @@ export const whatsappService = {
       
       // Primeiro tenta conectar para gerar QR code
       const connectionResult = await evolutionApi.connectInstance(instanceName);
+      console.log("Resultado da conexão:", connectionResult);
       
       if (connectionResult.qrcode?.base64) {
         console.log("QR Code obtido com sucesso");
@@ -103,7 +104,15 @@ export const whatsappService = {
           status: "awaiting_scan"
         };
       } else {
-        throw new Error("QR Code não foi gerado");
+        // Se não há QR code, talvez já esteja conectado
+        const status = await evolutionApi.getInstanceStatus(instanceName);
+        if (status.instance.state === "open") {
+          return {
+            success: true,
+            status: "connected"
+          };
+        }
+        throw new Error("QR Code não foi gerado e instância não está conectada");
       }
       
     } catch (error) {

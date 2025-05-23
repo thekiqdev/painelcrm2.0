@@ -29,6 +29,20 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
     onAddConnectionClick(); // Open the dialog to edit
   };
 
+  // Function to get display name for connection type
+  const getConnectionTypeDisplay = (type: string) => {
+    switch (type) {
+      case "evolution":
+        return "WhatsApp Web";
+      case "qrcode":
+        return "QR Code";
+      case "webjs":
+        return "WhatsApp Web.js";
+      default:
+        return "WhatsApp";
+    }
+  };
+
   // Render empty state
   if (connections.length === 0) {
     return (
@@ -56,7 +70,7 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
             <div>
               <h3 className="font-medium">{connection.name}</h3>
               <p className="text-sm text-muted-foreground">
-                Tipo: {connection.type === "qrcode" ? "QR Code" : connection.type === "evolution" ? "Evolution API" : "WhatsApp Web.js"}
+                Tipo: {getConnectionTypeDisplay(connection.type)}
               </p>
             </div>
             
