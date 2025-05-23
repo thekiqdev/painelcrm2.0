@@ -13,6 +13,7 @@ import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
 import { DomainSection } from "@/components/settings/DomainSection";
 import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
 import { UserManagementSection } from "@/components/settings/UserManagementSection";
+import { toast } from "sonner";
 
 type SettingSection = 
   | "companyData" 
@@ -31,11 +32,17 @@ type SettingSection =
 const Settings = () => {
   const [activeSection, setActiveSection] = useState<SettingSection>("companyData");
 
+  // Default save handler for sections that need it
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    toast.success("Configurações salvas com sucesso!");
+  };
+
   // Renderizar a seção ativa
   const renderActiveSection = () => {
     switch (activeSection) {
       case "companyData":
-        return <CompanyDataSection />;
+        return <CompanyDataSection handleSave={handleSave} />;
       case "users":
         return <UsersSection />;
       case "userManagement":
@@ -43,13 +50,13 @@ const Settings = () => {
       case "billing":
         return <BillingSection />;
       case "notifications":
-        return <NotificationsSection />;
+        return <NotificationsSection handleSave={handleSave} />;
       case "security":
         return <SecuritySection />;
       case "preferences":
-        return <PreferencesSection />;
+        return <PreferencesSection handleSave={handleSave} />;
       case "leadsConfig":
-        return <LeadsSection />;
+        return <LeadsSection handleSave={handleSave} />;
       case "clientGroups":
         return <ClientGroupsSection />;
       case "collaborators":
@@ -57,9 +64,9 @@ const Settings = () => {
       case "whatsapp":
         return <WhatsAppSection />;
       case "domain":
-        return <DomainSection />;
+        return <DomainSection handleSave={handleSave} />;
       default:
-        return <CompanyDataSection />;
+        return <CompanyDataSection handleSave={handleSave} />;
     }
   };
 
