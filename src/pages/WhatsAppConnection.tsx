@@ -10,7 +10,6 @@ import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { whatsappService } from "@/services/whatsapp";
-import { evolutionApi } from "@/services/evolutionApi";
 
 interface ConnectionConfig {
   instanceName?: string;
@@ -22,7 +21,6 @@ const WhatsAppConnection = () => {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [instanceName, setInstanceName] = useState<string>("");
   const [webhookUrl, setWebhookUrl] = useState<string>("");
-  const [apiProvider, setApiProvider] = useState<"evolution">("evolution");
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [savedConnections, setSavedConnections] = useState<Array<{
     id: string;
@@ -58,7 +56,7 @@ const WhatsAppConnection = () => {
     });
     
     try {
-      if (apiProvider === "evolution" && instanceName) {
+      if (instanceName) {
         toast({
           title: "Conectando via Evolution API",
           description: "Usando as credenciais fornecidas para conectar...",
@@ -80,7 +78,7 @@ const WhatsAppConnection = () => {
           });
         }
       } else {
-        throw new Error("Provedor de API não suportado");
+        throw new Error("Nome da instância é obrigatório");
       }
     } catch (error) {
       console.error("Erro ao conectar:", error);
@@ -95,7 +93,7 @@ const WhatsAppConnection = () => {
   
   const handleDisconnect = async () => {
     try {
-      if (apiProvider === "evolution" && instanceName) {
+      if (instanceName) {
         await whatsappService.disconnectEvolution(instanceName);
       }
       setConnectionStatus("disconnected");
@@ -116,7 +114,7 @@ const WhatsAppConnection = () => {
 
   const handleConfirmConnection = async () => {
     try {
-      if (apiProvider === "evolution" && instanceName) {
+      if (instanceName) {
         await whatsappService.confirmEvolutionConnection(instanceName);
       }
       setConnectionStatus("connected");
@@ -139,7 +137,7 @@ const WhatsAppConnection = () => {
     const newConnection = {
       id: Date.now().toString(),
       name: instanceName || "Evolution API Connection",
-      type: apiProvider,
+      type: "evolution",
       config: {
         instanceName,
         webhookUrl
@@ -205,7 +203,6 @@ const WhatsAppConnection = () => {
     const connection = savedConnections.find(conn => conn.id === id);
     if (!connection) return;
     
-    setApiProvider(connection.type as any);
     setInstanceName(connection.config.instanceName || "");
     setWebhookUrl(connection.config.webhookUrl || "");
     setSelectedConnection(id);
@@ -216,13 +213,12 @@ const WhatsAppConnection = () => {
     const connection = savedConnections.find(conn => conn.id === id);
     if (!connection) return;
     
-    setApiProvider(connection.type as any);
     setInstanceName(connection.config.instanceName || "");
     setWebhookUrl(connection.config.webhookUrl || "");
     
     handleConnect();
   };
-  
+
   const clearConnectionForm = () => {
     setInstanceName("");
     setWebhookUrl("");
@@ -234,7 +230,7 @@ const WhatsAppConnection = () => {
     if (qrCode && connectionStatus === "connecting") {
       const timer = setTimeout(async () => {
         try {
-          if (apiProvider === "evolution" && instanceName) {
+          if (instanceName) {
             const status = await whatsappService.checkEvolutionStatus(instanceName);
             if (status.instance.state === "open") {
               setConnectionStatus("connected");
@@ -252,7 +248,7 @@ const WhatsAppConnection = () => {
       
       return () => clearTimeout(timer);
     }
-  }, [qrCode, connectionStatus, toast, apiProvider, instanceName]);
+  }, [qrCode, connectionStatus, toast, instanceName]);
 
   return (
     <div className="container mx-auto py-6">
@@ -266,200 +262,60 @@ const WhatsAppConnection = () => {
               <span>Conectar WhatsApp</span>
             </CardTitle>
             <CardDescription>
-              Conecte sua conta WhatsApp para começar a gerenciar mensagens e atendimentos
+              Conecte sua conta WhatsApp usando a Evolution API
             </CardDescription>
           </CardHeader>
           
           <CardContent>
-            <Tabs defaultValue="qrcode" className="mb-6">
-              <TabsList className="mb-4">
-                <TabsTrigger value="qrcode">Via QR Code</TabsTrigger>
-                <TabsTrigger value="webjs">Via WhatsApp Web.js</TabsTrigger>
-                <TabsTrigger value="evolution">Via Evolution API</TabsTrigger>
-              </TabsList>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="instanceName">Nome da Instância</Label>
+                <Input 
+                  id="instanceName" 
+                  placeholder="Nome da sua instância Evolution" 
+                  value={instanceName}
+                  onChange={(e) => setInstanceName(e.target.value)}
+                />
+              </div>
               
-              <TabsContent value="qrcode">
-                <div className="flex flex-col items-center justify-center min-h-[300px]">
-                  {connectionStatus === "disconnected" ? (
-                    <div className="flex flex-col items-center gap-4">
-                      <QrCode className="h-24 w-24 text-muted-foreground" />
-                      <p className="text-center text-muted-foreground mb-4">
-                        Clique no botão abaixo para gerar um QR code e conectar o seu WhatsApp
-                      </p>
-                      <Button 
-                        onClick={() => {
-                          setApiProvider("default");
-                          handleConnect();
-                        }}
-                      >
-                        Conectar WhatsApp
-                      </Button>
-                    </div>
-                  ) : (
-                    <QRCodeScanner 
-                      qrCode={qrCode} 
-                      connectionStatus={connectionStatus} 
-                      onDisconnect={handleDisconnect} 
-                      onConfirmConnection={handleConfirmConnection} 
-                    />
-                  )}
-                </div>
-              </TabsContent>
+              <div className="space-y-2">
+                <Label htmlFor="webhookUrl">URL do Webhook (opcional)</Label>
+                <Input 
+                  id="webhookUrl" 
+                  placeholder="URL para receber notificações da Evolution API" 
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                />
+              </div>
               
-              <TabsContent value="webjs">
-                <div className="flex flex-col gap-4">
-                  <div className="space-y-4">
-                    <Alert className="mt-2">
-                      <AlertDescription>
-                        O WhatsApp Web.js é uma biblioteca cliente para WhatsApp Web que não requer uma API externa.
-                      </AlertDescription>
-                    </Alert>
-                    
-                    <div className="flex justify-center mt-4">
-                      {connectionStatus === "disconnected" ? (
-                        <Button 
-                          onClick={() => {
-                            setApiProvider("webjs");
-                            handleConnect();
-                          }}
-                        >
-                          Conectar via WhatsApp Web.js
-                        </Button>
-                      ) : connectionStatus === "connecting" ? (
-                        <QRCodeScanner 
-                          qrCode={qrCode} 
-                          connectionStatus={connectionStatus} 
-                          onDisconnect={handleDisconnect} 
-                          onConfirmConnection={handleConfirmConnection} 
-                        />
-                      ) : (
-                        <Button variant="destructive" onClick={handleDisconnect}>
-                          Desconectar
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
+              <Alert className="mt-2">
+                <AlertDescription>
+                  Para usar a Evolution API, configure primeiro as credenciais em Configurações {">"} WhatsApp {">"} Evolution API.
+                </AlertDescription>
+              </Alert>
               
-              <TabsContent value="evolution">
-                <div className="flex flex-col gap-4">
-                  {savedConnections.filter(conn => conn.type === "evolution").length > 0 && (
-                    <div className="space-y-4 mb-4">
-                      <h3 className="font-medium text-lg">Conexões salvas</h3>
-                      <div className="space-y-2">
-                        {savedConnections
-                          .filter(conn => conn.type === "evolution")
-                          .map(conn => (
-                            <div 
-                              key={conn.id} 
-                              className="border rounded-md p-4 cursor-pointer hover:bg-accent transition-colors"
-                              onClick={() => handleEditConnection(conn.id)}
-                            >
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="font-medium">{conn.name}</p>
-                                  <p className="text-sm text-muted-foreground">
-                                    {conn.config.instanceName ? `Instância: ${conn.config.instanceName}` : "Sem instância"}
-                                  </p>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleEditConnection(conn.id);
-                                    }}
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleConnectSaved(conn.id);
-                                    }}
-                                  >
-                                    Conectar
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="space-y-4">
-                    <h3 className="font-medium text-lg">
-                      {isEditing ? "Editar conexão" : "Nova conexão"}
-                    </h3>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="instanceName">Nome da Instância</Label>
-                      <Input 
-                        id="instanceName" 
-                        placeholder="Nome da sua instância Evolution" 
-                        value={instanceName}
-                        onChange={(e) => setInstanceName(e.target.value)}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="webhookUrl">URL do Webhook (opcional)</Label>
-                      <Input 
-                        id="webhookUrl" 
-                        placeholder="URL para receber notificações da Evolution API" 
-                        value={webhookUrl}
-                        onChange={(e) => setWebhookUrl(e.target.value)}
-                      />
-                    </div>
-                    
-                    <Alert className="mt-2">
-                      <AlertDescription>
-                        Para usar a Evolution API, configure primeiro as credenciais em Configurações {">"} WhatsApp {">"} Evolution API.
-                      </AlertDescription>
-                    </Alert>
-                    
-                    <div className="flex justify-center gap-2 mt-4">
-                      {isEditing ? (
-                        <>
-                          <Button 
-                            variant="outline"
-                            onClick={clearConnectionForm}
-                          >
-                            Cancelar
-                          </Button>
-                          <Button 
-                            onClick={handleUpdateConnection}
-                            disabled={!instanceName}
-                          >
-                            Atualizar
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button 
-                            onClick={handleSaveConnection}
-                            variant="outline"
-                            disabled={!instanceName}
-                          >
-                            Salvar Credenciais
-                          </Button>
-                          <Button 
-                            onClick={handleConnect}
-                            disabled={!instanceName}
-                          >
-                            Conectar
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
+              <div className="flex justify-center gap-2 mt-4">
+                {connectionStatus === "disconnected" ? (
+                  <Button 
+                    onClick={handleConnect}
+                    disabled={!instanceName}
+                  >
+                    Conectar
+                  </Button>
+                ) : connectionStatus === "connecting" && qrCode ? (
+                  <QRCodeScanner 
+                    qrCode={qrCode} 
+                    connectionStatus={connectionStatus} 
+                    onDisconnect={handleDisconnect} 
+                    onConfirmConnection={handleConfirmConnection} 
+                  />
+                ) : (
+                  <Button variant="destructive" onClick={handleDisconnect}>
+                    Desconectar
+                  </Button>
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
         

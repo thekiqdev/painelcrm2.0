@@ -56,7 +56,7 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
             <div>
               <h3 className="font-medium">{connection.name}</h3>
               <p className="text-sm text-muted-foreground">
-                Tipo: {connection.type === "qrcode" ? "QR Code" : connection.type === "evolution" ? "Evolution API" : "WhatsApp Web.js"}
+                Tipo: Evolution API
               </p>
             </div>
             
