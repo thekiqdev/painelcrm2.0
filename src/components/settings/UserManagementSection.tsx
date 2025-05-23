@@ -49,7 +49,7 @@ type PermissionType =
   | "view_reports" 
   | "manage_users";
 
-export const UserManagementSection: React.FC<Partial<SettingsSectionProps>> = () => {
+export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   // State
   const [users, setUsers] = useState<User[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
