@@ -4,7 +4,6 @@ import AddConnectionDialog from "@/components/whatsapp/AddConnectionDialog";
 import ConnectionPanel from "@/components/whatsapp/ConnectionPanel";
 import StatusPanel from "@/components/whatsapp/StatusPanel";
 import AdvancedSettings from "@/components/whatsapp/AdvancedSettings";
-import EvolutionApiConfigComponent from "@/components/whatsapp/EvolutionApiConfig";
 import useWhatsAppConnection from "@/components/whatsapp/useWhatsAppConnection";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -34,7 +33,6 @@ export const WhatsAppSection = () => {
       <Tabs defaultValue="connections" value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="connections">Conexões</TabsTrigger>
-          <TabsTrigger value="evolution">Configuração API</TabsTrigger>
           <TabsTrigger value="settings">Configurações Avançadas</TabsTrigger>
         </TabsList>
         
@@ -100,10 +98,6 @@ export const WhatsAppSection = () => {
               </CardContent>
             </Card>
           )}
-        </TabsContent>
-        
-        <TabsContent value="evolution" className="pt-4">
-          <EvolutionApiConfigComponent />
         </TabsContent>
         
         <TabsContent value="settings" className="pt-4">
