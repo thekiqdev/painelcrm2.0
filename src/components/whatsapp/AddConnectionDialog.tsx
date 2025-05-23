@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -148,19 +149,19 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       const generatedInstanceName = `${cleanConnectionName}_${cleanPhoneNumber}`;
       setInstanceName(generatedInstanceName);
       
-      console.log("Verificando estado existente para instância:", generatedInstanceName);
+      console.log("Processando instância:", generatedInstanceName);
+      
+      // Obter configuração ativa
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Configuração não encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       
       // Verificar se já existe estado salvo para esta instância
       let savedState = loadInstanceState(generatedInstanceName);
       
       if (savedState && savedState.created) {
-        console.log("Instância já foi criada anteriormente, verificando status...");
-        
-        // Verificar se a instância ainda existe e está ativa
-        const config = await evolutionApi.getActiveConfig();
-        if (!config) throw new Error("Configuração não encontrada");
-        
-        evolutionApi.setCredentials(config.api_url, config.global_key);
+        console.log("Instância já criada anteriormente, verificando status...");
         
         try {
           const status = await evolutionApi.getInstanceStatus(generatedInstanceName);
@@ -178,32 +179,25 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             }, 2000);
             return;
           } else {
-            console.log("Instância existe mas não está conectada, avançando para QR code...");
-            // Avançar para QR code
+            console.log("Instância existe mas não está conectada, obtendo QR code...");
+            // Pular criação e ir direto para QR code
             setCurrentStep("qrcode");
-            await attemptGenerateQRCode(generatedInstanceName, config);
+            await obtainQRCodeDirectly(generatedInstanceName, config);
             return;
           }
         } catch (statusError) {
           console.log("Instância salva não existe mais, criando nova...");
-          // Se chegou aqui, a instância foi deletada, vamos criar uma nova
           clearInstanceState(generatedInstanceName);
           savedState = null;
         }
       }
       
+      // Criar nova instância
       console.log("Criando nova instância:", generatedInstanceName);
-      console.log("Número limpo:", cleanPhoneNumber);
       
       toast.info("Criando instância", {
         description: "Preparando conexão WhatsApp...",
       });
-      
-      // Criar instância
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Configuração não encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
       
       let instanceResult;
       try {
@@ -242,18 +236,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       // Salvar conexão no sistema
       saveConnectionToSystem(instanceResult);
       
-      // IMPORTANTE: Avançar para a próxima etapa imediatamente após criar/encontrar a instância
-      console.log("Avançando para etapa QR Code...");
+      // Ir direto para QR code
+      console.log("Avançando para QR Code...");
       setCurrentStep("qrcode");
       
-      // Aguardar um pouco antes de tentar obter o QR code
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Tentar gerar QR code
-      await attemptGenerateQRCode(generatedInstanceName, config);
+      // Obter QR code imediatamente
+      await obtainQRCodeDirectly(generatedInstanceName, config);
       
     } catch (error) {
-      console.error("Erro ao criar instância:", error);
+      console.error("Erro ao processar instância:", error);
       toast.error("Erro ao criar conexão", {
         description: error instanceof Error ? error.message : "Ocorreu um erro"
       });
@@ -264,123 +255,90 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     }
   };
 
-  const attemptGenerateQRCode = async (instanceName: string, config: any) => {
-    console.log("Iniciando geração de QR code para:", instanceName);
+  const obtainQRCodeDirectly = async (instanceName: string, config: any) => {
+    console.log("Obtendo QR code diretamente para:", instanceName);
     
-    let qrResult;
-    let attempts = 0;
-    const maxAttempts = 5;
-    
-    while (attempts < maxAttempts) {
-      try {
-        console.log(`Tentativa ${attempts + 1} de obter QR code`);
+    try {
+      // Primeiro, tentar conectar a instância para gerar QR code
+      const connectionResult = await evolutionApi.connectInstance(instanceName);
+      console.log("Resultado da conexão:", connectionResult);
+      
+      if (connectionResult?.qrcode?.base64) {
+        console.log("QR Code obtido via conectInstance!");
+        setQrCode(connectionResult.qrcode.base64);
         
-        // Primeiro, tentar obter QR code diretamente
-        try {
-          qrResult = await evolutionApi.getQRCode(instanceName);
-          console.log("QR Code obtido diretamente:", qrResult);
-          
-          if (qrResult?.qrcode?.base64) {
-            console.log("QR Code encontrado!");
-            setQrCode(qrResult.qrcode.base64);
-            
-            // Atualizar estado com QR code
-            const updatedState: InstanceState = {
-              instanceName,
-              connectionName,
-              phoneNumber: extractPhoneNumbers(phoneNumber),
-              step: "qrcode",
-              qrCode: qrResult.qrcode.base64,
-              created: true
-            };
-            saveInstanceState(updatedState);
-            
-            toast.success("QR Code gerado", {
-              description: "Escaneie o QR code com seu WhatsApp",
-            });
-            
-            // Iniciar verificação de conexão
-            startConnectionPolling(instanceName);
-            return;
-          }
-        } catch (qrError) {
-          console.log("Erro ao obter QR code diretamente, tentando conectar instância...");
-        }
+        // Atualizar estado com QR code
+        const updatedState: InstanceState = {
+          instanceName,
+          connectionName,
+          phoneNumber: extractPhoneNumbers(phoneNumber),
+          step: "qrcode",
+          qrCode: connectionResult.qrcode.base64,
+          created: true
+        };
+        saveInstanceState(updatedState);
         
-        // Se não conseguiu obter QR code diretamente, tentar conectar instância
-        try {
-          qrResult = await evolutionApi.connectInstance(instanceName);
-          console.log("Resultado da conexão:", qrResult);
-          
-          if (qrResult?.qrcode?.base64) {
-            console.log("QR Code obtido via conexão!");
-            setQrCode(qrResult.qrcode.base64);
-            
-            // Atualizar estado com QR code
-            const updatedState: InstanceState = {
-              instanceName,
-              connectionName,
-              phoneNumber: extractPhoneNumbers(phoneNumber),
-              step: "qrcode",
-              qrCode: qrResult.qrcode.base64,
-              created: true
-            };
-            saveInstanceState(updatedState);
-            
-            toast.success("QR Code gerado", {
-              description: "Escaneie o QR code com seu WhatsApp",
-            });
-            
-            // Iniciar verificação de conexão
-            startConnectionPolling(instanceName);
-            return;
-          }
-        } catch (connectError) {
-          console.log("Erro ao conectar instância:", connectError);
-        }
+        toast.success("QR Code gerado", {
+          description: "Escaneie o QR code com seu WhatsApp",
+        });
         
-        // Se chegou aqui, verificar se a instância já está conectada
-        try {
-          const status = await evolutionApi.getInstanceStatus(instanceName);
-          console.log("Status da instância:", status);
-          
-          if (status.instance.state === "open") {
-            console.log("Instância já está conectada!");
-            setCurrentStep("connected");
-            toast.success("Instância já conectada!", {
-              description: "Esta instância já estava ativa",
-            });
-            
-            // Auto-finalizar após 2 segundos
-            setTimeout(() => {
-              handleFinishConnection();
-            }, 2000);
-            return;
-          }
-        } catch (statusError) {
-          console.log("Erro ao verificar status:", statusError);
-        }
-        
-        console.log("QR Code não encontrado na tentativa", attempts + 1);
-        attempts++;
-        
-        if (attempts < maxAttempts) {
-          console.log(`Aguardando 3 segundos antes da próxima tentativa...`);
-          await new Promise(resolve => setTimeout(resolve, 3000));
-        }
-        
-      } catch (error) {
-        console.error(`Erro na tentativa ${attempts + 1}:`, error);
-        attempts++;
-        if (attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 3000));
-        }
+        // Iniciar verificação de conexão
+        startConnectionPolling(instanceName);
+        return;
       }
+      
+      // Se não conseguiu via connectInstance, tentar método direto
+      const qrResult = await evolutionApi.getQRCode(instanceName);
+      console.log("QR Code obtido diretamente:", qrResult);
+      
+      if (qrResult?.qrcode?.base64) {
+        console.log("QR Code encontrado!");
+        setQrCode(qrResult.qrcode.base64);
+        
+        // Atualizar estado com QR code
+        const updatedState: InstanceState = {
+          instanceName,
+          connectionName,
+          phoneNumber: extractPhoneNumbers(phoneNumber),
+          step: "qrcode",
+          qrCode: qrResult.qrcode.base64,
+          created: true
+        };
+        saveInstanceState(updatedState);
+        
+        toast.success("QR Code gerado", {
+          description: "Escaneie o QR code com seu WhatsApp",
+        });
+        
+        // Iniciar verificação de conexão
+        startConnectionPolling(instanceName);
+        return;
+      }
+      
+      // Se chegou aqui, verificar se a instância já está conectada
+      const status = await evolutionApi.getInstanceStatus(instanceName);
+      console.log("Status da instância:", status);
+      
+      if (status.instance.state === "open") {
+        console.log("Instância já está conectada!");
+        setCurrentStep("connected");
+        toast.success("Instância já conectada!", {
+          description: "Esta instância já estava ativa",
+        });
+        
+        // Auto-finalizar após 2 segundos
+        setTimeout(() => {
+          handleFinishConnection();
+        }, 2000);
+        return;
+      }
+      
+      throw new Error("Não foi possível gerar o QR code. Verifique se a instância foi criada corretamente.");
+      
+    } catch (error) {
+      console.error("Erro ao obter QR code:", error);
+      throw error;
     }
-    
-    // Se chegou aqui, não conseguiu gerar QR code
-    console.error("Não foi possível gerar QR code após", maxAttempts, "tentativas");
-    throw new Error(`Não foi possível gerar o QR code após ${maxAttempts} tentativas. Verifique se a instância foi criada corretamente.`);
   };
 
   const startConnectionPolling = (instanceName: string) => {
@@ -551,7 +509,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                 type="submit" 
                 disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveConfig || extractPhoneNumbers(phoneNumber).length < 10}
               >
-                {isSubmitting ? "Criando..." : "Próximo"}
+                {isSubmitting ? "Processando..." : "Próximo"}
               </Button>
             </DialogFooter>
           </form>
