@@ -1,4 +1,5 @@
 
+
 export interface SettingsMenuItemProps {
   id: string;
   label: string;
@@ -20,3 +21,4 @@ export interface Connection {
   status: ConnectionStatus;
   configData?: any;
 }
+
