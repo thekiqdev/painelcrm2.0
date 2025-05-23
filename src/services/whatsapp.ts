@@ -34,7 +34,7 @@ export const whatsappService = {
   },
   
   // Método específico para Evolution API - Passo 1: Criar instância
-  createEvolutionInstance: async (instanceName: string, webhookUrl?: string) => {
+  createEvolutionInstance: async (instanceName: string, phoneNumber: string, webhookUrl?: string) => {
     try {
       console.log("Passo 1: Criando instância Evolution API:", instanceName);
       
@@ -46,7 +46,7 @@ export const whatsappService = {
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
       // Criar instância
-      const instanceData = await evolutionApi.createInstance(instanceName, webhookUrl);
+      const instanceData = await evolutionApi.createInstance(instanceName, phoneNumber, webhookUrl);
       console.log("Instância criada com sucesso:", instanceData);
       
       return {

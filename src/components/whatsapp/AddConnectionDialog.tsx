@@ -92,7 +92,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       if (!config) throw new Error("Configuração não encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      await evolutionApi.createInstance(generatedInstanceName);
+      await evolutionApi.createInstance(generatedInstanceName, phoneNumber);
       
       // Aguardar um pouco e obter QR code
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -246,7 +246,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                   required
                 />
                 <p className="text-xs text-muted-foreground">
-                  Insira o número sem código do país
+                  Insira o número sem código do país (será adicionado automaticamente o +55)
                 </p>
               </div>
               

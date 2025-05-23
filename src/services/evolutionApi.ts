@@ -189,8 +189,23 @@ class EvolutionApiService {
     }
   }
 
+  // Função para formatar o número de telefone
+  private formatPhoneNumber(phoneNumber: string): string {
+    // Remove todos os caracteres não numéricos
+    const cleanNumber = phoneNumber.replace(/\D/g, '');
+    
+    // Se não começar com código do país, adiciona 55 (Brasil)
+    if (!cleanNumber.startsWith('55') && cleanNumber.length <= 11) {
+      return `55${cleanNumber}`;
+    }
+    
+    return cleanNumber;
+  }
+
   // Criar uma nova instância com os parâmetros corretos da documentação
-  async createInstance(instanceName: string, webhookUrl?: string): Promise<EvolutionInstance> {
+  async createInstance(instanceName: string, phoneNumber: string, webhookUrl?: string): Promise<EvolutionInstance> {
+    const formattedNumber = this.formatPhoneNumber(phoneNumber);
+    
     const response = await fetch(`${this.baseUrl}/instance/create`, {
       method: "POST",
       headers: this.getHeaders(),
@@ -198,7 +213,7 @@ class EvolutionApiService {
         instanceName,
         token: this.apiKey,
         qrcode: true,
-        number: "",
+        number: formattedNumber,
         integration: "WHATSAPP-BAILEYS",
         webhook: webhookUrl || "",
         webhook_by_events: true,
