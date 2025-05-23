@@ -1,13 +1,13 @@
 
 import React, { useState } from "react";
-import ConnectionPanel from "@/components/whatsapp/ConnectionPanel";
-import StatusPanel from "@/components/whatsapp/StatusPanel";
+import ConnectionsList from "@/components/whatsapp/ConnectionsList";
+import SimpleConnectionDialog from "@/components/whatsapp/SimpleConnectionDialog";
 import EvolutionApiConfigComponent from "@/components/whatsapp/EvolutionApiConfig";
 import useWhatsAppConnection from "@/components/whatsapp/useWhatsAppConnection";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageSquare, PhoneCall } from "lucide-react";
-import { Connection } from "@/components/settings/types";
+import QRCodeScanner from "@/components/whatsapp/QRCodeScanner";
 
 export const WhatsAppSection = () => {
   const {
@@ -21,6 +21,7 @@ export const WhatsAppSection = () => {
     handleConfirmConnection
   } = useWhatsAppConnection();
 
+  const [showConnectionDialog, setShowConnectionDialog] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
   const showResourcesSection = connections.length > 0;
 
@@ -33,25 +34,39 @@ export const WhatsAppSection = () => {
         </TabsList>
         
         <TabsContent value="connections" className="pt-4 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <ConnectionPanel
+          {/* Mostrar QR Code se estiver conectando */}
+          {connectionStatus === "connecting" && qrCode && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Escaneie o QR Code</CardTitle>
+                <CardDescription>
+                  Use seu WhatsApp para escanear o código abaixo
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <QRCodeScanner 
+                  qrCode={qrCode}
+                  connectionStatus={connectionStatus}
+                  onDisconnect={handleDisconnect}
+                  onConfirmConnection={handleConfirmConnection}
+                />
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Lista de Conexões */}
+          {(!qrCode || connectionStatus !== "connecting") && (
+            <ConnectionsList
               connections={connections}
-              activeConnection={activeConnection}
-              qrCode={qrCode}
-              connectionStatus={connectionStatus}
               isLoading={isLoading}
               handleConnect={handleConnect}
               handleDisconnect={handleDisconnect}
-              handleConfirmConnection={handleConfirmConnection}
+              onAddConnectionClick={() => setShowConnectionDialog(true)}
             />
-            
-            <StatusPanel 
-              connectionStatus={connectionStatus} 
-              activeConnection={activeConnection} 
-            />
-          </div>
+          )}
           
-          {showResourcesSection && (
+          {/* Recursos Disponíveis */}
+          {showResourcesSection && connectionStatus === "connected" && (
             <Card>
               <CardHeader>
                 <CardTitle>Recursos Disponíveis</CardTitle>
@@ -98,6 +113,14 @@ export const WhatsAppSection = () => {
           <EvolutionApiConfigComponent />
         </TabsContent>
       </Tabs>
+
+      {/* Dialog para Nova Conexão */}
+      <SimpleConnectionDialog
+        open={showConnectionDialog}
+        onOpenChange={setShowConnectionDialog}
+        onConnect={handleConnect}
+        isLoading={isLoading}
+      />
     </div>
   );
 };
