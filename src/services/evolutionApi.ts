@@ -202,6 +202,17 @@ class EvolutionApiService {
     return cleanNumber;
   }
 
+  // Verificar se instância existe
+  async instanceExists(instanceName: string): Promise<boolean> {
+    try {
+      const status = await this.getInstanceStatus(instanceName);
+      return !!status;
+    } catch (error) {
+      console.log("Instância não existe:", instanceName);
+      return false;
+    }
+  }
+
   // Criar uma nova instância com os parâmetros corretos da documentação
   async createInstance(instanceName: string, phoneNumber: string, webhookUrl?: string): Promise<EvolutionInstance> {
     const formattedNumber = this.formatPhoneNumber(phoneNumber);
@@ -211,6 +222,13 @@ class EvolutionApiService {
       formattedNumber,
       webhookUrl
     });
+    
+    // Primeiro verificar se a instância já existe
+    const exists = await this.instanceExists(instanceName);
+    if (exists) {
+      console.log("Instância já existe:", instanceName);
+      throw new Error(`Instância ${instanceName} já existe`);
+    }
     
     const response = await fetch(`${this.baseUrl}/instance/create`, {
       method: "POST",
@@ -252,6 +270,13 @@ class EvolutionApiService {
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Erro detalhado ao criar instância:", errorText);
+      
+      // Verificar se é erro de instância já existente
+      if (errorText.includes("already exists") || errorText.includes("já existe")) {
+        console.log("Instância já existe, isso é esperado em alguns casos");
+        throw new Error(`Instância ${instanceName} já existe`);
+      }
+      
       throw new Error(`Erro ao criar instância: ${errorText}`);
     }
 

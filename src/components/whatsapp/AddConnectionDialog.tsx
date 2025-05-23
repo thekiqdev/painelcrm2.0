@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -26,6 +27,15 @@ interface AddConnectionDialogProps {
 
 type DialogStep = "form" | "qrcode" | "connected";
 
+interface InstanceState {
+  instanceName: string;
+  connectionName: string;
+  phoneNumber: string;
+  step: DialogStep;
+  qrCode?: string;
+  created: boolean;
+}
+
 const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   isOpen,
   onClose,
@@ -42,6 +52,22 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
     return phone.replace(/\D/g, '');
+  };
+  
+  // Função para salvar estado da instância
+  const saveInstanceState = (state: InstanceState) => {
+    localStorage.setItem(`instance_state_${state.instanceName}`, JSON.stringify(state));
+  };
+  
+  // Função para carregar estado da instância
+  const loadInstanceState = (instanceName: string): InstanceState | null => {
+    const saved = localStorage.getItem(`instance_state_${instanceName}`);
+    return saved ? JSON.parse(saved) : null;
+  };
+  
+  // Função para limpar estado da instância
+  const clearInstanceState = (instanceName: string) => {
+    localStorage.removeItem(`instance_state_${instanceName}`);
   };
   
   useEffect(() => {
@@ -93,7 +119,62 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       const generatedInstanceName = `${cleanConnectionName}_${cleanPhoneNumber}`;
       setInstanceName(generatedInstanceName);
       
-      console.log("Criando instância com nome:", generatedInstanceName);
+      console.log("Verificando estado existente para instância:", generatedInstanceName);
+      
+      // Verificar se já existe estado salvo para esta instância
+      let savedState = loadInstanceState(generatedInstanceName);
+      
+      if (savedState && savedState.created) {
+        console.log("Instância já foi criada anteriormente, verificando status...");
+        
+        // Verificar se a instância ainda existe e está ativa
+        const config = await evolutionApi.getActiveConfig();
+        if (!config) throw new Error("Configuração não encontrada");
+        
+        evolutionApi.setCredentials(config.api_url, config.global_key);
+        
+        try {
+          const status = await evolutionApi.getInstanceStatus(generatedInstanceName);
+          
+          if (status.instance.state === "open") {
+            // Instância já está conectada
+            setCurrentStep("connected");
+            toast.success("Instância já conectada!", {
+              description: "Esta instância já estava ativa",
+            });
+            
+            // Auto-finalizar após 2 segundos
+            setTimeout(() => {
+              handleFinishConnection();
+            }, 2000);
+            return;
+          } else {
+            console.log("Instância existe mas não está conectada, tentando obter QR code...");
+            // Tentar obter QR code da instância existente
+            const qrResult = await evolutionApi.connectInstance(generatedInstanceName);
+            
+            if (qrResult.qrcode?.base64) {
+              console.log("QR Code obtido para instância existente");
+              setQrCode(qrResult.qrcode.base64);
+              
+              toast.success("QR Code gerado", {
+                description: "Escaneie o QR code com seu WhatsApp",
+              });
+              
+              // Iniciar verificação de conexão
+              startConnectionPolling(generatedInstanceName);
+              return;
+            }
+          }
+        } catch (statusError) {
+          console.log("Instância salva não existe mais, criando nova...");
+          // Se chegou aqui, a instância foi deletada, vamos criar uma nova
+          clearInstanceState(generatedInstanceName);
+          savedState = null;
+        }
+      }
+      
+      console.log("Criando nova instância:", generatedInstanceName);
       console.log("Número limpo:", cleanPhoneNumber);
       
       toast.info("Criando instância", {
@@ -105,9 +186,47 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       if (!config) throw new Error("Configuração não encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      const instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
       
-      console.log("Instância criada:", instanceResult);
+      try {
+        const instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
+        console.log("Instância criada:", instanceResult);
+        
+        // Salvar estado indicando que a instância foi criada
+        const newState: InstanceState = {
+          instanceName: generatedInstanceName,
+          connectionName,
+          phoneNumber: cleanPhoneNumber,
+          step: "qrcode",
+          created: true
+        };
+        saveInstanceState(newState);
+        
+        toast.success("Instância criada", {
+          description: "Instância criada com sucesso",
+        });
+        
+      } catch (createError: any) {
+        // Se o erro for de instância já existente, continuar normalmente
+        if (createError.message?.includes("already exists") || createError.message?.includes("já existe")) {
+          console.log("Instância já existe, continuando...");
+          
+          // Salvar estado indicando que a instância existe
+          const newState: InstanceState = {
+            instanceName: generatedInstanceName,
+            connectionName,
+            phoneNumber: cleanPhoneNumber,
+            step: "qrcode", 
+            created: true
+          };
+          saveInstanceState(newState);
+          
+          toast.info("Instância encontrada", {
+            description: "Usando instância existente",
+          });
+        } else {
+          throw createError;
+        }
+      }
       
       // Aguardar um pouco antes de tentar obter o QR code
       await new Promise(resolve => setTimeout(resolve, 3000));
@@ -125,6 +244,17 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           if (qrResult.qrcode?.base64) {
             console.log("QR Code obtido com sucesso");
             setQrCode(qrResult.qrcode.base64);
+            
+            // Atualizar estado com QR code
+            const updatedState: InstanceState = {
+              instanceName: generatedInstanceName,
+              connectionName,
+              phoneNumber: cleanPhoneNumber,
+              step: "qrcode",
+              qrCode: qrResult.qrcode.base64,
+              created: true
+            };
+            saveInstanceState(updatedState);
             
             toast.success("QR Code gerado", {
               description: "Escaneie o QR code com seu WhatsApp",
@@ -182,6 +312,16 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           setCurrentStep("connected");
           clearInterval(pollInterval);
           
+          // Atualizar estado para conectado e limpar QR code
+          const finalState: InstanceState = {
+            instanceName,
+            connectionName,
+            phoneNumber: extractPhoneNumbers(phoneNumber),
+            step: "connected",
+            created: true
+          };
+          saveInstanceState(finalState);
+          
           toast.success("Conectado com sucesso!", {
             description: "WhatsApp foi conectado com sucesso",
           });
@@ -214,6 +354,9 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       instanceName,
       phoneNumber: extractPhoneNumbers(phoneNumber)
     });
+    
+    // Limpar estado após finalizar conexão com sucesso
+    clearInstanceState(instanceName);
     onClose();
   };
 
@@ -291,7 +434,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                   required
                 />
                 <p className="text-xs text-muted-foreground">
-                  Digite apenas os números do seu WhatsApp. O código do país (+55) será adicionado automaticamente.
+                  Digite o número no formato (XX) 9 XXXX-XXXX. O código do país (+55) será adicionado automaticamente.
                 </p>
               </div>
               
