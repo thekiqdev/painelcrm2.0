@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -68,6 +69,37 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const clearInstanceState = (instanceName: string) => {
     localStorage.removeItem(`instance_state_${instanceName}`);
   };
+
+  // Função para salvar conexão no sistema
+  const saveConnectionToSystem = (instanceData: any) => {
+    const connections = JSON.parse(localStorage.getItem('whatsapp_connections') || '[]');
+    const newConnection = {
+      id: `conn_${Date.now()}`,
+      name: connectionName,
+      type: "evolution" as ConnectionType,
+      status: "connecting",
+      configData: {
+        instanceName,
+        phoneNumber: extractPhoneNumbers(phoneNumber),
+        ...instanceData
+      },
+      createdAt: new Date().toISOString()
+    };
+    
+    // Verificar se já existe uma conexão com o mesmo instanceName
+    const existingIndex = connections.findIndex((conn: any) => 
+      conn.configData?.instanceName === instanceName
+    );
+    
+    if (existingIndex >= 0) {
+      connections[existingIndex] = { ...connections[existingIndex], ...newConnection };
+    } else {
+      connections.push(newConnection);
+    }
+    
+    localStorage.setItem('whatsapp_connections', JSON.stringify(connections));
+    console.log("Conexão salva no sistema:", newConnection);
+  };
   
   useEffect(() => {
     const checkConfig = async () => {
@@ -107,7 +139,6 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     }
     
     setIsSubmitting(true);
-    setCurrentStep("qrcode");
     
     try {
       // Extrair apenas números do telefone
@@ -148,8 +179,9 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             }, 2000);
             return;
           } else {
-            console.log("Instância existe mas não está conectada, tentando obter QR code...");
-            // Pular para tentativa de QR code diretamente
+            console.log("Instância existe mas não está conectada, avançando para QR code...");
+            // Avançar para QR code
+            setCurrentStep("qrcode");
             await attemptGenerateQRCode(generatedInstanceName, config);
             return;
           }
@@ -174,8 +206,9 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
+      let instanceResult;
       try {
-        const instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
+        instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
         console.log("Instância criada:", instanceResult);
         
         toast.success("Instância criada", {
@@ -190,6 +223,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           toast.info("Instância encontrada", {
             description: "Usando instância existente",
           });
+          
+          instanceResult = { instanceName: generatedInstanceName };
         } else {
           throw createError;
         }
@@ -205,8 +240,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       };
       saveInstanceState(newState);
       
+      // Salvar conexão no sistema
+      saveConnectionToSystem(instanceResult);
+      
+      // IMPORTANTE: Avançar para a próxima etapa imediatamente após criar/encontrar a instância
+      console.log("Avançando para etapa QR Code...");
+      setCurrentStep("qrcode");
+      
       // Aguardar um pouco antes de tentar obter o QR code
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Tentar gerar QR code
       await attemptGenerateQRCode(generatedInstanceName, config);
@@ -224,6 +266,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   };
 
   const attemptGenerateQRCode = async (instanceName: string, config: any) => {
+    console.log("Iniciando geração de QR code para:", instanceName);
+    
     // Tentar obter QR code
     let qrResult;
     let attempts = 0;
@@ -303,6 +347,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             created: true
           };
           saveInstanceState(finalState);
+          
+          // Atualizar conexão no sistema para status conectado
+          const connections = JSON.parse(localStorage.getItem('whatsapp_connections') || '[]');
+          const updatedConnections = connections.map((conn: any) => 
+            conn.configData?.instanceName === instanceName 
+              ? { ...conn, status: "connected" }
+              : conn
+          );
+          localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
           
           toast.success("Conectado com sucesso!", {
             description: "WhatsApp foi conectado com sucesso",
@@ -423,7 +476,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               <Alert>
                 <InfoIcon className="h-4 w-4 mr-2" />
                 <AlertDescription>
-                  Uma instância será criada automaticamente para esta conexão
+                  Uma instância será criada automaticamente para esta conexão e salva no sistema
                 </AlertDescription>
               </Alert>
             </div>
