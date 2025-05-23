@@ -1,301 +1,132 @@
-
-import React from 'react';
-import { useLocation, NavLink } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut } from 'lucide-react';
+import React from "react";
+import { Link, Outlet, useLocation } from "react-router-dom";
+import { useTheme } from "next-themes";
+import { Moon, Sun, Settings, User, LogOut, ChevronDown } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarTrigger,
-  SidebarProvider,
-  useSidebar
-} from "@/components/ui/sidebar";
-import { Badge } from '@/components/ui/badge';
-import { Avatar } from '@/components/ui/avatar';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Button } from '@/components/ui/button';
-import { useAuth } from '@/contexts/AuthContext';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Toaster } from "@/components/ui/sonner";
+import NotificationsMenu from "@/components/notifications/NotificationsMenu";
 
-interface AppLayoutProps {
-  children: React.ReactNode;
-}
-
-const Nav = () => {
+const AppLayout = () => {
+  const { user, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const location = useLocation();
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
-  
-  const getNavClass = ({ isActive }: { isActive: boolean }) => 
-    isActive ? "bg-crm-primary/10 text-crm-primary font-medium" : "hover:bg-muted/50";
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      console.error("Error logging out:", error);
+    }
+  };
 
   return (
-    <Sidebar collapsible="icon" className={collapsed ? "w-16 transition-all duration-300" : "w-64 transition-all duration-300"}>
-      <SidebarTrigger className="m-2 self-end" />
-      
-      <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-start px-4'} pb-2 mb-6`}>
-        {collapsed ? (
-          <div className="w-8 h-8 rounded-md bg-crm-primary text-white flex items-center justify-center font-bold">M</div>
-        ) : (
+    <div className="min-h-screen bg-background">
+      <header className="border-b">
+        <div className="container mx-auto flex items-center justify-between h-16 px-4">
           <div className="flex items-center">
-            <div className="w-8 h-8 rounded-md bg-crm-primary text-white flex items-center justify-center font-bold mr-3">M</div>
-            <h1 className="text-lg font-bold">MultiCRM</h1>
+            <Link to="/" className="text-xl font-bold text-primary mr-6">
+              CRM EVO
+            </Link>
+            <nav className="hidden md:flex gap-4">
+              <Link to="/" className="text-sm font-medium hover:underline">
+                Dashboard
+              </Link>
+              <Link to="/customers" className="text-sm font-medium hover:underline">
+                Clientes
+              </Link>
+              <Link to="/invoices" className="text-sm font-medium hover:underline">
+                Faturas
+              </Link>
+              <Link to="/settings" className="text-sm font-medium hover:underline">
+                Configurações
+              </Link>
+              <Link to="/whatsapp" className="text-sm font-medium hover:underline">
+                WhatsApp
+              </Link>
+            </nav>
           </div>
-        )}
-      </div>
-      
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <NavLink to="/dashboard" className={getNavClass}>
-                  <LayoutDashboard className="mr-2 h-5 w-5" />
-                  {!collapsed && <span>Dashboard</span>}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Vendas</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/clients" className={getNavClass}>
-                    <Users className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Clientes</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/leads" className={getNavClass}>
-                    <UserPlus className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Leads</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/funnel" className={getNavClass}>
-                    <List className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Funil de Vendas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/products" className={getNavClass}>
-                    <Briefcase className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Produtos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Projetos</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/projects" className={getNavClass}>
-                    <Calendar className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Projetos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/tasks" className={getNavClass}>
-                    <ClipboardCheck className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Tarefas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/chat" className={getNavClass}>
-                    <MessageSquare className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Chat</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Documentação</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/proposals" className={getNavClass}>
-                    <FileText className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Propostas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/contracts" className={getNavClass}>
-                    <FileSearch className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Contratos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Financeiro</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/billing" className={getNavClass}>
-                    <DollarSign className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Faturamento</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/finance" className={getNavClass}>
-                    <DollarSign className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Financeiro</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <NavLink to="/settings" className={getNavClass}>
-                  <Settings className="mr-2 h-5 w-5" />
-                  {!collapsed && <span>Configurações</span>}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroup>
-      </SidebarContent>
-    </Sidebar>
-  );
-};
-
-const Header = () => {
-  const { user, profile, signOut } = useAuth();
-  const initials = profile ? 
-    (profile.first_name?.charAt(0) || '') + (profile.last_name?.charAt(0) || '') : 
-    'U';
-  
-  const displayName = profile ? 
-    `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : 
-    'Usuário';
-
-  return (
-    <header className="h-16 border-b flex items-center justify-between px-4">
-      <div className="flex items-center">
-        <SidebarTrigger className="mr-4" />
-        <h1 className="text-xl font-bold hidden md:block">MultiCRM</h1>
-      </div>
-      
-      <div className="flex items-center space-x-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-5 w-5" />
-              <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center bg-red-500 text-white text-xs">3</Badge>
+          <div className="flex items-center gap-2">
+            {/* Theme Toggle Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {theme === "dark" ? (
+                <Sun className="h-5 w-5" />
+              ) : (
+                <Moon className="h-5 w-5" />
+              )}
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel>Notificações</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <div className="max-h-96 overflow-y-auto">
-              {[1, 2, 3].map(i => (
-                <DropdownMenuItem key={i} className="py-3">
-                  <div>
-                    <p className="text-sm font-medium">Nova tarefa atribuída</p>
-                    <p className="text-xs text-muted-foreground">Reunião com cliente XYZ às 15:00</p>
-                    <p className="text-xs text-muted-foreground mt-1">Há 5 minutos</p>
+
+            {/* Adicionar menu de notificações */}
+            <NotificationsMenu />
+
+            {/* User Menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="relative h-8 flex items-center gap-2 px-0">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={user?.user_metadata?.avatar_url} />
+                    <AvatarFallback>
+                      {user?.email?.charAt(0)?.toUpperCase() || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="hidden md:block text-left">
+                    <p className="text-sm font-medium leading-none mb-1">
+                      {user?.user_metadata?.full_name || user?.email?.split("@")[0]}
+                    </p>
+                    <p className="text-xs leading-none text-muted-foreground">
+                      {user?.email}
+                    </p>
                   </div>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto hidden md:block" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Minha Conta</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link to="/profile" className="cursor-pointer">
+                    <User className="mr-2 h-4 w-4" />
+                    Perfil
+                  </Link>
                 </DropdownMenuItem>
-              ))}
-            </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2">
-              <Avatar className="h-8 w-8">
-                <div className="bg-crm-primary text-white h-full w-full flex items-center justify-center font-medium">
-                  {initials || 'U'}
-                </div>
-              </Avatar>
-              <span className="hidden md:inline font-medium">{displayName}</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Minha Conta</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <User className="mr-2 h-4 w-4" />
-              <span>Perfil</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Settings className="mr-2 h-4 w-4" />
-              <span>Configurações</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={signOut}>
-              <LogOut className="mr-2 h-4 w-4" />
-              <span>Sair</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </header>
-  );
-};
-
-const AppLayout = ({ children }: AppLayoutProps) => {
-  return (
-    <SidebarProvider>
-      <div className="flex h-screen w-full overflow-hidden">
-        <Nav />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <Header />
-          <main className="flex-1 overflow-auto p-6">
-            {children}
-          </main>
+                <DropdownMenuItem asChild>
+                  <Link to="/settings" className="cursor-pointer">
+                    <Settings className="mr-2 h-4 w-4" />
+                    Configurações
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLogout}>
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sair
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </header>
+
+      <main className="container mx-auto py-6 px-4">
+        <Outlet />
+      </main>
+      
+      <Toaster richColors />
+    </div>
   );
 };
 

@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 import { whatsappService } from "@/services/whatsapp";
 
 interface ConnectionConfig {
@@ -21,7 +20,7 @@ export const useWhatsAppConnectionManager = () => {
     config: ConnectionConfig;
   }>>([]);
   const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
-  const { toast } = useToast();
+  const [error, setError] = useState<string | null>(null);
   
   useEffect(() => {
     const savedData = localStorage.getItem("whatsapp_connections");
@@ -42,15 +41,15 @@ export const useWhatsAppConnectionManager = () => {
   
   const handleConnect = async () => {
     setConnectionStatus("connecting");
-    toast({
-      title: "Iniciando conexão",
+    setError(null);
+    
+    toast.info("Iniciando conexão", {
       description: "Por favor, aguarde enquanto processamos sua solicitação...",
     });
     
     try {
       if (instanceName) {
-        toast({
-          title: "Criando instância",
+        toast.info("Criando instância", {
           description: "Criando instância na Evolution API...",
         });
         
@@ -58,14 +57,12 @@ export const useWhatsAppConnectionManager = () => {
         
         if (result.status === "connected") {
           setConnectionStatus("connected");
-          toast({
-            title: "Conectado com sucesso!",
+          toast.success("Conectado com sucesso!", {
             description: "Sua conta WhatsApp foi conectada via Evolution API",
           });
         } else if (result.status === "disconnected") {
           setConnectionStatus("disconnected");
-          toast({
-            title: "Instância criada!",
+          toast.success("Instância criada!", {
             description: "Agora clique em 'Gerar QR Code' para conectar",
           });
         }
@@ -75,10 +72,9 @@ export const useWhatsAppConnectionManager = () => {
     } catch (error) {
       console.error("Erro ao conectar:", error);
       setConnectionStatus("disconnected");
-      toast({
-        title: "Erro na conexão",
+      setError(error instanceof Error ? error.message : "Ocorreu um erro ao tentar conectar");
+      toast.error("Erro na conexão", {
         description: error instanceof Error ? error.message : "Ocorreu um erro ao tentar conectar",
-        variant: "destructive",
       });
     }
   };
@@ -86,8 +82,9 @@ export const useWhatsAppConnectionManager = () => {
   const handleGenerateQRCode = async () => {
     try {
       setConnectionStatus("connecting");
-      toast({
-        title: "Gerando QR Code",
+      setError(null);
+      
+      toast.info("Gerando QR Code", {
         description: "Por favor, aguarde...",
       });
       
@@ -95,8 +92,7 @@ export const useWhatsAppConnectionManager = () => {
       
       if (result.qrcode?.base64) {
         setQrCode(result.qrcode.base64);
-        toast({
-          title: "QR Code gerado",
+        toast.success("QR Code gerado", {
           description: "Escaneie o QR code com o seu WhatsApp",
         });
       } else {
@@ -105,10 +101,9 @@ export const useWhatsAppConnectionManager = () => {
     } catch (error) {
       console.error("Erro ao gerar QR code:", error);
       setConnectionStatus("disconnected");
-      toast({
-        title: "Erro ao gerar QR code",
-        description: error instanceof Error ? error.message : "Ocorreu um erro ao gerar o QR code.",
-        variant: "destructive",
+      setError(error instanceof Error ? error.message : "Ocorreu um erro ao gerar o QR code");
+      toast.error("Erro ao gerar QR code", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro ao gerar o QR code",
       });
     }
   };
@@ -120,16 +115,13 @@ export const useWhatsAppConnectionManager = () => {
       }
       setConnectionStatus("disconnected");
       setQrCode(null);
-      toast({
-        title: "Desconectado",
+      toast.success("Desconectado", {
         description: "Conexão WhatsApp encerrada com sucesso",
       });
     } catch (error) {
       console.error("Erro ao desconectar:", error);
-      toast({
-        title: "Erro ao desconectar",
-        description: "Ocorreu um erro ao tentar desconectar o WhatsApp.",
-        variant: "destructive",
+      toast.error("Erro ao desconectar", {
+        description: "Ocorreu um erro ao tentar desconectar o WhatsApp",
       });
     }
   };
@@ -141,16 +133,13 @@ export const useWhatsAppConnectionManager = () => {
       }
       setConnectionStatus("connected");
       setQrCode(null);
-      toast({
-        title: "Conectado com sucesso!",
+      toast.success("Conectado com sucesso!", {
         description: "Sua conta WhatsApp foi confirmada manualmente",
       });
     } catch (error) {
       console.error("Erro ao confirmar conexão:", error);
-      toast({
-        title: "Erro na confirmação",
-        description: "Ocorreu um erro ao tentar confirmar a conexão WhatsApp.",
-        variant: "destructive",
+      toast.error("Erro na confirmação", {
+        description: "Ocorreu um erro ao tentar confirmar a conexão WhatsApp",
       });
     }
   };
@@ -169,8 +158,7 @@ export const useWhatsAppConnectionManager = () => {
     const updatedConnections = [...savedConnections, newConnection];
     setSavedConnections(updatedConnections);
     
-    toast({
-      title: "Conexão salva",
+    toast.success("Conexão salva", {
       description: "As credenciais de conexão foram salvas",
     });
     
@@ -198,8 +186,7 @@ export const useWhatsAppConnectionManager = () => {
     setSelectedConnection(null);
     setIsEditing(false);
     
-    toast({
-      title: "Conexão atualizada",
+    toast.success("Conexão atualizada", {
       description: "As credenciais de conexão foram atualizadas",
     });
     
@@ -210,8 +197,7 @@ export const useWhatsAppConnectionManager = () => {
     const updatedConnections = savedConnections.filter(conn => conn.id !== id);
     setSavedConnections(updatedConnections);
     
-    toast({
-      title: "Conexão removida",
+    toast.success("Conexão removida", {
       description: "A conexão foi removida com sucesso",
     });
     
@@ -258,8 +244,7 @@ export const useWhatsAppConnectionManager = () => {
             if (status.instance.state === "open") {
               setConnectionStatus("connected");
               setQrCode(null);
-              toast({
-                title: "Conectado com sucesso!",
+              toast.success("Conectado com sucesso!", {
                 description: "Sua conta WhatsApp foi conectada",
               });
             }
@@ -271,7 +256,7 @@ export const useWhatsAppConnectionManager = () => {
       
       return () => clearTimeout(timer);
     }
-  }, [qrCode, connectionStatus, toast, instanceName]);
+  }, [qrCode, connectionStatus, instanceName]);
 
   return {
     connectionStatus,
@@ -281,6 +266,7 @@ export const useWhatsAppConnectionManager = () => {
     isEditing,
     savedConnections,
     selectedConnection,
+    error,
     setInstanceName,
     setWebhookUrl,
     handleConnect,

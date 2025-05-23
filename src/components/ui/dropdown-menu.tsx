@@ -1,3 +1,4 @@
+
 import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronRight, Circle } from "lucide-react"
@@ -179,6 +180,73 @@ const DropdownMenuShortcut = ({
 }
 DropdownMenuShortcut.displayName = "DropdownMenuShortcut"
 
+// Adicionando componentes personalizados para abas dentro do dropdown menu
+
+type TabsProps = {
+  value: string
+  onValueChange: (value: string) => void
+}
+
+const DropdownMenuTabs: React.FC<React.PropsWithChildren<TabsProps>> = ({ 
+  children, 
+  value, 
+  onValueChange
+}) => {
+  return (
+    <div data-value={value} data-tabs role="tablist" className="dropdown-menu-tabs">
+      {React.Children.map(children, child => {
+        if (React.isValidElement(child)) {
+          return React.cloneElement(child as React.ReactElement<any>, {
+            currentValue: value,
+            onValueChange
+          });
+        }
+        return child;
+      })}
+    </div>
+  )
+}
+
+type TabProps = {
+  value: string
+  className?: string
+  currentValue?: string
+  onValueChange?: (value: string) => void
+}
+
+const DropdownMenuTab: React.FC<React.PropsWithChildren<TabProps>> = ({
+  children,
+  value,
+  className,
+  currentValue,
+  onValueChange
+}) => {
+  const isActive = currentValue === value;
+  
+  const handleClick = () => {
+    onValueChange?.(value);
+  };
+
+  return (
+    <button
+      type="button"
+      role="tab"
+      data-value={value}
+      data-state={isActive ? "active" : "inactive"}
+      className={cn(
+        "px-4 py-2 text-sm flex items-center gap-1",
+        isActive 
+          ? "font-medium border-b-2 border-primary text-primary" 
+          : "text-muted-foreground border-b-2 border-transparent",
+        className
+      )}
+      onClick={handleClick}
+    >
+      {children}
+    </button>
+  )
+}
+
 export {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -195,4 +263,6 @@ export {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuRadioGroup,
+  DropdownMenuTabs,
+  DropdownMenuTab,
 }
