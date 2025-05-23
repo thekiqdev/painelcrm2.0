@@ -55,6 +55,7 @@ export interface EvolutionContact {
   pushName?: string;
   remoteJid: string;
   unreadMessages?: number;
+  profilePictureUrl?: string;
 }
 
 class EvolutionApi {
@@ -98,6 +99,32 @@ class EvolutionApi {
     return data;
   }
 
+  async getAllConfigs(): Promise<EvolutionApiConfig[]> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        console.error('Usuário não autenticado:', userError);
+        return [];
+      }
+
+      const { data, error } = await supabase
+        .from('evolution_api_configs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Erro ao buscar configurações:', error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Erro ao obter configurações:', error);
+      return [];
+    }
+  }
+
   async getActiveConfig(): Promise<EvolutionApiConfig | null> {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -122,6 +149,116 @@ class EvolutionApi {
     } catch (error) {
       console.error('Erro ao obter configuração ativa:', error);
       return null;
+    }
+  }
+
+  async saveConfig(name: string, apiUrl: string, globalKey: string): Promise<void> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      // Desativar outras configurações se esta for a primeira
+      const { data: existingConfigs } = await supabase
+        .from('evolution_api_configs')
+        .select('id')
+        .eq('user_id', user.id);
+
+      const isFirstConfig = !existingConfigs || existingConfigs.length === 0;
+
+      const { error } = await supabase
+        .from('evolution_api_configs')
+        .insert({
+          name,
+          api_url: apiUrl,
+          global_key: globalKey,
+          user_id: user.id,
+          is_active: isFirstConfig
+        });
+
+      if (error) {
+        throw new Error(`Erro ao salvar configuração: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Erro ao salvar configuração:', error);
+      throw error;
+    }
+  }
+
+  async updateConfig(configId: string, updates: { name: string; api_url: string; global_key: string }): Promise<void> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      const { error } = await supabase
+        .from('evolution_api_configs')
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', configId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        throw new Error(`Erro ao atualizar configuração: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar configuração:', error);
+      throw error;
+    }
+  }
+
+  async setActiveConfig(configId: string): Promise<void> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      // Desativar todas as configurações do usuário
+      await supabase
+        .from('evolution_api_configs')
+        .update({ is_active: false })
+        .eq('user_id', user.id);
+
+      // Ativar a configuração selecionada
+      const { error } = await supabase
+        .from('evolution_api_configs')
+        .update({ is_active: true })
+        .eq('id', configId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        throw new Error(`Erro ao ativar configuração: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Erro ao ativar configuração:', error);
+      throw error;
+    }
+  }
+
+  async deleteConfig(configId: string): Promise<void> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      const { error } = await supabase
+        .from('evolution_api_configs')
+        .delete()
+        .eq('id', configId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        throw new Error(`Erro ao excluir configuração: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Erro ao excluir configuração:', error);
+      throw error;
     }
   }
 

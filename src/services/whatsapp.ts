@@ -45,8 +45,8 @@ export const whatsappService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      // Criar instância
-      const instanceData = await evolutionApi.createInstance(instanceName, phoneNumber, webhookUrl);
+      // Criar instância - fixed: removed third parameter
+      const instanceData = await evolutionApi.createInstance(instanceName, phoneNumber);
       console.log("Instância criada com sucesso:", instanceData);
       
       return {
