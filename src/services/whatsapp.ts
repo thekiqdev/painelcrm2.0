@@ -163,7 +163,24 @@ export const whatsappService = {
       throw error;
     }
   },
-  
+
+  // Método para obter configuração ativa (sem expor credenciais)
+  getEvolutionConfig: async () => {
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) {
+        throw new Error("Nenhuma configuração da Evolution API encontrada. Configure primeiro em Configurações.");
+      }
+      return {
+        hasConfig: true,
+        configName: config.name
+      };
+    } catch (error) {
+      console.error("Erro ao obter configuração:", error);
+      return null;
+    }
+  },
+
   // Verificar status da instância Evolution
   checkEvolutionStatus: async (instanceName: string) => {
     try {
@@ -203,6 +220,19 @@ export const whatsappService = {
       return await evolutionApi.listInstances();
     } catch (error) {
       console.error("Erro ao listar instâncias Evolution:", error);
+      throw error;
+    }
+  },
+
+  deleteEvolutionInstance: async (instanceName: string) => {
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      return await evolutionApi.deleteInstance(instanceName);
+    } catch (error) {
+      console.error("Erro ao deletar instância Evolution:", error);
       throw error;
     }
   },

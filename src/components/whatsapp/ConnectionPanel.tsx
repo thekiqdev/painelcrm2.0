@@ -1,10 +1,13 @@
+
 import React, { useState } from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, QrCode } from "lucide-react";
-import { Connection, ConnectionStatus } from "@/components/settings/types";
+import { Loader2, QrCode, Trash2 } from "lucide-react";
+import { Connection, ConnectionStatus } from "@/components/whatsapp/useWhatsAppConnection";
+import { toast } from "sonner";
+import { whatsappService } from "@/services/whatsapp";
 
 interface ConnectionPanelProps {
   connections: Connection[];
@@ -28,14 +31,16 @@ const ConnectionPanel: React.FC<ConnectionPanelProps> = ({
   handleConfirmConnection
 }) => {
   const [instanceName, setInstanceName] = useState("");
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [isGeneratingQr, setIsGeneratingQr] = useState(false);
 
-  const handleSubmitNewConnection = (e: React.FormEvent) => {
+  const handleSubmitNewConnection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!instanceName.trim()) return;
     
     const newConnection: Connection = {
       id: `conn_${Date.now()}`,
-      name: `Evolution API: ${instanceName}`,
+      name: `WhatsApp: ${instanceName}`,
       type: "evolution",
       status: "disconnected",
       configData: {
@@ -46,13 +51,64 @@ const ConnectionPanel: React.FC<ConnectionPanelProps> = ({
     handleConnect(newConnection);
     setInstanceName("");
   };
+
+  const handleDeleteConnection = async (connection: Connection) => {
+    if (!connection.configData?.instanceName) return;
+    
+    setIsDeleting(connection.id);
+    try {
+      const config = await whatsappService.getEvolutionConfig();
+      if (!config) {
+        throw new Error("Configuração da Evolution API não encontrada");
+      }
+      
+      // Tentar deletar a instância no Evolution API
+      await whatsappService.deleteEvolutionInstance(connection.configData.instanceName);
+      
+      // Remover da lista local
+      const updatedConnections = connections.filter(c => c.id !== connection.id);
+      localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+      
+      // Recarregar a página para atualizar a lista
+      window.location.reload();
+      
+      toast.success("Conexão excluída com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir conexão:", error);
+      toast.error("Erro ao excluir conexão", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  const handleGenerateQrCode = async (connection: Connection) => {
+    if (!connection.configData?.instanceName) return;
+    
+    setIsGeneratingQr(true);
+    try {
+      const qrResult = await whatsappService.getEvolutionQRCode(connection.configData.instanceName);
+      if (qrResult.qrcode?.base64) {
+        // Atualizar o estado do QR code no componente pai
+        handleConnect(connection);
+      }
+    } catch (error) {
+      console.error("Erro ao gerar QR code:", error);
+      toast.error("Erro ao gerar QR code", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    } finally {
+      setIsGeneratingQr(false);
+    }
+  };
   
   return (
     <Card className="flex flex-col">
       <CardHeader>
-        <CardTitle>Conexão WhatsApp</CardTitle>
+        <CardTitle>Conexões WhatsApp</CardTitle>
         <CardDescription>
-          Conecte o WhatsApp usando a Evolution API
+          Gerencie suas conexões com a Evolution API
         </CardDescription>
       </CardHeader>
       
@@ -123,46 +179,88 @@ const ConnectionPanel: React.FC<ConnectionPanelProps> = ({
             </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmitNewConnection} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="instanceName">Nome da Instância</Label>
-              <Input
-                id="instanceName"
-                value={instanceName}
-                onChange={(e) => setInstanceName(e.target.value)}
-                placeholder="Ex: minha-instancia"
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                Forneça um nome para sua instância da Evolution API
-              </p>
-            </div>
-            
-            <Button 
-              type="submit" 
-              disabled={isLoading || !instanceName.trim()}
-              className="w-full"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Conectando...
-                </>
-              ) : (
-                "Conectar WhatsApp"
-              )}
-            </Button>
-          </form>
+          <div className="space-y-6">
+            {/* Formulário para nova conexão */}
+            <form onSubmit={handleSubmitNewConnection} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="instanceName">Nome da Instância</Label>
+                <Input
+                  id="instanceName"
+                  value={instanceName}
+                  onChange={(e) => setInstanceName(e.target.value)}
+                  placeholder="Ex: minha-instancia"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Forneça um nome único para sua instância do WhatsApp
+                </p>
+              </div>
+              
+              <Button 
+                type="submit" 
+                disabled={isLoading || !instanceName.trim()}
+                className="w-full"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Criando Conexão...
+                  </>
+                ) : (
+                  "Criar Nova Conexão"
+                )}
+              </Button>
+            </form>
+
+            {/* Lista de conexões existentes */}
+            {connections.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium">Conexões Existentes</h4>
+                {connections.map((connection) => (
+                  <div key={connection.id} className="p-3 border rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">{connection.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Status: {connection.status === "connected" ? "Conectado" : 
+                                  connection.status === "connecting" ? "Conectando" : "Desconectado"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        {connection.status === "disconnected" && (
+                          <Button
+                            size="sm"
+                            onClick={() => handleGenerateQrCode(connection)}
+                            disabled={isGeneratingQr}
+                          >
+                            {isGeneratingQr ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <QrCode className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => handleDeleteConnection(connection)}
+                          disabled={isDeleting === connection.id}
+                        >
+                          {isDeleting === connection.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </CardContent>
-      
-      {connectionStatus !== "disconnected" && connections.length > 0 && (
-        <CardFooter className="flex-col border-t pt-4">
-          <p className="text-xs text-muted-foreground mb-2">
-            Conexões disponíveis: {connections.length}
-          </p>
-        </CardFooter>
-      )}
     </Card>
   );
 };

@@ -2,8 +2,10 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plus, Edit, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, CheckCircle2, QrCode } from "lucide-react";
 import { Connection, ConnectionStatus } from "@/components/whatsapp/useWhatsAppConnection";
+import { whatsappService } from "@/services/whatsapp";
+import { toast } from "sonner";
 
 interface ConnectionsListProps {
   connections: Connection[];
@@ -20,13 +22,50 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
   handleDisconnect,
   onAddConnectionClick,
 }) => {
-  const [editingConnection, setEditingConnection] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
-  // Function to handle editing a connection
-  const handleEditClick = (connectionId: string, event: React.MouseEvent) => {
-    event.stopPropagation(); // Prevent the card click event from firing
-    setEditingConnection(connectionId);
-    onAddConnectionClick(); // Open the dialog to edit
+  const handleDeleteConnection = async (connection: Connection, event: React.MouseEvent) => {
+    event.stopPropagation();
+    
+    if (!connection.configData?.instanceName) return;
+    
+    setIsDeleting(connection.id);
+    try {
+      // Deletar a instância no Evolution API
+      await whatsappService.deleteEvolutionInstance(connection.configData.instanceName);
+      
+      // Remover da lista local
+      const updatedConnections = connections.filter(c => c.id !== connection.id);
+      localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+      
+      // Recarregar a página para atualizar a lista
+      window.location.reload();
+      
+      toast.success("Conexão excluída com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir conexão:", error);
+      toast.error("Erro ao excluir conexão", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  const handleGenerateQrCode = async (connection: Connection, event: React.MouseEvent) => {
+    event.stopPropagation();
+    
+    if (!connection.configData?.instanceName) return;
+    
+    try {
+      await whatsappService.getEvolutionQRCode(connection.configData.instanceName);
+      handleConnect(connection);
+    } catch (error) {
+      console.error("Erro ao gerar QR code:", error);
+      toast.error("Erro ao gerar QR code", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    }
   };
 
   // Render empty state
@@ -49,14 +88,17 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
       {connections.map((connection) => (
         <Card 
           key={connection.id} 
-          className="overflow-hidden cursor-pointer hover:bg-accent/50 transition-colors"
-          onClick={() => connection.status !== "connected" && handleConnect(connection)}
+          className="overflow-hidden hover:bg-accent/50 transition-colors"
         >
           <div className="flex items-center justify-between p-4">
             <div>
               <h3 className="font-medium">{connection.name}</h3>
               <p className="text-sm text-muted-foreground">
-                Tipo: Evolution API
+                Instância: {connection.configData?.instanceName || "N/A"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Status: {connection.status === "connected" ? "Conectado" : 
+                        connection.status === "connecting" ? "Conectando" : "Desconectado"}
               </p>
             </div>
             
@@ -68,28 +110,22 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                 </span>
               )}
               
-              <Button 
-                size="sm" 
-                variant="outline"
-                onClick={(e) => handleEditClick(connection.id, e)}
-              >
-                <Edit className="h-4 w-4" />
-              </Button>
-              
-              {connection.status === "disconnected" ? (
+              {connection.status === "disconnected" && (
                 <Button 
                   size="sm" 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleConnect(connection);
-                  }}
+                  onClick={(e) => handleGenerateQrCode(connection, e)}
                   disabled={isLoading}
                 >
+                  <QrCode className="h-4 w-4 mr-2" />
                   Conectar
                 </Button>
-              ) : connection.status === "connecting" ? (
+              )}
+              
+              {connection.status === "connecting" && (
                 <Button size="sm" disabled>Conectando...</Button>
-              ) : (
+              )}
+              
+              {connection.status === "connected" && (
                 <Button 
                   size="sm" 
                   variant="destructive" 
@@ -102,6 +138,15 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                   Desconectar
                 </Button>
               )}
+              
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={(e) => handleDeleteConnection(connection, e)}
+                disabled={isDeleting === connection.id}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         </Card>
@@ -110,7 +155,7 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
       <div className="flex justify-center mt-4">
         <Button onClick={onAddConnectionClick} variant="outline">
           <Plus className="mr-2 h-4 w-4" />
-          Adicionar Outra Conexão
+          Adicionar Nova Conexão
         </Button>
       </div>
     </div>
