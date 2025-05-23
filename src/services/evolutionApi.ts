@@ -37,6 +37,14 @@ export interface EvolutionContact {
   profilePictureUrl?: string;
 }
 
+export interface EvolutionApiConfig {
+  id: string;
+  name: string;
+  api_url: string;
+  global_key: string;
+  is_active: boolean;
+}
+
 class EvolutionApiService {
   private baseUrl: string = "";
   private apiKey: string = "";
@@ -51,6 +59,135 @@ class EvolutionApiService {
       "Content-Type": "application/json",
       "apikey": this.apiKey,
     };
+  }
+
+  // Métodos para gerenciar configurações no banco de dados
+  async saveConfig(name: string, api_url: string, global_key: string): Promise<EvolutionApiConfig | null> {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Usuário não autenticado");
+      
+      const { data, error } = await supabase
+        .from("evolution_api_configs")
+        .insert({
+          name,
+          api_url,
+          global_key,
+          user_id: user.id
+        })
+        .select()
+        .single();
+        
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error("Erro ao salvar configuração:", error);
+      return null;
+    }
+  }
+
+  async getActiveConfig(): Promise<EvolutionApiConfig | null> {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Usuário não autenticado");
+      
+      const { data, error } = await supabase
+        .from("evolution_api_configs")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+        
+      if (error) {
+        if (error.code === "PGRST116") { // Nenhum resultado encontrado
+          return null;
+        }
+        throw error;
+      }
+      
+      return data;
+    } catch (error) {
+      console.error("Erro ao obter configuração ativa:", error);
+      return null;
+    }
+  }
+
+  async updateConfig(id: string, updates: Partial<EvolutionApiConfig>): Promise<EvolutionApiConfig | null> {
+    try {
+      const { data, error } = await supabase
+        .from("evolution_api_configs")
+        .update(updates)
+        .eq("id", id)
+        .select()
+        .single();
+        
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error("Erro ao atualizar configuração:", error);
+      return null;
+    }
+  }
+
+  async deleteConfig(id: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from("evolution_api_configs")
+        .delete()
+        .eq("id", id);
+        
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error("Erro ao excluir configuração:", error);
+      return false;
+    }
+  }
+
+  async setActiveConfig(id: string): Promise<boolean> {
+    try {
+      // Primeiro, desativa todas as configurações do usuário
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Usuário não autenticado");
+      
+      await supabase
+        .from("evolution_api_configs")
+        .update({ is_active: false })
+        .eq("user_id", user.id);
+      
+      // Depois, ativa apenas a configuração específica
+      const { error } = await supabase
+        .from("evolution_api_configs")
+        .update({ is_active: true })
+        .eq("id", id);
+        
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error("Erro ao definir configuração ativa:", error);
+      return false;
+    }
+  }
+
+  async getAllConfigs(): Promise<EvolutionApiConfig[]> {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Usuário não autenticado");
+      
+      const { data, error } = await supabase
+        .from("evolution_api_configs")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+        
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error("Erro ao listar configurações:", error);
+      return [];
+    }
   }
 
   // Criar uma nova instância
@@ -138,6 +275,22 @@ class EvolutionApiService {
     }
 
     return await response.json();
+  }
+
+  // Listar todas as instâncias
+  async listInstances(): Promise<string[]> {
+    const response = await fetch(`${this.baseUrl}/instance/fetchInstances`, {
+      method: "GET",
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Erro ao listar instâncias: ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.instances || [];
   }
 
   // Listar conversas

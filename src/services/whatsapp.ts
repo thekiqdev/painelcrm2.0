@@ -33,16 +33,16 @@ export const whatsappService = {
     return await response.json();
   },
   
-  connectEvolution: async (apiKey: string, instanceId: string, instanceName: string, webhookUrl?: string, serverUrl?: string) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      throw new Error("Não autenticado");
-    }
-    
+  connectEvolution: async (instanceName: string, webhookUrl?: string) => {
     try {
+      // Obter a configuração ativa da Evolution API
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) {
+        throw new Error("Nenhuma configuração da Evolution API encontrada. Configure primeiro em Configurações.");
+      }
+      
       // Configurar credenciais da Evolution API
-      const baseUrl = serverUrl || "https://api.evolution.com"; // URL padrão se não fornecida
-      evolutionApi.setCredentials(baseUrl, apiKey);
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       
       // Criar instância se não existir
       let instanceData;
@@ -60,14 +60,12 @@ export const whatsappService = {
       const { error: dbError } = await supabase
         .from("whatsapp_connections")
         .upsert({
-          user_id: session.user.id,
+          user_id: (await supabase.auth.getUser()).data.user?.id,
           status: connectionResult.qrcode ? "awaiting_scan" : "connected",
           provider: "evolution",
           config_data: {
-            apiKey: `${apiKey.substring(0, 5)}...`,
-            instanceId,
             instanceName,
-            serverUrl: baseUrl,
+            serverUrl: config.api_url,
             hasWebhook: !!webhookUrl
           },
           qr_code: connectionResult.qrcode?.base64 || null,
@@ -82,8 +80,7 @@ export const whatsappService = {
         status: connectionResult.qrcode ? "connecting" : "connected",
         qrCode: connectionResult.qrcode?.base64,
         provider: "evolution",
-        instanceName,
-        instanceId
+        instanceName
       };
       
     } catch (error) {
@@ -206,10 +203,13 @@ export const whatsappService = {
     return await response.json();
   },
 
-  // Novos métodos específicos para Evolution API
-  checkEvolutionStatus: async (instanceName: string, serverUrl: string, apiKey: string) => {
+  // Métodos específicos para Evolution API com configuração do banco
+  checkEvolutionStatus: async (instanceName: string) => {
     try {
-      evolutionApi.setCredentials(serverUrl, apiKey);
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       return await evolutionApi.getInstanceStatus(instanceName);
     } catch (error) {
       console.error("Erro ao verificar status Evolution:", error);
@@ -217,9 +217,12 @@ export const whatsappService = {
     }
   },
 
-  getEvolutionQRCode: async (instanceName: string, serverUrl: string, apiKey: string) => {
+  getEvolutionQRCode: async (instanceName: string) => {
     try {
-      evolutionApi.setCredentials(serverUrl, apiKey);
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       return await evolutionApi.getQRCode(instanceName);
     } catch (error) {
       console.error("Erro ao obter QR code Evolution:", error);
@@ -227,9 +230,25 @@ export const whatsappService = {
     }
   },
 
-  getEvolutionChats: async (instanceName: string, serverUrl: string, apiKey: string) => {
+  listEvolutionInstances: async () => {
     try {
-      evolutionApi.setCredentials(serverUrl, apiKey);
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      return await evolutionApi.listInstances();
+    } catch (error) {
+      console.error("Erro ao listar instâncias Evolution:", error);
+      throw error;
+    }
+  },
+
+  getEvolutionChats: async (instanceName: string) => {
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       return await evolutionApi.getChats(instanceName);
     } catch (error) {
       console.error("Erro ao obter conversas Evolution:", error);
@@ -237,9 +256,12 @@ export const whatsappService = {
     }
   },
 
-  getEvolutionMessages: async (instanceName: string, remoteJid: string, serverUrl: string, apiKey: string, limit: number = 50) => {
+  getEvolutionMessages: async (instanceName: string, remoteJid: string, limit: number = 50) => {
     try {
-      evolutionApi.setCredentials(serverUrl, apiKey);
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       return await evolutionApi.getMessages(instanceName, remoteJid, limit);
     } catch (error) {
       console.error("Erro ao obter mensagens Evolution:", error);
@@ -247,9 +269,12 @@ export const whatsappService = {
     }
   },
 
-  sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string, serverUrl: string, apiKey: string) => {
+  sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string) => {
     try {
-      evolutionApi.setCredentials(serverUrl, apiKey);
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       return await evolutionApi.sendMessage(instanceName, remoteJid, message);
     } catch (error) {
       console.error("Erro ao enviar mensagem Evolution:", error);

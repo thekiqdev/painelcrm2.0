@@ -6,12 +6,10 @@ import { toast } from "sonner";
 
 interface UseEvolutionChatProps {
   instanceName: string;
-  serverUrl: string;
-  apiKey: string;
   enabled: boolean;
 }
 
-export const useEvolutionChat = ({ instanceName, serverUrl, apiKey, enabled }: UseEvolutionChatProps) => {
+export const useEvolutionChat = ({ instanceName, enabled }: UseEvolutionChatProps) => {
   const [chats, setChats] = useState<EvolutionContact[]>([]);
   const [messages, setMessages] = useState<EvolutionMessage[]>([]);
   const [activeChat, setActiveChat] = useState<string | null>(null);
@@ -20,11 +18,11 @@ export const useEvolutionChat = ({ instanceName, serverUrl, apiKey, enabled }: U
 
   // Carregar conversas
   const loadChats = async () => {
-    if (!enabled || !instanceName || !serverUrl || !apiKey) return;
+    if (!enabled || !instanceName) return;
     
     try {
       setIsLoading(true);
-      const chatData = await whatsappService.getEvolutionChats(instanceName, serverUrl, apiKey);
+      const chatData = await whatsappService.getEvolutionChats(instanceName);
       setChats(chatData);
     } catch (error) {
       console.error("Erro ao carregar conversas:", error);
@@ -38,15 +36,13 @@ export const useEvolutionChat = ({ instanceName, serverUrl, apiKey, enabled }: U
 
   // Carregar mensagens de uma conversa
   const loadMessages = async (remoteJid: string) => {
-    if (!enabled || !instanceName || !serverUrl || !apiKey) return;
+    if (!enabled || !instanceName) return;
     
     try {
       setIsLoading(true);
       const messageData = await whatsappService.getEvolutionMessages(
         instanceName, 
-        remoteJid, 
-        serverUrl, 
-        apiKey
+        remoteJid
       );
       setMessages(messageData);
       setActiveChat(remoteJid);
@@ -62,16 +58,14 @@ export const useEvolutionChat = ({ instanceName, serverUrl, apiKey, enabled }: U
 
   // Enviar mensagem
   const sendMessage = async (remoteJid: string, message: string) => {
-    if (!enabled || !instanceName || !serverUrl || !apiKey) return;
+    if (!enabled || !instanceName) return;
     
     try {
       setIsSending(true);
       await whatsappService.sendEvolutionMessage(
         instanceName, 
         remoteJid, 
-        message, 
-        serverUrl, 
-        apiKey
+        message
       );
       
       // Recarregar mensagens após envio
@@ -93,7 +87,7 @@ export const useEvolutionChat = ({ instanceName, serverUrl, apiKey, enabled }: U
     if (enabled) {
       loadChats();
     }
-  }, [enabled, instanceName, serverUrl, apiKey]);
+  }, [enabled, instanceName]);
 
   return {
     chats,

@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,8 +13,10 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { InfoIcon } from "lucide-react";
-import { ConnectionType, ConnectionStatus } from "@/components/settings/types";
+import { InfoIcon, AlertCircle } from "lucide-react";
+import { ConnectionType } from "@/components/settings/types";
+import { evolutionApi } from "@/services/evolutionApi";
+import { toast } from "sonner";
 
 interface AddConnectionDialogProps {
   isOpen: boolean;
@@ -29,26 +31,57 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
 }) => {
   const [connectionName, setConnectionName] = useState("");
   const [connectionType, setConnectionType] = useState<ConnectionType>("qrcode");
-  const [evolutionApiKey, setEvolutionApiKey] = useState("");
-  const [evolutionInstanceId, setEvolutionInstanceId] = useState("");
   const [evolutionInstanceName, setEvolutionInstanceName] = useState("");
-  const [evolutionServerUrl, setEvolutionServerUrl] = useState("");
-  const [evolutionWebhookUrl, setEvolutionWebhookUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasActiveConfig, setHasActiveConfig] = useState(false);
+  const [availableInstances, setAvailableInstances] = useState<string[]>([]);
+  const [isLoadingInstances, setIsLoadingInstances] = useState(false);
+  
+  useEffect(() => {
+    const checkConfig = async () => {
+      try {
+        const config = await evolutionApi.getActiveConfig();
+        setHasActiveConfig(!!config);
+        
+        if (config) {
+          // Se tiver configuração, tenta listar as instâncias disponíveis
+          setIsLoadingInstances(true);
+          try {
+            evolutionApi.setCredentials(config.api_url, config.global_key);
+            const instances = await evolutionApi.listInstances();
+            setAvailableInstances(instances);
+          } catch (error) {
+            console.error("Erro ao listar instâncias:", error);
+          } finally {
+            setIsLoadingInstances(false);
+          }
+        }
+      } catch (error) {
+        console.error("Erro ao verificar configuração:", error);
+      }
+    };
+    
+    if (isOpen && connectionType === "evolution") {
+      checkConfig();
+    }
+  }, [isOpen, connectionType]);
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (connectionType === "evolution" && !hasActiveConfig) {
+      toast.error("Configuração necessária", {
+        description: "Configure primeiro a Evolution API em Configurações."
+      });
+      return;
+    }
     
     setIsSubmitting(true);
     
     let configData = {};
     if (connectionType === "evolution") {
       configData = {
-        apiKey: evolutionApiKey,
-        instanceId: evolutionInstanceId,
-        instanceName: evolutionInstanceName,
-        serverUrl: evolutionServerUrl,
-        webhookUrl: evolutionWebhookUrl
+        instanceName: evolutionInstanceName
       };
     }
     
@@ -57,19 +90,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     // Reset form
     setConnectionName("");
     setConnectionType("qrcode");
-    setEvolutionApiKey("");
-    setEvolutionInstanceId("");
     setEvolutionInstanceName("");
-    setEvolutionServerUrl("");
-    setEvolutionWebhookUrl("");
     setIsSubmitting(false);
-  };
-
-  const generateWebhookUrl = () => {
-    const baseUrl = window.location.origin;
-    const sanitizedName = connectionName.toLowerCase().replace(/[^a-z0-9]/g, '-');
-    const webhookUrl = `${baseUrl}/api/evolution-webhook/${sanitizedName}`;
-    setEvolutionWebhookUrl(webhookUrl);
   };
 
   return (
@@ -129,82 +151,55 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                 
                 <TabsContent value="evolution" className="pt-4">
                   <div className="space-y-4">
-                    <Alert>
-                      <InfoIcon className="h-4 w-4 mr-2" />
-                      <AlertDescription>
-                        Conecte usando a Evolution API (requer credenciais separadas)
-                      </AlertDescription>
-                    </Alert>
+                    {!hasActiveConfig ? (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4 mr-2" />
+                        <AlertDescription>
+                          Você precisa configurar a Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Evolution API.
+                        </AlertDescription>
+                      </Alert>
+                    ) : (
+                      <>
+                        <Alert>
+                          <InfoIcon className="h-4 w-4 mr-2" />
+                          <AlertDescription>
+                            Conecte usando a Evolution API configurada
+                          </AlertDescription>
+                        </Alert>
                     
-                    <div className="grid gap-2">
-                      <Label htmlFor="evolutionServerUrl">URL do Servidor Evolution API</Label>
-                      <Input
-                        id="evolutionServerUrl"
-                        placeholder="https://api.evolution.com"
-                        value={evolutionServerUrl}
-                        onChange={(e) => setEvolutionServerUrl(e.target.value)}
-                        required={connectionType === "evolution"}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        URL base do seu servidor Evolution API
-                      </p>
-                    </div>
-                    
-                    <div className="grid gap-2">
-                      <Label htmlFor="evolutionApiKey">API Key</Label>
-                      <Input
-                        id="evolutionApiKey"
-                        placeholder="Sua chave API da Evolution"
-                        value={evolutionApiKey}
-                        onChange={(e) => setEvolutionApiKey(e.target.value)}
-                        required={connectionType === "evolution"}
-                      />
-                    </div>
-                    
-                    <div className="grid gap-2">
-                      <Label htmlFor="evolutionInstanceName">Nome da Instância</Label>
-                      <Input
-                        id="evolutionInstanceName"
-                        placeholder="Nome da instância (ex: whatsapp)"
-                        value={evolutionInstanceName}
-                        onChange={(e) => setEvolutionInstanceName(e.target.value)}
-                        required={connectionType === "evolution"}
-                      />
-                    </div>
-                    
-                    <div className="grid gap-2">
-                      <Label htmlFor="evolutionInstanceId">ID da Instância</Label>
-                      <Input
-                        id="evolutionInstanceId"
-                        placeholder="ID da instância"
-                        value={evolutionInstanceId}
-                        onChange={(e) => setEvolutionInstanceId(e.target.value)}
-                        required={connectionType === "evolution"}
-                      />
-                    </div>
-                    
-                    <div className="grid gap-2">
-                      <Label htmlFor="evolutionWebhookUrl">URL do Webhook (para receber mensagens)</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          id="evolutionWebhookUrl"
-                          placeholder="URL do webhook para receber notificações"
-                          value={evolutionWebhookUrl}
-                          onChange={(e) => setEvolutionWebhookUrl(e.target.value)}
-                        />
-                        <Button 
-                          type="button" 
-                          variant="outline" 
-                          onClick={generateWebhookUrl}
-                          disabled={!connectionName}
-                        >
-                          Gerar
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Esta URL deve ser configurada na Evolution API para receber eventos e mensagens.
-                      </p>
-                    </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="evolutionInstanceName">Nome da Instância</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              list="instancesList"
+                              id="evolutionInstanceName"
+                              placeholder="Nome da instância (ex: whatsapp)"
+                              value={evolutionInstanceName}
+                              onChange={(e) => setEvolutionInstanceName(e.target.value)}
+                              required={connectionType === "evolution"}
+                            />
+                          </div>
+                          
+                          {availableInstances.length > 0 && (
+                            <datalist id="instancesList">
+                              {availableInstances.map((instance) => (
+                                <option key={instance} value={instance} />
+                              ))}
+                            </datalist>
+                          )}
+                          
+                          {isLoadingInstances && (
+                            <p className="text-xs text-muted-foreground">Carregando instâncias disponíveis...</p>
+                          )}
+                          
+                          {availableInstances.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {availableInstances.length} instâncias disponíveis. Selecione uma da lista ou crie uma nova.
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 </TabsContent>
               </Tabs>
@@ -215,7 +210,14 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             <Button variant="outline" type="button" onClick={onClose}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={isSubmitting || !connectionName || (connectionType === "evolution" && (!evolutionApiKey || !evolutionInstanceName || !evolutionInstanceId || !evolutionServerUrl))}>
+            <Button 
+              type="submit" 
+              disabled={
+                isSubmitting || 
+                !connectionName || 
+                (connectionType === "evolution" && (!evolutionInstanceName || !hasActiveConfig))
+              }
+            >
               {isSubmitting ? "Adicionando..." : "Adicionar Conexão"}
             </Button>
           </DialogFooter>

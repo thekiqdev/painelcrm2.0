@@ -143,6 +143,39 @@ export type Database = {
           },
         ]
       }
+      evolution_api_configs: {
+        Row: {
+          api_url: string
+          created_at: string
+          global_key: string
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          api_url: string
+          created_at?: string
+          global_key: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          api_url?: string
+          created_at?: string
+          global_key?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       funnel_stages: {
         Row: {
           color: string
