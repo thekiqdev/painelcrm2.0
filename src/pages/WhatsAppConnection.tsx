@@ -63,14 +63,23 @@ const WhatsAppConnection = () => {
           description: "Usando as credenciais fornecidas para conectar...",
         });
         
-        const result = await whatsappService.connectEvolution(instanceName, webhookUrl);
+        // Usar o método correto: createEvolutionInstance em vez de connectEvolution
+        const result = await whatsappService.createEvolutionInstance(instanceName, webhookUrl);
         
-        if (result.status === "connected") {
-          setConnectionStatus("connected");
-          toast({
-            title: "Conectado com sucesso!",
-            description: "Sua conta WhatsApp foi conectada via Evolution API",
-          });
+        if (result.success) {
+          // Após criar instância, obter QR code
+          const qrResult = await whatsappService.getEvolutionQRCode(instanceName);
+          
+          if (qrResult.success && qrResult.qrCode) {
+            setQrCode(qrResult.qrCode);
+            toast({
+              title: "QR Code gerado",
+              description: "Escaneie o QR code com o seu WhatsApp",
+            });
+            
+            // Iniciar polling para verificar conexão
+            startConnectionPolling(instanceName);
+          }
         }
       } else if (apiProvider === "webjs") {
         toast({
@@ -256,6 +265,41 @@ const WhatsAppConnection = () => {
     setWebhookUrl("");
     setIsEditing(false);
     setSelectedConnection(null);
+  };
+
+  const startConnectionPolling = (instanceName: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const result = await whatsappService.checkEvolutionConnection(instanceName);
+        
+        if (result.success && result.status === "connected") {
+          setConnectionStatus("connected");
+          setQrCode(null);
+          clearInterval(pollInterval);
+          
+          toast({
+            title: "Conectado com sucesso!",
+            description: "Sua conta WhatsApp foi conectada via Evolution API",
+          });
+        }
+      } catch (error) {
+        console.error("Erro ao verificar conexão:", error);
+      }
+    }, 5000); // Verificar a cada 5 segundos
+    
+    // Limpar polling após 5 minutos
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      if (connectionStatus === "connecting") {
+        toast({
+          title: "Timeout na conexão",
+          description: "QR Code expirou. Tente novamente.",
+          variant: "destructive",
+        });
+        setConnectionStatus("disconnected");
+        setQrCode(null);
+      }
+    }, 300000); // 5 minutos
   };
 
   useEffect(() => {

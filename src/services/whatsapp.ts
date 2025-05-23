@@ -161,6 +161,48 @@ export const whatsappService = {
       throw error;
     }
   },
+
+  // Método para obter conversas da Evolution API
+  getEvolutionChats: async (instanceName: string) => {
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      return await evolutionApi.getChats(instanceName);
+    } catch (error) {
+      console.error("Erro ao obter conversas Evolution:", error);
+      throw error;
+    }
+  },
+
+  // Método para obter mensagens da Evolution API
+  getEvolutionMessages: async (instanceName: string, remoteJid: string) => {
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      return await evolutionApi.getMessages(instanceName, remoteJid);
+    } catch (error) {
+      console.error("Erro ao obter mensagens Evolution:", error);
+      throw error;
+    }
+  },
+
+  // Método para enviar mensagem via Evolution API
+  sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string) => {
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      return await evolutionApi.sendMessage(instanceName, remoteJid, message);
+    } catch (error) {
+      console.error("Erro ao enviar mensagem Evolution:", error);
+      throw error;
+    }
+  },
   
   connectWebJS: async () => {
     const { data: { session } } = await supabase.auth.getSession();
