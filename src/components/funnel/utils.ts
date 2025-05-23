@@ -1,8 +1,6 @@
 
-// Precisamos criar este arquivo se não existir ou atualizar se existir
-// para garantir que todas as operações de funnel filtrem por user_id
 import { supabase } from "@/integrations/supabase/client";
-import { withUserId } from "@/utils/auth-helpers";
+import { withUserId, getUserProfiles } from "@/utils/auth-helpers";
 import { FunnelStage, SalesFunnel, Client } from "./types";
 
 // Interface para os dados do funil
@@ -12,6 +10,7 @@ export interface FunnelData {
   type: string;
   isDefault: boolean;
   source?: string;
+  profile_id?: string;
 }
 
 // Interface para os dados de estágios do funil
@@ -32,6 +31,7 @@ export const mapSupabaseToSalesFunnel = (data: any[]): SalesFunnel[] => {
     isDefault: item.is_default || false,
     createdAt: item.created_at,
     source: item.source || undefined,
+    profile_id: item.profile_id || undefined,
     stages: Array.isArray(item.stages) ? item.stages.map((stage: any) => ({
       id: stage.id,
       name: stage.name,
@@ -42,8 +42,8 @@ export const mapSupabaseToSalesFunnel = (data: any[]): SalesFunnel[] => {
   }));
 };
 
-// Buscar funis do usuário atual
-export const fetchFunnels = async () => {
+// Buscar funis do usuário atual e perfis relacionados
+export const fetchFunnels = async (profileId?: string) => {
   try {
     const userId = await withUserId({});
     
@@ -54,18 +54,39 @@ export const fetchFunnels = async () => {
     
     console.log("Buscando funis do usuário:", userId.user_id);
     
-    const { data, error } = await supabase
+    let query = supabase
       .from("sales_funnels")
-      .select("*, stages:funnel_stages(*)")
-      .eq("user_id", userId.user_id)
-      .order("created_at", { ascending: false });
+      .select("*, stages:funnel_stages(*)");
+      
+    if (profileId) {
+      // Se tiver um profileId, busca os funis desse perfil
+      console.log("Filtrando funis por perfil:", profileId);
+      query = query.eq("profile_id", profileId);
+    } else {
+      // Caso contrário, busca os funis pessoais do usuário ou de qualquer perfil que ele tenha acesso
+      const userProfiles = await getUserProfiles();
+      if (userProfiles && userProfiles.length > 0) {
+        const profileIds = userProfiles.map(profile => profile.id);
+        console.log("Filtrando funis pelos perfis:", profileIds);
+        
+        // Busca os funis pessoais ou de qualquer perfil do usuário
+        query = query.or(`user_id.eq.${userId.user_id},profile_id.in.(${profileIds.join(',')})`);
+      } else {
+        // Se não encontrar perfis, busca apenas os funis pessoais
+        query = query.eq("user_id", userId.user_id);
+      }
+    }
+    
+    query = query.order("created_at", { ascending: false });
+
+    const { data, error } = await query;
 
     if (error) {
       console.error("Erro ao buscar funis:", error);
       throw error;
     }
     
-    console.log(`Encontrados ${data?.length || 0} funis para o usuário ${userId.user_id}`);
+    console.log(`Encontrados ${data?.length || 0} funis`);
     return { success: true, data: mapSupabaseToSalesFunnel(data || []) };
   } catch (error: any) {
     console.error("Erro ao buscar funis:", error.message);

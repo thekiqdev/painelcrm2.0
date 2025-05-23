@@ -90,6 +90,82 @@ export async function getCurrentUserProfile() {
   }
 }
 
+// Função para buscar os perfis disponíveis para o usuário
+export async function getUserProfiles() {
+  try {
+    const userId = await getCurrentUserId();
+    if (!userId) return [];
+    
+    // Busca os perfis onde o usuário é dono
+    const { data: ownedProfiles, error: ownedError } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('owner_id', userId);
+      
+    if (ownedError) {
+      console.error('Erro ao buscar perfis do usuário:', ownedError);
+      return [];
+    }
+    
+    // Busca os perfis onde o usuário é membro
+    const { data: memberProfiles, error: memberError } = await supabase
+      .from('profile_members')
+      .select('profile_id, user_profiles(*)')
+      .eq('user_id', userId);
+      
+    if (memberError) {
+      console.error('Erro ao buscar associações de perfis:', memberError);
+      return ownedProfiles || [];
+    }
+    
+    // Combina os resultados (perfis próprios + perfis onde é membro)
+    const memberProfilesData = memberProfiles?.map(item => item.user_profiles) || [];
+    const allProfiles = [...(ownedProfiles || []), ...memberProfilesData];
+    
+    return allProfiles;
+  } catch (error) {
+    console.error('Erro ao obter perfis do usuário:', error);
+    return [];
+  }
+}
+
+// Função para verificar se o usuário tem uma determinada permissão em um perfil
+export async function checkPermission(profileId: string, permission: string): Promise<boolean> {
+  try {
+    const userId = await getCurrentUserId();
+    if (!userId) return false;
+    
+    // Verifica se o usuário é o dono do perfil
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('owner_id')
+      .eq('id', profileId)
+      .single();
+      
+    if (profile && profile.owner_id === userId) {
+      return true; // O dono tem todas as permissões
+    }
+    
+    // Verifica se o usuário tem a permissão específica
+    const { data, error } = await supabase
+      .from('user_permissions')
+      .select('*')
+      .eq('profile_id', profileId)
+      .eq('user_id', userId)
+      .or(`permission.eq.all_access,permission.eq.${permission}`);
+      
+    if (error) {
+      console.error('Erro ao verificar permissão:', error);
+      return false;
+    }
+    
+    return data && data.length > 0;
+  } catch (error) {
+    console.error('Erro ao verificar permissão:', error);
+    return false;
+  }
+}
+
 // Função para limpar o estado da sessão
 export async function clearAuthState() {
   try {

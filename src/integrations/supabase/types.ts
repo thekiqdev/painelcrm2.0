@@ -88,6 +88,7 @@ export type Database = {
           name: string
           notes: string | null
           phone: string | null
+          profile_id: string | null
           source: string | null
           status: string | null
           updated_at: string | null
@@ -103,6 +104,7 @@ export type Database = {
           name: string
           notes?: string | null
           phone?: string | null
+          profile_id?: string | null
           source?: string | null
           status?: string | null
           updated_at?: string | null
@@ -118,6 +120,7 @@ export type Database = {
           name?: string
           notes?: string | null
           phone?: string | null
+          profile_id?: string | null
           source?: string | null
           status?: string | null
           updated_at?: string | null
@@ -129,6 +132,13 @@ export type Database = {
             columns: ["group_id"]
             isOneToOne: false
             referencedRelation: "client_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clients_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -254,6 +264,7 @@ export type Database = {
           name: string
           notes: string | null
           phone: string | null
+          profile_id: string | null
           source: string
           status: string | null
           updated_at: string | null
@@ -267,6 +278,7 @@ export type Database = {
           name: string
           notes?: string | null
           phone?: string | null
+          profile_id?: string | null
           source?: string
           status?: string | null
           updated_at?: string | null
@@ -280,12 +292,56 @@ export type Database = {
           name?: string
           notes?: string | null
           phone?: string | null
+          profile_id?: string | null
           source?: string
           status?: string | null
           updated_at?: string | null
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "leads_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_members: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          profile_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          profile_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          profile_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -357,6 +413,7 @@ export type Database = {
           id: string
           is_default: boolean | null
           name: string
+          profile_id: string | null
           source: string | null
           type: string
           updated_at: string | null
@@ -368,6 +425,7 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name: string
+          profile_id?: string | null
           source?: string | null
           type: string
           updated_at?: string | null
@@ -379,10 +437,87 @@ export type Database = {
           id?: string
           is_default?: boolean | null
           name?: string
+          profile_id?: string | null
           source?: string | null
           type?: string
           updated_at?: string | null
           user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_funnels_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_permissions: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          permission: Database["public"]["Enums"]["permission_type"]
+          profile_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          permission: Database["public"]["Enums"]["permission_type"]
+          profile_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          permission?: Database["public"]["Enums"]["permission_type"]
+          profile_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_permissions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_profiles: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_admin: boolean
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_admin?: boolean
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_admin?: boolean
+          name?: string
+          owner_id?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -445,10 +580,31 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_permission: {
+        Args: {
+          profile_id: string
+          perm: Database["public"]["Enums"]["permission_type"]
+          user_id?: string
+        }
+        Returns: boolean
+      }
+      is_profile_member: {
+        Args: { profile_id: string; user_id?: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      permission_type:
+        | "all_access"
+        | "manage_clients"
+        | "view_clients"
+        | "manage_leads"
+        | "view_leads"
+        | "manage_funnels"
+        | "view_funnels"
+        | "manage_settings"
+        | "view_reports"
+        | "manage_users"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -563,6 +719,19 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      permission_type: [
+        "all_access",
+        "manage_clients",
+        "view_clients",
+        "manage_leads",
+        "view_leads",
+        "manage_funnels",
+        "view_funnels",
+        "manage_settings",
+        "view_reports",
+        "manage_users",
+      ],
+    },
   },
 } as const

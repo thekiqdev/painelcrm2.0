@@ -1,100 +1,83 @@
 
-import React, { useState, useEffect } from "react";
-import { toast } from "sonner";
-import { Building, Users, Globe, CreditCard, Bell, Settings as SettingsIcon, Shield, MessageSquare, UserRound, Target } from "lucide-react";
-import { useLocation } from "react-router-dom";
+import React, { useState } from "react";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { CompanyDataSection } from "@/components/settings/CompanyDataSection";
 import { UsersSection } from "@/components/settings/UsersSection";
-import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
-import { DomainSection } from "@/components/settings/DomainSection";
 import { BillingSection } from "@/components/settings/BillingSection";
 import { NotificationsSection } from "@/components/settings/NotificationsSection";
-import { PreferencesSection } from "@/components/settings/PreferencesSection";
 import { SecuritySection } from "@/components/settings/SecuritySection";
-import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
-import { ClientGroupsSection } from "@/components/settings/ClientGroupsSection";
+import { PreferencesSection } from "@/components/settings/PreferencesSection";
 import { LeadsSection } from "@/components/settings/LeadsSection";
-import { SettingsMenuItemProps } from "@/components/settings/types";
+import { ClientGroupsSection } from "@/components/settings/ClientGroupsSection";
+import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
+import { DomainSection } from "@/components/settings/DomainSection";
+import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
+import { UserManagementSection } from "@/components/settings/UserManagementSection";
+
+type SettingSection = 
+  | "companyData" 
+  | "users" 
+  | "userManagement"
+  | "billing" 
+  | "notifications" 
+  | "security" 
+  | "preferences" 
+  | "leadsConfig" 
+  | "clientGroups" 
+  | "collaborators" 
+  | "whatsapp" 
+  | "domain";
 
 const Settings = () => {
-  const [activeSettingsTab, setActiveSettingsTab] = useState("company");
-  const location = useLocation();
+  const [activeSection, setActiveSection] = useState<SettingSection>("companyData");
 
-  // Check for URL parameters on component mount
-  useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
-    const tabParam = searchParams.get("tab");
-    
-    // If tab parameter exists and is one of our valid tabs, set it as active
-    if (tabParam && ["company", "whatsapp", "users", "collaborators", "domain", 
-                     "billing", "notifications", "preferences", "security", "clients", "leads"].includes(tabParam)) {
-      setActiveSettingsTab(tabParam);
-    }
-  }, [location]);
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    toast.success("Configurações salvas com sucesso!");
-  };
-
-  // Define the settings menu items
-  const settingsMenuItems: SettingsMenuItemProps[] = [
-    { id: "company", label: "Dados da Empresa", icon: <Building className="mr-2 h-5 w-5" /> },
-    { id: "whatsapp", label: "WhatsApp", icon: <MessageSquare className="mr-2 h-5 w-5" /> },
-    { id: "users", label: "Usuários & Permissões", icon: <Users className="mr-2 h-5 w-5" /> },
-    { id: "collaborators", label: "Colaboradores", icon: <Users className="mr-2 h-5 w-5" /> },
-    { id: "clients", label: "Clientes", icon: <UserRound className="mr-2 h-5 w-5" /> },
-    { id: "leads", label: "Leads", icon: <Target className="mr-2 h-5 w-5" /> },
-    { id: "domain", label: "Domínio e URLs", icon: <Globe className="mr-2 h-5 w-5" /> },
-    { id: "billing", label: "Pagamentos e Faturamento", icon: <CreditCard className="mr-2 h-5 w-5" /> },
-    { id: "notifications", label: "Notificações", icon: <Bell className="mr-2 h-5 w-5" /> },
-    { id: "preferences", label: "Preferências Gerais", icon: <SettingsIcon className="mr-2 h-5 w-5" /> },
-    { id: "security", label: "Segurança", icon: <Shield className="mr-2 h-5 w-5" /> },
-  ];
-
-  // Render the content based on the active settings tab
-  const renderSettingsContent = () => {
-    switch (activeSettingsTab) {
-      case "company":
-        return <CompanyDataSection handleSave={handleSave} />;
-      case "whatsapp":
-        return <WhatsAppSection />;
+  // Renderizar a seção ativa
+  const renderActiveSection = () => {
+    switch (activeSection) {
+      case "companyData":
+        return <CompanyDataSection />;
       case "users":
         return <UsersSection />;
-      case "collaborators":
-        return <CollaboratorsSection />;
-      case "clients":
-        return <ClientGroupsSection handleSave={handleSave} />;
-      case "leads":
-        return <LeadsSection handleSave={handleSave} />;
-      case "domain":
-        return <DomainSection handleSave={handleSave} />;
+      case "userManagement":
+        return <UserManagementSection />;
       case "billing":
         return <BillingSection />;
       case "notifications":
-        return <NotificationsSection handleSave={handleSave} />;
-      case "preferences":
-        return <PreferencesSection handleSave={handleSave} />;
+        return <NotificationsSection />;
       case "security":
         return <SecuritySection />;
+      case "preferences":
+        return <PreferencesSection />;
+      case "leadsConfig":
+        return <LeadsSection />;
+      case "clientGroups":
+        return <ClientGroupsSection />;
+      case "collaborators":
+        return <CollaboratorsSection />;
+      case "whatsapp":
+        return <WhatsAppSection />;
+      case "domain":
+        return <DomainSection />;
       default:
-        return null;
+        return <CompanyDataSection />;
     }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Configurações</h1>
-        <SettingsMenu 
-          menuItems={settingsMenuItems}
-          activeTab={activeSettingsTab}
-          setActiveTab={setActiveSettingsTab}
-        />
+    <div className="container mx-auto py-6">
+      <h1 className="text-2xl font-bold mb-6">Configurações</h1>
+      
+      <div className="grid grid-cols-12 gap-6">
+        {/* Menu lateral */}
+        <div className="col-span-3">
+          <SettingsMenu activeSection={activeSection} onSelect={setActiveSection} />
+        </div>
+        
+        {/* Conteúdo da seção ativa */}
+        <div className="col-span-9">
+          {renderActiveSection()}
+        </div>
       </div>
-
-      {renderSettingsContent()}
     </div>
   );
 };
