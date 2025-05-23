@@ -66,7 +66,7 @@ export const fetchFunnels = async () => {
     }
     
     console.log(`Encontrados ${data?.length || 0} funis para o usuário ${userId.user_id}`);
-    return { success: true, data: mapSupabaseToSalesFunnel(data) };
+    return { success: true, data: mapSupabaseToSalesFunnel(data || []) };
   } catch (error: any) {
     console.error("Erro ao buscar funis:", error.message);
     return { success: false, error, data: [] };

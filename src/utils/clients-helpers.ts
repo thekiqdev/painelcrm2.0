@@ -85,7 +85,7 @@ export const fetchUserClients = async () => {
     if (error) throw error;
     
     console.log(`Encontrados ${data?.length || 0} clientes para o usuário ${userId}`);
-    return { success: true, data };
+    return { success: true, data: data || [] };
   } catch (error: any) {
     console.error("Erro ao buscar clientes:", error.message);
     return { success: false, error, data: [] };
@@ -108,7 +108,7 @@ export const fetchClientTasks = async (clientId: string) => {
       .order("created_at", { ascending: false });
 
     if (error) throw error;
-    return { success: true, data };
+    return { success: true, data: data || [] };
   } catch (error: any) {
     console.error("Erro ao buscar tarefas do cliente:", error.message);
     return { success: false, error, data: [] };

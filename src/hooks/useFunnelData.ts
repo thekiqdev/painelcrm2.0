@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { FunnelType, SalesFunnel, Deal } from "@/components/funnel/types";
 import { fetchFunnels, createFunnel } from "@/components/funnel/utils";
@@ -99,6 +100,8 @@ export function useFunnelData() {
   useEffect(() => {
     if (user) { // Só carrega os funis se o usuário estiver autenticado
       loadFunnels();
+    } else {
+      setIsLoading(false);
     }
   }, [user]); // Adicionado user como dependência
 
@@ -122,11 +125,11 @@ export function useFunnelData() {
         }
       } else {
         console.error("Erro no resultado da busca de funis:", result.error);
-        toast.error("Erro ao carregar funis");
+        toast.error("Erro ao carregar funis: " + (result.error?.message || "Erro desconhecido"));
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error loading funnels:", error);
-      toast.error("Erro ao carregar funis");
+      toast.error("Erro ao carregar funis: " + (error?.message || "Erro desconhecido"));
     } finally {
       setIsLoading(false);
     }
@@ -233,11 +236,11 @@ export function useFunnelData() {
         }, 300);
       } else {
         console.error("Erro ao criar funil:", result.error);
-        toast.error("Erro ao criar o funil. Tente novamente.");
+        toast.error("Erro ao criar o funil: " + (result.error?.message || "Tente novamente."));
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating funnel:", error);
-      toast.error("Erro ao criar o funil. Tente novamente.");
+      toast.error("Erro ao criar o funil: " + (error?.message || "Tente novamente."));
     } finally {
       setIsSubmitting(false);
     }
