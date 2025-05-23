@@ -1,14 +1,12 @@
 
 import React, { useState } from "react";
-import AddConnectionDialog from "@/components/whatsapp/AddConnectionDialog";
 import ConnectionPanel from "@/components/whatsapp/ConnectionPanel";
 import StatusPanel from "@/components/whatsapp/StatusPanel";
-import AdvancedSettings from "@/components/whatsapp/AdvancedSettings";
 import EvolutionApiConfigComponent from "@/components/whatsapp/EvolutionApiConfig";
 import useWhatsAppConnection from "@/components/whatsapp/useWhatsAppConnection";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageSquare, PhoneCall, Settings } from "lucide-react";
+import { MessageSquare, PhoneCall } from "lucide-react";
 
 export const WhatsAppSection = () => {
   const {
@@ -17,9 +15,6 @@ export const WhatsAppSection = () => {
     connectionStatus,
     qrCode,
     isLoading,
-    isDialogOpen,
-    setIsDialogOpen,
-    handleAddConnection,
     handleConnect,
     handleDisconnect,
     handleConfirmConnection
@@ -33,8 +28,7 @@ export const WhatsAppSection = () => {
       <Tabs defaultValue="connections" value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="connections">Conexões</TabsTrigger>
-          <TabsTrigger value="evolution">Evolution API</TabsTrigger>
-          <TabsTrigger value="settings">Configurações Avançadas</TabsTrigger>
+          <TabsTrigger value="settings">Configurações API</TabsTrigger>
         </TabsList>
         
         <TabsContent value="connections" className="pt-4 space-y-6">
@@ -45,7 +39,6 @@ export const WhatsAppSection = () => {
               qrCode={qrCode}
               connectionStatus={connectionStatus}
               isLoading={isLoading}
-              onAddConnectionClick={() => setIsDialogOpen(true)}
               handleConnect={handleConnect}
               handleDisconnect={handleDisconnect}
               handleConfirmConnection={handleConfirmConnection}
@@ -100,20 +93,10 @@ export const WhatsAppSection = () => {
           )}
         </TabsContent>
         
-        <TabsContent value="evolution" className="pt-4">
+        <TabsContent value="settings" className="pt-4">
           <EvolutionApiConfigComponent />
         </TabsContent>
-        
-        <TabsContent value="settings" className="pt-4">
-          <AdvancedSettings />
-        </TabsContent>
       </Tabs>
-      
-      <AddConnectionDialog
-        isOpen={isDialogOpen}
-        onClose={() => setIsDialogOpen(false)}
-        onAddConnection={handleAddConnection}
-      />
     </div>
   );
 };

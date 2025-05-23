@@ -8,7 +8,6 @@ import { Avatar } from "@/components/ui/avatar";
 import { UserCheck, Clock, Send } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Database } from "@/integrations/supabase/types";
 import { useNavigate } from "react-router-dom";
 import EvolutionChatPanel from "@/components/whatsapp/EvolutionChatPanel";
 
@@ -41,9 +40,7 @@ interface Connection {
   type: string;
   status: string;
   configData?: {
-    apiKey?: string;
     instanceName?: string;
-    serverUrl?: string;
   };
 }
 
@@ -272,13 +269,22 @@ const Chat = () => {
           </CardContent>
         </Card>
       ) : (
-        <Tabs defaultValue="mock" className="w-full">
+        <Tabs defaultValue={activeEvolutionConnection ? "evolution" : "mock"} className="w-full">
           <TabsList className="mb-4">
-            <TabsTrigger value="mock">Conversas Mock</TabsTrigger>
             {activeEvolutionConnection && (
               <TabsTrigger value="evolution">Evolution API</TabsTrigger>
             )}
+            <TabsTrigger value="mock">Conversas Mock</TabsTrigger>
           </TabsList>
+          
+          {activeEvolutionConnection && (
+            <TabsContent value="evolution">
+              <EvolutionChatPanel
+                instanceName={activeEvolutionConnection.configData?.instanceName || ""}
+                enabled={true}
+              />
+            </TabsContent>
+          )}
           
           <TabsContent value="mock">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
@@ -476,15 +482,6 @@ const Chat = () => {
               </Card>
             </div>
           </TabsContent>
-          
-          {activeEvolutionConnection && (
-            <TabsContent value="evolution">
-              <EvolutionChatPanel
-                instanceName={activeEvolutionConnection.configData?.instanceName || ""}
-                enabled={true}
-              />
-            </TabsContent>
-          )}
         </Tabs>
       )}
     </div>
