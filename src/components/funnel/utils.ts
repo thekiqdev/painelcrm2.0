@@ -8,7 +8,7 @@ export interface FunnelData {
   name: string;
   description?: string;
   type: string;
-  isDefault: boolean;
+  is_default: boolean; // Changed from isDefault to is_default
   source?: string;
   profile_id?: string;
 }
@@ -28,7 +28,7 @@ export const mapSupabaseToSalesFunnel = (data: any[]): SalesFunnel[] => {
     name: item.name,
     description: item.description || '',
     type: item.type,
-    isDefault: item.is_default || false,
+    isDefault: item.is_default || false, // Map is_default to isDefault
     createdAt: item.created_at,
     source: item.source || undefined,
     profile_id: item.profile_id || undefined,

@@ -208,7 +208,7 @@ export function useFunnelData() {
           name: newFunnelName,
           description: newFunnelDesc,
           type: newFunnelType,
-          isDefault: false,
+          is_default: false, // Changed from isDefault to is_default
           source: newFunnelSource || undefined,
         },
         defaultStages
