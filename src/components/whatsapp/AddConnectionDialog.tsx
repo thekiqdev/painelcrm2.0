@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -11,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { InfoIcon, CheckCircle2 } from "lucide-react";
 import { ConnectionType } from "@/components/settings/types";
@@ -38,6 +38,11 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [hasActiveConfig, setHasActiveConfig] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [instanceName, setInstanceName] = useState("");
+  
+  // Função para extrair apenas os números do telefone
+  const extractPhoneNumbers = (phone: string): string => {
+    return phone.replace(/\D/g, '');
+  };
   
   useEffect(() => {
     const checkConfig = async () => {
@@ -80,12 +85,16 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setCurrentStep("qrcode");
     
     try {
+      // Extrair apenas números do telefone
+      const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
+      
       // Limpar caracteres especiais do nome da conexão para criar o instanceName
       const cleanConnectionName = connectionName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-      const generatedInstanceName = `${cleanConnectionName}_${phoneNumber.replace(/\D/g, '')}`;
+      const generatedInstanceName = `${cleanConnectionName}_${cleanPhoneNumber}`;
       setInstanceName(generatedInstanceName);
       
       console.log("Criando instância com nome:", generatedInstanceName);
+      console.log("Número limpo:", cleanPhoneNumber);
       
       toast.info("Criando instância", {
         description: "Preparando conexão WhatsApp...",
@@ -96,7 +105,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       if (!config) throw new Error("Configuração não encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      const instanceResult = await evolutionApi.createInstance(generatedInstanceName, phoneNumber);
+      const instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
       
       console.log("Instância criada:", instanceResult);
       
@@ -203,7 +212,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const handleFinishConnection = () => {
     onAddConnection(connectionName, "evolution", {
       instanceName,
-      phoneNumber
+      phoneNumber: extractPhoneNumbers(phoneNumber)
     });
     onClose();
   };
@@ -276,15 +285,13 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               
               <div className="grid gap-2">
                 <Label htmlFor="phoneNumber">Número do WhatsApp</Label>
-                <Input
-                  id="phoneNumber"
-                  placeholder="Ex: 11999999999"
+                <PhoneInput
                   value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  onChange={setPhoneNumber}
                   required
                 />
                 <p className="text-xs text-muted-foreground">
-                  Insira o número sem código do país (será adicionado automaticamente o +55)
+                  Digite apenas os números do seu WhatsApp. O código do país (+55) será adicionado automaticamente.
                 </p>
               </div>
               
@@ -302,7 +309,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               </Button>
               <Button 
                 type="submit" 
-                disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveConfig}
+                disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveConfig || extractPhoneNumbers(phoneNumber).length < 10}
               >
                 {isSubmitting ? "Criando..." : "Próximo"}
               </Button>
