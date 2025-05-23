@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getCurrentUserId, getUserProfiles } from "@/utils/auth-helpers";
+import { SettingsSectionProps } from "./types";
 
 interface User {
   id: string;
@@ -48,7 +49,7 @@ type PermissionType =
   | "view_reports" 
   | "manage_users";
 
-export const UserManagementSection: React.FC = () => {
+export const UserManagementSection: React.FC<SettingsSectionProps> = ({ handleSave }) => {
   // State
   const [users, setUsers] = useState<User[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
