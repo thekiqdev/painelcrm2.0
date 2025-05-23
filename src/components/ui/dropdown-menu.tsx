@@ -1,4 +1,3 @@
-
 import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronRight, Circle } from "lucide-react"
@@ -180,54 +179,6 @@ const DropdownMenuShortcut = ({
 }
 DropdownMenuShortcut.displayName = "DropdownMenuShortcut"
 
-// Components para as abas
-const DropdownMenuTabs = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & {
-    value: string;
-    onValueChange: (value: string) => void;
-  }
->(({ className, children, value, onValueChange, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("w-full", className)}
-    data-value={value}
-    {...props}
-  >
-    {React.Children.map(children, (child) => {
-      if (React.isValidElement(child)) {
-        return React.cloneElement(child, { value, onValueChange } as any);
-      }
-      return child;
-    })}
-  </div>
-));
-DropdownMenuTabs.displayName = "DropdownMenuTabs";
-
-const DropdownMenuTab = React.forwardRef<
-  HTMLButtonElement,
-  React.ButtonHTMLAttributes<HTMLButtonElement> & {
-    value: string;
-    onValueChange?: (value: string) => void;
-  }
->(({ className, children, value: tabValue, value: currentValue, onValueChange, ...props }, ref) => (
-  <button
-    ref={ref}
-    className={cn(
-      "flex items-center justify-center px-3 py-2 text-sm font-medium transition-colors",
-      "hover:bg-accent hover:text-accent-foreground",
-      "focus:bg-accent focus:text-accent-foreground focus:outline-none",
-      currentValue === tabValue && "bg-accent text-accent-foreground",
-      className
-    )}
-    onClick={() => onValueChange?.(tabValue)}
-    {...props}
-  >
-    {children}
-  </button>
-));
-DropdownMenuTab.displayName = "DropdownMenuTab";
-
 export {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -244,6 +195,4 @@ export {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuRadioGroup,
-  DropdownMenuTabs,
-  DropdownMenuTab,
 }

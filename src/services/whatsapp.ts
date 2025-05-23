@@ -2,7 +2,38 @@ import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
 export const whatsappService = {
-  connectEvolution: async (instanceName: string) => {
+  connect: async (options?: { provider?: string, apiKey?: string, instanceId?: string }) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error("Não autenticado");
+    }
+    
+    let endpoint = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-connection/connect`;
+    
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${session.access_token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(options || {})
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Error response:", errorText);
+      try {
+        const error = JSON.parse(errorText);
+        throw new Error(error.error || "Falha ao conectar WhatsApp");
+      } catch (e) {
+        throw new Error("Falha ao conectar WhatsApp: " + errorText.substring(0, 100));
+      }
+    }
+    
+    return await response.json();
+  },
+  
+  connectEvolution: async (instanceName: string, webhookUrl?: string) => {
     try {
       // Obter a configuração ativa da Evolution API
       const config = await evolutionApi.getActiveConfig();
@@ -10,80 +41,46 @@ export const whatsappService = {
         throw new Error("Nenhuma configuração da Evolution API encontrada. Configure primeiro em Configurações.");
       }
       
-      console.log("Using Evolution API config:", {
-        url: config.api_url,
-        key: `${config.global_key.substring(0, 3)}...`,
-        instanceName
-      });
-      
       // Configurar credenciais da Evolution API
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      // Primeiro, verificar se a instância já existe
-      console.log("Checking if instance exists:", instanceName);
-      let instanceExists = false;
-      
+      // Criar instância se não existir
+      let instanceData;
       try {
-        const status = await evolutionApi.getInstanceStatus(instanceName);
-        console.log("Instance already exists with status:", status);
-        instanceExists = true;
-        
-        // Se a instância já existe e está aberta (conectada), retornar como conectado
-        if (status.instance.state === "open") {
-          return {
-            status: "connected",
-            provider: "evolution",
-            instanceName
-          };
-        }
+        instanceData = await evolutionApi.createInstance(instanceName, webhookUrl);
       } catch (error) {
-        console.log("Instance does not exist, will create new one");
-        instanceExists = false;
+        // Se a instância já existe, tentar conectar
+        console.log("Instância pode já existir, tentando conectar...");
       }
       
-      // Criar instância apenas se não existir
-      if (!instanceExists) {
-        console.log("Creating new instance:", instanceName);
-        try {
-          const createResult = await evolutionApi.createInstance(instanceName);
-          console.log("Instance creation result:", createResult);
-          
-          // Aguardar um pouco para garantir que a instância foi criada
-          console.log("Waiting for instance to be ready...");
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          
-          // Verificar se a instância foi criada com sucesso
-          let retries = 0;
-          const maxRetries = 5;
-          
-          while (retries < maxRetries) {
-            try {
-              const verifyStatus = await evolutionApi.getInstanceStatus(instanceName);
-              console.log(`Instance verification attempt ${retries + 1}:`, verifyStatus);
-              break;
-            } catch (verifyError) {
-              retries++;
-              console.log(`Instance verification failed, attempt ${retries}/${maxRetries}`);
-              if (retries < maxRetries) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-              } else {
-                throw new Error(`Falha ao verificar se a instância ${instanceName} foi criada após ${maxRetries} tentativas`);
-              }
-            }
-          }
-        } catch (createError) {
-          console.error("Error creating instance:", createError);
-          throw new Error(`Falha ao criar instância: ${createError instanceof Error ? createError.message : 'Erro desconhecido'}`);
-        }
+      // Conectar à instância (gerar QR code)
+      const connectionResult = await evolutionApi.connectInstance(instanceName);
+      
+      // Salvar dados da conexão no Supabase
+      const { error: dbError } = await supabase
+        .from("whatsapp_connections")
+        .upsert({
+          user_id: (await supabase.auth.getUser()).data.user?.id,
+          status: connectionResult.qrcode ? "awaiting_scan" : "connected",
+          provider: "evolution",
+          config_data: {
+            instanceName,
+            serverUrl: config.api_url,
+            hasWebhook: !!webhookUrl
+          },
+          qr_code: connectionResult.qrcode?.base64 || null,
+          updated_at: new Date().toISOString()
+        });
+      
+      if (dbError) {
+        console.error("Erro ao salvar no banco:", dbError);
       }
       
-      // Retornar que a instância foi criada mas ainda não conectada
-      // O QR code será gerado em uma etapa separada
       return {
-        status: "disconnected", // Instância criada mas não conectada
+        status: connectionResult.qrcode ? "connecting" : "connected",
+        qrCode: connectionResult.qrcode?.base64,
         provider: "evolution",
-        instanceName,
-        message: "Instância criada com sucesso. Clique em 'Conectar' para gerar o QR code."
+        instanceName
       };
       
     } catch (error) {
@@ -92,93 +89,128 @@ export const whatsappService = {
     }
   },
   
-  disconnectEvolution: async (instanceName: string) => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) {
-        throw new Error("Nenhuma configuração da Evolution API encontrada.");
-      }
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      
-      try {
-        // Tente fazer logout da instância
-        await evolutionApi.logoutInstance(instanceName);
-      } catch (error) {
-        console.warn("Erro ao fazer logout da instância:", error);
-        // Continue mesmo se houver erro no logout
-      }
-      
-      // Atualize o status no banco de dados
-      const { error: dbError } = await supabase
-        .from("whatsapp_connections")
-        .update({
-          status: "disconnected",
-          updated_at: new Date().toISOString()
-        })
-        .eq("user_id", (await supabase.auth.getUser()).data.user?.id);
-      
-      if (dbError) {
-        console.error("Erro ao atualizar status no banco:", dbError);
-      }
-      
-      return { success: true };
-    } catch (error) {
-      console.error("Erro ao desconectar Evolution:", error);
-      throw error;
+  connectWebJS: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error("Não autenticado");
     }
+    
+    // Endpoint para conexão usando whatsapp-web.js
+    const endpoint = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-connection/connect-webjs`;
+    
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${session.access_token}`,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Error response:", errorText);
+      try {
+        const error = JSON.parse(errorText);
+        throw new Error(error.error || "Falha ao conectar WhatsApp via Web.js");
+      } catch (e) {
+        throw new Error("Falha ao conectar WhatsApp: " + errorText.substring(0, 100));
+      }
+    }
+    
+    return await response.json();
   },
   
-  confirmEvolutionConnection: async (instanceName: string) => {
-    try {
-      // Atualize o status no banco de dados
-      const { error: dbError } = await supabase
-        .from("whatsapp_connections")
-        .update({
-          status: "connected",
-          updated_at: new Date().toISOString()
-        })
-        .eq("user_id", (await supabase.auth.getUser()).data.user?.id);
-      
-      if (dbError) {
-        console.error("Erro ao atualizar status no banco:", dbError);
-      }
-      
-      return { success: true };
-    } catch (error) {
-      console.error("Erro ao confirmar conexão Evolution:", error);
-      throw error;
+  disconnect: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error("Não autenticado");
     }
+    
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-connection/disconnect`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${session.access_token}`,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Error response:", errorText);
+      try {
+        const error = JSON.parse(errorText);
+        throw new Error(error.error || "Falha ao desconectar WhatsApp");
+      } catch (e) {
+        throw new Error("Falha ao desconectar WhatsApp: " + errorText.substring(0, 100));
+      }
+    }
+    
+    return await response.json();
+  },
+  
+  confirmConnection: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error("Não autenticado");
+    }
+    
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-connection/confirm`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${session.access_token}`,
+        "Content-Type": "application/json"
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Error response:", errorText);
+      try {
+        const error = JSON.parse(errorText);
+        throw new Error(error.error || "Falha ao confirmar conexão WhatsApp");
+      } catch (e) {
+        throw new Error("Falha ao confirmar conexão WhatsApp: " + errorText.substring(0, 100));
+      }
+    }
+    
+    return await response.json();
+  },
+  
+  getStatus: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      throw new Error("Não autenticado");
+    }
+    
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-connection/status`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${session.access_token}`,
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Error response:", errorText);
+      try {
+        const error = JSON.parse(errorText);
+        throw new Error(error.error || "Falha ao obter status do WhatsApp");
+      } catch (e) {
+        throw new Error("Falha ao obter status do WhatsApp: " + errorText.substring(0, 100));
+      }
+    }
+    
+    return await response.json();
   },
 
-  // Método para obter configuração ativa (sem expor credenciais)
-  getEvolutionConfig: async () => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) {
-        throw new Error("Nenhuma configuração da Evolution API encontrada. Configure primeiro em Configurações.");
-      }
-      return {
-        hasConfig: true,
-        configName: config.name
-      };
-    } catch (error) {
-      console.error("Erro ao obter configuração:", error);
-      return null;
-    }
-  },
-
-  // Verificar status da instância Evolution
+  // Métodos específicos para Evolution API com configuração do banco
   checkEvolutionStatus: async (instanceName: string) => {
     try {
-      console.log("Checking status for instance:", instanceName);
       const config = await evolutionApi.getActiveConfig();
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      const status = await evolutionApi.getInstanceStatus(instanceName);
-      console.log("Instance status:", status);
-      return status;
+      return await evolutionApi.getInstanceStatus(instanceName);
     } catch (error) {
       console.error("Erro ao verificar status Evolution:", error);
       throw error;
@@ -191,20 +223,7 @@ export const whatsappService = {
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      
-      // Primeiro, conectar à instância para gerar o QR code
-      console.log("Connecting to instance to generate QR code:", instanceName);
-      const connectionResult = await evolutionApi.connectInstance(instanceName);
-      console.log("Connection result:", connectionResult);
-      
-      if (connectionResult.qrcode?.base64) {
-        return {
-          qrcode: connectionResult.qrcode,
-          status: "connecting"
-        };
-      } else {
-        throw new Error("Falha ao gerar QR code");
-      }
+      return await evolutionApi.getQRCode(instanceName);
     } catch (error) {
       console.error("Erro ao obter QR code Evolution:", error);
       throw error;
@@ -220,19 +239,6 @@ export const whatsappService = {
       return await evolutionApi.listInstances();
     } catch (error) {
       console.error("Erro ao listar instâncias Evolution:", error);
-      throw error;
-    }
-  },
-
-  deleteEvolutionInstance: async (instanceName: string) => {
-    try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.deleteInstance(instanceName);
-    } catch (error) {
-      console.error("Erro ao deletar instância Evolution:", error);
       throw error;
     }
   },

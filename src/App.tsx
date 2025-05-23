@@ -1,4 +1,3 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -29,7 +28,6 @@ import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
 import FunnelDetails from "./pages/FunnelDetails";
 import ProposalDetails from "./pages/ProposalDetails";
-import WhatsAppConnection from "./pages/WhatsAppConnection";
 
 const queryClient = new QueryClient();
 
@@ -43,7 +41,8 @@ const App = () => (
           <Routes>
             <Route path="/" element={<AuthWhatsApp />} />
             
-            <Route path="/register" element={<AuthLayout>{<Register />}</AuthLayout>} />
+            {/* Alterado: a página de registro não precisa de AuthGuard */}
+            <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
             
             <Route path="/register/steps" element={
               <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
@@ -52,87 +51,83 @@ const App = () => (
                 </AuthLayout>
               </AuthGuard>
             } />
-            <Route path="/login" element={<AuthLayout>{<AuthWhatsApp />}</AuthLayout>} />
+            <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
             
+            {/* Protected routes */}
             <Route path="/dashboard" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Dashboard />}</AppLayout>
+                <AppLayout><Dashboard /></AppLayout>
               </AuthGuard>
             } />
             
             <Route path="/clients" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Clients />}</AppLayout>
+                <AppLayout><Clients /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/leads" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Leads />}</AppLayout>
+                <AppLayout><Leads /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Funnel />}</AppLayout>
+                <AppLayout><Funnel /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel/:funnelId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<FunnelDetails />}</AppLayout>
+                <AppLayout><FunnelDetails /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel/:funnelId/stage/:stageId/proposal/:proposalId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<ProposalDetails />}</AppLayout>
+                <AppLayout><ProposalDetails /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/projects" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Projects />}</AppLayout>
+                <AppLayout><Projects /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/tasks" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Tasks />}</AppLayout>
+                <AppLayout><Tasks /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Products />}</AppLayout>
+                <AppLayout><Products /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/proposals" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Proposals />}</AppLayout>
+                <AppLayout><Proposals /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/contracts" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Contracts />}</AppLayout>
+                <AppLayout><Contracts /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/billing" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Billing />}</AppLayout>
+                <AppLayout><Billing /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/finance" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Finance />}</AppLayout>
+                <AppLayout><Finance /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/chat" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Chat />}</AppLayout>
+                <AppLayout><Chat /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/settings" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<Settings />}</AppLayout>
-              </AuthGuard>
-            } />
-            <Route path="/whatsapp" element={
-              <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout>{<WhatsAppConnection />}</AppLayout>
+                <AppLayout><Settings /></AppLayout>
               </AuthGuard>
             } />
             

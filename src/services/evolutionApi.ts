@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 
 export interface EvolutionInstance {
@@ -191,105 +192,63 @@ class EvolutionApiService {
 
   // Criar uma nova instância
   async createInstance(instanceName: string, webhookUrl?: string): Promise<EvolutionInstance> {
-    console.log(`Creating instance: ${instanceName} with URL: ${this.baseUrl}/instance/create`);
-    
-    const requestBody = {
-      instanceName,
-      qrcode: true,
-      integration: "WHATSAPP-BAILEYS",
-      webhook: webhookUrl || "",
-      webhook_by_events: !!webhookUrl,
-      events: [
-        "APPLICATION_STARTUP",
-        "QRCODE_UPDATED", 
-        "MESSAGES_UPSERT",
-        "MESSAGES_UPDATE",
-        "SEND_MESSAGE",
-        "CONTACTS_UPDATE",
-        "PRESENCE_UPDATE",
-        "CHATS_UPDATE",
-        "CONNECTION_UPDATE"
-      ]
-    };
-    
-    console.log("Request payload:", JSON.stringify(requestBody, null, 2));
-    
-    try {
-      const response = await fetch(`${this.baseUrl}/instance/create`, {
-        method: "POST",
-        headers: this.getHeaders(),
-        body: JSON.stringify(requestBody),
-      });
-
-      console.log("Create instance response status:", response.status);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Error response:", errorText);
-        
-        // Verificar se o erro é porque a instância já existe
-        if (errorText.includes("already exists") || errorText.includes("já existe")) {
-          console.log("Instance already exists, this is OK");
-          return {
-            instanceName,
-            instanceId: instanceName,
-            status: "close",
-            serverUrl: this.baseUrl,
-            apiKey: this.apiKey,
-          };
-        }
-        
-        throw new Error(`Erro ao criar instância: ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log("Create instance response:", data);
-      
-      return {
+    const response = await fetch(`${this.baseUrl}/instance/create`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify({
         instanceName,
-        instanceId: data.instance?.instanceId || instanceName,
-        status: "close",
-        serverUrl: this.baseUrl,
-        apiKey: this.apiKey,
-        ...data
-      };
-    } catch (error) {
-      console.error("Error creating instance:", error);
-      throw error;
+        token: this.apiKey,
+        qrcode: true,
+        number: "",
+        webhook: webhookUrl,
+        webhook_by_events: false,
+        events: [
+          "APPLICATION_STARTUP",
+          "QRCODE_UPDATED",
+          "MESSAGES_UPSERT",
+          "MESSAGES_UPDATE",
+          "SEND_MESSAGE",
+          "CONTACTS_UPDATE",
+          "PRESENCE_UPDATE",
+          "CHATS_UPDATE",
+          "CONNECTION_UPDATE"
+        ]
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Erro ao criar instância: ${errorText}`);
     }
+
+    const data = await response.json();
+    return {
+      instanceName,
+      instanceId: data.instance?.instanceId || instanceName,
+      status: "close",
+      serverUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      ...data
+    };
   }
 
   // Conectar instância (gerar QR code)
   async connectInstance(instanceName: string): Promise<{ qrcode?: { base64: string; code: string }; status: string }> {
-    console.log(`Connecting to instance: ${instanceName} at URL: ${this.baseUrl}/instance/connect/${instanceName}`);
-    
-    try {
-      const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
-        method: "GET",
-        headers: this.getHeaders(),
-      });
+    const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
+      method: "GET",
+      headers: this.getHeaders(),
+    });
 
-      console.log("Connect instance response status:", response.status);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Connect instance error response:", errorText);
-        throw new Error(`Erro ao conectar instância: ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log("Connect instance response data:", data);
-      return data;
-    } catch (error) {
-      console.error("Error connecting to instance:", error);
-      throw error;
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Erro ao conectar instância: ${errorText}`);
     }
+
+    return await response.json();
   }
 
   // Obter status da instância
   async getInstanceStatus(instanceName: string): Promise<{ instance: { state: string; status: string } }> {
-    console.log(`Getting status for instance: ${instanceName}`);
-    
     const response = await fetch(`${this.baseUrl}/instance/connectionState/${instanceName}`, {
       method: "GET",
       headers: this.getHeaders(),
@@ -297,15 +256,13 @@ class EvolutionApiService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Get status error response:", errorText);
       throw new Error(`Erro ao obter status da instância: ${errorText}`);
     }
 
-    const data = await response.json();
-    console.log("Instance status response:", data);
-    return data;
+    return await response.json();
   }
 
+  // Obter QR code da instância
   async getQRCode(instanceName: string): Promise<{ qrcode: { base64: string; code: string } }> {
     const response = await fetch(`${this.baseUrl}/instance/qrcode/${instanceName}`, {
       method: "GET",
@@ -320,6 +277,7 @@ class EvolutionApiService {
     return await response.json();
   }
 
+  // Listar todas as instâncias
   async listInstances(): Promise<string[]> {
     const response = await fetch(`${this.baseUrl}/instance/fetchInstances`, {
       method: "GET",
@@ -335,6 +293,7 @@ class EvolutionApiService {
     return data.instances || [];
   }
 
+  // Listar conversas
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
     const response = await fetch(`${this.baseUrl}/chat/findChats/${instanceName}`, {
       method: "GET",
@@ -349,6 +308,7 @@ class EvolutionApiService {
     return await response.json();
   }
 
+  // Obter mensagens de uma conversa
   async getMessages(instanceName: string, remoteJid: string, limit: number = 50): Promise<EvolutionMessage[]> {
     const response = await fetch(`${this.baseUrl}/chat/findMessages/${instanceName}`, {
       method: "POST",
@@ -370,6 +330,7 @@ class EvolutionApiService {
     return data.messages || [];
   }
 
+  // Enviar mensagem
   async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/message/sendText/${instanceName}`, {
       method: "POST",
@@ -390,6 +351,7 @@ class EvolutionApiService {
     return await response.json();
   }
 
+  // Deletar instância
   async deleteInstance(instanceName: string): Promise<void> {
     const response = await fetch(`${this.baseUrl}/instance/delete/${instanceName}`, {
       method: "DELETE",
@@ -402,6 +364,7 @@ class EvolutionApiService {
     }
   }
 
+  // Logout da instância
   async logoutInstance(instanceName: string): Promise<void> {
     const response = await fetch(`${this.baseUrl}/instance/logout/${instanceName}`, {
       method: "DELETE",
