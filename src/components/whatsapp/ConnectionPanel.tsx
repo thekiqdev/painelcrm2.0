@@ -1,28 +1,18 @@
-
 import React, { useState } from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, QrCode } from "lucide-react";
-
-interface Connection {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  configData?: {
-    instanceName?: string;
-  };
-}
+import { Connection, ConnectionStatus } from "@/components/settings/types";
 
 interface ConnectionPanelProps {
   connections: Connection[];
   activeConnection: Connection | null;
   qrCode: string | null;
-  connectionStatus: "disconnected" | "connecting" | "connected";
+  connectionStatus: ConnectionStatus;
   isLoading: boolean;
-  handleConnect: (connection: Connection | { id: string; name: string; type: string; configData: { instanceName: string } }) => void;
+  handleConnect: (connection: Connection) => void;
   handleDisconnect: () => void;
   handleConfirmConnection: () => void;
 }
@@ -43,10 +33,11 @@ const ConnectionPanel: React.FC<ConnectionPanelProps> = ({
     e.preventDefault();
     if (!instanceName.trim()) return;
     
-    const newConnection = {
+    const newConnection: Connection = {
       id: `conn_${Date.now()}`,
       name: `Evolution API: ${instanceName}`,
       type: "evolution",
+      status: "disconnected",
       configData: {
         instanceName
       }

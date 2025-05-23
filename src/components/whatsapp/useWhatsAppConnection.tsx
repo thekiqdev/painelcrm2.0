@@ -3,13 +3,14 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { whatsappService } from "@/services/whatsapp";
+import { ConnectionType } from "@/components/settings/types";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
 export interface Connection {
   id: string;
   name: string;
-  type: string;
+  type: ConnectionType;
   status: ConnectionStatus;
   configData?: {
     instanceName?: string;

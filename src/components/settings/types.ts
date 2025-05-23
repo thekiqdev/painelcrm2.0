@@ -11,7 +11,7 @@ export interface SettingsSectionProps {
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
-export type ConnectionType = "qrcode" | "evolution" | "webjs";
+export type ConnectionType = "evolution";
 
 export interface Connection {
   id: string;

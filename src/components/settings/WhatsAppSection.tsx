@@ -7,6 +7,7 @@ import useWhatsAppConnection from "@/components/whatsapp/useWhatsAppConnection";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageSquare, PhoneCall } from "lucide-react";
+import { Connection } from "@/components/settings/types";
 
 export const WhatsAppSection = () => {
   const {

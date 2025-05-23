@@ -3,7 +3,7 @@ import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
-import { ConnectionStatus as ConnectionStatusType, Connection } from "@/components/settings/types";
+import { Connection, ConnectionStatus as ConnectionStatusType } from "@/components/settings/types";
 
 interface StatusPanelProps {
   connectionStatus: ConnectionStatusType;

@@ -10,6 +10,7 @@ import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { whatsappService } from "@/services/whatsapp";
+import { evolutionApi } from "@/services/evolutionApi";
 
 interface ConnectionConfig {
   instanceName?: string;
@@ -21,7 +22,7 @@ const WhatsAppConnection = () => {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [instanceName, setInstanceName] = useState<string>("");
   const [webhookUrl, setWebhookUrl] = useState<string>("");
-  const [apiProvider, setApiProvider] = useState<"default" | "evolution" | "webjs">("default");
+  const [apiProvider, setApiProvider] = useState<"evolution">("evolution");
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [savedConnections, setSavedConnections] = useState<Array<{
     id: string;
@@ -63,7 +64,7 @@ const WhatsAppConnection = () => {
           description: "Usando as credenciais fornecidas para conectar...",
         });
         
-        const result = await whatsappService.connectEvolution(instanceName, webhookUrl);
+        const result = await whatsappService.connectEvolution(instanceName);
         
         if (result.status === "connected") {
           setConnectionStatus("connected");
@@ -71,48 +72,15 @@ const WhatsAppConnection = () => {
             title: "Conectado com sucesso!",
             description: "Sua conta WhatsApp foi conectada via Evolution API",
           });
-        }
-      } else if (apiProvider === "webjs") {
-        toast({
-          title: "Conectando via WhatsApp Web.js",
-          description: "Gerando QR code para conexão...",
-        });
-        
-        const result = await whatsappService.connectWebJS();
-        
-        if (result.status === "connecting" && result.qrCode) {
+        } else if (result.qrCode) {
           setQrCode(result.qrCode);
           toast({
             title: "QR Code gerado",
             description: "Escaneie o QR code com o seu WhatsApp",
-          });
-        } else if (result.status === "connected") {
-          setConnectionStatus("connected");
-          setQrCode(null);
-          toast({
-            title: "Conectado com sucesso!",
-            description: "Sua conta WhatsApp foi conectada via WhatsApp Web.js",
           });
         }
       } else {
-        const result = await whatsappService.connect({ provider: apiProvider });
-        
-        if (result.status === "connecting" && result.qrCode) {
-          setQrCode(result.qrCode);
-          toast({
-            title: "QR Code gerado",
-            description: "Escaneie o QR code com o seu WhatsApp",
-          });
-        } else if (result.status === "connected") {
-          setConnectionStatus("connected");
-          setQrCode(null);
-          toast({
-            title: "Conectado com sucesso!",
-            description: "Sua conta WhatsApp foi conectada",
-          });
-        } else {
-          throw new Error("Resposta inesperada do servidor");
-        }
+        throw new Error("Provedor de API não suportado");
       }
     } catch (error) {
       console.error("Erro ao conectar:", error);
@@ -127,7 +95,9 @@ const WhatsAppConnection = () => {
   
   const handleDisconnect = async () => {
     try {
-      await whatsappService.disconnect();
+      if (apiProvider === "evolution" && instanceName) {
+        await whatsappService.disconnectEvolution(instanceName);
+      }
       setConnectionStatus("disconnected");
       setQrCode(null);
       toast({
@@ -146,7 +116,9 @@ const WhatsAppConnection = () => {
 
   const handleConfirmConnection = async () => {
     try {
-      await whatsappService.confirmConnection();
+      if (apiProvider === "evolution" && instanceName) {
+        await whatsappService.confirmEvolutionConnection(instanceName);
+      }
       setConnectionStatus("connected");
       setQrCode(null);
       toast({
@@ -262,14 +234,16 @@ const WhatsAppConnection = () => {
     if (qrCode && connectionStatus === "connecting") {
       const timer = setTimeout(async () => {
         try {
-          const status = await whatsappService.getStatus();
-          if (status.connected || status.status === "connected") {
-            setConnectionStatus("connected");
-            setQrCode(null);
-            toast({
-              title: "Conectado com sucesso!",
-              description: "Sua conta WhatsApp foi conectada",
-            });
+          if (apiProvider === "evolution" && instanceName) {
+            const status = await whatsappService.checkEvolutionStatus(instanceName);
+            if (status.instance.state === "open") {
+              setConnectionStatus("connected");
+              setQrCode(null);
+              toast({
+                title: "Conectado com sucesso!",
+                description: "Sua conta WhatsApp foi conectada",
+              });
+            }
           }
         } catch (error) {
           console.error("Erro ao verificar status:", error);
@@ -278,7 +252,7 @@ const WhatsAppConnection = () => {
       
       return () => clearTimeout(timer);
     }
-  }, [qrCode, connectionStatus, toast]);
+  }, [qrCode, connectionStatus, toast, apiProvider, instanceName]);
 
   return (
     <div className="container mx-auto py-6">
