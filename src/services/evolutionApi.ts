@@ -1,4 +1,4 @@
-import { getActiveConfig } from "../config";
+import { getActiveConfig, getAllConfigs, saveConfig, updateConfig, deleteConfig, setActiveConfig, type EvolutionApiConfig } from "../config";
 
 export interface EvolutionConfig {
   id: string;
@@ -87,12 +87,63 @@ class EvolutionAPI {
     console.log("Credenciais Evolution API configuradas:", { baseUrl, hasKey: !!globalKey });
   }
 
-  async getActiveConfig(): Promise<EvolutionConfig | null> {
+  // Métodos de configuração
+  async getActiveConfig(): Promise<EvolutionApiConfig | null> {
     try {
       return await getActiveConfig();
     } catch (error) {
       console.error("Erro ao obter configuração ativa:", error);
       return null;
+    }
+  }
+
+  async getAllConfigs(): Promise<EvolutionApiConfig[]> {
+    try {
+      return await getAllConfigs();
+    } catch (error) {
+      console.error("Erro ao obter todas as configurações:", error);
+      return [];
+    }
+  }
+
+  async saveConfig(name: string, apiUrl: string, globalKey: string): Promise<EvolutionApiConfig | null> {
+    try {
+      return await saveConfig(name, apiUrl, globalKey);
+    } catch (error) {
+      console.error("Erro ao salvar configuração:", error);
+      throw error;
+    }
+  }
+
+  async updateConfig(id: string, updates: Partial<EvolutionApiConfig>): Promise<EvolutionApiConfig | null> {
+    try {
+      return await updateConfig(id, updates);
+    } catch (error) {
+      console.error("Erro ao atualizar configuração:", error);
+      throw error;
+    }
+  }
+
+  async deleteConfig(id: string): Promise<boolean> {
+    try {
+      return await deleteConfig(id);
+    } catch (error) {
+      console.error("Erro ao deletar configuração:", error);
+      throw error;
+    }
+  }
+
+  async setActiveConfig(id: string): Promise<boolean> {
+    try {
+      const result = await setActiveConfig(id);
+      if (result) {
+        // Recarregar configuração após definir como ativa
+        await this.loadConfig();
+      }
+      return result;
+    } catch (error) {
+      console.error("Erro ao definir configuração ativa:", error);
+      throw error;
     }
   }
 
@@ -164,6 +215,19 @@ class EvolutionAPI {
       console.error("Erro ao obter QR Code:", error);
       throw error;
     }
+  }
+
+  // Adicionar os métodos faltantes para chat
+  async getChats(instanceName: string, instanceApiKey?: string): Promise<EvolutionContact[]> {
+    return this.findChats(instanceName, instanceApiKey);
+  }
+
+  async getMessages(instanceName: string, remoteJid: string, limit: number = 50, instanceApiKey?: string): Promise<EvolutionMessage[]> {
+    return this.findMessages(instanceName, { remoteJid, limit }, instanceApiKey);
+  }
+
+  async getQRCode(instanceName: string, instanceApiKey?: string): Promise<string> {
+    return this.getInstanceQrCode(instanceName, instanceApiKey);
   }
 
   async deleteInstance(instanceName: string, instanceApiKey?: string): Promise<any> {
@@ -639,3 +703,6 @@ class EvolutionAPI {
 }
 
 export const evolutionApi = new EvolutionAPI();
+
+// Export do tipo para compatibilidade
+export type { EvolutionApiConfig };
