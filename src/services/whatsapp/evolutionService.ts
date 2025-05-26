@@ -235,7 +235,7 @@ export const evolutionService = {
             console.log(`Instância conectada encontrada: ${instance.instanceName}`);
             return {
               instanceName: instance.instanceName,
-              apikey: instance.apikey
+              apikey: instance.apikey || null
             };
           }
         } catch (statusError) {
