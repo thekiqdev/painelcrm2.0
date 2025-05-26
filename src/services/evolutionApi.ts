@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionApiConfig {
@@ -428,8 +427,8 @@ class EvolutionApi {
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
     console.log(`Obtendo conversas para instância: ${instanceName}`);
     
-    // Usar o endpoint correto da documentação
-    const response = await this.makeRequest(`/chat/findChats/${instanceName}?getInbox=true`);
+    // Usar o endpoint correto conforme a documentação
+    const response = await this.makeRequest(`/chat/findChats/${instanceName}`);
     
     // A resposta pode vir como array diretamente ou dentro de uma propriedade
     if (Array.isArray(response)) {
