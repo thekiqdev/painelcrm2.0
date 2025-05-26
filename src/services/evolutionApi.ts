@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionApiConfig {
@@ -458,16 +459,24 @@ class EvolutionApi {
     return [];
   }
 
-  async getMessages(instanceName: string, remoteJid: string, limit: number = 20): Promise<EvolutionMessage[]> {
+  async getMessages(instanceName: string, remoteJid: string, limit: number = 10): Promise<EvolutionMessage[]> {
     console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
     
-    // Usar query parameters corretos baseado na documentação
-    const params = new URLSearchParams({
-      remoteJid: remoteJid,
-      limit: limit.toString()
-    });
+    // Usar endpoint correto conforme documentação fornecida
+    const payload = {
+      where: {
+        key: {
+          remoteJid: remoteJid
+        }
+      },
+      page: 1,
+      offset: limit
+    };
     
-    const response = await this.makeRequest(`/chat/whatsapp/findMessages/${instanceName}?${params.toString()}`);
+    const response = await this.makeRequest(`/chat/findMessages/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
     
     // A resposta pode vir como array diretamente ou dentro de uma propriedade
     if (Array.isArray(response)) {
