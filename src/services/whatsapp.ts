@@ -166,10 +166,14 @@ export const whatsappService = {
       if (result.qrcode) {
         // Se obteve QR code na criação, salvar no banco e retornar
         const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          throw new Error("Usuário não autenticado");
+        }
+        
         const { error: dbError } = await supabase
           .from("whatsapp_connections")
           .upsert({
-            user_id: user?.id,
+            user_id: user.id,
             status: "awaiting_scan",
             provider: "evolution",
             config_data: {
@@ -232,10 +236,14 @@ export const whatsappService = {
         
         // Salvar no banco de dados
         const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          throw new Error("Usuário não autenticado");
+        }
+        
         const { error: dbError } = await supabase
           .from("whatsapp_connections")
           .upsert({
-            user_id: user?.id,
+            user_id: user.id,
             status: "awaiting_scan",
             provider: "evolution",
             config_data: {
@@ -288,10 +296,15 @@ export const whatsappService = {
       
       if (status.instance.state === "open") {
         // Conexão estabelecida com sucesso
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          throw new Error("Usuário não autenticado");
+        }
+        
         const { error: dbError } = await supabase
           .from("whatsapp_connections")
           .upsert({
-            user_id: (await supabase.auth.getUser()).data.user?.id,
+            user_id: user.id,
             status: "connected",
             provider: "evolution",
             config_data: {
