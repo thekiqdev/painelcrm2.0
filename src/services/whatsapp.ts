@@ -11,14 +11,5 @@ export const whatsappService = {
   ...evolutionService,
   
   // Métodos de chat
-  ...chatService,
-  
-  // Novos métodos do módulo Chat
-  readMessages: chatService.readMessages || evolutionService.readMessages,
-  markMessageAsUnread: chatService.markMessageAsUnread || evolutionService.markMessageAsUnread,
-  updateMessage: chatService.updateMessage || evolutionService.updateMessage,
-  archiveChat: chatService.archiveChat || evolutionService.archiveChat,
-  checkIsWhatsApp: chatService.checkIsWhatsApp || evolutionService.checkIsWhatsApp,
-  findContacts: chatService.findContacts || evolutionService.findContacts,
-  fetchProfilePictureUrl: chatService.fetchProfilePictureUrl || evolutionService.fetchProfilePictureUrl
+  ...chatService
 };

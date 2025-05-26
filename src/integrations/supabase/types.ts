@@ -751,7 +751,9 @@ export type Database = {
         Returns: boolean
       }
       is_profile_member: {
-        Args: { profile_id: string; user_id?: string }
+        Args:
+          | { profile_id: string; user_id?: string }
+          | { user_id: number; profile_id: number }
         Returns: boolean
       }
       upsert_conversation_status: {
