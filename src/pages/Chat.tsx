@@ -41,6 +41,16 @@ const Chat = () => {
   const [activeInstanceName, setActiveInstanceName] = useState<string>("");
   const [activeConnectionId, setActiveConnectionId] = useState<string>("");
 
+  // Garantir que o connectionId seja válido antes de passar para o hook
+  const validConnectionId = activeConnectionId && activeConnectionId.trim() !== "" ? activeConnectionId : undefined;
+
+  console.log("Chat component state:", {
+    activeInstanceName,
+    activeConnectionId,
+    validConnectionId,
+    connectionStatus
+  });
+
   const {
     chats,
     messages,
@@ -55,7 +65,7 @@ const Chat = () => {
   } = useEvolutionChatCache({
     instanceName: activeInstanceName,
     enabled: connectionStatus === "connected" && !!activeInstanceName,
-    connectionId: activeConnectionId
+    connectionId: validConnectionId
   });
 
   useEffect(() => {
@@ -174,13 +184,29 @@ const Chat = () => {
 
   const handleAttendConversation = async (conversationId: string) => {
     const conversation = conversations.find(c => c.id === conversationId);
-    if (!conversation) return;
+    if (!conversation) {
+      toast.error("Conversa não encontrada");
+      return;
+    }
 
-    console.log("Atendendo conversa:", conversation.remoteJid);
+    if (!validConnectionId) {
+      toast.error("ID da conexão não encontrado");
+      return;
+    }
+
+    console.log("Atendendo conversa:", {
+      conversationId,
+      remoteJid: conversation.remoteJid,
+      connectionId: validConnectionId
+    });
     
     const success = await attendConversation(conversation.remoteJid);
     if (success) {
       console.log("Conversa atendida com sucesso, mensagens carregadas");
+      // Recarregar as conversas para atualizar o status
+      await refreshChats();
+    } else {
+      toast.error("Erro ao atender conversa");
     }
   };
 
@@ -241,7 +267,7 @@ const Chat = () => {
               {conversation.unreadCount}
             </span>
           )}
-          {showAttendButton && conversation.status === "pending" && (
+          {showAttendButton && conversation.status === "pending" && validConnectionId && (
             <Button 
               size="sm" 
               onClick={(e) => {
@@ -249,6 +275,7 @@ const Chat = () => {
                 handleAttendConversation(conversation.id);
               }}
               className="h-6 text-xs px-2"
+              disabled={!validConnectionId}
             >
               Atender
             </Button>
@@ -315,6 +342,9 @@ const Chat = () => {
                 <span className="text-sm text-green-700 ml-1">{connectedNumber}</span>
                 {activeInstanceName && (
                   <span className="text-xs text-green-600 ml-2">({activeInstanceName})</span>
+                )}
+                {validConnectionId && (
+                  <span className="text-xs text-green-500 ml-2">[ID: {validConnectionId.slice(0, 8)}...]</span>
                 )}
               </div>
             </div>
@@ -395,6 +425,7 @@ const Chat = () => {
                   </CardContent>
                 </Card>
 
+                
                 <Card className="md:col-span-2 flex flex-col">
                   {activeChat && activeChatInfo ? (
                     <>
@@ -539,6 +570,7 @@ const Chat = () => {
                   </CardContent>
                 </Card>
 
+                
                 <Card className="md:col-span-2 flex flex-col">
                   {activeChat && activeChatInfo ? (
                     <>
