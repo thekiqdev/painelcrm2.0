@@ -428,15 +428,44 @@ class EvolutionApi {
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
     console.log(`Obtendo conversas para instância: ${instanceName}`);
     
-    const response = await this.makeRequest(`/chat/findChats/${instanceName}`);
-    return response || [];
+    // Usar o endpoint correto da documentação
+    const response = await this.makeRequest(`/chat/findChats/${instanceName}?getInbox=true`);
+    
+    // A resposta pode vir como array diretamente ou dentro de uma propriedade
+    if (Array.isArray(response)) {
+      return response;
+    } else if (response.chats && Array.isArray(response.chats)) {
+      return response.chats;
+    } else if (response.data && Array.isArray(response.data)) {
+      return response.data;
+    }
+    
+    console.log('Formato de resposta inesperado:', response);
+    return [];
   }
 
   async getMessages(instanceName: string, remoteJid: string, limit: number = 20): Promise<EvolutionMessage[]> {
     console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
     
-    const response = await this.makeRequest(`/chat/findMessages/${instanceName}?remoteJid=${encodeURIComponent(remoteJid)}&limit=${limit}`);
-    return response || [];
+    // Usar query parameters corretos
+    const params = new URLSearchParams({
+      remoteJid: remoteJid,
+      limit: limit.toString()
+    });
+    
+    const response = await this.makeRequest(`/chat/findMessages/${instanceName}?${params.toString()}`);
+    
+    // A resposta pode vir como array diretamente ou dentro de uma propriedade
+    if (Array.isArray(response)) {
+      return response;
+    } else if (response.messages && Array.isArray(response.messages)) {
+      return response.messages;
+    } else if (response.data && Array.isArray(response.data)) {
+      return response.data;
+    }
+    
+    console.log('Formato de resposta inesperado para mensagens:', response);
+    return [];
   }
 
   async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {

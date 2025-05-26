@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -63,6 +62,8 @@ const Chat = () => {
       try {
         if (!user) return;
         
+        console.log("Verificando status de conexão do usuário:", user.id);
+        
         const { data, error } = await supabase
           .from('profiles')
           .select('whatsapp_connected')
@@ -82,6 +83,8 @@ const Chat = () => {
           
           // Check for Evolution API connections
           const savedConnections = localStorage.getItem('whatsapp_connections');
+          console.log("Conexões salvas no localStorage:", savedConnections);
+          
           if (savedConnections) {
             try {
               const connections: Connection[] = JSON.parse(savedConnections);
@@ -89,13 +92,34 @@ const Chat = () => {
                 c.type === "evolution" && c.status === "connected"
               );
               
+              console.log("Conexão Evolution encontrada:", evolutionConnection);
+              
               if (evolutionConnection) {
                 setActiveEvolutionConnection(evolutionConnection);
                 setConnectedNumber(evolutionConnection.configData?.phoneNumber || "Número não identificado");
                 await loadEvolutionChats(evolutionConnection.configData?.instanceName || '');
+              } else {
+                console.log("Nenhuma conexão Evolution ativa encontrada");
+                // Tentar carregar com base no número do perfil
+                const userPhoneNumber = user.user_metadata?.whatsapp_number;
+                if (userPhoneNumber) {
+                  const instanceName = `painelcrmevo_${userPhoneNumber}`;
+                  console.log("Tentando carregar conversas com instanceName baseado no perfil:", instanceName);
+                  setConnectedNumber(userPhoneNumber);
+                  await loadEvolutionChats(instanceName);
+                }
               }
             } catch (error) {
               console.error("Error loading connections:", error);
+            }
+          } else {
+            // Se não há conexões salvas, tentar usar o número do perfil do usuário
+            const userPhoneNumber = user.user_metadata?.whatsapp_number;
+            if (userPhoneNumber) {
+              const instanceName = `painelcrmevo_${userPhoneNumber}`;
+              console.log("Tentando carregar conversas sem localStorage, instanceName:", instanceName);
+              setConnectedNumber(userPhoneNumber);
+              await loadEvolutionChats(instanceName);
             }
           }
         } else {
@@ -113,7 +137,10 @@ const Chat = () => {
   }, [user]);
 
   const loadEvolutionChats = async (instanceName: string) => {
-    if (!instanceName) return;
+    if (!instanceName) {
+      console.log("Nome da instância não fornecido");
+      return;
+    }
     
     try {
       setIsLoading(true);
@@ -121,6 +148,12 @@ const Chat = () => {
       
       const chats: EvolutionContact[] = await whatsappService.getEvolutionChats(instanceName);
       console.log("Conversas carregadas:", chats);
+      
+      if (!chats || chats.length === 0) {
+        console.log("Nenhuma conversa encontrada");
+        setConversations([]);
+        return;
+      }
       
       const conversationsWithMessages = await Promise.all(
         chats.map(async (chat) => {
@@ -160,10 +193,12 @@ const Chat = () => {
       );
       
       setConversations(conversationsWithMessages);
+      console.log("Conversas processadas:", conversationsWithMessages);
     } catch (error) {
       console.error("Erro ao carregar conversas:", error);
+      setConversations([]);
       toast.error("Erro ao carregar conversas", {
-        description: "Não foi possível carregar as conversas do WhatsApp"
+        description: error instanceof Error ? error.message : "Não foi possível carregar as conversas do WhatsApp"
       });
     } finally {
       setIsLoading(false);
@@ -387,6 +422,16 @@ const Chat = () => {
               Online
             </Badge>
           </div>
+
+          {/* Debug info */}
+          {isLoading && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                <span className="text-sm text-blue-800">Carregando conversas...</span>
+              </div>
+            </div>
+          )}
 
           {/* Filtro de contatos */}
           <Card>
