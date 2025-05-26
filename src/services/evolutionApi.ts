@@ -68,6 +68,34 @@ export interface EvolutionChat {
   };
 }
 
+export interface EvolutionChatMessageUpdate {
+  remoteJid: string;
+  messageId: string;
+  newContent: string;
+}
+
+export interface EvolutionChatArchive {
+  remoteJid: string;
+  archive: boolean;
+}
+
+export interface EvolutionNumberCheck {
+  number: string;
+}
+
+export interface EvolutionProfilePicture {
+  remoteJid: string;
+}
+
+export interface EvolutionReadMessages {
+  remoteJid: string;
+}
+
+export interface EvolutionFindMessagesParams {
+  remoteJid: string;
+  limit?: number;
+}
+
 export class EvolutionApi {
   private apiUrl: string = '';
   private globalKey: string = '';
@@ -113,6 +141,270 @@ export class EvolutionApi {
     const data = await response.json();
     console.log('Resposta da API:', data);
     return data;
+  }
+
+  // Novos métodos do módulo Chat
+
+  async findChats(instanceName: string, instanceApiKey?: string): Promise<EvolutionContact[]> {
+    console.log(`Obtendo conversas via findChats para instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    try {
+      const response = await this.makeRequest(`/chat/findChats/${cleanInstanceName}`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      }, !!instanceApiKey);
+      
+      console.log('Resposta do findChats:', response);
+      
+      if (Array.isArray(response)) {
+        return response.map((item, index) => {
+          const chatData = item.chat || item;
+          let remoteJid = chatData.id || item.id || item.remoteJid;
+          
+          if (remoteJid && !remoteJid.includes('@')) {
+            if (/^\d+$/.test(remoteJid)) {
+              remoteJid = `${remoteJid}@s.whatsapp.net`;
+            }
+          }
+          
+          return {
+            id: chatData.id || item.id || remoteJid || `chat_${index}_${Date.now()}`,
+            remoteJid: remoteJid || `unknown_${index}`,
+            pushName: item.pushName || chatData.pushName || item.name || '',
+            unreadMessages: chatData.unreadCount || item.unreadCount || 0,
+            profilePictureUrl: item.profilePicUrl || item.profilePictureUrl
+          };
+        });
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Erro ao obter chats via findChats:', error);
+      throw error;
+    }
+  }
+
+  async findMessages(instanceName: string, params: EvolutionFindMessagesParams, instanceApiKey?: string): Promise<EvolutionMessage[]> {
+    console.log(`Buscando mensagens via findMessages para ${params.remoteJid} na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    let cleanRemoteJid = params.remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
+    const payload = {
+      remoteJid: cleanRemoteJid,
+      limit: params.limit || 50
+    };
+    
+    try {
+      const response = await this.makeRequest(`/chat/findMessages/${cleanInstanceName}`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }, !!instanceApiKey);
+      
+      console.log("Resposta do findMessages:", response);
+      
+      if (Array.isArray(response)) {
+        return response;
+      } else if (response.messages && Array.isArray(response.messages)) {
+        return response.messages;
+      } else if (response.data && Array.isArray(response.data)) {
+        return response.data;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Erro ao buscar mensagens via findMessages:', error);
+      throw error;
+    }
+  }
+
+  async readMessages(instanceName: string, params: EvolutionReadMessages, instanceApiKey?: string): Promise<any> {
+    console.log(`Marcando mensagens como lidas para ${params.remoteJid} na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    let cleanRemoteJid = params.remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
+    const payload = {
+      remoteJid: cleanRemoteJid
+    };
+
+    return await this.makeRequest(`/chat/readMessages/${cleanInstanceName}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, !!instanceApiKey);
+  }
+
+  async markMessageAsUnread(instanceName: string, params: EvolutionReadMessages, instanceApiKey?: string): Promise<any> {
+    console.log(`Marcando mensagens como não lidas para ${params.remoteJid} na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    let cleanRemoteJid = params.remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
+    const payload = {
+      remoteJid: cleanRemoteJid
+    };
+
+    return await this.makeRequest(`/chat/markMessageAsUnread/${cleanInstanceName}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, !!instanceApiKey);
+  }
+
+  async updateMessage(instanceName: string, params: EvolutionChatMessageUpdate, instanceApiKey?: string): Promise<any> {
+    console.log(`Atualizando mensagem ${params.messageId} para ${params.remoteJid} na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    let cleanRemoteJid = params.remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
+    const payload = {
+      remoteJid: cleanRemoteJid,
+      messageId: params.messageId,
+      newContent: params.newContent
+    };
+
+    return await this.makeRequest(`/chat/updateMessage/${cleanInstanceName}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, !!instanceApiKey);
+  }
+
+  async archiveChat(instanceName: string, params: EvolutionChatArchive, instanceApiKey?: string): Promise<any> {
+    console.log(`${params.archive ? 'Arquivando' : 'Desarquivando'} conversa ${params.remoteJid} na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    let cleanRemoteJid = params.remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
+    const payload = {
+      remoteJid: cleanRemoteJid,
+      archive: params.archive
+    };
+
+    return await this.makeRequest(`/chat/archiveChat/${cleanInstanceName}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, !!instanceApiKey);
+  }
+
+  async checkIsWhatsApp(instanceName: string, params: EvolutionNumberCheck, instanceApiKey?: string): Promise<any> {
+    console.log(`Verificando se ${params.number} é WhatsApp na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    const payload = {
+      number: params.number.replace(/[^\d]/g, '')
+    };
+
+    return await this.makeRequest(`/chat/checkIsWhatsApp/${cleanInstanceName}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, !!instanceApiKey);
+  }
+
+  async findContacts(instanceName: string, instanceApiKey?: string): Promise<EvolutionContact[]> {
+    console.log(`Buscando contatos na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+
+    try {
+      const response = await this.makeRequest(`/chat/findContacts/${cleanInstanceName}`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      }, !!instanceApiKey);
+      
+      console.log('Resposta do findContacts:', response);
+      
+      if (Array.isArray(response)) {
+        return response.map((contact, index) => ({
+          id: contact.id || `contact_${index}_${Date.now()}`,
+          remoteJid: contact.remoteJid || contact.id || `unknown_${index}`,
+          pushName: contact.pushName || contact.name || '',
+          profilePictureUrl: contact.profilePictureUrl || contact.profilePicUrl
+        }));
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Erro ao buscar contatos:', error);
+      throw error;
+    }
+  }
+
+  async fetchProfilePictureUrl(instanceName: string, params: EvolutionProfilePicture, instanceApiKey?: string): Promise<any> {
+    console.log(`Buscando foto de perfil de ${params.remoteJid} na instância: ${instanceName}`);
+    
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
+    let cleanRemoteJid = params.remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
+    const payload = {
+      remoteJid: cleanRemoteJid
+    };
+
+    return await this.makeRequest(`/chat/fetchProfilePictureUrl/${cleanInstanceName}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, !!instanceApiKey);
   }
 
   async getAllConfigs(): Promise<EvolutionApiConfig[]> {
