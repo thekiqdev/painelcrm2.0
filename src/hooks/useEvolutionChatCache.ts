@@ -1,23 +1,27 @@
-
 import { useState, useEffect, useRef } from "react";
 import { whatsappService } from "@/services/whatsapp";
 import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
+import { conversationStatusService, ConversationAttendance } from "@/services/conversationStatusService";
 import { toast } from "sonner";
 
 interface CachedChat extends EvolutionContact {
   messages?: EvolutionMessage[];
   lastFetched?: number;
+  status?: 'pending' | 'active' | 'closed';
+  attendant?: string;
+  attended_at?: string;
 }
 
 interface UseEvolutionChatCacheProps {
   instanceName: string;
   enabled: boolean;
+  connectionId?: string;
 }
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
 const MESSAGE_CACHE_DURATION = 2 * 60 * 1000; // 2 minutos
 
-export const useEvolutionChatCache = ({ instanceName, enabled }: UseEvolutionChatCacheProps) => {
+export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: UseEvolutionChatCacheProps) => {
   const [chats, setChats] = useState<CachedChat[]>([]);
   const [messages, setMessages] = useState<EvolutionMessage[]>([]);
   const [activeChat, setActiveChat] = useState<string | null>(null);
@@ -36,7 +40,7 @@ export const useEvolutionChatCache = ({ instanceName, enabled }: UseEvolutionCha
     return Date.now() - timestamp < duration;
   };
 
-  // Carregar conversas com cache
+  // Carregar conversas com cache e status
   const loadChats = async (forceRefresh = false) => {
     if (!enabled || !instanceName) return;
     
@@ -63,10 +67,22 @@ export const useEvolutionChatCache = ({ instanceName, enabled }: UseEvolutionCha
       console.log("Carregando conversas da API:", instanceName);
       const chatData = await whatsappService.getEvolutionChats(instanceName);
       
-      const cachedChats: CachedChat[] = chatData.map(chat => ({
-        ...chat,
-        lastFetched: Date.now()
-      }));
+      // Carregar status das conversas se temos connectionId
+      let statusMap: Record<string, ConversationAttendance> = {};
+      if (connectionId) {
+        statusMap = await conversationStatusService.getAllConversationStatuses(connectionId);
+      }
+      
+      const cachedChats: CachedChat[] = chatData.map(chat => {
+        const attendance = statusMap[chat.remoteJid];
+        return {
+          ...chat,
+          lastFetched: Date.now(),
+          status: attendance?.status || 'pending',
+          attendant: attendance?.attendant_id,
+          attended_at: attendance?.attended_at
+        };
+      });
       
       // Atualizar cache
       chatsCache.current.set(cacheKey, {
@@ -168,12 +184,51 @@ export const useEvolutionChatCache = ({ instanceName, enabled }: UseEvolutionCha
     }
   };
 
+  // Atender conversa
+  const attendConversation = async (remoteJid: string) => {
+    if (!connectionId) {
+      toast.error("ID da conexão não encontrado");
+      return;
+    }
+
+    try {
+      const attendance = await conversationStatusService.updateConversationStatus(
+        connectionId,
+        remoteJid,
+        'active'
+      );
+
+      if (attendance) {
+        // Atualizar o chat local
+        setChats(prev => prev.map(chat => 
+          chat.remoteJid === remoteJid 
+            ? { 
+                ...chat, 
+                status: 'active',
+                attendant: attendance.attendant_id,
+                attended_at: attendance.attended_at
+              }
+            : chat
+        ));
+
+        // Invalidar cache para forçar atualização
+        const cacheKey = getCacheKey(instanceName);
+        chatsCache.current.delete(cacheKey);
+
+        toast.success("Conversa atendida com sucesso!");
+      }
+    } catch (error) {
+      console.error("Erro ao atender conversa:", error);
+      toast.error("Erro ao atender conversa");
+    }
+  };
+
   // Carregar conversas quando os parâmetros mudarem (apenas na primeira vez)
   useEffect(() => {
     if (enabled && instanceName) {
       loadChats();
     }
-  }, [enabled, instanceName]);
+  }, [enabled, instanceName, connectionId]);
 
   // Limpar cache quando não habilitado
   useEffect(() => {
@@ -196,6 +251,7 @@ export const useEvolutionChatCache = ({ instanceName, enabled }: UseEvolutionCha
     loadMessages,
     sendMessage,
     setActiveChat,
+    attendConversation,
     refreshChats: () => loadChats(true),
     refreshMessages: (remoteJid: string) => loadMessages(remoteJid, true)
   };
