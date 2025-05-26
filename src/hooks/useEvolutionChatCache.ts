@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from "react";
 import { whatsappService } from "@/services/whatsapp";
 import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
@@ -39,6 +38,62 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
   // Verificar se o cache ainda é válido
   const isCacheValid = (timestamp: number, duration: number) => {
     return Date.now() - timestamp < duration;
+  };
+
+  // Atender conversa
+  const attendConversation = async (remoteJid: string) => {
+    if (!connectionId) {
+      console.error("Connection ID não encontrado para atender conversa");
+      toast.error("ID da conexão não encontrado");
+      return false;
+    }
+
+    console.log("Iniciando atendimento da conversa:", { remoteJid, connectionId });
+
+    try {
+      const attendance = await conversationStatusService.updateConversationStatus(
+        connectionId,
+        remoteJid,
+        'active'
+      );
+
+      if (attendance) {
+        console.log("Status atualizado com sucesso:", attendance);
+        
+        // Atualizar o chat local
+        setChats(prev => prev.map(chat => 
+          chat.remoteJid === remoteJid 
+            ? { 
+                ...chat, 
+                status: 'active',
+                attendant: attendance.attendant_id,
+                attended_at: attendance.attended_at
+              }
+            : chat
+        ));
+
+        // Invalidar cache para forçar atualização
+        const cacheKey = getCacheKey(instanceName);
+        chatsCache.current.delete(cacheKey);
+
+        // Carregar mensagens automaticamente após atender
+        await loadMessages(remoteJid, true);
+
+        toast.success("Conversa atendida com sucesso!");
+        return true;
+      } else {
+        console.error("Não foi possível obter dados do atendimento");
+        toast.error("Erro ao confirmar atendimento da conversa");
+        return false;
+      }
+    } catch (error) {
+      console.error("Erro ao atender conversa:", error);
+      const errorMessage = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error("Erro ao atender conversa", {
+        description: errorMessage
+      });
+      return false;
+    }
   };
 
   // Carregar conversas com cache e status
@@ -184,55 +239,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
       });
     } finally {
       setIsSending(false);
-    }
-  };
-
-  // Atender conversa
-  const attendConversation = async (remoteJid: string) => {
-    if (!connectionId) {
-      toast.error("ID da conexão não encontrado");
-      return false;
-    }
-
-    console.log("Iniciando atendimento da conversa:", remoteJid);
-
-    try {
-      const attendance = await conversationStatusService.updateConversationStatus(
-        connectionId,
-        remoteJid,
-        'active'
-      );
-
-      if (attendance) {
-        console.log("Status atualizado com sucesso:", attendance);
-        
-        // Atualizar o chat local
-        setChats(prev => prev.map(chat => 
-          chat.remoteJid === remoteJid 
-            ? { 
-                ...chat, 
-                status: 'active',
-                attendant: attendance.attendant_id,
-                attended_at: attendance.attended_at
-              }
-            : chat
-        ));
-
-        // Invalidar cache para forçar atualização
-        const cacheKey = getCacheKey(instanceName);
-        chatsCache.current.delete(cacheKey);
-
-        // Carregar mensagens automaticamente após atender
-        await loadMessages(remoteJid, true);
-
-        toast.success("Conversa atendida com sucesso!");
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error("Erro ao atender conversa:", error);
-      toast.error("Erro ao atender conversa");
-      return false;
     }
   };
 
