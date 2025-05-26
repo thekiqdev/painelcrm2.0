@@ -96,7 +96,7 @@ export const evolutionService = {
         // Atualizar conexão existente ou criar nova
         const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
         
-        if (existingConnection) {
+        if (existingConnection?.id) {
           await connectionDatabaseService.updateConnection(existingConnection.id, {
             status: "awaiting_scan",
             qr_code: qrResult.qrcode.base64
@@ -122,7 +122,7 @@ export const evolutionService = {
         if (status?.instance?.state === "open") {
           // Atualizar status para conectado
           const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-          if (existingConnection) {
+          if (existingConnection?.id) {
             await connectionDatabaseService.updateConnection(existingConnection.id, {
               status: "connected",
               qr_code: null
@@ -158,7 +158,7 @@ export const evolutionService = {
       if (status?.instance?.state === "open") {
         // Atualizar status no banco de dados
         const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-        if (existingConnection) {
+        if (existingConnection?.id) {
           await connectionDatabaseService.updateConnection(existingConnection.id, {
             status: "connected",
             qr_code: null
@@ -198,7 +198,7 @@ export const evolutionService = {
       // Deletar conexão do banco de dados
       try {
         const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-        if (existingConnection) {
+        if (existingConnection?.id) {
           await connectionDatabaseService.deleteConnection(existingConnection.id);
         }
       } catch (dbError) {
