@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -148,7 +147,6 @@ export const whatsappService = {
     return await response.json();
   },
   
-  // Método específico para Evolution API - Criar instância e obter QR Code em um passo
   createEvolutionInstance: async (instanceName: string, phoneNumber: string, webhookUrl?: string) => {
     try {
       console.log("Criando instância Evolution API e obtendo QR Code:", instanceName);
