@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -393,11 +394,16 @@ export const whatsappService = {
       await evolutionApi.deleteInstance(instanceName);
       
       // Remover do banco de dados local
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error("Usuário não autenticado");
+      }
+      
       const { error: dbError } = await supabase
         .from("whatsapp_connections")
         .delete()
         .eq("config_data->>instanceName", instanceName)
-        .eq("user_id", (await supabase.auth.getUser()).data.user?.id);
+        .eq("user_id", user.id);
       
       if (dbError) {
         console.error("Erro ao remover do banco:", dbError);
