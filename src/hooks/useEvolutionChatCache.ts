@@ -108,6 +108,8 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
   const loadMessages = async (remoteJid: string, forceRefresh = false) => {
     if (!enabled || !instanceName) return;
     
+    console.log("Carregando mensagens para:", remoteJid);
+    
     const cacheKey = getMessageCacheKey(instanceName, remoteJid);
     const cached = messagesCache.current.get(cacheKey);
     
@@ -189,8 +191,10 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
   const attendConversation = async (remoteJid: string) => {
     if (!connectionId) {
       toast.error("ID da conexão não encontrado");
-      return;
+      return false;
     }
+
+    console.log("Iniciando atendimento da conversa:", remoteJid);
 
     try {
       const attendance = await conversationStatusService.updateConversationStatus(
@@ -200,6 +204,8 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
       );
 
       if (attendance) {
+        console.log("Status atualizado com sucesso:", attendance);
+        
         // Atualizar o chat local
         setChats(prev => prev.map(chat => 
           chat.remoteJid === remoteJid 

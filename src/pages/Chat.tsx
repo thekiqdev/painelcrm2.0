@@ -198,7 +198,7 @@ const Chat = () => {
       className={`px-4 py-3 hover:bg-muted cursor-pointer ${
         activeChat === conversation.remoteJid ? "bg-muted" : ""
       }`}
-      onClick={() => !showAttendButton && handleSelectConversation(conversation.id)}
+      onClick={() => handleSelectConversation(conversation.id)}
     >
       <div className="flex items-start gap-3">
         <Avatar className="h-10 w-10 flex-shrink-0">
