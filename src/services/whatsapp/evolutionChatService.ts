@@ -33,15 +33,34 @@ export const evolutionChatService = {
       }
       
       // Filtrar chats inválidos e adicionar verificações de segurança
-      return chats.filter(chat => chat && typeof chat === 'object' && chat.remoteJid).map(chat => {
-        return {
-          id: chat.id || chat.remoteJid || `chat_${Date.now()}_${Math.random()}`,
-          remoteJid: chat.remoteJid,
-          pushName: chat.pushName || chat.remoteJid,
-          profilePictureUrl: chat.profilePictureUrl,
-          unreadMessages: chat.unreadMessages || 0
-        };
-      });
+      return chats
+        .filter(chat => {
+          // Verificar se o chat existe e tem as propriedades necessárias
+          if (!chat || typeof chat !== 'object') {
+            console.warn("Chat inválido encontrado:", chat);
+            return false;
+          }
+          
+          // Verificar se tem remoteJid (essencial para um chat)
+          if (!chat.remoteJid) {
+            console.warn("Chat sem remoteJid encontrado:", chat);
+            return false;
+          }
+          
+          return true;
+        })
+        .map((chat, index) => {
+          // Gerar um ID único se não existir
+          const chatId = chat.id || chat.remoteJid || `chat_${Date.now()}_${index}`;
+          
+          return {
+            id: chatId,
+            remoteJid: chat.remoteJid,
+            pushName: chat.pushName || chat.remoteJid,
+            profilePictureUrl: chat.profilePictureUrl || chat.profilePicUrl,
+            unreadMessages: chat.unreadMessages || chat.unreadCount || 0
+          };
+        });
     } catch (error) {
       console.error("Erro ao obter conversas Evolution:", error);
       throw error;
@@ -57,7 +76,28 @@ export const evolutionChatService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      return await evolutionApi.getMessages(instanceName, remoteJid, 50, instanceApiKey);
+      const messages = await evolutionApi.getMessages(instanceName, remoteJid, 50, instanceApiKey);
+      
+      // Verificar se messages é válido e é um array
+      if (!messages || !Array.isArray(messages)) {
+        console.log("Nenhuma mensagem válida retornada");
+        return [];
+      }
+      
+      // Filtrar mensagens inválidas
+      return messages.filter(message => {
+        if (!message || typeof message !== 'object') {
+          console.warn("Mensagem inválida encontrada:", message);
+          return false;
+        }
+        
+        if (!message.key || !message.key.id) {
+          console.warn("Mensagem sem key.id encontrada:", message);
+          return false;
+        }
+        
+        return true;
+      });
     } catch (error) {
       console.error("Erro ao obter mensagens Evolution:", error);
       throw error;

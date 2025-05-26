@@ -15,7 +15,7 @@ export interface EvolutionInstance {
   instanceName: string;
   phone?: string;
   status?: string;
-  apikey?: string; // Adicionar apikey da instância
+  apikey?: string;
 }
 
 export interface EvolutionQRResponse {
@@ -55,7 +55,9 @@ export interface EvolutionContact {
   pushName?: string;
   remoteJid: string;
   unreadMessages?: number;
+  unreadCount?: number;
   profilePictureUrl?: string;
+  profilePicUrl?: string;
 }
 
 export interface EvolutionChat {
@@ -69,10 +71,10 @@ export interface EvolutionChat {
 class EvolutionApi {
   private apiUrl: string = '';
   private globalKey: string = '';
-  private instanceApiKey: string = ''; // Nova propriedade para apikey da instância
+  private instanceApiKey: string = '';
 
   setCredentials(apiUrl: string, globalKey: string) {
-    this.apiUrl = apiUrl.replace(/\/$/, ''); // Remove trailing slash
+    this.apiUrl = apiUrl.replace(/\/$/, '');
     this.globalKey = globalKey;
   }
 
@@ -173,7 +175,6 @@ class EvolutionApi {
         throw new Error('Usuário não autenticado');
       }
 
-      // Desativar outras configurações se esta for a primeira
       const { data: existingConfigs } = await supabase
         .from('evolution_api_configs')
         .select('id')
@@ -232,13 +233,11 @@ class EvolutionApi {
         throw new Error('Usuário não autenticado');
       }
 
-      // Desativar todas as configurações do usuário
       await supabase
         .from('evolution_api_configs')
         .update({ is_active: false })
         .eq('user_id', user.id);
 
-      // Ativar a configuração selecionada
       const { error } = await supabase
         .from('evolution_api_configs')
         .update({ is_active: true })
@@ -276,7 +275,6 @@ class EvolutionApi {
     }
   }
 
-  // Listar todas as instâncias disponíveis
   async getAllInstances(): Promise<EvolutionInstance[]> {
     console.log('Obtendo todas as instâncias disponíveis');
     
@@ -292,7 +290,7 @@ class EvolutionApi {
           instanceName: instance.instance?.instanceName || instance.instanceName,
           phone: instance.instance?.phone || instance.phone,
           status: instance.instance?.state || instance.state,
-          apikey: instance.apikey || instance.instance?.apikey // Capturar a apikey da instância
+          apikey: instance.apikey || instance.instance?.apikey
         }));
       }
       
@@ -304,7 +302,6 @@ class EvolutionApi {
   }
 
   async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance & { qrcode?: string }> {
-    // Sanitizar o número de telefone removendo caracteres especiais
     const sanitizedNumber = phoneNumber ? phoneNumber.replace(/[^\d]/g, '') : undefined;
     
     const payload: any = {
@@ -327,14 +324,11 @@ class EvolutionApi {
 
       console.log('Instância criada com sucesso:', response);
       
-      // Extrair QR code da resposta se disponível
       let qrCodeData = null;
       if (response.qrcode) {
         if (response.qrcode.base64) {
-          // Se já vem em base64, usar diretamente
           qrCodeData = response.qrcode.base64.replace('data:image/png;base64,', '');
         } else if (typeof response.qrcode === 'string') {
-          // Se é uma string, pode ser o base64 direto
           qrCodeData = response.qrcode.replace('data:image/png;base64,', '');
         }
       }
@@ -346,7 +340,6 @@ class EvolutionApi {
     } catch (error) {
       console.error('Erro ao criar instância:', error);
       
-      // Se o erro for de instância já existente, não considerar como erro crítico
       if (error instanceof Error && (
         error.message.includes('already exists') || 
         error.message.includes('já existe') ||
@@ -354,7 +347,6 @@ class EvolutionApi {
       )) {
         console.log('Instância já existe, tentando obter QR code...');
         try {
-          // Se a instância já existe, tentar obter o QR code via connect
           const qrResult = await this.connectInstance(instanceName);
           return {
             instanceName,
@@ -374,7 +366,6 @@ class EvolutionApi {
     console.log(`Obtendo QR code para instância: ${instanceName}`);
     
     try {
-      // Primeiro tentar o endpoint específico de QR code
       const response = await this.makeRequest(`/instance/qrcode/${instanceName}`, {
         method: 'GET',
       });
@@ -395,13 +386,12 @@ class EvolutionApi {
     } catch (error) {
       console.error('Erro ao obter QR code via endpoint específico:', error);
       
-      // Se o endpoint específico falhou, tentar via connect
       console.log('Tentando obter QR code via connect...');
       try {
         return await this.connectInstance(instanceName);
       } catch (connectError) {
         console.error('Erro ao conectar instância:', connectError);
-        throw error; // Lançar o erro original do QR code
+        throw error;
       }
     }
   }
@@ -416,7 +406,6 @@ class EvolutionApi {
 
       console.log('Resposta do connect:', response);
       
-      // Verificar diferentes formatos de resposta do QR code
       if (response && response.qrcode) {
         if (response.qrcode.base64) {
           return {
@@ -469,49 +458,62 @@ class EvolutionApi {
   async getChats(instanceName: string, instanceApiKey?: string): Promise<EvolutionContact[]> {
     console.log(`Obtendo conversas para instância: ${instanceName}`);
     
-    // Remover aspas extras do nome da instância se existirem
     const cleanInstanceName = instanceName.replace(/"/g, '');
     
-    // Se fornecida, usar a apikey da instância
     if (instanceApiKey) {
       this.setInstanceApiKey(instanceApiKey);
     }
     
-    // Usar endpoint correto baseado na documentação: POST /chat/findChats/:instance
-    const response = await this.makeRequest(`/chat/findChats/${cleanInstanceName}`, {
-      method: 'POST',
-      body: JSON.stringify({})
-    }, !!instanceApiKey); // Usar instance key se fornecida
-    
-    console.log('Resposta raw do findChats:', response);
-    
-    // A resposta vem como array de objetos com propriedade "chat"
-    if (Array.isArray(response)) {
-      return response.map((item: EvolutionChat) => ({
-        id: item.chat.id,
-        remoteJid: item.chat.id,
-        pushName: '', // Será preenchido posteriormente se necessário
-        unreadMessages: item.chat.unreadCount,
-        profilePictureUrl: undefined
-      }));
+    try {
+      const response = await this.makeRequest(`/chat/findChats/${cleanInstanceName}`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      }, !!instanceApiKey);
+      
+      console.log('Resposta raw do findChats:', response);
+      
+      // Verificar se response é válido
+      if (!response) {
+        console.log('Resposta vazia da API');
+        return [];
+      }
+      
+      // Se é um array diretamente
+      if (Array.isArray(response)) {
+        return response
+          .filter(item => item && typeof item === 'object')
+          .map((item, index) => {
+            // Verificar se tem a estrutura esperada
+            const chatData = item.chat || item;
+            
+            return {
+              id: chatData.id || item.id || item.remoteJid || `chat_${index}_${Date.now()}`,
+              remoteJid: chatData.id || item.remoteJid || `unknown_${index}`,
+              pushName: item.pushName || chatData.pushName || '',
+              unreadMessages: chatData.unreadCount || item.unreadCount || 0,
+              profilePictureUrl: item.profilePicUrl || item.profilePictureUrl
+            };
+          });
+      }
+      
+      console.log('Formato de resposta inesperado:', response);
+      return [];
+      
+    } catch (error) {
+      console.error('Erro ao obter chats:', error);
+      throw error;
     }
-    
-    console.log('Formato de resposta inesperado:', response);
-    return [];
   }
 
   async getMessages(instanceName: string, remoteJid: string, limit: number = 10, instanceApiKey?: string): Promise<EvolutionMessage[]> {
     console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
     
-    // Remover aspas extras do nome da instância se existirem
     const cleanInstanceName = instanceName.replace(/"/g, '');
     
-    // Se fornecida, usar a apikey da instância
     if (instanceApiKey) {
       this.setInstanceApiKey(instanceApiKey);
     }
     
-    // Usar endpoint correto conforme documentação fornecida: POST /chat/findMessages/:instance
     const payload = {
       where: {
         key: {
@@ -522,31 +524,34 @@ class EvolutionApi {
       offset: limit
     };
     
-    const response = await this.makeRequest(`/chat/findMessages/${cleanInstanceName}`, {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }, !!instanceApiKey); // Usar instance key se fornecida
-    
-    // A resposta pode vir como array diretamente ou dentro de uma propriedade
-    if (Array.isArray(response)) {
-      return response;
-    } else if (response.messages && Array.isArray(response.messages)) {
-      return response.messages;
-    } else if (response.data && Array.isArray(response.data)) {
-      return response.data;
+    try {
+      const response = await this.makeRequest(`/chat/findMessages/${cleanInstanceName}`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }, !!instanceApiKey);
+      
+      if (Array.isArray(response)) {
+        return response;
+      } else if (response.messages && Array.isArray(response.messages)) {
+        return response.messages;
+      } else if (response.data && Array.isArray(response.data)) {
+        return response.data;
+      }
+      
+      console.log('Formato de resposta inesperado para mensagens:', response);
+      return [];
+      
+    } catch (error) {
+      console.error('Erro ao obter mensagens:', error);
+      throw error;
     }
-    
-    console.log('Formato de resposta inesperado para mensagens:', response);
-    return [];
   }
 
   async sendMessage(instanceName: string, remoteJid: string, message: string, instanceApiKey?: string): Promise<any> {
     console.log(`Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
     
-    // Remover aspas extras do nome da instância se existirem
     const cleanInstanceName = instanceName.replace(/"/g, '');
     
-    // Se fornecida, usar a apikey da instância
     if (instanceApiKey) {
       this.setInstanceApiKey(instanceApiKey);
     }
@@ -559,7 +564,7 @@ class EvolutionApi {
     return await this.makeRequest(`/message/sendText/${cleanInstanceName}`, {
       method: 'POST',
       body: JSON.stringify(payload),
-    }, !!instanceApiKey); // Usar instance key se fornecida
+    }, !!instanceApiKey);
   }
 }
 
