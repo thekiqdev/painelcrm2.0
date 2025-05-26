@@ -1,5 +1,4 @@
 
-
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -231,7 +230,7 @@ export const whatsappService = {
       const qrResult = await evolutionApi.getQRCode(instanceName);
       console.log("Resultado do QR Code:", qrResult);
       
-      if (qrResult.qrcode?.base64) {
+      if (qrResult?.qrcode?.base64) {
         console.log("QR Code obtido com sucesso");
         
         // Salvar no banco de dados
