@@ -224,8 +224,8 @@ export const evolutionService = {
       // Procurar por uma instância conectada
       for (const instance of instances) {
         try {
-          // Verificar se instance e instanceName existem
-          if (!instance || !instance.instanceName) {
+          // Verificar se instance e instanceName existem com optional chaining
+          if (!instance?.instanceName) {
             console.log("Instância com dados inválidos encontrada, pulando...");
             continue;
           }
