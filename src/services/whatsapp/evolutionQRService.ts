@@ -12,10 +12,10 @@ export const evolutionQRService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      const qrResult = await evolutionApi.getQRCode(instanceName);
+      const qrResult = await evolutionApi.getInstanceQrCode(instanceName);
       console.log("Resultado do QR Code:", qrResult);
       
-      if (qrResult && qrResult.qrcode && qrResult.qrcode.base64) {
+      if (qrResult && typeof qrResult === 'string') {
         console.log("QR Code obtido com sucesso");
         
         // Atualizar conexão existente ou criar nova
@@ -24,7 +24,7 @@ export const evolutionQRService = {
         if (existingConnection?.id) {
           await connectionDatabaseService.updateConnection(existingConnection.id, {
             status: "awaiting_scan",
-            qr_code: qrResult.qrcode.base64
+            qr_code: qrResult
           });
         } else {
           await connectionDatabaseService.saveConnection({
@@ -33,13 +33,13 @@ export const evolutionQRService = {
             status: "awaiting_scan",
             instance_name: instanceName,
             config_data: { instanceName },
-            qr_code: qrResult.qrcode.base64
+            qr_code: qrResult
           });
         }
         
         return {
           success: true,
-          qrCode: qrResult.qrcode.base64,
+          qrCode: qrResult,
           status: "awaiting_scan"
         };
       } else {
