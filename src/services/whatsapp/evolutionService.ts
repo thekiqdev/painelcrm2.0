@@ -90,7 +90,7 @@ export const evolutionService = {
       const qrResult = await evolutionApi.getQRCode(instanceName);
       console.log("Resultado do QR Code:", qrResult);
       
-      if (qrResult?.qrcode?.base64) {
+      if (qrResult && qrResult.qrcode && qrResult.qrcode.base64) {
         console.log("QR Code obtido com sucesso");
         
         // Atualizar conexão existente ou criar nova
@@ -220,7 +220,12 @@ export const evolutionService = {
   findActiveConnection: async () => {
     try {
       const connections = await connectionDatabaseService.getConnections();
-      const activeConnection = connections.find(conn => conn.status === "connected");
+      if (!connections || connections.length === 0) {
+        console.log("Nenhuma conexão encontrada no banco");
+        return null;
+      }
+      
+      const activeConnection = connections.find(conn => conn && conn.status === "connected");
       
       if (activeConnection && activeConnection.instance_name) {
         console.log(`Conexão ativa encontrada: ${activeConnection.instance_name}`);
@@ -246,7 +251,7 @@ export const evolutionService = {
       // Se não foi fornecido instanceName, buscar no banco
       if (!targetInstanceName) {
         const activeConnection = await this.findActiveConnection();
-        if (!activeConnection) {
+        if (!activeConnection || !activeConnection.instanceName) {
           throw new Error("Nenhuma conexão ativa encontrada");
         }
         targetInstanceName = activeConnection.instanceName;
@@ -259,7 +264,25 @@ export const evolutionService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      return await evolutionApi.getChats(targetInstanceName);
+      const chats = await evolutionApi.getChats(targetInstanceName);
+      console.log("Conversas retornadas da API:", chats);
+      
+      // Verificar se chats é válido e é um array
+      if (!chats || !Array.isArray(chats)) {
+        console.log("Nenhuma conversa válida retornada");
+        return [];
+      }
+      
+      // Filtrar chats inválidos e adicionar verificações de segurança
+      return chats.filter(chat => chat && typeof chat === 'object' && chat.remoteJid).map(chat => {
+        return {
+          id: chat.id || chat.remoteJid || `chat_${Date.now()}_${Math.random()}`,
+          remoteJid: chat.remoteJid,
+          pushName: chat.pushName || chat.remoteJid,
+          profilePictureUrl: chat.profilePictureUrl,
+          unreadMessages: chat.unreadMessages || 0
+        };
+      });
     } catch (error) {
       console.error("Erro ao obter conversas Evolution:", error);
       throw error;
