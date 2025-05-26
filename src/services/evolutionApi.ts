@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionServerConfig {
@@ -400,7 +399,7 @@ class EvolutionApi {
   async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance> {
     const webhookUrl = this.getWebhookUrl(instanceName);
     
-    // Payload conforme a documentação fornecida
+    // Payload exato conforme a documentação da API fornecida
     const payload: any = {
       instanceName,
       qrcode: true,
@@ -408,22 +407,29 @@ class EvolutionApi {
       webhook: webhookUrl,
       webhook_by_events: true,
       events: [
-        "APPLICATION_STARTUP",
-        "QRCODE_UPDATED", 
-        "CONNECTION_UPDATE",
-        "MESSAGES_UPSERT"
+        "APPLICATION_STARTUP"
       ],
-      reject_call: false,
-      groups_ignore: false,
+      reject_call: true,
+      groups_ignore: true,
       always_online: true,
       read_messages: true,
       read_status: true,
-      websocket_enabled: false,
-      rabbitmq_enabled: false,
-      sqs_enabled: false
+      websocket_enabled: true,
+      websocket_events: [
+        "APPLICATION_STARTUP"
+      ],
+      rabbitmq_enabled: true,
+      rabbitmq_events: [
+        "APPLICATION_STARTUP"
+      ],
+      sqs_enabled: true,
+      sqs_events: [
+        "APPLICATION_STARTUP"
+      ],
+      typebot_listening_from_me: true
     };
 
-    // Adicionar número se fornecido
+    // Adicionar número se fornecido (apenas números)
     if (phoneNumber && phoneNumber.trim()) {
       payload.number = phoneNumber.replace(/\D/g, '');
     }
