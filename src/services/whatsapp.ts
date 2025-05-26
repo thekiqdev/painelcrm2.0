@@ -378,6 +378,7 @@ export const whatsappService = {
       throw error;
     }
   },
+  
   // Método para deletar instância Evolution API
   deleteEvolutionInstance: async (instanceName: string) => {
     try {
