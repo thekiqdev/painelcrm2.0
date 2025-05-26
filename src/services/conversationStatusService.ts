@@ -19,16 +19,18 @@ export const conversationStatusService = {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Usuário não autenticado");
 
-      const { data, error } = await supabase
-        .from('conversation_attendances')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('connection_id', connectionId)
-        .eq('remote_jid', remoteJid)
-        .maybeSingle();
+      const { data, error } = await supabase.rpc('get_conversation_status', {
+        p_user_id: user.id,
+        p_connection_id: connectionId,
+        p_remote_jid: remoteJid
+      });
 
-      if (error) throw error;
-      return data;
+      if (error) {
+        console.error("Erro ao obter status da conversa:", error);
+        return null;
+      }
+      
+      return data?.[0] || null;
     } catch (error) {
       console.error("Erro ao obter status da conversa:", error);
       return null;
@@ -47,24 +49,22 @@ export const conversationStatusService = {
       const now = new Date().toISOString();
       const attendedAt = status === 'active' ? now : null;
 
-      const { data, error } = await supabase
-        .from('conversation_attendances')
-        .upsert({
-          user_id: user.id,
-          connection_id: connectionId,
-          remote_jid: remoteJid,
-          status,
-          attendant_id: status === 'active' ? user.id : null,
-          attended_at: attendedAt,
-          updated_at: now
-        }, {
-          onConflict: 'user_id,connection_id,remote_jid'
-        })
-        .select()
-        .single();
+      const { data, error } = await supabase.rpc('upsert_conversation_status', {
+        p_user_id: user.id,
+        p_connection_id: connectionId,
+        p_remote_jid: remoteJid,
+        p_status: status,
+        p_attendant_id: status === 'active' ? user.id : null,
+        p_attended_at: attendedAt,
+        p_updated_at: now
+      });
 
-      if (error) throw error;
-      return data;
+      if (error) {
+        console.error("Erro ao atualizar status da conversa:", error);
+        return null;
+      }
+      
+      return data?.[0] || null;
     } catch (error) {
       console.error("Erro ao atualizar status da conversa:", error);
       return null;
@@ -76,16 +76,18 @@ export const conversationStatusService = {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Usuário não autenticado");
 
-      const { data, error } = await supabase
-        .from('conversation_attendances')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('connection_id', connectionId);
+      const { data, error } = await supabase.rpc('get_all_conversation_statuses', {
+        p_user_id: user.id,
+        p_connection_id: connectionId
+      });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Erro ao obter todos os status de conversas:", error);
+        return {};
+      }
 
       const statusMap: Record<string, ConversationAttendance> = {};
-      data?.forEach(attendance => {
+      data?.forEach((attendance: ConversationAttendance) => {
         statusMap[attendance.remote_jid] = attendance;
       });
 
