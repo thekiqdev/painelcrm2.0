@@ -1,6 +1,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "../evolutionApi";
+import { connectionDatabaseService } from "./connectionDatabaseService";
 
 export const evolutionService = {
   createEvolutionInstance: async (instanceName: string, phoneNumber: string, webhookUrl?: string) => {
@@ -18,23 +19,21 @@ export const evolutionService = {
       console.log("Resultado da criação da instância:", result);
       
       if (result?.qrcode) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          throw new Error("Usuário não autenticado");
-        }
-        
-        const { error: dbError } = await supabase
-          .from("whatsapp_connections")
-          .upsert({
-            user_id: user.id,
-            status: "awaiting_scan",
-            qr_code: result.qrcode,
-            updated_at: new Date().toISOString()
-          });
-        
-        if (dbError) {
-          console.error("Erro ao salvar no banco:", dbError);
-        }
+        // Salvar conexão no banco de dados
+        await connectionDatabaseService.saveConnection({
+          name: instanceName,
+          type: "evolution",
+          status: "awaiting_scan",
+          instance_name: instanceName,
+          phone_number: phoneNumber,
+          webhook_url: webhookUrl,
+          config_data: {
+            instanceName,
+            phoneNumber,
+            webhookUrl
+          },
+          qr_code: result.qrcode
+        });
         
         return {
           success: true,
@@ -45,6 +44,21 @@ export const evolutionService = {
         try {
           const status = await evolutionApi.getInstanceStatus(instanceName);
           if (status?.instance?.state === "open") {
+            // Salvar conexão conectada no banco
+            await connectionDatabaseService.saveConnection({
+              name: instanceName,
+              type: "evolution",
+              status: "connected",
+              instance_name: instanceName,
+              phone_number: phoneNumber,
+              webhook_url: webhookUrl,
+              config_data: {
+                instanceName,
+                phoneNumber,
+                webhookUrl
+              }
+            });
+            
             return {
               success: true,
               status: "connected"
@@ -79,22 +93,23 @@ export const evolutionService = {
       if (qrResult?.qrcode?.base64) {
         console.log("QR Code obtido com sucesso");
         
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          throw new Error("Usuário não autenticado");
-        }
+        // Atualizar conexão existente ou criar nova
+        const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
         
-        const { error: dbError } = await supabase
-          .from("whatsapp_connections")
-          .upsert({
-            user_id: user.id,
+        if (existingConnection) {
+          await connectionDatabaseService.updateConnection(existingConnection.id, {
             status: "awaiting_scan",
-            qr_code: qrResult.qrcode.base64,
-            updated_at: new Date().toISOString()
+            qr_code: qrResult.qrcode.base64
           });
-        
-        if (dbError) {
-          console.error("Erro ao salvar no banco:", dbError);
+        } else {
+          await connectionDatabaseService.saveConnection({
+            name: instanceName,
+            type: "evolution",
+            status: "awaiting_scan",
+            instance_name: instanceName,
+            config_data: { instanceName },
+            qr_code: qrResult.qrcode.base64
+          });
         }
         
         return {
@@ -105,6 +120,15 @@ export const evolutionService = {
       } else {
         const status = await evolutionApi.getInstanceStatus(instanceName);
         if (status?.instance?.state === "open") {
+          // Atualizar status para conectado
+          const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
+          if (existingConnection) {
+            await connectionDatabaseService.updateConnection(existingConnection.id, {
+              status: "connected",
+              qr_code: null
+            });
+          }
+          
           return {
             success: true,
             status: "connected"
@@ -132,22 +156,13 @@ export const evolutionService = {
       console.log("Status da instância:", status);
       
       if (status?.instance?.state === "open") {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          throw new Error("Usuário não autenticado");
-        }
-        
-        const { error: dbError } = await supabase
-          .from("whatsapp_connections")
-          .upsert({
-            user_id: user.id,
+        // Atualizar status no banco de dados
+        const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
+        if (existingConnection) {
+          await connectionDatabaseService.updateConnection(existingConnection.id, {
             status: "connected",
-            qr_code: null,
-            updated_at: new Date().toISOString()
+            qr_code: null
           });
-        
-        if (dbError) {
-          console.error("Erro ao atualizar no banco:", dbError);
         }
         
         return {
@@ -180,16 +195,14 @@ export const evolutionService = {
       
       await evolutionApi.deleteInstance(instanceName);
       
+      // Deletar conexão do banco de dados
       try {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (!userError && user) {
-          await supabase
-            .from("whatsapp_connections")
-            .delete()
-            .eq("user_id", user.id);
+        const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
+        if (existingConnection) {
+          await connectionDatabaseService.deleteConnection(existingConnection.id);
         }
-      } catch (authError) {
-        console.log("Usuário não autenticado, pulando remoção do banco");
+      } catch (dbError) {
+        console.log("Erro ao deletar do banco, pode não existir a conexão");
       }
       
       return {
@@ -235,7 +248,7 @@ export const evolutionService = {
             console.log(`Instância conectada encontrada: ${instance.instanceName}`);
             return {
               instanceName: instance.instanceName,
-              apikey: instance.apikey || null
+              apikey: instance?.apikey || null
             };
           }
         } catch (statusError) {
@@ -269,7 +282,6 @@ export const evolutionService = {
     }
   },
 
-  // Novo método para obter mensagens com apikey da instância
   getEvolutionMessages: async (instanceName: string, remoteJid: string, instanceApiKey?: string) => {
     try {
       console.log("Obtendo mensagens Evolution API:", instanceName, remoteJid);
@@ -286,7 +298,6 @@ export const evolutionService = {
     }
   },
 
-  // Novo método para enviar mensagens com apikey da instância
   sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string, instanceApiKey?: string) => {
     try {
       console.log("Enviando mensagem Evolution API:", instanceName, remoteJid);

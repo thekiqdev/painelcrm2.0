@@ -589,28 +589,46 @@ export type Database = {
       }
       whatsapp_connections: {
         Row: {
+          config_data: Json | null
           created_at: string
           id: string
+          instance_name: string | null
+          name: string | null
+          phone_number: string | null
           qr_code: string | null
           status: string
+          type: string | null
           updated_at: string
           user_id: string
+          webhook_url: string | null
         }
         Insert: {
+          config_data?: Json | null
           created_at?: string
           id?: string
+          instance_name?: string | null
+          name?: string | null
+          phone_number?: string | null
           qr_code?: string | null
           status?: string
+          type?: string | null
           updated_at?: string
           user_id: string
+          webhook_url?: string | null
         }
         Update: {
+          config_data?: Json | null
           created_at?: string
           id?: string
+          instance_name?: string | null
+          name?: string | null
+          phone_number?: string | null
           qr_code?: string | null
           status?: string
+          type?: string | null
           updated_at?: string
           user_id?: string
+          webhook_url?: string | null
         }
         Relationships: []
       }

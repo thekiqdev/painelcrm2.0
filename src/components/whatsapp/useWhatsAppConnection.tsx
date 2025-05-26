@@ -3,7 +3,24 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { whatsappService } from "@/services/whatsapp";
+import { connectionDatabaseService, DatabaseConnection } from "@/services/whatsapp/connectionDatabaseService";
 import { Connection, ConnectionStatus, ConnectionType } from "@/components/settings/types";
+
+// Função para converter DatabaseConnection para Connection
+const convertDatabaseToConnection = (dbConnection: DatabaseConnection): Connection => {
+  return {
+    id: dbConnection.id,
+    name: dbConnection.name,
+    type: dbConnection.type as ConnectionType,
+    status: dbConnection.status as ConnectionStatus,
+    configData: {
+      instanceName: dbConnection.instance_name,
+      phoneNumber: dbConnection.phone_number,
+      serverUrl: dbConnection.webhook_url,
+      ...dbConnection.config_data
+    }
+  };
+};
 
 export const useWhatsAppConnection = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -15,33 +32,35 @@ export const useWhatsAppConnection = () => {
   const [currentStep, setCurrentStep] = useState<"create" | "qrcode" | "connect">("create");
   const { user, profile, updateProfile } = useAuth();
   
-  // Load saved connections from localStorage on component mount
-  useEffect(() => {
-    const loadSavedConnections = () => {
-      const savedConnectionsJson = localStorage.getItem('whatsapp_connections');
-      if (savedConnectionsJson) {
-        try {
-          const savedConnections = JSON.parse(savedConnectionsJson);
-          console.log("Loaded connections from localStorage:", savedConnections);
-          setConnections(savedConnections);
-        } catch (error) {
-          console.error('Error loading saved connections:', error);
-        }
+  // Carregar conexões do banco de dados
+  const loadConnectionsFromDatabase = async () => {
+    try {
+      if (!user) return;
+      
+      const dbConnections = await connectionDatabaseService.getConnections();
+      const convertedConnections = dbConnections.map(convertDatabaseToConnection);
+      console.log("Conexões carregadas do banco:", convertedConnections);
+      setConnections(convertedConnections);
+      
+      // Se houver uma conexão ativa, definir como ativa
+      const connectedConnection = convertedConnections.find(c => c.status === "connected");
+      if (connectedConnection && !activeConnection) {
+        setActiveConnection(connectedConnection);
+        setConnectionStatus("connected");
       }
-    };
-    
-    loadSavedConnections();
-  }, []);
-
-  // Save connections to localStorage whenever they change
-  useEffect(() => {
-    if (connections.length > 0) {
-      console.log("Saving connections to localStorage:", connections);
-      localStorage.setItem('whatsapp_connections', JSON.stringify(connections));
+    } catch (error) {
+      console.error("Erro ao carregar conexões do banco:", error);
     }
-  }, [connections]);
+  };
+
+  // Carregar conexões quando o usuário estiver autenticado
+  useEffect(() => {
+    if (user) {
+      loadConnectionsFromDatabase();
+    }
+  }, [user]);
   
-  // Check current connection status on component mount
+  // Verificar status da conexão atual
   useEffect(() => {
     const checkConnectionStatus = async () => {
       try {
@@ -49,15 +68,6 @@ export const useWhatsAppConnection = () => {
         
         if (profile?.whatsapp_connected) {
           setConnectionStatus("connected");
-          
-          if (!activeConnection && connections.length > 0) {
-            const connectedConnection = connections.find(c => c.status === "connected");
-            if (connectedConnection) {
-              setActiveConnection(connectedConnection);
-            } else {
-              setActiveConnection(connections[0]);
-            }
-          }
           return;
         }
         
@@ -66,13 +76,6 @@ export const useWhatsAppConnection = () => {
           setConnectionStatus("connected");
           if (!profile?.whatsapp_connected) {
             await updateProfile({ whatsapp_connected: true });
-          }
-          
-          if (!activeConnection && connections.length > 0) {
-            const connectedConnection = connections.find(c => c.status === "connected");
-            if (connectedConnection) {
-              setActiveConnection(connectedConnection);
-            }
           }
         } else {
           setConnectionStatus("disconnected");
@@ -86,35 +89,52 @@ export const useWhatsAppConnection = () => {
     };
     
     checkConnectionStatus();
-  }, [user, profile, updateProfile, activeConnection, connections]);
+  }, [user, profile, updateProfile]);
   
-  const handleAddConnection = (connectionName: string, connectionType: string, configData?: any) => {
-    const newConnection: Connection = {
-      id: `conn_${Date.now()}`,
-      name: connectionName,
-      type: connectionType as ConnectionType,
-      status: "connected" as ConnectionStatus, // Já vem conectado do novo fluxo
-      configData
-    };
-    
-    console.log("Adding new connection:", newConnection);
-    
-    const updatedConnections = [...connections, newConnection];
-    setConnections(updatedConnections);
-    setActiveConnection(newConnection);
-    setConnectionStatus("connected");
-    
-    localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
-    
-    // Atualizar perfil
-    if (user) {
-      updateProfile({ whatsapp_connected: true });
+  const handleAddConnection = async (connectionName: string, connectionType: string, configData?: any) => {
+    try {
+      setIsLoading(true);
+      
+      // Salvar conexão no banco de dados
+      const savedConnection = await connectionDatabaseService.saveConnection({
+        name: connectionName,
+        type: connectionType,
+        status: "connected",
+        instance_name: configData?.instanceName,
+        phone_number: configData?.phoneNumber,
+        webhook_url: configData?.serverUrl,
+        config_data: configData || {}
+      });
+      
+      if (savedConnection) {
+        const newConnection = convertDatabaseToConnection(savedConnection);
+        
+        console.log("Conexão salva no banco:", newConnection);
+        
+        // Recarregar conexões do banco
+        await loadConnectionsFromDatabase();
+        
+        setActiveConnection(newConnection);
+        setConnectionStatus("connected");
+        
+        // Atualizar perfil
+        if (user) {
+          await updateProfile({ whatsapp_connected: true });
+        }
+        
+        setIsDialogOpen(false);
+        toast.success("Conexão adicionada", { 
+          description: `A conexão "${connectionName}" foi adicionada com sucesso.` 
+        });
+      }
+    } catch (error) {
+      console.error("Erro ao adicionar conexão:", error);
+      toast.error("Erro ao adicionar conexão", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    } finally {
+      setIsLoading(false);
     }
-    
-    setIsDialogOpen(false);
-    toast.success("Conexão adicionada", { 
-      description: `A conexão "${connectionName}" foi adicionada com sucesso.` 
-    });
   };
 
   const handleDeleteConnection = async (connectionId: string) => {
@@ -131,12 +151,11 @@ export const useWhatsAppConnection = () => {
         await whatsappService.deleteEvolutionInstance(connectionToDelete.configData.instanceName);
       }
 
-      // Remover da lista local
-      const updatedConnections = connections.filter(c => c.id !== connectionId);
-      setConnections(updatedConnections);
+      // Deletar do banco de dados
+      await connectionDatabaseService.deleteConnection(connectionId);
       
-      // Atualizar localStorage
-      localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+      // Recarregar conexões do banco
+      await loadConnectionsFromDatabase();
       
       // Se a conexão ativa foi deletada, limpar
       if (activeConnection?.id === connectionId) {
@@ -181,11 +200,13 @@ export const useWhatsAppConnection = () => {
           setConnectionStatus("connected");
           await updateProfile({ whatsapp_connected: true });
           
-          const updatedConnections = connections.map(c => 
-            c.id === connection.id ? { ...c, status: "connected" as ConnectionStatus } : c
-          );
-          setConnections(updatedConnections);
-          localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+          // Atualizar status no banco
+          await connectionDatabaseService.updateConnection(connection.id, {
+            status: "connected"
+          });
+          
+          // Recarregar conexões
+          await loadConnectionsFromDatabase();
           
           toast.success("Já conectado!", {
             description: "Esta conexão já estava ativa",
@@ -215,12 +236,13 @@ export const useWhatsAppConnection = () => {
       setCurrentStep("create");
       
       if (activeConnection) {
-        const updatedConnections = connections.map(c => 
-          c.id === activeConnection.id ? { ...c, status: "disconnected" as ConnectionStatus } : c
-        );
-        setConnections(updatedConnections);
+        // Atualizar status no banco
+        await connectionDatabaseService.updateConnection(activeConnection.id, {
+          status: "disconnected"
+        });
         
-        localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+        // Recarregar conexões
+        await loadConnectionsFromDatabase();
         
         setActiveConnection(null);
       }
@@ -256,12 +278,13 @@ export const useWhatsAppConnection = () => {
       await updateProfile({ whatsapp_connected: true });
       
       if (activeConnection) {
-        const updatedConnections = connections.map(c => 
-          c.id === activeConnection.id ? { ...c, status: "connected" as ConnectionStatus } : c
-        );
-        setConnections(updatedConnections);
+        // Atualizar status no banco
+        await connectionDatabaseService.updateConnection(activeConnection.id, {
+          status: "connected"
+        });
         
-        localStorage.setItem('whatsapp_connections', JSON.stringify(updatedConnections));
+        // Recarregar conexões
+        await loadConnectionsFromDatabase();
       }
       
       toast.success("Conectado com sucesso!", {
@@ -290,7 +313,8 @@ export const useWhatsAppConnection = () => {
     handleConnect,
     handleDisconnect,
     handleDeleteConnection,
-    handleConfirmConnection
+    handleConfirmConnection,
+    loadConnectionsFromDatabase
   };
 };
 
