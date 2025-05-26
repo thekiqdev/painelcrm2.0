@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -27,6 +26,15 @@ interface AddConnectionDialogProps {
 
 type DialogStep = "form" | "creating" | "qrcode" | "connected" | "error";
 
+interface InstanceState {
+  instanceName: string;
+  connectionName: string;
+  phoneNumber: string;
+  step: DialogStep;
+  qrCode?: string;
+  created: boolean;
+}
+
 const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   isOpen,
   onClose,
@@ -36,7 +44,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [phoneNumber, setPhoneNumber] = useState("");
   const [currentStep, setCurrentStep] = useState<DialogStep>("form");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasActiveServer, setHasActiveServer] = useState(false);
+  const [hasActiveConfig, setHasActiveConfig] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [instanceName, setInstanceName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -45,26 +53,66 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const extractPhoneNumbers = (phone: string): string => {
     return phone.replace(/\D/g, '');
   };
+  
+  // Função para salvar estado da instância
+  const saveInstanceState = (state: InstanceState) => {
+    localStorage.setItem(`instance_state_${state.instanceName}`, JSON.stringify(state));
+  };
+  
+  // Função para carregar estado da instância
+  const loadInstanceState = (instanceName: string): InstanceState | null => {
+    const saved = localStorage.getItem(`instance_state_${instanceName}`);
+    return saved ? JSON.parse(saved) : null;
+  };
+  
+  // Função para limpar estado da instância
+  const clearInstanceState = (instanceName: string) => {
+    localStorage.removeItem(`instance_state_${instanceName}`);
+  };
 
+  // Função para salvar conexão no sistema
+  const saveConnectionToSystem = (instanceData: any) => {
+    const connections = JSON.parse(localStorage.getItem('whatsapp_connections') || '[]');
+    const newConnection = {
+      id: `conn_${Date.now()}`,
+      name: connectionName,
+      type: "evolution" as ConnectionType,
+      status: "connecting",
+      configData: {
+        instanceName,
+        phoneNumber: extractPhoneNumbers(phoneNumber),
+        ...instanceData
+      },
+      createdAt: new Date().toISOString()
+    };
+    
+    // Verificar se já existe uma conexão com o mesmo instanceName
+    const existingIndex = connections.findIndex((conn: any) => 
+      conn.configData?.instanceName === instanceName
+    );
+    
+    if (existingIndex >= 0) {
+      connections[existingIndex] = { ...connections[existingIndex], ...newConnection };
+    } else {
+      connections.push(newConnection);
+    }
+    
+    localStorage.setItem('whatsapp_connections', JSON.stringify(connections));
+    console.log("Conexão salva no sistema:", newConnection);
+  };
+  
   useEffect(() => {
-    const checkServer = async () => {
+    const checkConfig = async () => {
       try {
-        const server = await evolutionApi.getActiveServer();
-        console.log('[AddConnection] Servidor ativo encontrado:', server);
-        setHasActiveServer(!!server);
-        
-        if (server) {
-          console.log('[AddConnection] Configurando credenciais:', server.server_url);
-          evolutionApi.setCredentials(server.server_url, server.api_key);
-        }
+        const config = await evolutionApi.getActiveConfig();
+        setHasActiveConfig(!!config);
       } catch (error) {
-        console.error("Erro ao verificar servidor:", error);
-        setHasActiveServer(false);
+        console.error("Erro ao verificar configuração:", error);
       }
     };
     
     if (isOpen) {
-      checkServer();
+      checkConfig();
     }
   }, [isOpen]);
 
@@ -84,52 +132,107 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const handleNextStep = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!hasActiveServer) {
-      toast.error("Servidor necessário", {
-        description: "Configure primeiro um servidor Evolution API em Configurações Avançadas."
+    if (!hasActiveConfig) {
+      toast.error("Configuração necessária", {
+        description: "Configure primeiro a Evolution API em Configurações."
       });
       return;
     }
     
     setIsSubmitting(true);
-    setErrorMessage("");
+    setCurrentStep("creating");
     
     try {
       // Extrair apenas números do telefone
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       
-      // Criar instanceName mais simples
-      const timestamp = Date.now().toString().slice(-6);
-      const generatedInstanceName = `instance_${cleanPhoneNumber}_${timestamp}`;
+      // Limpar caracteres especiais do nome da conexão para criar o instanceName
+      const cleanConnectionName = connectionName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+      const generatedInstanceName = `${cleanConnectionName}_${cleanPhoneNumber}`;
       setInstanceName(generatedInstanceName);
       
-      console.log("[AddConnection] Processando instância:", generatedInstanceName);
+      console.log("Processando instância:", generatedInstanceName);
       
-      // Ir para tela de criação
-      setCurrentStep("creating");
+      // Obter configuração ativa
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Configuração não encontrada");
       
-      // Obter servidor ativo novamente para garantir que temos as credenciais
-      const server = await evolutionApi.getActiveServer();
-      if (!server) throw new Error("Servidor não encontrado");
+      evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      console.log('[AddConnection] Configurando API com servidor:', server.server_url);
-      evolutionApi.setCredentials(server.server_url, server.api_key);
+      // Verificar se já existe estado salvo para esta instância
+      let savedState = loadInstanceState(generatedInstanceName);
       
-      // Aguardar 3 segundos na tela de criação para dar tempo da API processar
-      setTimeout(async () => {
+      if (savedState && savedState.created) {
+        console.log("Instância já criada anteriormente, verificando status...");
+        
         try {
-          console.log("[AddConnection] Tentando obter QR code...");
-          await obtainQRCode(generatedInstanceName);
+          const status = await evolutionApi.getInstanceStatus(generatedInstanceName);
           
-        } catch (error) {
-          console.error("[AddConnection] Erro ao obter QR code:", error);
-          setErrorMessage(error instanceof Error ? error.message : "Erro ao processar instância");
-          setCurrentStep("error");
+          if (status.instance.state === "open") {
+            // Instância já está conectada
+            setCurrentStep("connected");
+            toast.success("Instância já conectada!", {
+              description: "Esta instância já estava ativa",
+            });
+            
+            // Auto-finalizar após 2 segundos
+            setTimeout(() => {
+              handleFinishConnection();
+            }, 2000);
+            return;
+          } else {
+            console.log("Instância existe mas não está conectada, indo para QR code...");
+            // Aguardar 2 segundos na tela de criação e depois ir para QR code
+            setTimeout(() => {
+              obtainQRCodeDirectly(generatedInstanceName, config);
+            }, 2000);
+            return;
+          }
+        } catch (statusError) {
+          console.log("Instância salva não existe mais, criando nova...");
+          clearInstanceState(generatedInstanceName);
+          savedState = null;
         }
-      }, 3000);
+      }
+      
+      // Criar nova instância
+      console.log("Criando nova instância:", generatedInstanceName);
+      
+      let instanceResult;
+      try {
+        instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
+        console.log("Instância criada:", instanceResult);
+        
+      } catch (createError: any) {
+        // Se o erro for de instância já existente, continuar normalmente
+        if (createError.message?.includes("already exists") || createError.message?.includes("já existe")) {
+          console.log("Instância já existe, continuando...");
+          instanceResult = { instanceName: generatedInstanceName };
+        } else {
+          throw createError;
+        }
+      }
+      
+      // Salvar estado indicando que a instância foi criada/encontrada
+      const newState: InstanceState = {
+        instanceName: generatedInstanceName,
+        connectionName,
+        phoneNumber: cleanPhoneNumber,
+        step: "creating",
+        created: true
+      };
+      saveInstanceState(newState);
+      
+      // Salvar conexão no sistema
+      saveConnectionToSystem(instanceResult);
+      
+      // Aguardar 2 segundos na tela de criação e depois ir para QR code
+      setTimeout(() => {
+        obtainQRCodeDirectly(generatedInstanceName, config);
+      }, 2000);
       
     } catch (error) {
-      console.error("[AddConnection] Erro inicial:", error);
+      console.error("Erro ao processar instância:", error);
       setErrorMessage(error instanceof Error ? error.message : "Ocorreu um erro");
       setCurrentStep("error");
     } finally {
@@ -137,34 +240,29 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     }
   };
 
-  const obtainQRCode = async (instanceName: string) => {
-    console.log("[AddConnection] Obtendo QR code para:", instanceName);
+  const obtainQRCodeDirectly = async (instanceName: string, config: any) => {
+    console.log("Obtendo QR code diretamente para:", instanceName);
     setCurrentStep("qrcode");
     
     try {
+      // Usar a nova implementação correta
       const qrResult = await evolutionApi.getQRCode(instanceName);
-      console.log("[AddConnection] Resultado do QR Code:", qrResult);
+      console.log("Resultado do QR Code:", qrResult);
       
       if (qrResult?.qrcode?.base64) {
-        console.log("[AddConnection] QR Code obtido com sucesso!");
+        console.log("QR Code obtido com sucesso!");
         setQrCode(qrResult.qrcode.base64);
         
-        // Salvar conexão no localStorage
-        const connections = JSON.parse(localStorage.getItem('whatsapp_connections') || '[]');
-        const newConnection = {
-          id: `conn_${Date.now()}`,
-          name: connectionName,
-          type: "evolution" as ConnectionType,
-          status: "connecting",
-          configData: {
-            instanceName,
-            phoneNumber: extractPhoneNumbers(phoneNumber)
-          },
-          createdAt: new Date().toISOString()
+        // Atualizar estado com QR code
+        const updatedState: InstanceState = {
+          instanceName,
+          connectionName,
+          phoneNumber: extractPhoneNumbers(phoneNumber),
+          step: "qrcode",
+          qrCode: qrResult.qrcode.base64,
+          created: true
         };
-        
-        connections.push(newConnection);
-        localStorage.setItem('whatsapp_connections', JSON.stringify(connections));
+        saveInstanceState(updatedState);
         
         toast.success("QR Code gerado", {
           description: "Escaneie o QR code com seu WhatsApp",
@@ -175,23 +273,28 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         return;
       }
       
-      throw new Error("QR Code não foi gerado. Verifique a configuração da Evolution API.");
+      // Se chegou aqui, verificar se a instância já está conectada
+      const status = await evolutionApi.getInstanceStatus(instanceName);
+      console.log("Status da instância:", status);
       
-    } catch (error) {
-      console.error("[AddConnection] Erro ao obter QR code:", error);
-      
-      if (error instanceof Error && error.message.includes('já está conectada')) {
+      if (status.instance.state === "open") {
+        console.log("Instância já está conectada!");
         setCurrentStep("connected");
         toast.success("Instância já conectada!", {
           description: "Esta instância já estava ativa",
         });
         
+        // Auto-finalizar após 2 segundos
         setTimeout(() => {
           handleFinishConnection();
         }, 2000);
         return;
       }
       
+      throw new Error("Não foi possível gerar o QR code. Verifique se a instância foi criada corretamente.");
+      
+    } catch (error) {
+      console.error("Erro ao obter QR code:", error);
       setErrorMessage(error instanceof Error ? error.message : "Erro ao gerar QR code");
       setCurrentStep("error");
     }
@@ -204,16 +307,20 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setCurrentStep("qrcode");
     
     try {
-      await obtainQRCode(instanceName);
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Configuração não encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      await obtainQRCodeDirectly(instanceName, config);
     } catch (error) {
-      console.error("[AddConnection] Erro ao tentar novamente:", error);
+      console.error("Erro ao tentar novamente:", error);
       setErrorMessage(error instanceof Error ? error.message : "Erro ao tentar novamente");
       setCurrentStep("error");
     }
   };
 
   const startConnectionPolling = (instanceName: string) => {
-    console.log("[AddConnection] Iniciando polling para instância:", instanceName);
+    console.log("Iniciando polling para instância:", instanceName);
     
     const pollInterval = setInterval(async () => {
       try {
@@ -223,11 +330,21 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         evolutionApi.setCredentials(config.api_url, config.global_key);
         const status = await evolutionApi.getInstanceStatus(instanceName);
         
-        console.log("[AddConnection] Status da instância:", status);
+        console.log("Status da instância:", status);
         
         if (status.instance.state === "open") {
           setCurrentStep("connected");
           clearInterval(pollInterval);
+          
+          // Atualizar estado para conectado e limpar QR code
+          const finalState: InstanceState = {
+            instanceName,
+            connectionName,
+            phoneNumber: extractPhoneNumbers(phoneNumber),
+            step: "connected",
+            created: true
+          };
+          saveInstanceState(finalState);
           
           // Atualizar conexão no sistema para status conectado
           const connections = JSON.parse(localStorage.getItem('whatsapp_connections') || '[]');
@@ -248,7 +365,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           }, 2000);
         }
       } catch (error) {
-        console.error("[AddConnection] Erro ao verificar conexão:", error);
+        console.error("Erro ao verificar conexão:", error);
       }
     }, 3000);
     
@@ -268,6 +385,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       phoneNumber: extractPhoneNumbers(phoneNumber)
     });
     
+    // Limpar estado após finalizar conexão com sucesso
+    clearInstanceState(instanceName);
     onClose();
   };
 
@@ -301,7 +420,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       case "form":
         return "Insira os dados para criar uma nova conexão WhatsApp";
       case "creating":
-        return "Preparando sua instância no servidor Evolution API...";
+        return "Preparando sua instância no servidor...";
       case "qrcode":
         return "Use seu celular para escanear o QR code e conectar o WhatsApp";
       case "connected":
@@ -326,11 +445,11 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         {currentStep === "form" && (
           <form onSubmit={handleNextStep}>
             <div className="grid gap-4 py-4">
-              {!hasActiveServer && (
+              {!hasActiveConfig && (
                 <Alert variant="destructive">
                   <InfoIcon className="h-4 w-4 mr-2" />
                   <AlertDescription>
-                    Você precisa configurar um servidor Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
+                    Você precisa configurar a Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
                   </AlertDescription>
                 </Alert>
               )}
@@ -361,7 +480,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               <Alert>
                 <InfoIcon className="h-4 w-4 mr-2" />
                 <AlertDescription>
-                  Uma instância será criada automaticamente com webhook configurado para receber atualizações de status
+                  Uma instância será criada automaticamente para esta conexão e salva no sistema
                 </AlertDescription>
               </Alert>
             </div>
@@ -372,7 +491,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               </Button>
               <Button 
                 type="submit" 
-                disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveServer || extractPhoneNumbers(phoneNumber).length < 10}
+                disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveConfig || extractPhoneNumbers(phoneNumber).length < 10}
               >
                 {isSubmitting ? "Processando..." : "Próximo"}
               </Button>
@@ -386,7 +505,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-primary"></div>
               <h3 className="text-lg font-semibold">Criando instância...</h3>
               <p className="text-muted-foreground">
-                Configurando webhook e preparando conexão com a Evolution API
+                Preparando sua conexão no servidor Evolution API
               </p>
             </div>
           </div>

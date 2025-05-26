@@ -1,15 +1,5 @@
-import { supabase } from '@/integrations/supabase/client';
 
-export interface EvolutionServerConfig {
-  id: string;
-  name: string;
-  server_url: string;
-  api_key: string;
-  is_active: boolean;
-  user_id: string;
-  created_at: string;
-  updated_at: string;
-}
+import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionApiConfig {
   id: string;
@@ -70,25 +60,23 @@ export interface EvolutionContact {
 
 class EvolutionApi {
   private apiUrl: string = '';
-  private apiKey: string = '';
+  private globalKey: string = '';
 
-  setCredentials(apiUrl: string, apiKey: string) {
+  setCredentials(apiUrl: string, globalKey: string) {
     this.apiUrl = apiUrl.replace(/\/$/, ''); // Remove trailing slash
-    this.apiKey = apiKey;
+    this.globalKey = globalKey;
   }
 
   private getHeaders() {
     return {
       'Content-Type': 'application/json',
-      'apikey': this.apiKey,
+      'apikey': this.globalKey,
     };
   }
 
   private async makeRequest(endpoint: string, options: RequestInit = {}) {
     const url = `${this.apiUrl}${endpoint}`;
-    console.log(`[Evolution API] Fazendo requisição para: ${url}`);
-    console.log(`[Evolution API] Headers:`, this.getHeaders());
-    console.log(`[Evolution API] Payload:`, options.body);
+    console.log(`Fazendo requisição para: ${url}`);
     
     const response = await fetch(url, {
       ...options,
@@ -98,139 +86,17 @@ class EvolutionApi {
       },
     });
 
-    console.log(`[Evolution API] Status da resposta: ${response.status}`);
+    console.log(`Status da resposta: ${response.status}`);
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[Evolution API] Erro na requisição: ${response.status} - ${errorText}`);
+      console.error(`Erro na requisição: ${response.status} - ${errorText}`);
       throw new Error(`Erro na API: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
-    console.log('[Evolution API] Resposta da API:', data);
+    console.log('Resposta da API:', data);
     return data;
-  }
-
-  private getWebhookUrl(instanceName: string): string {
-    const projectUrl = 'https://meoatixglqaxnzzovuez.supabase.co';
-    return `${projectUrl}/functions/v1/evolution-webhook/${instanceName}`;
-  }
-
-  // Métodos para gerenciar servidores Evolution
-  async getAllServers(): Promise<EvolutionServerConfig[]> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        console.error('Usuário não autenticado:', userError);
-        return [];
-      }
-
-      const { data, error } = await supabase
-        .from('evolution_servers')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Erro ao buscar servidores:', error);
-        return [];
-      }
-
-      return data || [];
-    } catch (error) {
-      console.error('Erro ao obter servidores:', error);
-      return [];
-    }
-  }
-
-  async getActiveServer(): Promise<EvolutionServerConfig | null> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        console.error('Usuário não autenticado:', userError);
-        return null;
-      }
-
-      const { data, error } = await supabase
-        .from('evolution_servers')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .single();
-
-      if (error) {
-        console.error('Erro ao buscar servidor ativo:', error);
-        return null;
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Erro ao obter servidor ativo:', error);
-      return null;
-    }
-  }
-
-  async saveServer(name: string, serverUrl: string, apiKey: string): Promise<void> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      // Verificar se é o primeiro servidor
-      const { data: existingServers } = await supabase
-        .from('evolution_servers')
-        .select('id')
-        .eq('user_id', user.id);
-
-      const isFirstServer = !existingServers || existingServers.length === 0;
-
-      const { error } = await supabase
-        .from('evolution_servers')
-        .insert({
-          name,
-          server_url: serverUrl,
-          api_key: apiKey,
-          user_id: user.id,
-          is_active: isFirstServer
-        });
-
-      if (error) {
-        throw new Error(`Erro ao salvar servidor: ${error.message}`);
-      }
-    } catch (error) {
-      console.error('Erro ao salvar servidor:', error);
-      throw error;
-    }
-  }
-
-  async setActiveServer(serverId: string): Promise<void> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      // Desativar todos os servidores do usuário
-      await supabase
-        .from('evolution_servers')
-        .update({ is_active: false })
-        .eq('user_id', user.id);
-
-      // Ativar o servidor selecionado
-      const { error } = await supabase
-        .from('evolution_servers')
-        .update({ is_active: true })
-        .eq('id', serverId)
-        .eq('user_id', user.id);
-
-      if (error) {
-        throw new Error(`Erro ao ativar servidor: ${error.message}`);
-      }
-    } catch (error) {
-      console.error('Erro ao ativar servidor:', error);
-      throw error;
-    }
   }
 
   async getAllConfigs(): Promise<EvolutionApiConfig[]> {
@@ -397,44 +263,17 @@ class EvolutionApi {
   }
 
   async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance> {
-    const webhookUrl = this.getWebhookUrl(instanceName);
-    
-    // Payload exato conforme a documentação da API fornecida
     const payload: any = {
       instanceName,
       qrcode: true,
-      integration: "WHATSAPP-BAILEYS",
-      webhook: webhookUrl,
-      webhook_by_events: true,
-      events: [
-        "APPLICATION_STARTUP"
-      ],
-      reject_call: true,
-      groups_ignore: true,
-      always_online: true,
-      read_messages: true,
-      read_status: true,
-      websocket_enabled: true,
-      websocket_events: [
-        "APPLICATION_STARTUP"
-      ],
-      rabbitmq_enabled: true,
-      rabbitmq_events: [
-        "APPLICATION_STARTUP"
-      ],
-      sqs_enabled: true,
-      sqs_events: [
-        "APPLICATION_STARTUP"
-      ],
-      typebot_listening_from_me: true
+      integration: "WHATSAPP-BAILEYS"
     };
 
-    // Adicionar número se fornecido (apenas números)
-    if (phoneNumber && phoneNumber.trim()) {
-      payload.number = phoneNumber.replace(/\D/g, '');
+    if (phoneNumber) {
+      payload.number = phoneNumber;
     }
 
-    console.log('[Evolution API] Criando instância com payload:', JSON.stringify(payload, null, 2));
+    console.log('Criando instância com payload:', payload);
     
     try {
       const response = await this.makeRequest('/instance/create', {
@@ -442,30 +281,18 @@ class EvolutionApi {
         body: JSON.stringify(payload),
       });
 
-      console.log('[Evolution API] Instância criada com sucesso:', response);
-      return {
-        instanceName,
-        ...response
-      };
+      console.log('Instância criada com sucesso:', response);
+      return response;
     } catch (error) {
-      console.error('[Evolution API] Erro ao criar instância:', error);
+      console.error('Erro ao criar instância:', error);
       
-      // Se o erro for de instância já existente, tentar buscar informações da instância
+      // Se o erro for de instância já existente, não considerar como erro crítico
       if (error instanceof Error && (
         error.message.includes('already exists') || 
         error.message.includes('já existe') ||
         error.message.includes('409')
       )) {
-        console.log('[Evolution API] Instância já existe, verificando status...');
-        try {
-          const status = await this.getInstanceStatus(instanceName);
-          return { 
-            instanceName,
-            status: status.instance.state 
-          };
-        } catch (statusError) {
-          console.error('[Evolution API] Erro ao verificar status da instância existente:', statusError);
-        }
+        console.log('Instância já existe, retornando dados básicos');
         return { instanceName };
       }
       
@@ -474,111 +301,124 @@ class EvolutionApi {
   }
 
   async connectInstance(instanceName: string): Promise<EvolutionQRResponse> {
-    console.log(`[Evolution API] Conectando instância: ${instanceName}`);
+    console.log(`Conectando instância para obter QR code: ${instanceName}`);
     
     try {
       const response = await this.makeRequest(`/instance/connect/${instanceName}`, {
         method: 'GET',
       });
 
-      console.log('[Evolution API] Resposta do connect:', response);
-      return response;
+      console.log('Resposta do connect:', response);
+      
+      // A Evolution API pode retornar o QR code diretamente no connect
+      if (response && response.base64) {
+        return {
+          qrcode: {
+            base64: response.base64,
+            code: response.code || ''
+          }
+        };
+      }
+      
+      // Ou pode retornar na estrutura padrão
+      if (response && response.qrcode && response.qrcode.base64) {
+        return response;
+      }
+      
+      // Se não retornou QR code, tentar endpoint específico
+      console.log('QR code não encontrado no connect, tentando endpoint específico...');
+      return await this.getQRCodeDirect(instanceName);
       
     } catch (error) {
-      console.error('[Evolution API] Erro ao conectar instância:', error);
+      console.error('Erro ao conectar instância:', error);
+      throw error;
+    }
+  }
+
+  async getQRCodeDirect(instanceName: string): Promise<EvolutionQRResponse> {
+    console.log(`Obtendo QR code diretamente para instância: ${instanceName}`);
+    
+    try {
+      // Tentar múltiplos endpoints possíveis para QR code
+      const endpoints = [
+        `/instance/qrcode/${instanceName}`,
+        `/instance/${instanceName}/qrcode`,
+        `/qrcode/${instanceName}`
+      ];
+      
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`Tentando endpoint: ${endpoint}`);
+          const response = await this.makeRequest(endpoint);
+          
+          console.log('Resposta do QR code:', response);
+          
+          // Verificar diferentes formatos de resposta
+          if (response && response.base64) {
+            return {
+              qrcode: {
+                base64: response.base64,
+                code: response.code || ''
+              }
+            };
+          }
+          
+          if (response && response.qrcode && response.qrcode.base64) {
+            return response;
+          }
+          
+          if (response && response.qr && response.qr.base64) {
+            return {
+              qrcode: {
+                base64: response.qr.base64,
+                code: response.qr.code || ''
+              }
+            };
+          }
+          
+        } catch (endpointError) {
+          console.log(`Endpoint ${endpoint} falhou:`, endpointError);
+          continue; // Tentar próximo endpoint
+        }
+      }
+      
+      throw new Error('Nenhum endpoint de QR code funcionou');
+      
+    } catch (error) {
+      console.error('Erro ao obter QR code:', error);
       throw error;
     }
   }
 
   async getQRCode(instanceName: string): Promise<EvolutionQRResponse> {
-    console.log(`[Evolution API] Obtendo QR code para instância: ${instanceName}`);
+    console.log(`Obtendo QR code para instância: ${instanceName}`);
     
     try {
-      // Primeiro verificar se a instância existe
-      let instanceExists = false;
-      try {
-        await this.getInstanceStatus(instanceName);
-        instanceExists = true;
-        console.log('[Evolution API] Instância existe, prosseguindo...');
-      } catch (statusError) {
-        console.log('[Evolution API] Instância não existe, tentando criar...');
-        
-        // Se instância não existe, tentar criar
-        try {
-          await this.createInstance(instanceName);
-          instanceExists = true;
-          console.log('[Evolution API] Instância criada, aguardando inicialização...');
-          // Aguardar um pouco para a instância inicializar
-          await new Promise(resolve => setTimeout(resolve, 3000));
-        } catch (createError) {
-          console.error('[Evolution API] Erro ao criar instância:', createError);
-          throw new Error('Não foi possível criar a instância. Verifique a configuração da Evolution API.');
-        }
-      }
-
-      if (!instanceExists) {
-        throw new Error('Instância não pode ser criada ou acessada');
-      }
-
-      // Tentar conectar para gerar QR code
-      try {
-        const connectResponse = await this.connectInstance(instanceName);
-        if (connectResponse?.qrcode?.base64) {
-          return connectResponse;
-        }
-      } catch (connectError) {
-        console.log('[Evolution API] Erro ao conectar, tentando endpoint direto do QR code:', connectError);
+      // Primeiro tentar conectar a instância
+      const connectResult = await this.connectInstance(instanceName);
+      
+      if (connectResult && connectResult.qrcode && connectResult.qrcode.base64) {
+        console.log('QR code obtido via connect');
+        return connectResult;
       }
       
-      // Aguardar um pouco e tentar obter QR code diretamente
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Tentar endpoint direto do QR code
-      try {
-        const qrResponse = await this.makeRequest(`/instance/qrcode/${instanceName}`, {
-          method: 'GET',
-        });
-        
-        console.log('[Evolution API] Resposta do QR code:', qrResponse);
-        
-        if (qrResponse?.base64) {
-          return {
-            qrcode: {
-              base64: qrResponse.base64,
-              code: qrResponse.code || ''
-            }
-          };
-        }
-        
-        if (qrResponse?.qrcode?.base64) {
-          return qrResponse;
-        }
-      } catch (qrError) {
-        console.log('[Evolution API] Erro no endpoint do QR code:', qrError);
-      }
-      
-      // Verificar se a instância já está conectada
-      const status = await this.getInstanceStatus(instanceName);
-      if (status.instance.state === 'open') {
-        throw new Error('Instância já está conectada');
-      }
-      
-      throw new Error('QR Code não foi gerado. A instância pode estar em processo de inicialização. Tente novamente em alguns segundos.');
+      // Se connect não retornou QR code, tentar endpoints diretos
+      return await this.getQRCodeDirect(instanceName);
       
     } catch (error) {
-      console.error('[Evolution API] Erro ao obter QR code:', error);
+      console.error('Erro ao obter QR code:', error);
       throw error;
     }
   }
 
   async getInstanceStatus(instanceName: string): Promise<EvolutionInstanceStatus> {
-    console.log(`[Evolution API] Verificando status da instância: ${instanceName}`);
+    console.log(`Verificando status da instância: ${instanceName}`);
     
     return await this.makeRequest(`/instance/connectionState/${instanceName}`);
   }
 
   async deleteInstance(instanceName: string): Promise<any> {
-    console.log(`[Evolution API] Deletando instância: ${instanceName}`);
+    console.log(`Deletando instância: ${instanceName}`);
     
     return await this.makeRequest(`/instance/delete/${instanceName}`, {
       method: 'DELETE',
@@ -586,21 +426,21 @@ class EvolutionApi {
   }
 
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
-    console.log(`[Evolution API] Obtendo conversas para instância: ${instanceName}`);
+    console.log(`Obtendo conversas para instância: ${instanceName}`);
     
     const response = await this.makeRequest(`/chat/findChats/${instanceName}`);
     return response || [];
   }
 
   async getMessages(instanceName: string, remoteJid: string, limit: number = 20): Promise<EvolutionMessage[]> {
-    console.log(`[Evolution API] Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
+    console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
     
     const response = await this.makeRequest(`/chat/findMessages/${instanceName}?remoteJid=${encodeURIComponent(remoteJid)}&limit=${limit}`);
     return response || [];
   }
 
   async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
-    console.log(`[Evolution API] Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
+    console.log(`Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
     
     const payload = {
       number: remoteJid,
