@@ -42,7 +42,7 @@ export const evolutionChatService = {
           }
           
           // Verificar se tem remoteJid (essencial para um chat)
-          const remoteJid = chat.remoteJid || chat.id || (chat.chat && chat.chat.id);
+          const remoteJid = chat.remoteJid || chat.id;
           if (!remoteJid) {
             console.warn("Chat sem remoteJid encontrado:", chat);
             return false;
@@ -52,7 +52,7 @@ export const evolutionChatService = {
         })
         .map((chat, index) => {
           // Extrair remoteJid corretamente de diferentes formatos possíveis
-          const remoteJid = chat.remoteJid || chat.id || (chat.chat && chat.chat.id);
+          const remoteJid = chat.remoteJid || chat.id;
           
           console.log("Processando chat:", {
             original: chat,
@@ -65,9 +65,9 @@ export const evolutionChatService = {
           return {
             id: chatId,
             remoteJid: remoteJid,
-            pushName: chat.pushName || chat.name || remoteJid,
+            pushName: chat.pushName || remoteJid,
             profilePictureUrl: chat.profilePictureUrl || chat.profilePicUrl,
-            unreadMessages: chat.unreadMessages || chat.unreadCount || (chat.chat && chat.chat.unreadCount) || 0
+            unreadMessages: chat.unreadMessages || chat.unreadCount || 0
           };
         });
     } catch (error) {

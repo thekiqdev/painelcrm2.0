@@ -68,7 +68,7 @@ export interface EvolutionChat {
   };
 }
 
-class EvolutionApi {
+export class EvolutionApi {
   private apiUrl: string = '';
   private globalKey: string = '';
   private instanceApiKey: string = '';
@@ -573,6 +573,8 @@ class EvolutionApi {
       
       if (Array.isArray(response)) {
         return response;
+      } else if (response.messages && response.messages.records && Array.isArray(response.messages.records)) {
+        return response.messages.records;
       } else if (response.messages && Array.isArray(response.messages)) {
         return response.messages;
       } else if (response.data && Array.isArray(response.data)) {
