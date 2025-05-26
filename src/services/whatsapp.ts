@@ -393,8 +393,8 @@ export const whatsappService = {
       await evolutionApi.deleteInstance(instanceName);
       
       // Remover do banco de dados local
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
         throw new Error("Usuário não autenticado");
       }
       
