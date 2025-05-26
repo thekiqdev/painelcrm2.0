@@ -140,7 +140,6 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     }
     
     setIsSubmitting(true);
-    setCurrentStep("creating");
     
     try {
       // Extrair apenas números do telefone
@@ -182,10 +181,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             return;
           } else {
             console.log("Instância existe mas não está conectada, indo para QR code...");
-            // Aguardar 2 segundos na tela de criação e depois ir para QR code
-            setTimeout(() => {
-              obtainQRCodeDirectly(generatedInstanceName, config);
-            }, 2000);
+            // Se instância já existe, ir direto para QR code sem mostrar tela de criação
+            await obtainQRCodeDirectly(generatedInstanceName, config);
             return;
           }
         } catch (statusError) {
@@ -195,8 +192,50 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         }
       }
       
-      // Criar nova instância
+      // Verificar se a instância já existe na API antes de tentar criar
+      try {
+        console.log("Verificando se instância já existe na API...");
+        const status = await evolutionApi.getInstanceStatus(generatedInstanceName);
+        
+        if (status.instance.state === "open") {
+          // Instância já está conectada
+          setCurrentStep("connected");
+          toast.success("Instância já conectada!", {
+            description: "Esta instância já estava ativa",
+          });
+          
+          // Auto-finalizar após 2 segundos
+          setTimeout(() => {
+            handleFinishConnection();
+          }, 2000);
+          return;
+        } else {
+          // Instância existe mas não está conectada, ir direto para QR code
+          console.log("Instância já existe na API, indo para QR code...");
+          
+          // Salvar estado indicando que a instância foi encontrada
+          const newState: InstanceState = {
+            instanceName: generatedInstanceName,
+            connectionName,
+            phoneNumber: cleanPhoneNumber,
+            step: "qrcode",
+            created: true
+          };
+          saveInstanceState(newState);
+          
+          // Salvar conexão no sistema
+          saveConnectionToSystem({ instanceName: generatedInstanceName });
+          
+          await obtainQRCodeDirectly(generatedInstanceName, config);
+          return;
+        }
+      } catch (statusError) {
+        console.log("Instância não existe na API, criando nova...");
+      }
+      
+      // Se chegou aqui, precisa criar nova instância
       console.log("Criando nova instância:", generatedInstanceName);
+      setCurrentStep("creating");
       
       let instanceResult;
       try {
