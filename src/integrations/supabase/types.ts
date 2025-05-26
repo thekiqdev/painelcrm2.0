@@ -664,6 +664,38 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_all_conversation_statuses: {
+        Args: { p_user_id: string; p_connection_id: string }
+        Returns: {
+          id: string
+          user_id: string
+          connection_id: string
+          remote_jid: string
+          status: string
+          attendant_id: string
+          attended_at: string
+          created_at: string
+          updated_at: string
+        }[]
+      }
+      get_conversation_status: {
+        Args: {
+          p_user_id: string
+          p_connection_id: string
+          p_remote_jid: string
+        }
+        Returns: {
+          id: string
+          user_id: string
+          connection_id: string
+          remote_jid: string
+          status: string
+          attendant_id: string
+          attended_at: string
+          created_at: string
+          updated_at: string
+        }[]
+      }
       has_permission: {
         Args:
           | {
@@ -677,6 +709,28 @@ export type Database = {
       is_profile_member: {
         Args: { profile_id: string; user_id?: string }
         Returns: boolean
+      }
+      upsert_conversation_status: {
+        Args: {
+          p_user_id: string
+          p_connection_id: string
+          p_remote_jid: string
+          p_status: string
+          p_attendant_id?: string
+          p_attended_at?: string
+          p_updated_at?: string
+        }
+        Returns: {
+          id: string
+          user_id: string
+          connection_id: string
+          remote_jid: string
+          status: string
+          attendant_id: string
+          attended_at: string
+          created_at: string
+          updated_at: string
+        }[]
       }
     }
     Enums: {

@@ -19,7 +19,7 @@ export const conversationStatusService = {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Usuário não autenticado");
 
-      const { data, error } = await supabase.rpc('get_conversation_status', {
+      const { data, error } = await (supabase as any).rpc('get_conversation_status', {
         p_user_id: user.id,
         p_connection_id: connectionId,
         p_remote_jid: remoteJid
@@ -49,7 +49,7 @@ export const conversationStatusService = {
       const now = new Date().toISOString();
       const attendedAt = status === 'active' ? now : null;
 
-      const { data, error } = await supabase.rpc('upsert_conversation_status', {
+      const { data, error } = await (supabase as any).rpc('upsert_conversation_status', {
         p_user_id: user.id,
         p_connection_id: connectionId,
         p_remote_jid: remoteJid,
@@ -76,7 +76,7 @@ export const conversationStatusService = {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Usuário não autenticado");
 
-      const { data, error } = await supabase.rpc('get_all_conversation_statuses', {
+      const { data, error } = await (supabase as any).rpc('get_all_conversation_statuses', {
         p_user_id: user.id,
         p_connection_id: connectionId
       });
@@ -87,9 +87,11 @@ export const conversationStatusService = {
       }
 
       const statusMap: Record<string, ConversationAttendance> = {};
-      data?.forEach((attendance: ConversationAttendance) => {
-        statusMap[attendance.remote_jid] = attendance;
-      });
+      if (Array.isArray(data)) {
+        data.forEach((attendance: ConversationAttendance) => {
+          statusMap[attendance.remote_jid] = attendance;
+        });
+      }
 
       return statusMap;
     } catch (error) {
