@@ -26,9 +26,9 @@ serve(async (req) => {
   
   try {
     const url = new URL(req.url);
-    const connectionName = url.pathname.split("/").pop();
+    const instanceName = url.pathname.split("/").pop();
     
-    console.log(`Webhook chamado para conexão: ${connectionName}`);
+    console.log(`[Evolution Webhook] Webhook chamado para instância: ${instanceName}`);
     
     // Processar dados do webhook
     let webhookData;
@@ -38,28 +38,61 @@ serve(async (req) => {
       webhookData = { error: "Não foi possível processar o corpo da requisição" };
     }
     
-    console.log("Dados do webhook recebidos:", JSON.stringify(webhookData).substring(0, 200) + "...");
+    console.log("[Evolution Webhook] Dados recebidos:", JSON.stringify(webhookData, null, 2));
     
     // Armazenar eventos webhook para análise futura
-    await supabaseClient.from("whatsapp_webhook_events")
+    const { error: insertError } = await supabaseClient
+      .from("whatsapp_webhook_events")
       .insert({
-        connection_name: connectionName,
+        connection_name: instanceName || 'unknown',
         event_data: webhookData,
         created_at: new Date().toISOString()
       });
     
-    // Aqui você processaria eventos específicos da Evolution API
-    // Por exemplo, novas mensagens, alterações de status, etc.
+    if (insertError) {
+      console.error("[Evolution Webhook] Erro ao inserir evento:", insertError);
+    }
+    
+    // Processar eventos específicos da Evolution API
+    if (webhookData.event) {
+      console.log(`[Evolution Webhook] Processando evento: ${webhookData.event}`);
+      
+      switch (webhookData.event) {
+        case 'qrcode.updated':
+          console.log("[Evolution Webhook] QR Code atualizado");
+          // Aqui você pode processar atualizações do QR code se necessário
+          break;
+          
+        case 'connection.update':
+          console.log("[Evolution Webhook] Status de conexão atualizado:", webhookData.data);
+          // Processar mudanças no status da conexão
+          if (webhookData.data && webhookData.data.state === 'open') {
+            console.log("[Evolution Webhook] Instância conectada com sucesso!");
+          }
+          break;
+          
+        case 'messages.upsert':
+          console.log("[Evolution Webhook] Nova mensagem recebida");
+          // Processar novas mensagens
+          break;
+          
+        default:
+          console.log(`[Evolution Webhook] Evento não tratado: ${webhookData.event}`);
+      }
+    }
     
     return new Response(JSON.stringify({ 
       success: true,
-      message: "Webhook recebido com sucesso" 
+      message: "Webhook processado com sucesso",
+      instanceName: instanceName,
+      event: webhookData.event || 'unknown'
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
+    
   } catch (error) {
-    console.error("Erro ao processar webhook:", error);
+    console.error("[Evolution Webhook] Erro ao processar webhook:", error);
     
     return new Response(JSON.stringify({ 
       error: "Falha ao processar webhook",

@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionApiConfig {
@@ -76,7 +75,7 @@ class EvolutionApi {
 
   private async makeRequest(endpoint: string, options: RequestInit = {}) {
     const url = `${this.apiUrl}${endpoint}`;
-    console.log(`Fazendo requisição para: ${url}`);
+    console.log(`[Evolution API] Fazendo requisição para: ${url}`);
     
     const response = await fetch(url, {
       ...options,
@@ -86,17 +85,23 @@ class EvolutionApi {
       },
     });
 
-    console.log(`Status da resposta: ${response.status}`);
+    console.log(`[Evolution API] Status da resposta: ${response.status}`);
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`Erro na requisição: ${response.status} - ${errorText}`);
+      console.error(`[Evolution API] Erro na requisição: ${response.status} - ${errorText}`);
       throw new Error(`Erro na API: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
-    console.log('Resposta da API:', data);
+    console.log('[Evolution API] Resposta da API:', data);
     return data;
+  }
+
+  private getWebhookUrl(instanceName: string): string {
+    // URL do webhook da nossa aplicação
+    const projectUrl = 'https://meoatixglqaxnzzovuez.supabase.co';
+    return `${projectUrl}/functions/v1/evolution-webhook/${instanceName}`;
   }
 
   async getAllConfigs(): Promise<EvolutionApiConfig[]> {
@@ -263,17 +268,43 @@ class EvolutionApi {
   }
 
   async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance> {
+    const webhookUrl = this.getWebhookUrl(instanceName);
+    
     const payload: any = {
       instanceName,
       qrcode: true,
-      integration: "WHATSAPP-BAILEYS"
+      integration: "WHATSAPP-BAILEYS",
+      webhook: webhookUrl,
+      webhookByEvents: false,
+      webhookBase64: true,
+      events: [
+        "APPLICATION_STARTUP",
+        "QRCODE_UPDATED",
+        "CONNECTION_UPDATE",
+        "MESSAGES_UPSERT",
+        "MESSAGES_UPDATE",
+        "MESSAGES_DELETE",
+        "SEND_MESSAGE",
+        "CONTACTS_SET",
+        "CONTACTS_UPSERT",
+        "CONTACTS_UPDATE",
+        "PRESENCE_UPDATE",
+        "CHATS_SET",
+        "CHATS_UPSERT",
+        "CHATS_UPDATE",
+        "CHATS_DELETE",
+        "GROUPS_UPSERT",
+        "GROUP_UPDATE",
+        "GROUP_PARTICIPANTS_UPDATE",
+        "NEW_JWT_TOKEN"
+      ]
     };
 
     if (phoneNumber) {
       payload.number = phoneNumber;
     }
 
-    console.log('Criando instância com payload:', payload);
+    console.log('[Evolution API] Criando instância com payload:', payload);
     
     try {
       const response = await this.makeRequest('/instance/create', {
@@ -281,10 +312,10 @@ class EvolutionApi {
         body: JSON.stringify(payload),
       });
 
-      console.log('Instância criada com sucesso:', response);
+      console.log('[Evolution API] Instância criada com sucesso:', response);
       return response;
     } catch (error) {
-      console.error('Erro ao criar instância:', error);
+      console.error('[Evolution API] Erro ao criar instância:', error);
       
       // Se o erro for de instância já existente, não considerar como erro crítico
       if (error instanceof Error && (
@@ -292,7 +323,7 @@ class EvolutionApi {
         error.message.includes('já existe') ||
         error.message.includes('409')
       )) {
-        console.log('Instância já existe, retornando dados básicos');
+        console.log('[Evolution API] Instância já existe, retornando dados básicos');
         return { instanceName };
       }
       
@@ -301,124 +332,87 @@ class EvolutionApi {
   }
 
   async connectInstance(instanceName: string): Promise<EvolutionQRResponse> {
-    console.log(`Conectando instância para obter QR code: ${instanceName}`);
+    console.log(`[Evolution API] Conectando instância: ${instanceName}`);
     
     try {
       const response = await this.makeRequest(`/instance/connect/${instanceName}`, {
         method: 'GET',
       });
 
-      console.log('Resposta do connect:', response);
-      
-      // A Evolution API pode retornar o QR code diretamente no connect
-      if (response && response.base64) {
-        return {
-          qrcode: {
-            base64: response.base64,
-            code: response.code || ''
-          }
-        };
-      }
-      
-      // Ou pode retornar na estrutura padrão
-      if (response && response.qrcode && response.qrcode.base64) {
-        return response;
-      }
-      
-      // Se não retornou QR code, tentar endpoint específico
-      console.log('QR code não encontrado no connect, tentando endpoint específico...');
-      return await this.getQRCodeDirect(instanceName);
+      console.log('[Evolution API] Resposta do connect:', response);
+      return response;
       
     } catch (error) {
-      console.error('Erro ao conectar instância:', error);
-      throw error;
-    }
-  }
-
-  async getQRCodeDirect(instanceName: string): Promise<EvolutionQRResponse> {
-    console.log(`Obtendo QR code diretamente para instância: ${instanceName}`);
-    
-    try {
-      // Tentar múltiplos endpoints possíveis para QR code
-      const endpoints = [
-        `/instance/qrcode/${instanceName}`,
-        `/instance/${instanceName}/qrcode`,
-        `/qrcode/${instanceName}`
-      ];
-      
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`Tentando endpoint: ${endpoint}`);
-          const response = await this.makeRequest(endpoint);
-          
-          console.log('Resposta do QR code:', response);
-          
-          // Verificar diferentes formatos de resposta
-          if (response && response.base64) {
-            return {
-              qrcode: {
-                base64: response.base64,
-                code: response.code || ''
-              }
-            };
-          }
-          
-          if (response && response.qrcode && response.qrcode.base64) {
-            return response;
-          }
-          
-          if (response && response.qr && response.qr.base64) {
-            return {
-              qrcode: {
-                base64: response.qr.base64,
-                code: response.qr.code || ''
-              }
-            };
-          }
-          
-        } catch (endpointError) {
-          console.log(`Endpoint ${endpoint} falhou:`, endpointError);
-          continue; // Tentar próximo endpoint
-        }
-      }
-      
-      throw new Error('Nenhum endpoint de QR code funcionou');
-      
-    } catch (error) {
-      console.error('Erro ao obter QR code:', error);
+      console.error('[Evolution API] Erro ao conectar instância:', error);
       throw error;
     }
   }
 
   async getQRCode(instanceName: string): Promise<EvolutionQRResponse> {
-    console.log(`Obtendo QR code para instância: ${instanceName}`);
+    console.log(`[Evolution API] Obtendo QR code para instância: ${instanceName}`);
     
     try {
-      // Primeiro tentar conectar a instância
-      const connectResult = await this.connectInstance(instanceName);
+      // Primeiro conectar a instância
+      await this.connectInstance(instanceName);
       
-      if (connectResult && connectResult.qrcode && connectResult.qrcode.base64) {
-        console.log('QR code obtido via connect');
-        return connectResult;
+      // Aguardar um pouco para a instância processar
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Obter o QR code
+      const qrResponse = await this.makeRequest(`/instance/qrcode/${instanceName}`, {
+        method: 'GET',
+      });
+      
+      console.log('[Evolution API] Resposta do QR code:', qrResponse);
+      
+      // Verificar diferentes formatos de resposta
+      if (qrResponse && qrResponse.base64) {
+        return {
+          qrcode: {
+            base64: qrResponse.base64,
+            code: qrResponse.code || ''
+          }
+        };
       }
       
-      // Se connect não retornou QR code, tentar endpoints diretos
-      return await this.getQRCodeDirect(instanceName);
+      if (qrResponse && qrResponse.qrcode && qrResponse.qrcode.base64) {
+        return qrResponse;
+      }
+      
+      // Tentar endpoint alternativo
+      try {
+        const altResponse = await this.makeRequest(`/instance/${instanceName}/qrcode`, {
+          method: 'GET',
+        });
+        
+        if (altResponse && altResponse.base64) {
+          return {
+            qrcode: {
+              base64: altResponse.base64,
+              code: altResponse.code || ''
+            }
+          };
+        }
+      } catch (altError) {
+        console.log('[Evolution API] Endpoint alternativo falhou:', altError);
+      }
+      
+      throw new Error('QR Code não encontrado na resposta da API');
       
     } catch (error) {
-      console.error('Erro ao obter QR code:', error);
+      console.error('[Evolution API] Erro ao obter QR code:', error);
       throw error;
     }
   }
 
   async getInstanceStatus(instanceName: string): Promise<EvolutionInstanceStatus> {
-    console.log(`Verificando status da instância: ${instanceName}`);
+    console.log(`[Evolution API] Verificando status da instância: ${instanceName}`);
     
     return await this.makeRequest(`/instance/connectionState/${instanceName}`);
   }
 
   async deleteInstance(instanceName: string): Promise<any> {
-    console.log(`Deletando instância: ${instanceName}`);
+    console.log(`[Evolution API] Deletando instância: ${instanceName}`);
     
     return await this.makeRequest(`/instance/delete/${instanceName}`, {
       method: 'DELETE',
@@ -426,21 +420,21 @@ class EvolutionApi {
   }
 
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
-    console.log(`Obtendo conversas para instância: ${instanceName}`);
+    console.log(`[Evolution API] Obtendo conversas para instância: ${instanceName}`);
     
     const response = await this.makeRequest(`/chat/findChats/${instanceName}`);
     return response || [];
   }
 
   async getMessages(instanceName: string, remoteJid: string, limit: number = 20): Promise<EvolutionMessage[]> {
-    console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
+    console.log(`[Evolution API] Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
     
     const response = await this.makeRequest(`/chat/findMessages/${instanceName}?remoteJid=${encodeURIComponent(remoteJid)}&limit=${limit}`);
     return response || [];
   }
 
   async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
-    console.log(`Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
+    console.log(`[Evolution API] Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
     
     const payload = {
       number: remoteJid,
