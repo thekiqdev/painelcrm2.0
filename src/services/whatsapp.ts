@@ -378,7 +378,7 @@ export const whatsappService = {
     }
   },
   
-  // Método para deletar instância Evolution API - CORRIGIDO
+  // Método para deletar instância Evolution API
   deleteEvolutionInstance: async (instanceName: string) => {
     try {
       console.log("Deletando instância Evolution API:", instanceName);
@@ -393,19 +393,15 @@ export const whatsappService = {
       // Deletar instância na API Evolution
       await evolutionApi.deleteInstance(instanceName);
       
-      // Remover do banco de dados local se usuário estiver autenticado
+      // Remover do banco de dados local se possível (não bloquear se houver erro de auth)
       try {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (!userError && user) {
-          const { error: dbError } = await supabase
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          await supabase
             .from("whatsapp_connections")
             .delete()
             .eq("config_data->>instanceName", instanceName)
             .eq("user_id", user.id);
-          
-          if (dbError) {
-            console.error("Erro ao remover do banco:", dbError);
-          }
         }
       } catch (authError) {
         console.log("Usuário não autenticado, pulando remoção do banco");
