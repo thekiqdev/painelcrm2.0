@@ -261,15 +261,18 @@ class EvolutionApi {
     }
   }
 
-  async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance> {
+  async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance & { qrcode?: string }> {
+    // Sanitizar o número de telefone removendo caracteres especiais
+    const sanitizedNumber = phoneNumber ? phoneNumber.replace(/[^\d]/g, '') : undefined;
+    
     const payload: any = {
       instanceName,
       qrcode: true,
       integration: "WHATSAPP-BAILEYS"
     };
 
-    if (phoneNumber) {
-      payload.number = phoneNumber;
+    if (sanitizedNumber) {
+      payload.number = sanitizedNumber;
     }
 
     console.log('Criando instância com payload:', payload);
@@ -281,7 +284,23 @@ class EvolutionApi {
       });
 
       console.log('Instância criada com sucesso:', response);
-      return response;
+      
+      // Extrair QR code da resposta se disponível
+      let qrCodeData = null;
+      if (response.qrcode) {
+        if (response.qrcode.base64) {
+          // Se já vem em base64, usar diretamente
+          qrCodeData = response.qrcode.base64.replace('data:image/png;base64,', '');
+        } else if (typeof response.qrcode === 'string') {
+          // Se é uma string, pode ser o base64 direto
+          qrCodeData = response.qrcode.replace('data:image/png;base64,', '');
+        }
+      }
+      
+      return {
+        instanceName,
+        qrcode: qrCodeData
+      };
     } catch (error) {
       console.error('Erro ao criar instância:', error);
       
@@ -291,8 +310,14 @@ class EvolutionApi {
         error.message.includes('já existe') ||
         error.message.includes('409')
       )) {
-        console.log('Instância já existe, retornando dados básicos');
-        return { instanceName };
+        console.log('Instância já existe, tentando obter QR code...');
+        try {
+          // Se a instância já existe, tentar obter o QR code via connect
+          return await this.connectInstance(instanceName);
+        } catch (connectError) {
+          console.error('Erro ao conectar instância existente:', connectError);
+          return { instanceName };
+        }
       }
       
       throw error;
@@ -303,28 +328,17 @@ class EvolutionApi {
     console.log(`Obtendo QR code para instância: ${instanceName}`);
     
     try {
-      // Usar o endpoint correto para obter QR code
+      // Primeiro tentar o endpoint específico de QR code
       const response = await this.makeRequest(`/instance/qrcode/${instanceName}`, {
         method: 'GET',
       });
 
       console.log('Resposta do QR code:', response);
       
-      // Verificar se a resposta contém o QR code no formato esperado
-      if (response && response.qrcode) {
-        return {
-          qrcode: {
-            base64: response.qrcode,
-            code: response.code || ''
-          }
-        };
-      }
-      
-      // Se não tem qrcode diretamente, verificar se está em base64
       if (response && response.base64) {
         return {
           qrcode: {
-            base64: response.base64,
+            base64: response.base64.replace('data:image/png;base64,', ''),
             code: response.code || ''
           }
         };
@@ -333,8 +347,16 @@ class EvolutionApi {
       throw new Error('QR code não encontrado na resposta da API');
       
     } catch (error) {
-      console.error('Erro ao obter QR code:', error);
-      throw error;
+      console.error('Erro ao obter QR code via endpoint específico:', error);
+      
+      // Se o endpoint específico falhou, tentar via connect
+      console.log('Tentando obter QR code via connect...');
+      try {
+        return await this.connectInstance(instanceName);
+      } catch (connectError) {
+        console.error('Erro ao conectar instância:', connectError);
+        throw error; // Lançar o erro original do QR code
+      }
     }
   }
 
@@ -342,35 +364,41 @@ class EvolutionApi {
     console.log(`Conectando instância: ${instanceName}`);
     
     try {
-      // Primeiro tentar conectar a instância
       const response = await this.makeRequest(`/instance/connect/${instanceName}`, {
         method: 'GET',
       });
 
       console.log('Resposta do connect:', response);
       
-      // Se o connect retornou QR code, usar ele
+      // Verificar diferentes formatos de resposta do QR code
       if (response && response.qrcode) {
-        return {
-          qrcode: {
-            base64: response.qrcode,
-            code: response.code || ''
-          }
-        };
+        if (response.qrcode.base64) {
+          return {
+            qrcode: {
+              base64: response.qrcode.base64.replace('data:image/png;base64,', ''),
+              code: response.qrcode.code || ''
+            }
+          };
+        } else if (typeof response.qrcode === 'string') {
+          return {
+            qrcode: {
+              base64: response.qrcode.replace('data:image/png;base64,', ''),
+              code: response.code || ''
+            }
+          };
+        }
       }
       
       if (response && response.base64) {
         return {
           qrcode: {
-            base64: response.base64,
+            base64: response.base64.replace('data:image/png;base64,', ''),
             code: response.code || ''
           }
         };
       }
       
-      // Se connect não retornou QR code, obter via endpoint específico
-      console.log('Connect não retornou QR code, obtendo via endpoint específico...');
-      return await this.getQRCode(instanceName);
+      throw new Error('QR code não encontrado na resposta do connect');
       
     } catch (error) {
       console.error('Erro ao conectar instância:', error);
