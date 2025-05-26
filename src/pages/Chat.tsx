@@ -384,44 +384,40 @@ const Chat = () => {
         </Card>
       ) : (
         <>
-          {/* Cabeçalho com número conectado */}
+          {/* Cabeçalho compacto com número conectado */}
+          <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-3">
+            <div className="flex items-center gap-2">
+              <div className="bg-green-100 p-1.5 rounded-full">
+                <Phone className="h-4 w-4 text-green-600" />
+              </div>
+              <div>
+                <span className="text-sm font-medium text-green-800">WhatsApp Conectado:</span>
+                <span className="text-sm text-green-700 ml-1">{connectedNumber}</span>
+              </div>
+            </div>
+            <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
+              Online
+            </Badge>
+          </div>
+
+          {/* Filtro de contatos */}
           <Card>
             <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="bg-green-100 p-2 rounded-full">
-                    <Phone className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium">WhatsApp Conectado</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {connectedNumber}
-                    </p>
-                  </div>
-                </div>
-                <Badge variant="secondary" className="bg-green-100 text-green-800">
-                  Online
-                </Badge>
-              </div>
-              
-              {/* Filtro de contatos */}
-              <div className="mt-4">
-                <div className="relative">
-                  <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Filtrar por nome ou telefone..."
-                    value={contactFilter}
-                    onChange={(e) => setContactFilter(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
+              <div className="relative">
+                <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Filtrar por nome ou telefone..."
+                  value={contactFilter}
+                  onChange={(e) => setContactFilter(e.target.value)}
+                  className="pl-10"
+                />
               </div>
             </CardContent>
           </Card>
 
-          <Tabs defaultValue="mock" className="w-full">
+          <Tabs defaultValue="conversations" className="w-full">
             <TabsList className="mb-4">
-              <TabsTrigger value="mock">Conversas</TabsTrigger>
+              <TabsTrigger value="conversations">Conversas</TabsTrigger>
               <TabsTrigger value="pending">
                 Não atendidos
                 {pendingConversations.length > 0 && (
@@ -430,13 +426,10 @@ const Chat = () => {
                   </Badge>
                 )}
               </TabsTrigger>
-              {activeEvolutionConnection && (
-                <TabsTrigger value="evolution">Evolution API</TabsTrigger>
-              )}
             </TabsList>
             
-            <TabsContent value="mock">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-16rem)]">
+            <TabsContent value="conversations">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-20rem)]">
                 <Card className="md:col-span-1 flex flex-col">
                   <CardHeader className="px-4 py-3 border-b">
                     <CardTitle className="text-base font-medium flex items-center gap-2">
@@ -461,6 +454,7 @@ const Chat = () => {
                   </CardContent>
                 </Card>
 
+                
                 <Card className="md:col-span-2 flex flex-col">
                   {activeConversation ? (
                     <>
@@ -555,7 +549,7 @@ const Chat = () => {
             </TabsContent>
             
             <TabsContent value="pending">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-16rem)]">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-20rem)]">
                 <Card className="md:col-span-1 flex flex-col">
                   <CardHeader className="px-4 py-3 border-b">
                     <CardTitle className="text-base font-medium flex items-center gap-2">
@@ -580,6 +574,7 @@ const Chat = () => {
                   </CardContent>
                 </Card>
 
+                
                 <Card className="md:col-span-2 flex flex-col">
                   {activeConversation ? (
                     <>
@@ -672,15 +667,6 @@ const Chat = () => {
                 </Card>
               </div>
             </TabsContent>
-            
-            {activeEvolutionConnection && (
-              <TabsContent value="evolution">
-                <EvolutionChatPanel
-                  instanceName={activeEvolutionConnection.configData?.instanceName || ""}
-                  enabled={true}
-                />
-              </TabsContent>
-            )}
           </Tabs>
         </>
       )}
