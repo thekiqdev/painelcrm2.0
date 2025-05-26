@@ -395,8 +395,8 @@ export const whatsappService = {
       
       // Remover do banco de dados local se possível (não bloquear se houver erro de auth)
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (!userError && user) {
           await supabase
             .from("whatsapp_connections")
             .delete()
