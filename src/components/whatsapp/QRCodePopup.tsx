@@ -1,0 +1,223 @@
+
+import React, { useState, useEffect } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Loader2, RefreshCw, CheckCircle2, InfoIcon } from "lucide-react";
+import { evolutionApi } from "@/services/evolutionApi";
+import { toast } from "sonner";
+
+interface QRCodePopupProps {
+  isOpen: boolean;
+  onClose: () => void;
+  instanceName: string;
+  onConnect: () => void;
+}
+
+const QRCodePopup: React.FC<QRCodePopupProps> = ({
+  isOpen,
+  onClose,
+  instanceName,
+  onConnect,
+}) => {
+  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (isOpen && instanceName) {
+      generateQRCode();
+    }
+  }, [isOpen, instanceName]);
+
+  const generateQRCode = async () => {
+    setIsLoading(true);
+    setErrorMessage("");
+    setQrCode(null);
+    
+    try {
+      console.log("Gerando QR code para:", instanceName);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Configuração não encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      // Verificar se já está conectado
+      try {
+        const status = await evolutionApi.getInstanceStatus(instanceName);
+        
+        if (status.instance.state === "open") {
+          setIsConnected(true);
+          toast.success("Já conectado!", {
+            description: "Esta instância já estava conectada",
+          });
+          return;
+        }
+      } catch (statusError) {
+        console.log("Instância não encontrada ou erro ao verificar status");
+      }
+      
+      // Gerar QR code
+      const qrResult = await evolutionApi.getQRCode(instanceName);
+      
+      if (qrResult?.qrcode?.base64) {
+        setQrCode(qrResult.qrcode.base64);
+        toast.success("QR Code gerado", {
+          description: "Escaneie o QR code com seu WhatsApp",
+        });
+        
+        // Iniciar verificação de conexão
+        startConnectionPolling();
+      } else {
+        throw new Error("Não foi possível gerar o QR code");
+      }
+      
+    } catch (error) {
+      console.error("Erro ao gerar QR code:", error);
+      setErrorMessage(error instanceof Error ? error.message : "Erro ao gerar QR code");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startConnectionPolling = () => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const config = await evolutionApi.getActiveConfig();
+        if (!config) return;
+        
+        evolutionApi.setCredentials(config.api_url, config.global_key);
+        const status = await evolutionApi.getInstanceStatus(instanceName);
+        
+        if (status.instance.state === "open") {
+          setIsConnected(true);
+          clearInterval(pollInterval);
+          
+          toast.success("Conectado com sucesso!", {
+            description: "WhatsApp foi conectado com sucesso",
+          });
+          
+          // Auto-conectar após 2 segundos
+          setTimeout(() => {
+            onConnect();
+          }, 2000);
+        }
+      } catch (error) {
+        console.error("Erro ao verificar conexão:", error);
+      }
+    }, 3000);
+    
+    // Timeout após 5 minutos
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      if (!isConnected) {
+        setErrorMessage("QR Code expirou. Tente gerar novamente.");
+      }
+    }, 300000);
+  };
+
+  const handleRetry = () => {
+    generateQRCode();
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[450px]">
+        <DialogHeader>
+          <DialogTitle>
+            {isConnected ? "Conectado!" : "Escaneie o QR Code"}
+          </DialogTitle>
+          <DialogDescription>
+            {isConnected 
+              ? "Sua conta WhatsApp foi conectada com sucesso"
+              : "Use seu celular para escanear o QR code e conectar o WhatsApp"
+            }
+          </DialogDescription>
+        </DialogHeader>
+        
+        <div className="flex flex-col items-center py-6">
+          {isLoading && (
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="h-16 w-16 animate-spin text-primary" />
+              <p className="text-center">Gerando QR code...</p>
+            </div>
+          )}
+          
+          {qrCode && !isConnected && (
+            <div className="flex flex-col items-center gap-4">
+              <div className="border-4 border-white rounded-lg shadow-lg">
+                <img 
+                  src={`data:image/png;base64,${qrCode}`} 
+                  alt="QR Code para conexão WhatsApp" 
+                  className="w-[200px] h-[200px]" 
+                />
+              </div>
+              <div className="text-center max-w-sm">
+                <p className="text-sm text-muted-foreground">
+                  Abra o WhatsApp no seu celular, toque em Menu ou Configurações e selecione WhatsApp Web. 
+                  Aponte a câmera do seu celular para esta tela para capturar o código.
+                </p>
+                <p className="text-xs text-blue-600 font-medium mt-2">
+                  ⏳ Aguardando escaneamento...
+                </p>
+              </div>
+            </div>
+          )}
+          
+          {isConnected && (
+            <div className="flex flex-col items-center gap-4">
+              <CheckCircle2 className="h-16 w-16 text-green-500" />
+              <p className="text-center text-lg font-medium">WhatsApp Conectado!</p>
+              <Alert>
+                <InfoIcon className="h-4 w-4 mr-2" />
+                <AlertDescription>
+                  A conexão será finalizada automaticamente em alguns segundos.
+                </AlertDescription>
+              </Alert>
+            </div>
+          )}
+          
+          {errorMessage && (
+            <div className="flex flex-col items-center gap-4">
+              <Alert variant="destructive">
+                <AlertDescription>
+                  {errorMessage}
+                </AlertDescription>
+              </Alert>
+            </div>
+          )}
+        </div>
+        
+        <DialogFooter>
+          {!isConnected && !isLoading && (
+            <Button variant="outline" onClick={handleRetry}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Gerar Novo QR Code
+            </Button>
+          )}
+          
+          {isConnected ? (
+            <Button onClick={onConnect} className="w-full">
+              Finalizar Conexão
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={onClose}>
+              Cancelar
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+export default QRCodePopup;
