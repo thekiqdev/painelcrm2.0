@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,32 +13,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/integrations/supabase/types";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import EvolutionChatPanel from "@/components/whatsapp/EvolutionChatPanel";
-
-interface Message {
-  id: string;
-  content: string;
-  sender: "user" | "customer";
-  timestamp: Date;
-}
-
-interface Conversation {
-  id: string;
-  customer: {
-    name: string;
-    phone: string;
-    avatar?: string;
-  };
-  lastMessage: string;
-  unreadCount: number;
-  updatedAt: Date;
-  status: "active" | "pending" | "closed";
-  attendant?: string;
-}
-
-type ProfileWithConnection = {
-  whatsapp_connected: boolean | null;
-};
+import { whatsappService } from "@/services/whatsapp";
+import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
 
 interface Connection {
   id: string;
@@ -52,17 +29,34 @@ interface Connection {
   };
 }
 
+interface ChatConversation {
+  id: string;
+  remoteJid: string;
+  pushName?: string;
+  profilePictureUrl?: string;
+  lastMessage?: string;
+  unreadCount?: number;
+  updatedAt: Date;
+  status: "active" | "pending" | "closed";
+  attendant?: string;
+  messages: EvolutionMessage[];
+}
+
+type ProfileWithConnection = {
+  whatsapp_connected: boolean | null;
+};
+
 const Chat = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [activeEvolutionConnection, setActiveEvolutionConnection] = useState<Connection | null>(null);
   const [contactFilter, setContactFilter] = useState("");
   const [connectedNumber, setConnectedNumber] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     const checkConnectionStatus = async () => {
@@ -98,13 +92,12 @@ const Chat = () => {
               if (evolutionConnection) {
                 setActiveEvolutionConnection(evolutionConnection);
                 setConnectedNumber(evolutionConnection.configData?.phoneNumber || "Número não identificado");
+                await loadEvolutionChats(evolutionConnection.configData?.instanceName || '');
               }
             } catch (error) {
               console.error("Error loading connections:", error);
             }
           }
-          
-          loadMockData();
         } else {
           setConnectionStatus("disconnected");
         }
@@ -114,114 +107,74 @@ const Chat = () => {
       }
     };
 
-    const loadMockData = () => {
-      const mockConversations: Conversation[] = [
-        {
-          id: "1",
-          customer: {
-            name: "João Silva",
-            phone: "+5511987654321",
-            avatar: "",
-          },
-          lastMessage: "Quando meu pedido será enviado?",
-          unreadCount: 3,
-          updatedAt: new Date(Date.now() - 1000 * 60 * 5),
-          status: "active",
-          attendant: user?.email || "Você"
-        },
-        {
-          id: "2",
-          customer: {
-            name: "Maria Oliveira",
-            phone: "+5511912345678",
-            avatar: "",
-          },
-          lastMessage: "Preciso de ajuda urgente!",
-          unreadCount: 2,
-          updatedAt: new Date(Date.now() - 1000 * 60 * 10),
-          status: "pending"
-        },
-        {
-          id: "3",
-          customer: {
-            name: "Carlos Santos",
-            phone: "+5521998765432",
-            avatar: "",
-          },
-          lastMessage: "Obrigado pelo atendimento!",
-          unreadCount: 0,
-          updatedAt: new Date(Date.now() - 1000 * 60 * 30),
-          status: "active",
-          attendant: user?.email || "Você"
-        },
-        {
-          id: "4",
-          customer: {
-            name: "Ana Costa",
-            phone: "+5511999887766",
-            avatar: "",
-          },
-          lastMessage: "Olá, preciso de informações sobre produtos",
-          unreadCount: 1,
-          updatedAt: new Date(Date.now() - 1000 * 60 * 15),
-          status: "pending"
-        }
-      ];
-      
-      setConversations(mockConversations);
-    };
-
     if (user) {
       checkConnectionStatus();
     }
   }, [user]);
 
-  useEffect(() => {
-    if (activeConversation) {
-      const mockMessages: Message[] = [
-        {
-          id: "1",
-          content: "Olá, como posso ajudar?",
-          sender: "user",
-          timestamp: new Date(Date.now() - 1000 * 60 * 60),
-        },
-        {
-          id: "2",
-          content: "Estou com um problema no meu pedido",
-          sender: "customer",
-          timestamp: new Date(Date.now() - 1000 * 60 * 59),
-        },
-        {
-          id: "3",
-          content: "Qual é o número do seu pedido?",
-          sender: "user",
-          timestamp: new Date(Date.now() - 1000 * 60 * 55),
-        },
-        {
-          id: "4",
-          content: "O número é #12345",
-          sender: "customer",
-          timestamp: new Date(Date.now() - 1000 * 60 * 50),
-        },
-        {
-          id: "5",
-          content: "Vou verificar para você agora mesmo.",
-          sender: "user",
-          timestamp: new Date(Date.now() - 1000 * 60 * 45),
-        },
-      ];
+  const loadEvolutionChats = async (instanceName: string) => {
+    if (!instanceName) return;
+    
+    try {
+      setIsLoading(true);
+      console.log("Carregando conversas da instância:", instanceName);
       
-      setMessages(mockMessages);
+      const chats: EvolutionContact[] = await whatsappService.getEvolutionChats(instanceName);
+      console.log("Conversas carregadas:", chats);
       
-      setConversations(prev =>
-        prev.map(conv =>
-          conv.id === activeConversation
-            ? { ...conv, unreadCount: 0 }
-            : conv
-        )
+      const conversationsWithMessages = await Promise.all(
+        chats.map(async (chat) => {
+          try {
+            const messages = await whatsappService.getEvolutionMessages(instanceName, chat.remoteJid);
+            
+            const lastMessage = messages && messages.length > 0 
+              ? getMessageText(messages[messages.length - 1]) 
+              : "Sem mensagens";
+            
+            return {
+              id: chat.id,
+              remoteJid: chat.remoteJid,
+              pushName: chat.pushName,
+              profilePictureUrl: chat.profilePictureUrl,
+              lastMessage,
+              unreadCount: chat.unreadMessages || 0,
+              updatedAt: new Date(),
+              status: "pending" as const,
+              messages: messages || []
+            };
+          } catch (messageError) {
+            console.error(`Erro ao carregar mensagens para ${chat.remoteJid}:`, messageError);
+            return {
+              id: chat.id,
+              remoteJid: chat.remoteJid,
+              pushName: chat.pushName,
+              profilePictureUrl: chat.profilePictureUrl,
+              lastMessage: "Erro ao carregar mensagens",
+              unreadCount: 0,
+              updatedAt: new Date(),
+              status: "pending" as const,
+              messages: []
+            };
+          }
+        })
       );
+      
+      setConversations(conversationsWithMessages);
+    } catch (error) {
+      console.error("Erro ao carregar conversas:", error);
+      toast.error("Erro ao carregar conversas", {
+        description: "Não foi possível carregar as conversas do WhatsApp"
+      });
+    } finally {
+      setIsLoading(false);
     }
-  }, [activeConversation]);
+  };
+
+  const getMessageText = (message: EvolutionMessage) => {
+    return message.message?.conversation || 
+           message.message?.extendedTextMessage?.text || 
+           "Mensagem sem texto";
+  };
 
   const handleAttendConversation = (conversationId: string) => {
     setConversations(prev => 
@@ -239,26 +192,51 @@ const Chat = () => {
     });
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || !activeConversation || !activeEvolutionConnection?.configData?.instanceName) return;
     
-    const newMsg: Message = {
-      id: `new-${Date.now()}`,
-      content: newMessage,
-      sender: "user",
-      timestamp: new Date(),
-    };
+    const conversation = conversations.find(c => c.id === activeConversation);
+    if (!conversation) return;
     
-    setMessages(prev => [...prev, newMsg]);
-    setNewMessage("");
-    
-    console.log("Message to send:", newMessage);
+    try {
+      setIsLoading(true);
+      
+      await whatsappService.sendEvolutionMessage(
+        activeEvolutionConnection.configData.instanceName,
+        conversation.remoteJid,
+        newMessage
+      );
+      
+      // Recarregar mensagens após envio
+      const updatedMessages = await whatsappService.getEvolutionMessages(
+        activeEvolutionConnection.configData.instanceName,
+        conversation.remoteJid
+      );
+      
+      setConversations(prev => 
+        prev.map(conv => 
+          conv.id === activeConversation 
+            ? { ...conv, messages: updatedMessages || [] }
+            : conv
+        )
+      );
+      
+      setNewMessage("");
+      toast.success("Mensagem enviada com sucesso!");
+    } catch (error) {
+      console.error("Erro ao enviar mensagem:", error);
+      toast.error("Erro ao enviar mensagem", {
+        description: "Não foi possível enviar a mensagem"
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('pt-BR', { 
+  const formatTime = (timestamp: number) => {
+    return new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { 
       hour: '2-digit', 
       minute: '2-digit',
       hour12: false
@@ -272,15 +250,19 @@ const Chat = () => {
                     date.getFullYear() === now.getFullYear();
     
     if (isToday) {
-      return formatTime(date);
+      return date.toLocaleTimeString('pt-BR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
     }
     
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   };
 
   const filteredConversations = conversations.filter(conv =>
-    conv.customer.name.toLowerCase().includes(contactFilter.toLowerCase()) ||
-    conv.customer.phone.includes(contactFilter)
+    (conv.pushName && conv.pushName.toLowerCase().includes(contactFilter.toLowerCase())) ||
+    conv.remoteJid.includes(contactFilter)
   );
 
   const pendingConversations = filteredConversations.filter(conv => conv.status === "pending");
@@ -290,7 +272,7 @@ const Chat = () => {
     navigate("/settings?tab=whatsapp");
   };
 
-  const renderConversationItem = (conversation: Conversation, showAttendButton = false) => (
+  const renderConversationItem = (conversation: ChatConversation, showAttendButton = false) => (
     <li 
       key={conversation.id}
       className={`px-4 py-3 hover:bg-muted cursor-pointer ${
@@ -300,14 +282,18 @@ const Chat = () => {
     >
       <div className="flex items-start gap-3">
         <Avatar className="h-10 w-10 flex-shrink-0">
-          <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-            {conversation.customer.name.charAt(0)}
-          </div>
+          {conversation.profilePictureUrl ? (
+            <img src={conversation.profilePictureUrl} alt={conversation.pushName || conversation.remoteJid} />
+          ) : (
+            <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
+              {(conversation.pushName || conversation.remoteJid).charAt(0)}
+            </div>
+          )}
         </Avatar>
         <div className="flex-grow min-w-0">
           <div className="flex items-baseline justify-between">
             <h3 className="font-medium text-sm truncate">
-              {conversation.customer.name}
+              {conversation.pushName || conversation.remoteJid}
             </h3>
             <span className="text-xs text-muted-foreground whitespace-nowrap ml-1">
               {formatDate(conversation.updatedAt)}
@@ -330,7 +316,7 @@ const Chat = () => {
           </div>
         </div>
         <div className="flex flex-col items-end gap-1">
-          {conversation.unreadCount > 0 && (
+          {(conversation.unreadCount || 0) > 0 && (
             <span className="bg-primary text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
               {conversation.unreadCount}
             </span>
@@ -351,6 +337,8 @@ const Chat = () => {
       </div>
     </li>
   );
+
+  const activeConversationData = conversations.find(c => c.id === activeConversation);
 
   return (
     <div className="space-y-6">
@@ -439,7 +427,11 @@ const Chat = () => {
                   </CardHeader>
                   <CardContent className="p-0 flex-grow overflow-hidden">
                     <ScrollArea className="flex-grow">
-                      {activeConversations.length === 0 ? (
+                      {isLoading ? (
+                        <div className="p-4 text-center text-muted-foreground">
+                          Carregando conversas...
+                        </div>
+                      ) : activeConversations.length === 0 ? (
                         <div className="p-4 text-center text-muted-foreground">
                           Nenhuma conversa ativa
                         </div>
@@ -454,24 +446,27 @@ const Chat = () => {
                   </CardContent>
                 </Card>
 
-                
                 <Card className="md:col-span-2 flex flex-col">
-                  {activeConversation ? (
+                  {activeConversation && activeConversationData ? (
                     <>
                       <CardHeader className="px-4 py-3 border-b flex-shrink-0">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Avatar className="h-8 w-8">
-                              <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                {conversations.find(c => c.id === activeConversation)?.customer.name.charAt(0)}
-                              </div>
+                              {activeConversationData.profilePictureUrl ? (
+                                <img src={activeConversationData.profilePictureUrl} alt={activeConversationData.pushName || activeConversationData.remoteJid} />
+                              ) : (
+                                <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
+                                  {(activeConversationData.pushName || activeConversationData.remoteJid).charAt(0)}
+                                </div>
+                              )}
                             </Avatar>
                             <div>
                               <h3 className="font-medium text-sm">
-                                {conversations.find(c => c.id === activeConversation)?.customer.name}
+                                {activeConversationData.pushName || activeConversationData.remoteJid}
                               </h3>
                               <p className="text-xs text-muted-foreground">
-                                {conversations.find(c => c.id === activeConversation)?.customer.phone}
+                                {activeConversationData.remoteJid}
                               </p>
                             </div>
                           </div>
@@ -488,25 +483,25 @@ const Chat = () => {
                       <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
                         <ScrollArea className="flex-grow p-4">
                           <div className="space-y-4">
-                            {messages.map((message) => (
+                            {activeConversationData.messages.map((message) => (
                               <div 
-                                key={message.id} 
-                                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                                key={message.key.id} 
+                                className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
                               >
                                 <div 
                                   className={`max-w-[70%] rounded-lg p-3 ${
-                                    message.sender === 'user' 
+                                    message.key.fromMe 
                                       ? 'bg-primary text-primary-foreground' 
                                       : 'bg-muted'
                                   }`}
                                 >
-                                  <p className="text-sm">{message.content}</p>
+                                  <p className="text-sm">{getMessageText(message)}</p>
                                   <div className={`text-xs mt-1 ${
-                                    message.sender === 'user' 
+                                    message.key.fromMe 
                                       ? 'text-primary-foreground/70' 
                                       : 'text-muted-foreground'
                                   }`}>
-                                    {formatTime(message.timestamp)}
+                                    {formatTime(message.messageTimestamp)}
                                   </div>
                                 </div>
                               </div>
@@ -520,9 +515,14 @@ const Chat = () => {
                               placeholder="Digite sua mensagem..."
                               value={newMessage}
                               onChange={(e) => setNewMessage(e.target.value)}
+                              disabled={isLoading}
                               className="flex-grow"
                             />
-                            <Button type="submit" size="icon">
+                            <Button 
+                              type="submit" 
+                              size="icon"
+                              disabled={isLoading || !newMessage.trim()}
+                            >
                               <Send className="h-4 w-4" />
                             </Button>
                           </form>
@@ -559,7 +559,11 @@ const Chat = () => {
                   </CardHeader>
                   <CardContent className="p-0 flex-grow overflow-hidden">
                     <ScrollArea className="flex-grow">
-                      {pendingConversations.length === 0 ? (
+                      {isLoading ? (
+                        <div className="p-4 text-center text-muted-foreground">
+                          Carregando conversas...
+                        </div>
+                      ) : pendingConversations.length === 0 ? (
                         <div className="p-4 text-center text-muted-foreground">
                           Nenhuma conversa não atendida
                         </div>
@@ -574,24 +578,27 @@ const Chat = () => {
                   </CardContent>
                 </Card>
 
-                
                 <Card className="md:col-span-2 flex flex-col">
-                  {activeConversation ? (
+                  {activeConversation && activeConversationData ? (
                     <>
                       <CardHeader className="px-4 py-3 border-b flex-shrink-0">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Avatar className="h-8 w-8">
-                              <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                {conversations.find(c => c.id === activeConversation)?.customer.name.charAt(0)}
-                              </div>
+                              {activeConversationData.profilePictureUrl ? (
+                                <img src={activeConversationData.profilePictureUrl} alt={activeConversationData.pushName || activeConversationData.remoteJid} />
+                              ) : (
+                                <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
+                                  {(activeConversationData.pushName || activeConversationData.remoteJid).charAt(0)}
+                                </div>
+                              )}
                             </Avatar>
                             <div>
                               <h3 className="font-medium text-sm">
-                                {conversations.find(c => c.id === activeConversation)?.customer.name}
+                                {activeConversationData.pushName || activeConversationData.remoteJid}
                               </h3>
                               <p className="text-xs text-muted-foreground">
-                                {conversations.find(c => c.id === activeConversation)?.customer.phone}
+                                {activeConversationData.remoteJid}
                               </p>
                             </div>
                           </div>
@@ -608,25 +615,25 @@ const Chat = () => {
                       <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
                         <ScrollArea className="flex-grow p-4">
                           <div className="space-y-4">
-                            {messages.map((message) => (
+                            {activeConversationData.messages.map((message) => (
                               <div 
-                                key={message.id} 
-                                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                                key={message.key.id} 
+                                className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
                               >
                                 <div 
                                   className={`max-w-[70%] rounded-lg p-3 ${
-                                    message.sender === 'user' 
+                                    message.key.fromMe 
                                       ? 'bg-primary text-primary-foreground' 
                                       : 'bg-muted'
                                   }`}
                                 >
-                                  <p className="text-sm">{message.content}</p>
+                                  <p className="text-sm">{getMessageText(message)}</p>
                                   <div className={`text-xs mt-1 ${
-                                    message.sender === 'user' 
+                                    message.key.fromMe 
                                       ? 'text-primary-foreground/70' 
                                       : 'text-muted-foreground'
                                   }`}>
-                                    {formatTime(message.timestamp)}
+                                    {formatTime(message.messageTimestamp)}
                                   </div>
                                 </div>
                               </div>
@@ -640,9 +647,14 @@ const Chat = () => {
                               placeholder="Digite sua mensagem..."
                               value={newMessage}
                               onChange={(e) => setNewMessage(e.target.value)}
+                              disabled={isLoading}
                               className="flex-grow"
                             />
-                            <Button type="submit" size="icon">
+                            <Button 
+                              type="submit" 
+                              size="icon"
+                              disabled={isLoading || !newMessage.trim()}
+                            >
                               <Send className="h-4 w-4" />
                             </Button>
                           </form>
