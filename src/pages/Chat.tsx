@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,7 +42,6 @@ const Chat = () => {
   const [activeInstanceName, setActiveInstanceName] = useState<string>("");
   const [activeConnectionId, setActiveConnectionId] = useState<string>("");
 
-  // Garantir que o connectionId seja válido antes de passar para o hook
   const validConnectionId = activeConnectionId && activeConnectionId.trim() !== "" ? activeConnectionId : undefined;
 
   console.log("Chat component state:", {
@@ -125,7 +125,6 @@ const Chat = () => {
     }
   }, [user]);
 
-  // Converter chats do cache para conversações com status persistido
   const conversations: ChatConversation[] = chats.map(chat => ({
     id: chat.id,
     remoteJid: chat.remoteJid,
@@ -203,7 +202,6 @@ const Chat = () => {
     const success = await attendConversation(conversation.remoteJid);
     if (success) {
       console.log("Conversa atendida com sucesso, mensagens carregadas");
-      // Recarregar as conversas para atualizar o status
       await refreshChats();
     } else {
       toast.error("Erro ao atender conversa");
@@ -245,9 +243,6 @@ const Chat = () => {
               {formatDate(conversation.updatedAt)}
             </span>
           </div>
-          <p className="text-xs text-muted-foreground truncate">
-            {conversation.remoteJid}
-          </p>
           <div className="flex items-center gap-2 mt-1">
             {conversation.status === "pending" && (
               <Badge variant="destructive" className="text-xs">
@@ -445,9 +440,6 @@ const Chat = () => {
                               <h3 className="font-medium text-sm">
                                 {activeChatInfo.pushName || activeChatInfo.remoteJid}
                               </h3>
-                              <p className="text-xs text-muted-foreground">
-                                {activeChatInfo.remoteJid}
-                              </p>
                             </div>
                           </div>
                           <div className="flex gap-2">
@@ -590,9 +582,6 @@ const Chat = () => {
                               <h3 className="font-medium text-sm">
                                 {activeChatInfo.pushName || activeChatInfo.remoteJid}
                               </h3>
-                              <p className="text-xs text-muted-foreground">
-                                {activeChatInfo.remoteJid}
-                              </p>
                             </div>
                           </div>
                           <div className="flex gap-2">
