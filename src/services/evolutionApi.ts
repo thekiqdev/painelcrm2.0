@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionServerConfig {
@@ -87,6 +88,7 @@ class EvolutionApi {
   private async makeRequest(endpoint: string, options: RequestInit = {}) {
     const url = `${this.apiUrl}${endpoint}`;
     console.log(`[Evolution API] Fazendo requisição para: ${url}`);
+    console.log(`[Evolution API] Headers:`, this.getHeaders());
     console.log(`[Evolution API] Payload:`, options.body);
     
     const response = await fetch(url, {
@@ -111,7 +113,6 @@ class EvolutionApi {
   }
 
   private getWebhookUrl(instanceName: string): string {
-    // URL do webhook da nossa aplicação
     const projectUrl = 'https://meoatixglqaxnzzovuez.supabase.co';
     return `${projectUrl}/functions/v1/evolution-webhook/${instanceName}`;
   }
@@ -399,7 +400,7 @@ class EvolutionApi {
   async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance> {
     const webhookUrl = this.getWebhookUrl(instanceName);
     
-    // Payload correto conforme documentação fornecida
+    // Payload conforme a documentação fornecida
     const payload: any = {
       instanceName,
       qrcode: true,
@@ -408,7 +409,7 @@ class EvolutionApi {
       webhook_by_events: true,
       events: [
         "APPLICATION_STARTUP",
-        "QRCODE_UPDATED",
+        "QRCODE_UPDATED", 
         "CONNECTION_UPDATE",
         "MESSAGES_UPSERT"
       ],
@@ -422,7 +423,7 @@ class EvolutionApi {
       sqs_enabled: false
     };
 
-    // Só adicionar número se fornecido
+    // Adicionar número se fornecido
     if (phoneNumber && phoneNumber.trim()) {
       payload.number = phoneNumber.replace(/\D/g, '');
     }

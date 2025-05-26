@@ -50,13 +50,16 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     const checkServer = async () => {
       try {
         const server = await evolutionApi.getActiveServer();
+        console.log('[AddConnection] Servidor ativo encontrado:', server);
         setHasActiveServer(!!server);
         
         if (server) {
+          console.log('[AddConnection] Configurando credenciais:', server.server_url);
           evolutionApi.setCredentials(server.server_url, server.api_key);
         }
       } catch (error) {
         console.error("Erro ao verificar servidor:", error);
+        setHasActiveServer(false);
       }
     };
     
@@ -83,7 +86,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     
     if (!hasActiveServer) {
       toast.error("Servidor necessário", {
-        description: "Configure primeiro um servidor Evolution API em Configurações."
+        description: "Configure primeiro um servidor Evolution API em Configurações Avançadas."
       });
       return;
     }
@@ -105,10 +108,11 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       // Ir para tela de criação
       setCurrentStep("creating");
       
-      // Obter servidor ativo
+      // Obter servidor ativo novamente para garantir que temos as credenciais
       const server = await evolutionApi.getActiveServer();
       if (!server) throw new Error("Servidor não encontrado");
       
+      console.log('[AddConnection] Configurando API com servidor:', server.server_url);
       evolutionApi.setCredentials(server.server_url, server.api_key);
       
       // Aguardar 3 segundos na tela de criação para dar tempo da API processar
