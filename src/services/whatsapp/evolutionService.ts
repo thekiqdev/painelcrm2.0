@@ -246,7 +246,7 @@ export const evolutionService = {
       // Se não foi fornecido instanceName, buscar no banco
       if (!targetInstanceName) {
         const activeConnection = await this.findActiveConnection();
-        if (!activeConnection?.instanceName) {
+        if (!activeConnection) {
           throw new Error("Nenhuma conexão ativa encontrada");
         }
         targetInstanceName = activeConnection.instanceName;
