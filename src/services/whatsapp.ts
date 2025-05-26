@@ -1,4 +1,5 @@
 
+
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -282,7 +283,7 @@ export const whatsappService = {
 
   checkEvolutionConnection: async (instanceName: string) => {
     try {
-      console.log("Passo 3: Verificando status da conexão:", instanceName);
+      console.log("Verificando status da conexão:", instanceName);
       
       const config = await evolutionApi.getActiveConfig();
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");

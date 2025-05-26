@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionApiConfig {
@@ -56,6 +55,14 @@ export interface EvolutionContact {
   remoteJid: string;
   unreadMessages?: number;
   profilePictureUrl?: string;
+}
+
+export interface EvolutionChat {
+  chat: {
+    id: string;
+    conversationTimestamp: number;
+    unreadCount: number;
+  };
 }
 
 class EvolutionApi {
@@ -428,16 +435,23 @@ class EvolutionApi {
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
     console.log(`Obtendo conversas para instância: ${instanceName}`);
     
-    // Usar endpoint baseado na documentação do Postman
-    const response = await this.makeRequest(`/chat/whatsapp/find/${instanceName}`);
+    // Usar endpoint correto baseado na documentação: POST /chat/findChats/:instance
+    const response = await this.makeRequest(`/chat/findChats/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
     
-    // A resposta pode vir como array diretamente ou dentro de uma propriedade
+    console.log('Resposta raw do findChats:', response);
+    
+    // A resposta vem como array de objetos com propriedade "chat"
     if (Array.isArray(response)) {
-      return response;
-    } else if (response.chats && Array.isArray(response.chats)) {
-      return response.chats;
-    } else if (response.data && Array.isArray(response.data)) {
-      return response.data;
+      return response.map((item: EvolutionChat) => ({
+        id: item.chat.id,
+        remoteJid: item.chat.id,
+        pushName: '', // Será preenchido posteriormente se necessário
+        unreadMessages: item.chat.unreadCount,
+        profilePictureUrl: undefined
+      }));
     }
     
     console.log('Formato de resposta inesperado:', response);
