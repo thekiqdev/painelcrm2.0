@@ -394,17 +394,21 @@ export const whatsappService = {
       await evolutionApi.deleteInstance(instanceName);
       
       // Remover do banco de dados local se usuário estiver autenticado
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (!userError && user) {
-        const { error: dbError } = await supabase
-          .from("whatsapp_connections")
-          .delete()
-          .eq("config_data->>instanceName", instanceName)
-          .eq("user_id", user.id);
-        
-        if (dbError) {
-          console.error("Erro ao remover do banco:", dbError);
+      try {
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (!userError && user) {
+          const { error: dbError } = await supabase
+            .from("whatsapp_connections")
+            .delete()
+            .eq("config_data->>instanceName", instanceName)
+            .eq("user_id", user.id);
+          
+          if (dbError) {
+            console.error("Erro ao remover do banco:", dbError);
+          }
         }
+      } catch (authError) {
+        console.log("Usuário não autenticado, pulando remoção do banco");
       }
       
       return {
