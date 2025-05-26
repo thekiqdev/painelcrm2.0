@@ -28,11 +28,6 @@ export const evolutionService = {
           .upsert({
             user_id: user.id,
             status: "awaiting_scan",
-            provider: "evolution",
-            config_data: {
-              instanceName,
-              serverUrl: config.api_url,
-            },
             qr_code: result.qrcode,
             updated_at: new Date().toISOString()
           });
@@ -94,11 +89,6 @@ export const evolutionService = {
           .upsert({
             user_id: user.id,
             status: "awaiting_scan",
-            provider: "evolution",
-            config_data: {
-              instanceName,
-              serverUrl: config.api_url,
-            },
             qr_code: qrResult.qrcode.base64,
             updated_at: new Date().toISOString()
           });
@@ -152,11 +142,6 @@ export const evolutionService = {
           .upsert({
             user_id: user.id,
             status: "connected",
-            provider: "evolution",
-            config_data: {
-              instanceName,
-              serverUrl: config.api_url,
-            },
             qr_code: null,
             updated_at: new Date().toISOString()
           });
@@ -201,7 +186,6 @@ export const evolutionService = {
           await supabase
             .from("whatsapp_connections")
             .delete()
-            .eq("config_data->>instanceName", instanceName)
             .eq("user_id", user.id);
         }
       } catch (authError) {
