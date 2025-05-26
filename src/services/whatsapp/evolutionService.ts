@@ -216,66 +216,50 @@ export const evolutionService = {
     }
   },
 
-  // Novo método para encontrar a instância conectada correta
-  findConnectedInstance: async () => {
+  // Método para encontrar conexões ativas no banco de dados
+  findActiveConnection: async () => {
     try {
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      const connections = await connectionDatabaseService.getConnections();
+      const activeConnection = connections.find(conn => conn.status === "connected");
       
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      
-      // Obter todas as instâncias disponíveis
-      const instances = await evolutionApi.getAllInstances();
-      console.log("Instâncias disponíveis:", instances);
-      
-      // Verificar se instances existe e é um array antes de iterar
-      if (!instances || !Array.isArray(instances)) {
-        console.log("Nenhuma instância encontrada ou formato inválido");
-        return null;
+      if (activeConnection && activeConnection.instance_name) {
+        console.log(`Conexão ativa encontrada: ${activeConnection.instance_name}`);
+        return {
+          instanceName: activeConnection.instance_name,
+          apikey: null // API key será obtida da configuração global
+        };
       }
       
-      // Procurar por uma instância conectada
-      for (const instance of instances) {
-        try {
-          // Verificar se instance e instanceName existem com optional chaining
-          if (!instance?.instanceName) {
-            console.log("Instância com dados inválidos encontrada, pulando...");
-            continue;
-          }
-          
-          const status = await evolutionApi.getInstanceStatus(instance.instanceName);
-          if (status?.instance?.state === "open") {
-            console.log(`Instância conectada encontrada: ${instance.instanceName}`);
-            return {
-              instanceName: instance.instanceName,
-              apikey: instance?.apikey || null
-            };
-          }
-        } catch (statusError) {
-          console.log(`Erro ao verificar status da instância ${instance.instanceName}:`, statusError);
-          continue;
-        }
-      }
-      
-      console.log("Nenhuma instância conectada encontrada");
+      console.log("Nenhuma conexão ativa encontrada no banco");
       return null;
     } catch (error) {
-      console.error("Erro ao procurar instância conectada:", error);
+      console.error("Erro ao procurar conexão ativa:", error);
       return null;
     }
   },
 
-  // Novo método para obter conversas com apikey da instância
-  getEvolutionChats: async (instanceName: string, instanceApiKey?: string) => {
+  // Novo método para obter conversas com instância do banco
+  getEvolutionChats: async (instanceName?: string) => {
     try {
-      console.log("Obtendo conversas Evolution API:", instanceName);
+      let targetInstanceName = instanceName;
+      
+      // Se não foi fornecido instanceName, buscar no banco
+      if (!targetInstanceName) {
+        const activeConnection = await this.findActiveConnection();
+        if (!activeConnection) {
+          throw new Error("Nenhuma conexão ativa encontrada");
+        }
+        targetInstanceName = activeConnection.instanceName;
+      }
+      
+      console.log("Obtendo conversas Evolution API:", targetInstanceName);
       
       const config = await evolutionApi.getActiveConfig();
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      return await evolutionApi.getChats(instanceName, instanceApiKey);
+      return await evolutionApi.getChats(targetInstanceName);
     } catch (error) {
       console.error("Erro ao obter conversas Evolution:", error);
       throw error;

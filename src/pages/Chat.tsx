@@ -14,19 +14,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { whatsappService } from "@/services/whatsapp";
 import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
-
-interface Connection {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  configData?: {
-    apiKey?: string;
-    instanceName?: string;
-    serverUrl?: string;
-    phoneNumber?: string;
-  };
-}
+import { connectionDatabaseService } from "@/services/whatsapp/connectionDatabaseService";
 
 interface ChatConversation {
   id: string;
@@ -52,10 +40,10 @@ const Chat = () => {
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
-  const [activeEvolutionConnection, setActiveEvolutionConnection] = useState<Connection | null>(null);
   const [contactFilter, setContactFilter] = useState("");
   const [connectedNumber, setConnectedNumber] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
+  const [activeInstanceName, setActiveInstanceName] = useState<string>("");
 
   useEffect(() => {
     const checkConnectionStatus = async () => {
@@ -81,46 +69,25 @@ const Chat = () => {
         if (profile && profile.whatsapp_connected === true) {
           setConnectionStatus("connected");
           
-          // Check for Evolution API connections
-          const savedConnections = localStorage.getItem('whatsapp_connections');
-          console.log("Conexões salvas no localStorage:", savedConnections);
-          
-          if (savedConnections) {
-            try {
-              const connections: Connection[] = JSON.parse(savedConnections);
-              const evolutionConnection = connections.find(c => 
-                c.type === "evolution" && c.status === "connected"
-              );
-              
-              console.log("Conexão Evolution encontrada:", evolutionConnection);
-              
-              if (evolutionConnection) {
-                setActiveEvolutionConnection(evolutionConnection);
-                setConnectedNumber(evolutionConnection.configData?.phoneNumber || "Número não identificado");
-                await loadEvolutionChats(evolutionConnection.configData?.instanceName || '');
-              } else {
-                console.log("Nenhuma conexão Evolution ativa encontrada");
-                // Tentar carregar com base no número do perfil
-                const userPhoneNumber = user.user_metadata?.whatsapp_number;
-                if (userPhoneNumber) {
-                  const instanceName = `painelcrmevo_${userPhoneNumber}`;
-                  console.log("Tentando carregar conversas com instanceName baseado no perfil:", instanceName);
-                  setConnectedNumber(userPhoneNumber);
-                  await loadEvolutionChats(instanceName);
-                }
-              }
-            } catch (error) {
-              console.error("Error loading connections:", error);
+          // Buscar conexões ativas no banco de dados
+          try {
+            const connections = await connectionDatabaseService.getConnections();
+            console.log("Conexões do banco de dados:", connections);
+            
+            const activeConnection = connections.find(c => c.status === "connected");
+            
+            if (activeConnection && activeConnection.instance_name) {
+              console.log("Conexão ativa encontrada:", activeConnection);
+              setActiveInstanceName(activeConnection.instance_name);
+              setConnectedNumber(activeConnection.phone_number || "Número não identificado");
+              await loadEvolutionChats(activeConnection.instance_name);
+            } else {
+              console.log("Nenhuma conexão ativa encontrada no banco");
+              setConnectionStatus("disconnected");
             }
-          } else {
-            // Se não há conexões salvas, tentar usar o número do perfil do usuário
-            const userPhoneNumber = user.user_metadata?.whatsapp_number;
-            if (userPhoneNumber) {
-              const instanceName = `painelcrmevo_${userPhoneNumber}`;
-              console.log("Tentando carregar conversas sem localStorage, instanceName:", instanceName);
-              setConnectedNumber(userPhoneNumber);
-              await loadEvolutionChats(instanceName);
-            }
+          } catch (dbError) {
+            console.error("Erro ao buscar conexões do banco:", dbError);
+            setConnectionStatus("disconnected");
           }
         } else {
           setConnectionStatus("disconnected");
@@ -230,7 +197,7 @@ const Chat = () => {
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!newMessage.trim() || !activeConversation || !activeEvolutionConnection?.configData?.instanceName) return;
+    if (!newMessage.trim() || !activeConversation || !activeInstanceName) return;
     
     const conversation = conversations.find(c => c.id === activeConversation);
     if (!conversation) return;
@@ -239,14 +206,14 @@ const Chat = () => {
       setIsLoading(true);
       
       await whatsappService.sendEvolutionMessage(
-        activeEvolutionConnection.configData.instanceName,
+        activeInstanceName,
         conversation.remoteJid,
         newMessage
       );
       
       // Recarregar mensagens após envio
       const updatedMessages = await whatsappService.getEvolutionMessages(
-        activeEvolutionConnection.configData.instanceName,
+        activeInstanceName,
         conversation.remoteJid
       );
       
@@ -416,6 +383,9 @@ const Chat = () => {
               <div>
                 <span className="text-sm font-medium text-green-800">WhatsApp Conectado:</span>
                 <span className="text-sm text-green-700 ml-1">{connectedNumber}</span>
+                {activeInstanceName && (
+                  <span className="text-xs text-green-600 ml-2">({activeInstanceName})</span>
+                )}
               </div>
             </div>
             <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
