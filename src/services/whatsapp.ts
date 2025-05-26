@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -197,7 +196,7 @@ export const whatsappService = {
         // Se não obteve QR code, verificar se já está conectado
         try {
           const status = await evolutionApi.getInstanceStatus(instanceName);
-          if (status.instance.state === "open") {
+          if (status?.instance?.state === "open") {
             return {
               success: true,
               status: "connected"
@@ -266,7 +265,7 @@ export const whatsappService = {
       } else {
         // Se não há QR code, verificar se já está conectado
         const status = await evolutionApi.getInstanceStatus(instanceName);
-        if (status.instance && status.instance.state === "open") {
+        if (status?.instance?.state === "open") {
           return {
             success: true,
             status: "connected"
@@ -294,7 +293,7 @@ export const whatsappService = {
       const status = await evolutionApi.getInstanceStatus(instanceName);
       console.log("Status da instância:", status);
       
-      if (status.instance && status.instance.state === "open") {
+      if (status?.instance?.state === "open") {
         // Conexão estabelecida com sucesso
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
@@ -326,7 +325,7 @@ export const whatsappService = {
       } else {
         return {
           success: false,
-          status: status.instance ? status.instance.state : "unknown"
+          status: status?.instance?.state || "unknown"
         };
       }
       
@@ -336,7 +335,6 @@ export const whatsappService = {
     }
   },
 
-  // Método para obter conversas da Evolution API
   getEvolutionChats: async (instanceName: string) => {
     try {
       const config = await evolutionApi.getActiveConfig();
@@ -350,7 +348,6 @@ export const whatsappService = {
     }
   },
 
-  // Método para obter mensagens da Evolution API
   getEvolutionMessages: async (instanceName: string, remoteJid: string) => {
     try {
       const config = await evolutionApi.getActiveConfig();
@@ -364,7 +361,6 @@ export const whatsappService = {
     }
   },
 
-  // Método para enviar mensagem via Evolution API
   sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string) => {
     try {
       const config = await evolutionApi.getActiveConfig();
@@ -378,7 +374,6 @@ export const whatsappService = {
     }
   },
   
-  // Método para deletar instância Evolution API
   deleteEvolutionInstance: async (instanceName: string) => {
     try {
       console.log("Deletando instância Evolution API:", instanceName);
