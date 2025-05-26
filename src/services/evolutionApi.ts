@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionApiConfig {
@@ -313,7 +314,11 @@ class EvolutionApi {
         console.log('Instância já existe, tentando obter QR code...');
         try {
           // Se a instância já existe, tentar obter o QR code via connect
-          return await this.connectInstance(instanceName);
+          const qrResult = await this.connectInstance(instanceName);
+          return {
+            instanceName,
+            qrcode: qrResult.qrcode?.base64
+          };
         } catch (connectError) {
           console.error('Erro ao conectar instância existente:', connectError);
           return { instanceName };

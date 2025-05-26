@@ -146,6 +146,7 @@ export const whatsappService = {
     
     return await response.json();
   },
+  
   // Método específico para Evolution API - Criar instância e obter QR Code em um passo
   createEvolutionInstance: async (instanceName: string, phoneNumber: string, webhookUrl?: string) => {
     try {
@@ -164,10 +165,11 @@ export const whatsappService = {
       
       if (result.qrcode) {
         // Se obteve QR code na criação, salvar no banco e retornar
+        const { data: { user } } = await supabase.auth.getUser();
         const { error: dbError } = await supabase
           .from("whatsapp_connections")
           .upsert({
-            user_id: (await supabase.auth.getUser()).data.user?.id,
+            user_id: user?.id,
             status: "awaiting_scan",
             provider: "evolution",
             config_data: {
@@ -229,10 +231,11 @@ export const whatsappService = {
         console.log("QR Code obtido com sucesso");
         
         // Salvar no banco de dados
+        const { data: { user } } = await supabase.auth.getUser();
         const { error: dbError } = await supabase
           .from("whatsapp_connections")
           .upsert({
-            user_id: (await supabase.auth.getUser()).data.user?.id,
+            user_id: user?.id,
             status: "awaiting_scan",
             provider: "evolution",
             config_data: {
