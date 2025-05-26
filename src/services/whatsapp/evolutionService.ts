@@ -215,9 +215,21 @@ export const evolutionService = {
       const instances = await evolutionApi.getAllInstances();
       console.log("Instâncias disponíveis:", instances);
       
+      // Verificar se instances existe e é um array antes de iterar
+      if (!instances || !Array.isArray(instances)) {
+        console.log("Nenhuma instância encontrada ou formato inválido");
+        return null;
+      }
+      
       // Procurar por uma instância conectada
       for (const instance of instances) {
         try {
+          // Verificar se instance e instanceName existem
+          if (!instance || !instance.instanceName) {
+            console.log("Instância com dados inválidos encontrada, pulando...");
+            continue;
+          }
+          
           const status = await evolutionApi.getInstanceStatus(instance.instanceName);
           if (status?.instance?.state === "open") {
             console.log(`Instância conectada encontrada: ${instance.instanceName}`);
