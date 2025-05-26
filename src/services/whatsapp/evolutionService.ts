@@ -233,7 +233,10 @@ export const evolutionService = {
           const status = await evolutionApi.getInstanceStatus(instance.instanceName);
           if (status?.instance?.state === "open") {
             console.log(`Instância conectada encontrada: ${instance.instanceName}`);
-            return instance.instanceName;
+            return {
+              instanceName: instance.instanceName,
+              apikey: instance.apikey
+            };
           }
         } catch (statusError) {
           console.log(`Erro ao verificar status da instância ${instance.instanceName}:`, statusError);
@@ -246,6 +249,57 @@ export const evolutionService = {
     } catch (error) {
       console.error("Erro ao procurar instância conectada:", error);
       return null;
+    }
+  },
+
+  // Novo método para obter conversas com apikey da instância
+  getEvolutionChats: async (instanceName: string, instanceApiKey?: string) => {
+    try {
+      console.log("Obtendo conversas Evolution API:", instanceName);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      return await evolutionApi.getChats(instanceName, instanceApiKey);
+    } catch (error) {
+      console.error("Erro ao obter conversas Evolution:", error);
+      throw error;
+    }
+  },
+
+  // Novo método para obter mensagens com apikey da instância
+  getEvolutionMessages: async (instanceName: string, remoteJid: string, instanceApiKey?: string) => {
+    try {
+      console.log("Obtendo mensagens Evolution API:", instanceName, remoteJid);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      return await evolutionApi.getMessages(instanceName, remoteJid, 50, instanceApiKey);
+    } catch (error) {
+      console.error("Erro ao obter mensagens Evolution:", error);
+      throw error;
+    }
+  },
+
+  // Novo método para enviar mensagens com apikey da instância
+  sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string, instanceApiKey?: string) => {
+    try {
+      console.log("Enviando mensagem Evolution API:", instanceName, remoteJid);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      return await evolutionApi.sendMessage(instanceName, remoteJid, message, instanceApiKey);
+    } catch (error) {
+      console.error("Erro ao enviar mensagem Evolution:", error);
+      throw error;
     }
   }
 };

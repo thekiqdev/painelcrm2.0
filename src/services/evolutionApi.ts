@@ -15,6 +15,7 @@ export interface EvolutionInstance {
   instanceName: string;
   phone?: string;
   status?: string;
+  apikey?: string; // Adicionar apikey da instância
 }
 
 export interface EvolutionQRResponse {
@@ -68,27 +69,33 @@ export interface EvolutionChat {
 class EvolutionApi {
   private apiUrl: string = '';
   private globalKey: string = '';
+  private instanceApiKey: string = ''; // Nova propriedade para apikey da instância
 
   setCredentials(apiUrl: string, globalKey: string) {
     this.apiUrl = apiUrl.replace(/\/$/, ''); // Remove trailing slash
     this.globalKey = globalKey;
   }
 
-  private getHeaders() {
+  setInstanceApiKey(apiKey: string) {
+    this.instanceApiKey = apiKey;
+  }
+
+  private getHeaders(useInstanceKey: boolean = false) {
     return {
       'Content-Type': 'application/json',
-      'apikey': this.globalKey,
+      'apikey': useInstanceKey ? this.instanceApiKey : this.globalKey,
     };
   }
 
-  private async makeRequest(endpoint: string, options: RequestInit = {}) {
+  private async makeRequest(endpoint: string, options: RequestInit = {}, useInstanceKey: boolean = false) {
     const url = `${this.apiUrl}${endpoint}`;
     console.log(`Fazendo requisição para: ${url}`);
+    console.log(`Usando ${useInstanceKey ? 'instance apikey' : 'global key'}`);
     
     const response = await fetch(url, {
       ...options,
       headers: {
-        ...this.getHeaders(),
+        ...this.getHeaders(useInstanceKey),
         ...options.headers,
       },
     });
@@ -284,7 +291,8 @@ class EvolutionApi {
         return response.map((instance: any) => ({
           instanceName: instance.instance?.instanceName || instance.instanceName,
           phone: instance.instance?.phone || instance.phone,
-          status: instance.instance?.state || instance.state
+          status: instance.instance?.state || instance.state,
+          apikey: instance.apikey || instance.instance?.apikey // Capturar a apikey da instância
         }));
       }
       
@@ -458,17 +466,22 @@ class EvolutionApi {
     });
   }
 
-  async getChats(instanceName: string): Promise<EvolutionContact[]> {
+  async getChats(instanceName: string, instanceApiKey?: string): Promise<EvolutionContact[]> {
     console.log(`Obtendo conversas para instância: ${instanceName}`);
     
     // Remover aspas extras do nome da instância se existirem
     const cleanInstanceName = instanceName.replace(/"/g, '');
     
+    // Se fornecida, usar a apikey da instância
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
+    
     // Usar endpoint correto baseado na documentação: POST /chat/findChats/:instance
     const response = await this.makeRequest(`/chat/findChats/${cleanInstanceName}`, {
       method: 'POST',
       body: JSON.stringify({})
-    });
+    }, !!instanceApiKey); // Usar instance key se fornecida
     
     console.log('Resposta raw do findChats:', response);
     
@@ -487,11 +500,16 @@ class EvolutionApi {
     return [];
   }
 
-  async getMessages(instanceName: string, remoteJid: string, limit: number = 10): Promise<EvolutionMessage[]> {
+  async getMessages(instanceName: string, remoteJid: string, limit: number = 10, instanceApiKey?: string): Promise<EvolutionMessage[]> {
     console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
     
     // Remover aspas extras do nome da instância se existirem
     const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    // Se fornecida, usar a apikey da instância
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
     
     // Usar endpoint correto conforme documentação fornecida: POST /chat/findMessages/:instance
     const payload = {
@@ -507,7 +525,7 @@ class EvolutionApi {
     const response = await this.makeRequest(`/chat/findMessages/${cleanInstanceName}`, {
       method: 'POST',
       body: JSON.stringify(payload)
-    });
+    }, !!instanceApiKey); // Usar instance key se fornecida
     
     // A resposta pode vir como array diretamente ou dentro de uma propriedade
     if (Array.isArray(response)) {
@@ -522,11 +540,16 @@ class EvolutionApi {
     return [];
   }
 
-  async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
+  async sendMessage(instanceName: string, remoteJid: string, message: string, instanceApiKey?: string): Promise<any> {
     console.log(`Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
     
     // Remover aspas extras do nome da instância se existirem
     const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    // Se fornecida, usar a apikey da instância
+    if (instanceApiKey) {
+      this.setInstanceApiKey(instanceApiKey);
+    }
     
     const payload = {
       number: remoteJid,
@@ -536,7 +559,7 @@ class EvolutionApi {
     return await this.makeRequest(`/message/sendText/${cleanInstanceName}`, {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
+    }, !!instanceApiKey); // Usar instance key se fornecida
   }
 }
 
