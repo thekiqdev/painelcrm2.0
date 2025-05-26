@@ -71,11 +71,11 @@ export const whatsappService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      // Primeiro tenta conectar para gerar QR code
-      const connectionResult = await evolutionApi.connectInstance(instanceName);
-      console.log("Resultado da conexão:", connectionResult);
+      // Usar o método getQRCode diretamente
+      const qrResult = await evolutionApi.getQRCode(instanceName);
+      console.log("Resultado do QR Code:", qrResult);
       
-      if (connectionResult.qrcode?.base64) {
+      if (qrResult.qrcode?.base64) {
         console.log("QR Code obtido com sucesso");
         
         // Salvar no banco de dados
@@ -89,7 +89,7 @@ export const whatsappService = {
               instanceName,
               serverUrl: config.api_url,
             },
-            qr_code: connectionResult.qrcode.base64,
+            qr_code: qrResult.qrcode.base64,
             updated_at: new Date().toISOString()
           });
         
@@ -99,11 +99,11 @@ export const whatsappService = {
         
         return {
           success: true,
-          qrCode: connectionResult.qrcode.base64,
+          qrCode: qrResult.qrcode.base64,
           status: "awaiting_scan"
         };
       } else {
-        // Se não há QR code, talvez já esteja conectado
+        // Se não há QR code, verificar se já está conectado
         const status = await evolutionApi.getInstanceStatus(instanceName);
         if (status.instance.state === "open") {
           return {

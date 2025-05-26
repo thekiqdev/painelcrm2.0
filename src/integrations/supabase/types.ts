@@ -176,6 +176,39 @@ export type Database = {
         }
         Relationships: []
       }
+      evolution_servers: {
+        Row: {
+          api_key: string
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          server_url: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          api_key: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          server_url: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          api_key?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          server_url?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       funnel_stages: {
         Row: {
           color: string
