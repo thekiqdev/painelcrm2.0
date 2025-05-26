@@ -1,11 +1,12 @@
+
 import React, { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar } from "@/components/ui/avatar";
-import { Send, MessageSquare, Phone } from "lucide-react";
-import { useEvolutionChat } from "@/hooks/useEvolutionChat";
+import { Send, MessageSquare, Phone, RefreshCw } from "lucide-react";
+import { useEvolutionChatCache } from "@/hooks/useEvolutionChatCache";
 import { EvolutionMessage } from "@/services/evolutionApi";
 
 interface EvolutionChatPanelProps {
@@ -25,11 +26,12 @@ const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
     activeChat,
     isLoading,
     isSending,
-    loadChats,
     loadMessages,
     sendMessage,
-    setActiveChat
-  } = useEvolutionChat({
+    setActiveChat,
+    refreshChats,
+    refreshMessages
+  } = useEvolutionChatCache({
     instanceName,
     enabled
   });
@@ -99,18 +101,22 @@ const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
             <Button 
               variant="outline" 
               size="sm" 
-              onClick={loadChats}
+              onClick={refreshChats}
               disabled={isLoading}
+              className="h-8 w-8 p-0"
             >
-              Atualizar
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 flex-grow overflow-hidden">
           <ScrollArea className="flex-grow">
-            {isLoading ? (
+            {isLoading && chats.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground">
-                Carregando conversas...
+                <div className="flex items-center justify-center gap-2">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Carregando conversas...
+                </div>
               </div>
             ) : chats.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground">
@@ -121,7 +127,7 @@ const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
                 {chats.map((chat) => (
                   <li 
                     key={chat.id}
-                    className={`px-4 py-3 hover:bg-muted cursor-pointer ${
+                    className={`px-4 py-3 hover:bg-muted cursor-pointer transition-colors ${
                       activeChat === chat.remoteJid ? "bg-muted" : ""
                     }`}
                     onClick={() => loadMessages(chat.remoteJid)}
@@ -143,6 +149,13 @@ const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
                         <p className="text-xs text-muted-foreground truncate">
                           {chat.remoteJid}
                         </p>
+                        {chat.unreadMessages > 0 && (
+                          <div className="flex items-center gap-1 mt-1">
+                            <span className="bg-primary text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                              {chat.unreadMessages}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </li>
@@ -179,10 +192,10 @@ const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
                     variant="ghost" 
                     size="sm" 
                     className="h-8 w-8 p-0"
-                    onClick={() => loadMessages(activeChat)}
+                    onClick={() => refreshMessages(activeChat)}
                     disabled={isLoading}
                   >
-                    <MessageSquare className="h-4 w-4" />
+                    <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                   </Button>
                   <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                     <Phone className="h-4 w-4" />
@@ -192,9 +205,12 @@ const EvolutionChatPanel: React.FC<EvolutionChatPanelProps> = ({
             </CardHeader>
             <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
               <ScrollArea className="flex-grow p-4">
-                {isLoading ? (
+                {isLoading && messages.length === 0 ? (
                   <div className="text-center text-muted-foreground">
-                    Carregando mensagens...
+                    <div className="flex items-center justify-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Carregando mensagens...
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">

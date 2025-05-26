@@ -6,14 +6,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { UserCheck, Clock, Send, Phone, Filter, Users } from "lucide-react";
+import { UserCheck, Clock, Send, Phone, Filter, Users, RefreshCw } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Database } from "@/integrations/supabase/types";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { whatsappService } from "@/services/whatsapp";
-import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
+import { useEvolutionChatCache } from "@/hooks/useEvolutionChatCache";
+import { EvolutionMessage } from "@/services/evolutionApi";
 import { connectionDatabaseService } from "@/services/whatsapp/connectionDatabaseService";
 
 interface ChatConversation {
@@ -26,7 +25,6 @@ interface ChatConversation {
   updatedAt: Date;
   status: "active" | "pending" | "closed";
   attendant?: string;
-  messages: EvolutionMessage[];
 }
 
 type ProfileWithConnection = {
@@ -42,8 +40,19 @@ const Chat = () => {
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [contactFilter, setContactFilter] = useState("");
   const [connectedNumber, setConnectedNumber] = useState<string>("");
-  const [isLoading, setIsLoading] = useState(false);
   const [activeInstanceName, setActiveInstanceName] = useState<string>("");
+
+  const {
+    chats,
+    messages,
+    isLoading,
+    isSending,
+    sendMessage,
+    refreshChats
+  } = useEvolutionChatCache({
+    instanceName: activeInstanceName,
+    enabled: connectionStatus === "connected" && !!activeInstanceName
+  });
 
   useEffect(() => {
     const checkConnectionStatus = async () => {
@@ -69,7 +78,6 @@ const Chat = () => {
         if (profile && profile.whatsapp_connected === true) {
           setConnectionStatus("connected");
           
-          // Buscar conexões ativas no banco de dados
           try {
             const connections = await connectionDatabaseService.getConnections();
             console.log("Conexões do banco de dados:", connections);
@@ -80,7 +88,6 @@ const Chat = () => {
               console.log("Conexão ativa encontrada:", activeConnection);
               setActiveInstanceName(activeConnection.instance_name);
               setConnectedNumber(activeConnection.phone_number || "Número não identificado");
-              await loadEvolutionChats(activeConnection.instance_name);
             } else {
               console.log("Nenhuma conexão ativa encontrada no banco");
               setConnectionStatus("disconnected");
@@ -103,74 +110,23 @@ const Chat = () => {
     }
   }, [user]);
 
-  const loadEvolutionChats = async (instanceName: string) => {
-    if (!instanceName) {
-      console.log("Nome da instância não fornecido");
-      return;
+  // Converter chats do cache para conversações
+  useEffect(() => {
+    if (chats.length > 0) {
+      const convertedConversations: ChatConversation[] = chats.map(chat => ({
+        id: chat.id,
+        remoteJid: chat.remoteJid,
+        pushName: chat.pushName,
+        profilePictureUrl: chat.profilePictureUrl,
+        lastMessage: "Conversa ativa",
+        unreadCount: chat.unreadMessages || 0,
+        updatedAt: new Date(),
+        status: "pending" as const
+      }));
+      
+      setConversations(convertedConversations);
     }
-    
-    try {
-      setIsLoading(true);
-      console.log("Carregando conversas da instância:", instanceName);
-      
-      const chats: EvolutionContact[] = await whatsappService.getEvolutionChats(instanceName);
-      console.log("Conversas carregadas:", chats);
-      
-      if (!chats || chats.length === 0) {
-        console.log("Nenhuma conversa encontrada");
-        setConversations([]);
-        return;
-      }
-      
-      const conversationsWithMessages = await Promise.all(
-        chats.map(async (chat) => {
-          try {
-            const messages = await whatsappService.getEvolutionMessages(instanceName, chat.remoteJid);
-            
-            const lastMessage = messages && messages.length > 0 
-              ? getMessageText(messages[messages.length - 1]) 
-              : "Sem mensagens";
-            
-            return {
-              id: chat.id,
-              remoteJid: chat.remoteJid,
-              pushName: chat.pushName,
-              profilePictureUrl: chat.profilePictureUrl,
-              lastMessage,
-              unreadCount: chat.unreadMessages || 0,
-              updatedAt: new Date(),
-              status: "pending" as const,
-              messages: messages || []
-            };
-          } catch (messageError) {
-            console.error(`Erro ao carregar mensagens para ${chat.remoteJid}:`, messageError);
-            return {
-              id: chat.id,
-              remoteJid: chat.remoteJid,
-              pushName: chat.pushName,
-              profilePictureUrl: chat.profilePictureUrl,
-              lastMessage: "Erro ao carregar mensagens",
-              unreadCount: 0,
-              updatedAt: new Date(),
-              status: "pending" as const,
-              messages: []
-            };
-          }
-        })
-      );
-      
-      setConversations(conversationsWithMessages);
-      console.log("Conversas processadas:", conversationsWithMessages);
-    } catch (error) {
-      console.error("Erro ao carregar conversas:", error);
-      setConversations([]);
-      toast.error("Erro ao carregar conversas", {
-        description: error instanceof Error ? error.message : "Não foi possível carregar as conversas do WhatsApp"
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [chats]);
 
   const getMessageText = (message: EvolutionMessage) => {
     return message.message?.conversation || 
@@ -203,37 +159,10 @@ const Chat = () => {
     if (!conversation) return;
     
     try {
-      setIsLoading(true);
-      
-      await whatsappService.sendEvolutionMessage(
-        activeInstanceName,
-        conversation.remoteJid,
-        newMessage
-      );
-      
-      // Recarregar mensagens após envio
-      const updatedMessages = await whatsappService.getEvolutionMessages(
-        activeInstanceName,
-        conversation.remoteJid
-      );
-      
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === activeConversation 
-            ? { ...conv, messages: updatedMessages || [] }
-            : conv
-        )
-      );
-      
+      await sendMessage(conversation.remoteJid, newMessage);
       setNewMessage("");
-      toast.success("Mensagem enviada com sucesso!");
     } catch (error) {
       console.error("Erro ao enviar mensagem:", error);
-      toast.error("Erro ao enviar mensagem", {
-        description: "Não foi possível enviar a mensagem"
-      });
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -388,20 +317,21 @@ const Chat = () => {
                 )}
               </div>
             </div>
-            <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
-              Online
-            </Badge>
-          </div>
-
-          {/* Debug info */}
-          {isLoading && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <div className="flex items-center gap-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                <span className="text-sm text-blue-800">Carregando conversas...</span>
-              </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
+                Online
+              </Badge>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={refreshChats}
+                disabled={isLoading}
+                className="h-8 w-8 p-0"
+              >
+                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              </Button>
             </div>
-          )}
+          </div>
 
           {/* Filtro de contatos */}
           <Card>
@@ -442,9 +372,12 @@ const Chat = () => {
                   </CardHeader>
                   <CardContent className="p-0 flex-grow overflow-hidden">
                     <ScrollArea className="flex-grow">
-                      {isLoading ? (
+                      {isLoading && activeConversations.length === 0 ? (
                         <div className="p-4 text-center text-muted-foreground">
-                          Carregando conversas...
+                          <div className="flex items-center justify-center gap-2">
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Carregando conversas...
+                          </div>
                         </div>
                       ) : activeConversations.length === 0 ? (
                         <div className="p-4 text-center text-muted-foreground">
@@ -498,7 +431,7 @@ const Chat = () => {
                       <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
                         <ScrollArea className="flex-grow p-4">
                           <div className="space-y-4">
-                            {activeConversationData.messages.map((message) => (
+                            {messages.map((message) => (
                               <div 
                                 key={message.key.id} 
                                 className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
@@ -530,13 +463,13 @@ const Chat = () => {
                               placeholder="Digite sua mensagem..."
                               value={newMessage}
                               onChange={(e) => setNewMessage(e.target.value)}
-                              disabled={isLoading}
+                              disabled={isSending}
                               className="flex-grow"
                             />
                             <Button 
                               type="submit" 
                               size="icon"
-                              disabled={isLoading || !newMessage.trim()}
+                              disabled={isSending || !newMessage.trim()}
                             >
                               <Send className="h-4 w-4" />
                             </Button>
@@ -574,9 +507,12 @@ const Chat = () => {
                   </CardHeader>
                   <CardContent className="p-0 flex-grow overflow-hidden">
                     <ScrollArea className="flex-grow">
-                      {isLoading ? (
+                      {isLoading && pendingConversations.length === 0 ? (
                         <div className="p-4 text-center text-muted-foreground">
-                          Carregando conversas...
+                          <div className="flex items-center justify-center gap-2">
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Carregando conversas...
+                          </div>
                         </div>
                       ) : pendingConversations.length === 0 ? (
                         <div className="p-4 text-center text-muted-foreground">
@@ -630,7 +566,7 @@ const Chat = () => {
                       <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
                         <ScrollArea className="flex-grow p-4">
                           <div className="space-y-4">
-                            {activeConversationData.messages.map((message) => (
+                            {messages.map((message) => (
                               <div 
                                 key={message.key.id} 
                                 className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
@@ -662,13 +598,13 @@ const Chat = () => {
                               placeholder="Digite sua mensagem..."
                               value={newMessage}
                               onChange={(e) => setNewMessage(e.target.value)}
-                              disabled={isLoading}
+                              disabled={isSending}
                               className="flex-grow"
                             />
                             <Button 
                               type="submit" 
                               size="icon"
-                              disabled={isLoading || !newMessage.trim()}
+                              disabled={isSending || !newMessage.trim()}
                             >
                               <Send className="h-4 w-4" />
                             </Button>
