@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -246,40 +245,12 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setCurrentStep("qrcode");
     
     try {
-      // Primeiro, tentar conectar a instância para gerar QR code
-      const connectionResult = await evolutionApi.connectInstance(instanceName);
-      console.log("Resultado da conexão:", connectionResult);
-      
-      if (connectionResult?.qrcode?.base64) {
-        console.log("QR Code obtido via conectInstance!");
-        setQrCode(connectionResult.qrcode.base64);
-        
-        // Atualizar estado com QR code
-        const updatedState: InstanceState = {
-          instanceName,
-          connectionName,
-          phoneNumber: extractPhoneNumbers(phoneNumber),
-          step: "qrcode",
-          qrCode: connectionResult.qrcode.base64,
-          created: true
-        };
-        saveInstanceState(updatedState);
-        
-        toast.success("QR Code gerado", {
-          description: "Escaneie o QR code com seu WhatsApp",
-        });
-        
-        // Iniciar verificação de conexão
-        startConnectionPolling(instanceName);
-        return;
-      }
-      
-      // Se não conseguiu via connectInstance, tentar método direto
+      // Usar a nova implementação correta
       const qrResult = await evolutionApi.getQRCode(instanceName);
-      console.log("QR Code obtido diretamente:", qrResult);
+      console.log("Resultado do QR Code:", qrResult);
       
       if (qrResult?.qrcode?.base64) {
-        console.log("QR Code encontrado!");
+        console.log("QR Code obtido com sucesso!");
         setQrCode(qrResult.qrcode.base64);
         
         // Atualizar estado com QR code
