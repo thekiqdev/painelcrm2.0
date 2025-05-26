@@ -266,7 +266,7 @@ export const whatsappService = {
       } else {
         // Se não há QR code, verificar se já está conectado
         const status = await evolutionApi.getInstanceStatus(instanceName);
-        if (status.instance.state === "open") {
+        if (status.instance && status.instance.state === "open") {
           return {
             success: true,
             status: "connected"
@@ -294,7 +294,7 @@ export const whatsappService = {
       const status = await evolutionApi.getInstanceStatus(instanceName);
       console.log("Status da instância:", status);
       
-      if (status.instance.state === "open") {
+      if (status.instance && status.instance.state === "open") {
         // Conexão estabelecida com sucesso
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
@@ -326,7 +326,7 @@ export const whatsappService = {
       } else {
         return {
           success: false,
-          status: status.instance.state
+          status: status.instance ? status.instance.state : "unknown"
         };
       }
       
