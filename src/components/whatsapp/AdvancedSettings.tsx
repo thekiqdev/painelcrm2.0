@@ -1,52 +1,27 @@
 
 import React from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import EvolutionApiConfigComponent from "./EvolutionApiConfig";
+import EvolutionServerConfigComponent from "./EvolutionServerConfig";
 
-const AdvancedSettings: React.FC = () => {
+export const AdvancedSettings = () => {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Configurações Avançadas</CardTitle>
-        <CardDescription>
-          Configurações adicionais para sua integração WhatsApp
-        </CardDescription>
-      </CardHeader>
-      
-      <CardContent>
-        <Tabs defaultValue="templates">
-          <TabsList className="mb-4">
-            <TabsTrigger value="templates">Templates</TabsTrigger>
-            <TabsTrigger value="autoresponder">Respostas Automáticas</TabsTrigger>
-            <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="templates">
-            <div className="p-6 text-center border rounded-md">
-              <p className="text-muted-foreground">
-                Configure templates de mensagens para enviar aos seus clientes.
-              </p>
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="autoresponder">
-            <div className="p-6 text-center border rounded-md">
-              <p className="text-muted-foreground">
-                Configure respostas automáticas para mensagens recebidas.
-              </p>
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="webhooks">
-            <div className="p-6 text-center border rounded-md">
-              <p className="text-muted-foreground">
-                Configure webhooks para receber notificações de novas mensagens.
-              </p>
-            </div>
-          </TabsContent>
-        </Tabs>
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      <Tabs defaultValue="servers" className="w-full">
+        <TabsList>
+          <TabsTrigger value="servers">Servidores</TabsTrigger>
+          <TabsTrigger value="configs">Configurações</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="servers" className="pt-4">
+          <EvolutionServerConfigComponent />
+        </TabsContent>
+        
+        <TabsContent value="configs" className="pt-4">
+          <EvolutionApiConfigComponent />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 };
 

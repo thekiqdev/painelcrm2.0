@@ -1,5 +1,16 @@
 import { supabase } from '@/integrations/supabase/client';
 
+export interface EvolutionServerConfig {
+  id: string;
+  name: string;
+  server_url: string;
+  api_key: string;
+  is_active: boolean;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface EvolutionApiConfig {
   id: string;
   name: string;
@@ -59,17 +70,17 @@ export interface EvolutionContact {
 
 class EvolutionApi {
   private apiUrl: string = '';
-  private globalKey: string = '';
+  private apiKey: string = '';
 
-  setCredentials(apiUrl: string, globalKey: string) {
+  setCredentials(apiUrl: string, apiKey: string) {
     this.apiUrl = apiUrl.replace(/\/$/, ''); // Remove trailing slash
-    this.globalKey = globalKey;
+    this.apiKey = apiKey;
   }
 
   private getHeaders() {
     return {
       'Content-Type': 'application/json',
-      'apikey': this.globalKey,
+      'apikey': this.apiKey,
     };
   }
 
@@ -103,6 +114,123 @@ class EvolutionApi {
     // URL do webhook da nossa aplicação
     const projectUrl = 'https://meoatixglqaxnzzovuez.supabase.co';
     return `${projectUrl}/functions/v1/evolution-webhook/${instanceName}`;
+  }
+
+  // Métodos para gerenciar servidores Evolution
+  async getAllServers(): Promise<EvolutionServerConfig[]> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        console.error('Usuário não autenticado:', userError);
+        return [];
+      }
+
+      const { data, error } = await supabase
+        .from('evolution_servers')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Erro ao buscar servidores:', error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Erro ao obter servidores:', error);
+      return [];
+    }
+  }
+
+  async getActiveServer(): Promise<EvolutionServerConfig | null> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        console.error('Usuário não autenticado:', userError);
+        return null;
+      }
+
+      const { data, error } = await supabase
+        .from('evolution_servers')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .single();
+
+      if (error) {
+        console.error('Erro ao buscar servidor ativo:', error);
+        return null;
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Erro ao obter servidor ativo:', error);
+      return null;
+    }
+  }
+
+  async saveServer(name: string, serverUrl: string, apiKey: string): Promise<void> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      // Verificar se é o primeiro servidor
+      const { data: existingServers } = await supabase
+        .from('evolution_servers')
+        .select('id')
+        .eq('user_id', user.id);
+
+      const isFirstServer = !existingServers || existingServers.length === 0;
+
+      const { error } = await supabase
+        .from('evolution_servers')
+        .insert({
+          name,
+          server_url: serverUrl,
+          api_key: apiKey,
+          user_id: user.id,
+          is_active: isFirstServer
+        });
+
+      if (error) {
+        throw new Error(`Erro ao salvar servidor: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Erro ao salvar servidor:', error);
+      throw error;
+    }
+  }
+
+  async setActiveServer(serverId: string): Promise<void> {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Usuário não autenticado');
+      }
+
+      // Desativar todos os servidores do usuário
+      await supabase
+        .from('evolution_servers')
+        .update({ is_active: false })
+        .eq('user_id', user.id);
+
+      // Ativar o servidor selecionado
+      const { error } = await supabase
+        .from('evolution_servers')
+        .update({ is_active: true })
+        .eq('id', serverId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        throw new Error(`Erro ao ativar servidor: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Erro ao ativar servidor:', error);
+      throw error;
+    }
   }
 
   async getAllConfigs(): Promise<EvolutionApiConfig[]> {
@@ -271,25 +399,32 @@ class EvolutionApi {
   async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance> {
     const webhookUrl = this.getWebhookUrl(instanceName);
     
-    // Payload simplificado conforme documentação
+    // Payload correto conforme documentação fornecida
     const payload: any = {
       instanceName,
-      integration: "WHATSAPP-BAILEYS",
       qrcode: true,
+      integration: "WHATSAPP-BAILEYS",
       webhook: webhookUrl,
-      webhookByEvents: false,
-      webhookBase64: false,
+      webhook_by_events: true,
       events: [
         "APPLICATION_STARTUP",
         "QRCODE_UPDATED",
         "CONNECTION_UPDATE",
         "MESSAGES_UPSERT"
-      ]
+      ],
+      reject_call: false,
+      groups_ignore: false,
+      always_online: true,
+      read_messages: true,
+      read_status: true,
+      websocket_enabled: false,
+      rabbitmq_enabled: false,
+      sqs_enabled: false
     };
 
     // Só adicionar número se fornecido
     if (phoneNumber && phoneNumber.trim()) {
-      payload.number = phoneNumber.replace(/\D/g, ''); // Remove caracteres não numéricos
+      payload.number = phoneNumber.replace(/\D/g, '');
     }
 
     console.log('[Evolution API] Criando instância com payload:', JSON.stringify(payload, null, 2));

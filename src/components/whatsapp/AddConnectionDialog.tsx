@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -35,7 +36,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [phoneNumber, setPhoneNumber] = useState("");
   const [currentStep, setCurrentStep] = useState<DialogStep>("form");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasActiveConfig, setHasActiveConfig] = useState(false);
+  const [hasActiveServer, setHasActiveServer] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [instanceName, setInstanceName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -46,17 +47,21 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   };
 
   useEffect(() => {
-    const checkConfig = async () => {
+    const checkServer = async () => {
       try {
-        const config = await evolutionApi.getActiveConfig();
-        setHasActiveConfig(!!config);
+        const server = await evolutionApi.getActiveServer();
+        setHasActiveServer(!!server);
+        
+        if (server) {
+          evolutionApi.setCredentials(server.server_url, server.api_key);
+        }
       } catch (error) {
-        console.error("Erro ao verificar configuração:", error);
+        console.error("Erro ao verificar servidor:", error);
       }
     };
     
     if (isOpen) {
-      checkConfig();
+      checkServer();
     }
   }, [isOpen]);
 
@@ -76,9 +81,9 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const handleNextStep = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!hasActiveConfig) {
-      toast.error("Configuração necessária", {
-        description: "Configure primeiro a Evolution API em Configurações."
+    if (!hasActiveServer) {
+      toast.error("Servidor necessário", {
+        description: "Configure primeiro um servidor Evolution API em Configurações."
       });
       return;
     }
@@ -91,7 +96,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       
       // Criar instanceName mais simples
-      const timestamp = Date.now().toString().slice(-6); // Últimos 6 dígitos do timestamp
+      const timestamp = Date.now().toString().slice(-6);
       const generatedInstanceName = `instance_${cleanPhoneNumber}_${timestamp}`;
       setInstanceName(generatedInstanceName);
       
@@ -100,11 +105,11 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       // Ir para tela de criação
       setCurrentStep("creating");
       
-      // Obter configuração ativa
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Configuração não encontrada");
+      // Obter servidor ativo
+      const server = await evolutionApi.getActiveServer();
+      if (!server) throw new Error("Servidor não encontrado");
       
-      evolutionApi.setCredentials(config.api_url, config.global_key);
+      evolutionApi.setCredentials(server.server_url, server.api_key);
       
       // Aguardar 3 segundos na tela de criação para dar tempo da API processar
       setTimeout(async () => {
@@ -317,11 +322,11 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         {currentStep === "form" && (
           <form onSubmit={handleNextStep}>
             <div className="grid gap-4 py-4">
-              {!hasActiveConfig && (
+              {!hasActiveServer && (
                 <Alert variant="destructive">
                   <InfoIcon className="h-4 w-4 mr-2" />
                   <AlertDescription>
-                    Você precisa configurar a Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
+                    Você precisa configurar um servidor Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
                   </AlertDescription>
                 </Alert>
               )}
@@ -363,7 +368,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               </Button>
               <Button 
                 type="submit" 
-                disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveConfig || extractPhoneNumbers(phoneNumber).length < 10}
+                disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveServer || extractPhoneNumbers(phoneNumber).length < 10}
               >
                 {isSubmitting ? "Processando..." : "Próximo"}
               </Button>
