@@ -481,15 +481,38 @@ class EvolutionApi {
       // Se é um array diretamente
       if (Array.isArray(response)) {
         return response
-          .filter(item => item && typeof item === 'object')
+          .filter(item => {
+            if (!item || typeof item !== 'object') {
+              console.warn('Item inválido encontrado:', item);
+              return false;
+            }
+            return true;
+          })
           .map((item, index) => {
-            // Verificar se tem a estrutura esperada
+            // Verificar se tem a estrutura esperada da Evolution API
             const chatData = item.chat || item;
             
+            // O remoteJid pode vir em diferentes propriedades dependendo da versão da API
+            let remoteJid = chatData.id || item.id || item.remoteJid;
+            
+            // Se não tem formato @s.whatsapp.net ou @g.us, pode ser que precise ser construído
+            if (remoteJid && !remoteJid.includes('@')) {
+              // Para números individuais, adicionar @s.whatsapp.net
+              if (/^\d+$/.test(remoteJid)) {
+                remoteJid = `${remoteJid}@s.whatsapp.net`;
+              }
+            }
+            
+            console.log("Mapeando chat item:", {
+              original: item,
+              chatData,
+              finalRemoteJid: remoteJid
+            });
+            
             return {
-              id: chatData.id || item.id || item.remoteJid || `chat_${index}_${Date.now()}`,
-              remoteJid: chatData.id || item.remoteJid || `unknown_${index}`,
-              pushName: item.pushName || chatData.pushName || '',
+              id: chatData.id || item.id || remoteJid || `chat_${index}_${Date.now()}`,
+              remoteJid: remoteJid || `unknown_${index}`,
+              pushName: item.pushName || chatData.pushName || item.name || '',
               unreadMessages: chatData.unreadCount || item.unreadCount || 0,
               profilePictureUrl: item.profilePicUrl || item.profilePictureUrl
             };
@@ -514,10 +537,21 @@ class EvolutionApi {
       this.setInstanceApiKey(instanceApiKey);
     }
     
+    // Garantir que o remoteJid está no formato correto
+    let cleanRemoteJid = remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
+    console.log("RemoteJid processado:", {
+      original: remoteJid,
+      processed: cleanRemoteJid
+    });
+    
     const payload = {
       where: {
         key: {
-          remoteJid: remoteJid
+          remoteJid: cleanRemoteJid
         }
       },
       page: 1,
@@ -529,6 +563,13 @@ class EvolutionApi {
         method: 'POST',
         body: JSON.stringify(payload)
       }, !!instanceApiKey);
+      
+      console.log("Resposta de mensagens:", {
+        type: typeof response,
+        isArray: Array.isArray(response),
+        keys: response ? Object.keys(response) : [],
+        sample: response
+      });
       
       if (Array.isArray(response)) {
         return response;
@@ -556,10 +597,18 @@ class EvolutionApi {
       this.setInstanceApiKey(instanceApiKey);
     }
     
+    // Garantir que o remoteJid está no formato correto para envio
+    let cleanRemoteJid = remoteJid;
+    if (!cleanRemoteJid.includes('@') && /^\d+$/.test(cleanRemoteJid)) {
+      cleanRemoteJid = `${cleanRemoteJid}@s.whatsapp.net`;
+    }
+    
     const payload = {
-      number: remoteJid,
+      number: cleanRemoteJid,
       text: message
     };
+
+    console.log("Payload de envio:", payload);
 
     return await this.makeRequest(`/message/sendText/${cleanInstanceName}`, {
       method: 'POST',
