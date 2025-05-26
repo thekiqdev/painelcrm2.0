@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef } from "react";
 import { whatsappService } from "@/services/whatsapp";
 import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
@@ -215,12 +216,24 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
         const cacheKey = getCacheKey(instanceName);
         chatsCache.current.delete(cacheKey);
 
+        // Carregar mensagens automaticamente após atender
+        await loadMessages(remoteJid, true);
+
         toast.success("Conversa atendida com sucesso!");
+        return true;
       }
+      return false;
     } catch (error) {
       console.error("Erro ao atender conversa:", error);
       toast.error("Erro ao atender conversa");
+      return false;
     }
+  };
+
+  // Função para obter informações do chat ativo
+  const getActiveChatInfo = () => {
+    if (!activeChat) return null;
+    return chats.find(chat => chat.remoteJid === activeChat);
   };
 
   // Carregar conversas quando os parâmetros mudarem (apenas na primeira vez)
@@ -252,6 +265,7 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     sendMessage,
     setActiveChat,
     attendConversation,
+    getActiveChatInfo,
     refreshChats: () => loadChats(true),
     refreshMessages: (remoteJid: string) => loadMessages(remoteJid, true)
   };

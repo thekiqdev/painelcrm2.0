@@ -34,7 +34,6 @@ type ProfileWithConnection = {
 const Chat = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [contactFilter, setContactFilter] = useState("");
@@ -45,10 +44,13 @@ const Chat = () => {
   const {
     chats,
     messages,
+    activeChat,
     isLoading,
     isSending,
     sendMessage,
+    loadMessages,
     attendConversation,
+    getActiveChatInfo,
     refreshChats
   } = useEvolutionChatCache({
     instanceName: activeInstanceName,
@@ -135,13 +137,10 @@ const Chat = () => {
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!newMessage.trim() || !activeConversation || !activeInstanceName) return;
-    
-    const conversation = conversations.find(c => c.id === activeConversation);
-    if (!conversation) return;
+    if (!newMessage.trim() || !activeChat || !activeInstanceName) return;
     
     try {
-      await sendMessage(conversation.remoteJid, newMessage);
+      await sendMessage(activeChat, newMessage);
       setNewMessage("");
     } catch (error) {
       console.error("Erro ao enviar mensagem:", error);
@@ -177,17 +176,29 @@ const Chat = () => {
     const conversation = conversations.find(c => c.id === conversationId);
     if (!conversation) return;
 
-    await attendConversation(conversation.remoteJid);
-    setActiveConversation(conversationId);
+    console.log("Atendendo conversa:", conversation.remoteJid);
+    
+    const success = await attendConversation(conversation.remoteJid);
+    if (success) {
+      console.log("Conversa atendida com sucesso, mensagens carregadas");
+    }
+  };
+
+  const handleSelectConversation = async (conversationId: string) => {
+    const conversation = conversations.find(c => c.id === conversationId);
+    if (!conversation) return;
+
+    console.log("Selecionando conversa:", conversation.remoteJid);
+    await loadMessages(conversation.remoteJid);
   };
 
   const renderConversationItem = (conversation: ChatConversation, showAttendButton = false) => (
     <li 
       key={conversation.id}
       className={`px-4 py-3 hover:bg-muted cursor-pointer ${
-        activeConversation === conversation.id ? "bg-muted" : ""
+        activeChat === conversation.remoteJid ? "bg-muted" : ""
       }`}
-      onClick={() => !showAttendButton && setActiveConversation(conversation.id)}
+      onClick={() => !showAttendButton && handleSelectConversation(conversation.id)}
     >
       <div className="flex items-start gap-3">
         <Avatar className="h-10 w-10 flex-shrink-0">
@@ -209,7 +220,7 @@ const Chat = () => {
             </span>
           </div>
           <p className="text-xs text-muted-foreground truncate">
-            {conversation.lastMessage}
+            {conversation.remoteJid}
           </p>
           <div className="flex items-center gap-2 mt-1">
             {conversation.status === "pending" && (
@@ -259,7 +270,7 @@ const Chat = () => {
     navigate("/settings?tab=whatsapp");
   };
 
-  const activeConversationData = conversations.find(c => c.id === activeConversation);
+  const activeChatInfo = getActiveChatInfo();
 
   return (
     <div className="space-y-6">
@@ -385,26 +396,26 @@ const Chat = () => {
                 </Card>
 
                 <Card className="md:col-span-2 flex flex-col">
-                  {activeConversation && activeConversationData ? (
+                  {activeChat && activeChatInfo ? (
                     <>
                       <CardHeader className="px-4 py-3 border-b flex-shrink-0">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Avatar className="h-8 w-8">
-                              {activeConversationData.profilePictureUrl ? (
-                                <img src={activeConversationData.profilePictureUrl} alt={activeConversationData.pushName || activeConversationData.remoteJid} />
+                              {activeChatInfo.profilePictureUrl ? (
+                                <img src={activeChatInfo.profilePictureUrl} alt={activeChatInfo.pushName || activeChatInfo.remoteJid} />
                               ) : (
                                 <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                  {(activeConversationData.pushName || activeConversationData.remoteJid).charAt(0)}
+                                  {(activeChatInfo.pushName || activeChatInfo.remoteJid).charAt(0)}
                                 </div>
                               )}
                             </Avatar>
                             <div>
                               <h3 className="font-medium text-sm">
-                                {activeConversationData.pushName || activeConversationData.remoteJid}
+                                {activeChatInfo.pushName || activeChatInfo.remoteJid}
                               </h3>
                               <p className="text-xs text-muted-foreground">
-                                {activeConversationData.remoteJid}
+                                {activeChatInfo.remoteJid}
                               </p>
                             </div>
                           </div>
@@ -420,31 +431,40 @@ const Chat = () => {
                       </CardHeader>
                       <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
                         <ScrollArea className="flex-grow p-4">
-                          <div className="space-y-4">
-                            {messages.map((message) => (
-                              <div 
-                                key={message.key.id} 
-                                className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
-                              >
+                          {isLoading && messages.length === 0 ? (
+                            <div className="text-center text-muted-foreground">
+                              <div className="flex items-center justify-center gap-2">
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                Carregando mensagens...
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {messages.map((message) => (
                                 <div 
-                                  className={`max-w-[70%] rounded-lg p-3 ${
-                                    message.key.fromMe 
-                                      ? 'bg-primary text-primary-foreground' 
-                                      : 'bg-muted'
-                                  }`}
+                                  key={message.key.id} 
+                                  className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
                                 >
-                                  <p className="text-sm">{getMessageText(message)}</p>
-                                  <div className={`text-xs mt-1 ${
-                                    message.key.fromMe 
-                                      ? 'text-primary-foreground/70' 
-                                      : 'text-muted-foreground'
-                                  }`}>
-                                    {formatTime(message.messageTimestamp)}
+                                  <div 
+                                    className={`max-w-[70%] rounded-lg p-3 ${
+                                      message.key.fromMe 
+                                        ? 'bg-primary text-primary-foreground' 
+                                        : 'bg-muted'
+                                    }`}
+                                  >
+                                    <p className="text-sm">{getMessageText(message)}</p>
+                                    <div className={`text-xs mt-1 ${
+                                      message.key.fromMe 
+                                        ? 'text-primary-foreground/70' 
+                                        : 'text-muted-foreground'
+                                    }`}>
+                                      {formatTime(message.messageTimestamp)}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
+                              ))}
+                            </div>
+                          )}
                         </ScrollArea>
                         <div className="p-3 border-t">
                           <form onSubmit={handleSendMessage} className="flex gap-2">
@@ -520,26 +540,26 @@ const Chat = () => {
                 </Card>
 
                 <Card className="md:col-span-2 flex flex-col">
-                  {activeConversation && activeConversationData ? (
+                  {activeChat && activeChatInfo ? (
                     <>
                       <CardHeader className="px-4 py-3 border-b flex-shrink-0">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Avatar className="h-8 w-8">
-                              {activeConversationData.profilePictureUrl ? (
-                                <img src={activeConversationData.profilePictureUrl} alt={activeConversationData.pushName || activeConversationData.remoteJid} />
+                              {activeChatInfo.profilePictureUrl ? (
+                                <img src={activeChatInfo.profilePictureUrl} alt={activeChatInfo.pushName || activeChatInfo.remoteJid} />
                               ) : (
                                 <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                  {(activeConversationData.pushName || activeConversationData.remoteJid).charAt(0)}
+                                  {(activeChatInfo.pushName || activeChatInfo.remoteJid).charAt(0)}
                                 </div>
                               )}
                             </Avatar>
                             <div>
                               <h3 className="font-medium text-sm">
-                                {activeConversationData.pushName || activeConversationData.remoteJid}
+                                {activeChatInfo.pushName || activeChatInfo.remoteJid}
                               </h3>
                               <p className="text-xs text-muted-foreground">
-                                {activeConversationData.remoteJid}
+                                {activeChatInfo.remoteJid}
                               </p>
                             </div>
                           </div>
@@ -555,31 +575,40 @@ const Chat = () => {
                       </CardHeader>
                       <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
                         <ScrollArea className="flex-grow p-4">
-                          <div className="space-y-4">
-                            {messages.map((message) => (
-                              <div 
-                                key={message.key.id} 
-                                className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
-                              >
+                          {isLoading && messages.length === 0 ? (
+                            <div className="text-center text-muted-foreground">
+                              <div className="flex items-center justify-center gap-2">
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                Carregando mensagens...
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {messages.map((message) => (
                                 <div 
-                                  className={`max-w-[70%] rounded-lg p-3 ${
-                                    message.key.fromMe 
-                                      ? 'bg-primary text-primary-foreground' 
-                                      : 'bg-muted'
-                                  }`}
+                                  key={message.key.id} 
+                                  className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
                                 >
-                                  <p className="text-sm">{getMessageText(message)}</p>
-                                  <div className={`text-xs mt-1 ${
-                                    message.key.fromMe 
-                                      ? 'text-primary-foreground/70' 
-                                      : 'text-muted-foreground'
-                                  }`}>
-                                    {formatTime(message.messageTimestamp)}
+                                  <div 
+                                    className={`max-w-[70%] rounded-lg p-3 ${
+                                      message.key.fromMe 
+                                        ? 'bg-primary text-primary-foreground' 
+                                        : 'bg-muted'
+                                    }`}
+                                  >
+                                    <p className="text-sm">{getMessageText(message)}</p>
+                                    <div className={`text-xs mt-1 ${
+                                      message.key.fromMe 
+                                        ? 'text-primary-foreground/70' 
+                                        : 'text-muted-foreground'
+                                    }`}>
+                                      {formatTime(message.messageTimestamp)}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
+                              ))}
+                            </div>
+                          )}
                         </ScrollArea>
                         <div className="p-3 border-t">
                           <form onSubmit={handleSendMessage} className="flex gap-2">
