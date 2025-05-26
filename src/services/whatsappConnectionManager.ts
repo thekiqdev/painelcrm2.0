@@ -1,4 +1,3 @@
-
 import { connectionDatabaseService, DatabaseConnection } from "./whatsapp/connectionDatabaseService";
 import { evolutionService } from "./whatsapp/evolutionService";
 
@@ -43,7 +42,7 @@ export const whatsappConnectionManager = {
         };
       }
       
-      throw new Error(result.error || "Erro ao criar instância");
+      throw new Error("Erro ao criar instância");
     } catch (error) {
       console.error("Erro ao criar conexão:", error);
       return {
