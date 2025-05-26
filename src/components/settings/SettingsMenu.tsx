@@ -1,7 +1,6 @@
 
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { 
   Building, 
@@ -84,39 +83,37 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
 
   return (
     <div className="w-full h-full border rounded-md">
-      <ScrollArea className="h-[calc(100vh-200px)]">
-        <div className="p-4">
-          {categoryOrder.map(category => {
-            const items = categorizedItems[category];
-            if (!items) return null;
-            
-            return (
-              <div key={category} className="mb-6 last:mb-0">
-                <h4 className="text-sm font-medium text-muted-foreground mb-2">{category}</h4>
-                <div className="space-y-1">
-                  {items.map(item => (
-                    <Button
-                      key={item.id}
-                      variant={activeSection === item.id ? "secondary" : "ghost"}
-                      className={cn(
-                        "w-full justify-start",
-                        activeSection === item.id && "bg-secondary"
-                      )}
-                      onClick={() => onSelect(item.id)}
-                    >
-                      {item.icon}
-                      <span className="ml-2">{item.label}</span>
-                    </Button>
-                  ))}
-                </div>
-                {category !== categoryOrder[categoryOrder.length - 1] && (
-                  <Separator className="my-4" />
-                )}
+      <div className="p-4">
+        {categoryOrder.map(category => {
+          const items = categorizedItems[category];
+          if (!items) return null;
+          
+          return (
+            <div key={category} className="mb-6 last:mb-0">
+              <h4 className="text-sm font-medium text-muted-foreground mb-2">{category}</h4>
+              <div className="space-y-1">
+                {items.map(item => (
+                  <Button
+                    key={item.id}
+                    variant={activeSection === item.id ? "secondary" : "ghost"}
+                    className={cn(
+                      "w-full justify-start",
+                      activeSection === item.id && "bg-secondary"
+                    )}
+                    onClick={() => onSelect(item.id)}
+                  >
+                    {item.icon}
+                    <span className="ml-2">{item.label}</span>
+                  </Button>
+                ))}
               </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
+              {category !== categoryOrder[categoryOrder.length - 1] && (
+                <Separator className="my-4" />
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
