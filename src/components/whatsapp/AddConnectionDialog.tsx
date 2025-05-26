@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { InfoIcon, CheckCircle2 } from "lucide-react";
+import { InfoIcon, CheckCircle2, RefreshCw, AlertTriangle } from "lucide-react";
 import { ConnectionType } from "@/components/settings/types";
 import { evolutionApi } from "@/services/evolutionApi";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ interface AddConnectionDialogProps {
   onAddConnection: (connectionName: string, connectionType: string, configData?: any) => void;
 }
 
-type DialogStep = "form" | "qrcode" | "connected";
+type DialogStep = "form" | "creating" | "qrcode" | "connected" | "error";
 
 interface InstanceState {
   instanceName: string;
@@ -48,6 +48,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [hasActiveConfig, setHasActiveConfig] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [instanceName, setInstanceName] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
   
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
@@ -125,6 +126,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       setQrCode(null);
       setInstanceName("");
       setIsSubmitting(false);
+      setErrorMessage("");
     }
   }, [isOpen]);
   
@@ -139,6 +141,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     }
     
     setIsSubmitting(true);
+    setCurrentStep("creating");
     
     try {
       // Extrair apenas números do telefone
@@ -179,10 +182,11 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             }, 2000);
             return;
           } else {
-            console.log("Instância existe mas não está conectada, obtendo QR code...");
-            // Pular criação e ir direto para QR code
-            setCurrentStep("qrcode");
-            await obtainQRCodeDirectly(generatedInstanceName, config);
+            console.log("Instância existe mas não está conectada, indo para QR code...");
+            // Aguardar 2 segundos na tela de criação e depois ir para QR code
+            setTimeout(() => {
+              obtainQRCodeDirectly(generatedInstanceName, config);
+            }, 2000);
             return;
           }
         } catch (statusError) {
@@ -195,28 +199,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       // Criar nova instância
       console.log("Criando nova instância:", generatedInstanceName);
       
-      toast.info("Criando instância", {
-        description: "Preparando conexão WhatsApp...",
-      });
-      
       let instanceResult;
       try {
         instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
         console.log("Instância criada:", instanceResult);
         
-        toast.success("Instância criada", {
-          description: "Instância criada com sucesso",
-        });
-        
       } catch (createError: any) {
         // Se o erro for de instância já existente, continuar normalmente
         if (createError.message?.includes("already exists") || createError.message?.includes("já existe")) {
           console.log("Instância já existe, continuando...");
-          
-          toast.info("Instância encontrada", {
-            description: "Usando instância existente",
-          });
-          
           instanceResult = { instanceName: generatedInstanceName };
         } else {
           throw createError;
@@ -228,7 +219,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         instanceName: generatedInstanceName,
         connectionName,
         phoneNumber: cleanPhoneNumber,
-        step: "qrcode",
+        step: "creating",
         created: true
       };
       saveInstanceState(newState);
@@ -236,20 +227,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       // Salvar conexão no sistema
       saveConnectionToSystem(instanceResult);
       
-      // Ir direto para QR code
-      console.log("Avançando para QR Code...");
-      setCurrentStep("qrcode");
-      
-      // Obter QR code imediatamente
-      await obtainQRCodeDirectly(generatedInstanceName, config);
+      // Aguardar 2 segundos na tela de criação e depois ir para QR code
+      setTimeout(() => {
+        obtainQRCodeDirectly(generatedInstanceName, config);
+      }, 2000);
       
     } catch (error) {
       console.error("Erro ao processar instância:", error);
-      toast.error("Erro ao criar conexão", {
-        description: error instanceof Error ? error.message : "Ocorreu um erro"
-      });
-      setCurrentStep("form");
-      setQrCode(null);
+      setErrorMessage(error instanceof Error ? error.message : "Ocorreu um erro");
+      setCurrentStep("error");
     } finally {
       setIsSubmitting(false);
     }
@@ -257,6 +243,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
 
   const obtainQRCodeDirectly = async (instanceName: string, config: any) => {
     console.log("Obtendo QR code diretamente para:", instanceName);
+    setCurrentStep("qrcode");
     
     try {
       // Primeiro, tentar conectar a instância para gerar QR code
@@ -337,7 +324,27 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       
     } catch (error) {
       console.error("Erro ao obter QR code:", error);
-      throw error;
+      setErrorMessage(error instanceof Error ? error.message : "Erro ao gerar QR code");
+      setCurrentStep("error");
+    }
+  };
+
+  const handleRetryQRCode = async () => {
+    if (!instanceName) return;
+    
+    setErrorMessage("");
+    setCurrentStep("qrcode");
+    
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Configuração não encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      await obtainQRCodeDirectly(instanceName, config);
+    } catch (error) {
+      console.error("Erro ao tentar novamente:", error);
+      setErrorMessage(error instanceof Error ? error.message : "Erro ao tentar novamente");
+      setCurrentStep("error");
     }
   };
 
@@ -395,11 +402,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setTimeout(() => {
       clearInterval(pollInterval);
       if (currentStep === "qrcode") {
-        toast.error("Timeout na conexão", {
-          description: "QR Code expirou. Tente novamente.",
-        });
-        setCurrentStep("form");
-        setQrCode(null);
+        setErrorMessage("QR Code expirou. Tente gerar novamente.");
+        setCurrentStep("error");
       }
     }, 300000);
   };
@@ -416,9 +420,10 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   };
 
   const handleBack = () => {
-    if (currentStep === "qrcode") {
+    if (currentStep === "qrcode" || currentStep === "error") {
       setCurrentStep("form");
       setQrCode(null);
+      setErrorMessage("");
     }
   };
 
@@ -426,10 +431,14 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     switch (currentStep) {
       case "form":
         return "Nova Conexão WhatsApp";
+      case "creating":
+        return "Criando Instância";
       case "qrcode":
         return "Escaneie o QR Code";
       case "connected":
         return "Conectado com Sucesso!";
+      case "error":
+        return "Erro na Conexão";
       default:
         return "Nova Conexão WhatsApp";
     }
@@ -439,10 +448,14 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     switch (currentStep) {
       case "form":
         return "Insira os dados para criar uma nova conexão WhatsApp";
+      case "creating":
+        return "Preparando sua instância no servidor...";
       case "qrcode":
         return "Use seu celular para escanear o QR code e conectar o WhatsApp";
       case "connected":
         return "Sua conta WhatsApp foi conectada com sucesso";
+      case "error":
+        return "Ocorreu um erro durante o processo de conexão";
       default:
         return "Crie uma nova conexão WhatsApp";
     }
@@ -515,6 +528,18 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           </form>
         )}
 
+        {currentStep === "creating" && (
+          <div className="py-8 text-center">
+            <div className="flex flex-col items-center gap-4">
+              <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-primary"></div>
+              <h3 className="text-lg font-semibold">Criando instância...</h3>
+              <p className="text-muted-foreground">
+                Preparando sua conexão no servidor Evolution API
+              </p>
+            </div>
+          </div>
+        )}
+
         {currentStep === "qrcode" && (
           <div className="py-4">
             <QRCodeScanner 
@@ -531,6 +556,38 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               <Button variant="outline" onClick={onClose}>
                 Cancelar
               </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {currentStep === "error" && (
+          <div className="py-8 text-center">
+            <AlertTriangle className="h-16 w-16 text-red-500 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Erro na Conexão</h3>
+            <p className="text-muted-foreground mb-6">
+              {errorMessage || "Ocorreu um erro inesperado"}
+            </p>
+            
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              <AlertDescription>
+                {errorMessage}
+              </AlertDescription>
+            </Alert>
+            
+            <DialogFooter className="flex-col gap-2">
+              <Button onClick={handleRetryQRCode} className="w-full">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Tentar Gerar QR Code Novamente
+              </Button>
+              <div className="flex gap-2 w-full">
+                <Button variant="outline" onClick={handleBack} className="flex-1">
+                  Voltar
+                </Button>
+                <Button variant="outline" onClick={onClose} className="flex-1">
+                  Cancelar
+                </Button>
+              </div>
             </DialogFooter>
           </div>
         )}
