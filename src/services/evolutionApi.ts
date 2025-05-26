@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface EvolutionApiConfig {
@@ -270,6 +269,32 @@ class EvolutionApi {
     }
   }
 
+  // Listar todas as instâncias disponíveis
+  async getAllInstances(): Promise<EvolutionInstance[]> {
+    console.log('Obtendo todas as instâncias disponíveis');
+    
+    try {
+      const response = await this.makeRequest('/instance/fetchInstances', {
+        method: 'GET',
+      });
+
+      console.log('Instâncias encontradas:', response);
+      
+      if (Array.isArray(response)) {
+        return response.map((instance: any) => ({
+          instanceName: instance.instance?.instanceName || instance.instanceName,
+          phone: instance.instance?.phone || instance.phone,
+          status: instance.instance?.state || instance.state
+        }));
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Erro ao obter instâncias:', error);
+      return [];
+    }
+  }
+
   async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance & { qrcode?: string }> {
     // Sanitizar o número de telefone removendo caracteres especiais
     const sanitizedNumber = phoneNumber ? phoneNumber.replace(/[^\d]/g, '') : undefined;
@@ -436,8 +461,11 @@ class EvolutionApi {
   async getChats(instanceName: string): Promise<EvolutionContact[]> {
     console.log(`Obtendo conversas para instância: ${instanceName}`);
     
+    // Remover aspas extras do nome da instância se existirem
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
     // Usar endpoint correto baseado na documentação: POST /chat/findChats/:instance
-    const response = await this.makeRequest(`/chat/findChats/${instanceName}`, {
+    const response = await this.makeRequest(`/chat/findChats/${cleanInstanceName}`, {
       method: 'POST',
       body: JSON.stringify({})
     });
@@ -462,7 +490,10 @@ class EvolutionApi {
   async getMessages(instanceName: string, remoteJid: string, limit: number = 10): Promise<EvolutionMessage[]> {
     console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
     
-    // Usar endpoint correto conforme documentação fornecida
+    // Remover aspas extras do nome da instância se existirem
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
+    // Usar endpoint correto conforme documentação fornecida: POST /chat/findMessages/:instance
     const payload = {
       where: {
         key: {
@@ -473,7 +504,7 @@ class EvolutionApi {
       offset: limit
     };
     
-    const response = await this.makeRequest(`/chat/findMessages/${instanceName}`, {
+    const response = await this.makeRequest(`/chat/findMessages/${cleanInstanceName}`, {
       method: 'POST',
       body: JSON.stringify(payload)
     });
@@ -494,12 +525,15 @@ class EvolutionApi {
   async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
     console.log(`Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
     
+    // Remover aspas extras do nome da instância se existirem
+    const cleanInstanceName = instanceName.replace(/"/g, '');
+    
     const payload = {
       number: remoteJid,
       text: message
     };
 
-    return await this.makeRequest(`/message/sendText/${instanceName}`, {
+    return await this.makeRequest(`/message/sendText/${cleanInstanceName}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
