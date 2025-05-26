@@ -96,7 +96,7 @@ export const evolutionService = {
         // Atualizar conexão existente ou criar nova
         const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
         
-        if (existingConnection?.id) {
+        if (existingConnection && existingConnection.id) {
           await connectionDatabaseService.updateConnection(existingConnection.id, {
             status: "awaiting_scan",
             qr_code: qrResult.qrcode.base64
@@ -122,7 +122,7 @@ export const evolutionService = {
         if (status?.instance?.state === "open") {
           // Atualizar status para conectado
           const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-          if (existingConnection?.id) {
+          if (existingConnection && existingConnection.id) {
             await connectionDatabaseService.updateConnection(existingConnection.id, {
               status: "connected",
               qr_code: null
@@ -158,7 +158,7 @@ export const evolutionService = {
       if (status?.instance?.state === "open") {
         // Atualizar status no banco de dados
         const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-        if (existingConnection?.id) {
+        if (existingConnection && existingConnection.id) {
           await connectionDatabaseService.updateConnection(existingConnection.id, {
             status: "connected",
             qr_code: null
@@ -198,7 +198,7 @@ export const evolutionService = {
       // Deletar conexão do banco de dados
       try {
         const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-        if (existingConnection?.id) {
+        if (existingConnection && existingConnection.id) {
           await connectionDatabaseService.deleteConnection(existingConnection.id);
         }
       } catch (dbError) {
@@ -222,7 +222,7 @@ export const evolutionService = {
       const connections = await connectionDatabaseService.getConnections();
       const activeConnection = connections.find(conn => conn.status === "connected");
       
-      if (activeConnection?.instance_name) {
+      if (activeConnection && activeConnection.instance_name) {
         console.log(`Conexão ativa encontrada: ${activeConnection.instance_name}`);
         return {
           instanceName: activeConnection.instance_name,
