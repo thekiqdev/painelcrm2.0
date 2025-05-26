@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -165,8 +166,8 @@ export const whatsappService = {
       
       if (result.qrcode) {
         // Se obteve QR code na criação, salvar no banco e retornar
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (userError || !user) {
           throw new Error("Usuário não autenticado");
         }
         
@@ -235,8 +236,8 @@ export const whatsappService = {
         console.log("QR Code obtido com sucesso");
         
         // Salvar no banco de dados
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (userError || !user) {
           throw new Error("Usuário não autenticado");
         }
         
@@ -296,8 +297,8 @@ export const whatsappService = {
       
       if (status.instance.state === "open") {
         // Conexão estabelecida com sucesso
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (userError || !user) {
           throw new Error("Usuário não autenticado");
         }
         
