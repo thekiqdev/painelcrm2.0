@@ -201,5 +201,39 @@ export const evolutionService = {
       console.error("Erro ao deletar instância Evolution:", error);
       throw error;
     }
+  },
+
+  // Novo método para encontrar a instância conectada correta
+  findConnectedInstance: async () => {
+    try {
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) throw new Error("Nenhuma configuração ativa encontrada");
+      
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      // Obter todas as instâncias disponíveis
+      const instances = await evolutionApi.getAllInstances();
+      console.log("Instâncias disponíveis:", instances);
+      
+      // Procurar por uma instância conectada
+      for (const instance of instances) {
+        try {
+          const status = await evolutionApi.getInstanceStatus(instance.instanceName);
+          if (status?.instance?.state === "open") {
+            console.log(`Instância conectada encontrada: ${instance.instanceName}`);
+            return instance.instanceName;
+          }
+        } catch (statusError) {
+          console.log(`Erro ao verificar status da instância ${instance.instanceName}:`, statusError);
+          continue;
+        }
+      }
+      
+      console.log("Nenhuma instância conectada encontrada");
+      return null;
+    } catch (error) {
+      console.error("Erro ao procurar instância conectada:", error);
+      return null;
+    }
   }
 };
