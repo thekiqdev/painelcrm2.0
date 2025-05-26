@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -217,7 +218,6 @@ export const whatsappService = {
     }
   },
 
-  // Método específico para Evolution API - Obter QR Code
   getEvolutionQRCode: async (instanceName: string) => {
     try {
       console.log("Obtendo QR Code para instância:", instanceName);
@@ -280,7 +280,6 @@ export const whatsappService = {
     }
   },
 
-  // Método específico para Evolution API - Passo 3: Verificar conexão
   checkEvolutionConnection: async (instanceName: string) => {
     try {
       console.log("Passo 3: Verificando status da conexão:", instanceName);
@@ -310,7 +309,7 @@ export const whatsappService = {
               instanceName,
               serverUrl: config.api_url,
             },
-            qr_code: null, // Remove QR code após conexão
+            qr_code: null,
             updated_at: new Date().toISOString()
           });
         
