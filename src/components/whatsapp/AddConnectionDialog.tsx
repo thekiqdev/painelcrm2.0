@@ -17,6 +17,7 @@ import { InfoIcon, CheckCircle2, QrCode } from "lucide-react";
 import { ConnectionType } from "@/components/settings/types";
 import { evolutionApi } from "@/services/evolutionApi";
 import { toast } from "sonner";
+import { whatsappConnectionManager } from "@/services/whatsappConnectionManager";
 import QRCodePopup from "./QRCodePopup";
 
 interface AddConnectionDialogProps {
@@ -34,7 +35,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [phoneNumber, setPhoneNumber] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasActiveConfig, setHasActiveConfig] = useState(false);
-  const [instanceName, setInstanceName] = useState("");
+  const [connectionId, setConnectionId] = useState("");
   const [isCreated, setIsCreated] = useState(false);
   const [showQRPopup, setShowQRPopup] = useState(false);
   
@@ -63,7 +64,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     if (!isOpen) {
       setConnectionName("");
       setPhoneNumber("");
-      setInstanceName("");
+      setConnectionId("");
       setIsSubmitting(false);
       setIsCreated(false);
       setShowQRPopup(false);
@@ -86,59 +87,17 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       // Extrair apenas números do telefone
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       
-      // Limpar caracteres especiais do nome da conexão para criar o instanceName
-      const cleanConnectionName = connectionName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-      const generatedInstanceName = `${cleanConnectionName}_${cleanPhoneNumber}`;
-      setInstanceName(generatedInstanceName);
+      const result = await whatsappConnectionManager.createConnection(connectionName, cleanPhoneNumber);
       
-      console.log("Criando instância:", generatedInstanceName);
-      
-      // Obter configuração ativa
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Configuração não encontrada");
-      
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      
-      try {
-        const instanceResult = await evolutionApi.createInstance(generatedInstanceName, cleanPhoneNumber);
-        console.log("Instância criada:", instanceResult);
-        
-        // Salvar conexão no sistema
-        const connections = JSON.parse(localStorage.getItem('whatsapp_connections') || '[]');
-        const newConnection = {
-          id: `conn_${Date.now()}`,
-          name: connectionName,
-          type: "evolution" as ConnectionType,
-          status: "created",
-          configData: {
-            instanceName: generatedInstanceName,
-            phoneNumber: cleanPhoneNumber,
-            ...instanceResult
-          },
-          createdAt: new Date().toISOString()
-        };
-        
-        connections.push(newConnection);
-        localStorage.setItem('whatsapp_connections', JSON.stringify(connections));
-        
+      if (result.success && result.connection) {
+        setConnectionId(result.connection.id);
         setIsCreated(true);
         
         toast.success("Instância criada!", {
           description: "Clique em 'Ler QR Code' para conectar o WhatsApp",
         });
-        
-      } catch (createError: any) {
-        // Se o erro for de instância já existente, continuar normalmente
-        if (createError.message?.includes("already exists") || createError.message?.includes("já existe")) {
-          console.log("Instância já existe, continuando...");
-          setIsCreated(true);
-          
-          toast.success("Instância encontrada!", {
-            description: "Clique em 'Ler QR Code' para conectar o WhatsApp",
-          });
-        } else {
-          throw createError;
-        }
+      } else {
+        throw new Error(result.error || "Erro ao criar conexão");
       }
       
     } catch (error) {
@@ -157,10 +116,10 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
 
   const handleQRCodeConnect = () => {
     // Finalizar conexão
-    onAddConnection(connectionName, "evolution", {
-      instanceName,
-      phoneNumber: extractPhoneNumbers(phoneNumber)
-    });
+    const connection = whatsappConnectionManager.getConnections().find(c => c.id === connectionId);
+    if (connection) {
+      onAddConnection(connection.name, "evolution", connection.configData);
+    }
     
     setShowQRPopup(false);
     onClose();
@@ -240,7 +199,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Instância Criada!</h3>
               <p className="text-muted-foreground mb-6">
-                Sua instância "{instanceName}" foi criada com sucesso.
+                Sua instância foi criada com sucesso e está pronta para conectar.
               </p>
               
               <Alert className="mb-4">
@@ -267,7 +226,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       <QRCodePopup 
         isOpen={showQRPopup}
         onClose={() => setShowQRPopup(false)}
-        instanceName={instanceName}
+        connectionId={connectionId}
         onConnect={handleQRCodeConnect}
       />
     </>

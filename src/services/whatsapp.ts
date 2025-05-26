@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { evolutionApi } from "./evolutionApi";
 
@@ -378,7 +377,7 @@ export const whatsappService = {
     }
   },
   
-  // Método para deletar instância Evolution API
+  // Método para deletar instância Evolution API - CORRIGIDO
   deleteEvolutionInstance: async (instanceName: string) => {
     try {
       console.log("Deletando instância Evolution API:", instanceName);
@@ -393,20 +392,18 @@ export const whatsappService = {
       // Deletar instância na API Evolution
       await evolutionApi.deleteInstance(instanceName);
       
-      // Remover do banco de dados local
+      // Remover do banco de dados local se usuário estiver autenticado
       const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error("Usuário não autenticado");
-      }
-      
-      const { error: dbError } = await supabase
-        .from("whatsapp_connections")
-        .delete()
-        .eq("config_data->>instanceName", instanceName)
-        .eq("user_id", user.id);
-      
-      if (dbError) {
-        console.error("Erro ao remover do banco:", dbError);
+      if (!userError && user) {
+        const { error: dbError } = await supabase
+          .from("whatsapp_connections")
+          .delete()
+          .eq("config_data->>instanceName", instanceName)
+          .eq("user_id", user.id);
+        
+        if (dbError) {
+          console.error("Erro ao remover do banco:", dbError);
+        }
       }
       
       return {

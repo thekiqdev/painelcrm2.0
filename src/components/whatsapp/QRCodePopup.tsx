@@ -11,20 +11,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, RefreshCw, CheckCircle2, InfoIcon } from "lucide-react";
-import { evolutionApi } from "@/services/evolutionApi";
+import { whatsappConnectionManager } from "@/services/whatsappConnectionManager";
 import { toast } from "sonner";
 
 interface QRCodePopupProps {
   isOpen: boolean;
   onClose: () => void;
-  instanceName: string;
+  connectionId: string;
   onConnect: () => void;
 }
 
 const QRCodePopup: React.FC<QRCodePopupProps> = ({
   isOpen,
   onClose,
-  instanceName,
+  connectionId,
   onConnect,
 }) => {
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -33,10 +33,10 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    if (isOpen && instanceName) {
+    if (isOpen && connectionId) {
       generateQRCode();
     }
-  }, [isOpen, instanceName]);
+  }, [isOpen, connectionId]);
 
   const generateQRCode = async () => {
     setIsLoading(true);
@@ -44,41 +44,30 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     setQrCode(null);
     
     try {
-      console.log("Gerando QR code para:", instanceName);
+      console.log("Gerando QR code para conexão:", connectionId);
       
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) throw new Error("Configuração não encontrada");
+      const result = await whatsappConnectionManager.getQRCode(connectionId);
       
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      
-      // Verificar se já está conectado
-      try {
-        const status = await evolutionApi.getInstanceStatus(instanceName);
-        
-        if (status.instance.state === "open") {
+      if (result.success) {
+        if (result.qrCode === "already_connected") {
           setIsConnected(true);
           toast.success("Já conectado!", {
             description: "Esta instância já estava conectada",
           });
           return;
         }
-      } catch (statusError) {
-        console.log("Instância não encontrada ou erro ao verificar status");
-      }
-      
-      // Gerar QR code
-      const qrResult = await evolutionApi.getQRCode(instanceName);
-      
-      if (qrResult?.qrcode?.base64) {
-        setQrCode(qrResult.qrcode.base64);
-        toast.success("QR Code gerado", {
-          description: "Escaneie o QR code com seu WhatsApp",
-        });
         
-        // Iniciar verificação de conexão
-        startConnectionPolling();
+        if (result.qrCode) {
+          setQrCode(result.qrCode);
+          toast.success("QR Code gerado", {
+            description: "Escaneie o QR code com seu WhatsApp",
+          });
+          
+          // Iniciar verificação de conexão
+          startConnectionPolling();
+        }
       } else {
-        throw new Error("Não foi possível gerar o QR code");
+        throw new Error(result.error || "Erro ao gerar QR code");
       }
       
     } catch (error) {
@@ -92,13 +81,9 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   const startConnectionPolling = () => {
     const pollInterval = setInterval(async () => {
       try {
-        const config = await evolutionApi.getActiveConfig();
-        if (!config) return;
+        const result = await whatsappConnectionManager.checkConnectionStatus(connectionId);
         
-        evolutionApi.setCredentials(config.api_url, config.global_key);
-        const status = await evolutionApi.getInstanceStatus(instanceName);
-        
-        if (status.instance.state === "open") {
+        if (result.success && result.status === "connected") {
           setIsConnected(true);
           clearInterval(pollInterval);
           
