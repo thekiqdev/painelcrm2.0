@@ -23,7 +23,7 @@ export const evolutionChatService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      const chats = await evolutionApi.getChats(targetInstanceName);
+      const chats = await evolutionApi.findChats(targetInstanceName);
       console.log("Conversas retornadas da API:", chats);
       
       // Verificar se chats é válido e é um array
@@ -67,7 +67,7 @@ export const evolutionChatService = {
     }
   },
 
-  getEvolutionMessages: async (instanceName: string, remoteJid: string, instanceApiKey?: string) => {
+  getEvolutionMessages: async (instanceName: string, remoteJid: string) => {
     try {
       console.log("Obtendo mensagens Evolution API:", instanceName, remoteJid);
       
@@ -76,7 +76,7 @@ export const evolutionChatService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      const messages = await evolutionApi.getMessages(instanceName, remoteJid, 50, instanceApiKey);
+      const messages = await evolutionApi.findMessages(instanceName, remoteJid);
       
       // Verificar se messages é válido e é um array
       if (!messages || !Array.isArray(messages)) {
@@ -104,7 +104,7 @@ export const evolutionChatService = {
     }
   },
 
-  sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string, instanceApiKey?: string) => {
+  sendEvolutionMessage: async (instanceName: string, remoteJid: string, message: string) => {
     try {
       console.log("Enviando mensagem Evolution API:", instanceName, remoteJid);
       
@@ -113,7 +113,7 @@ export const evolutionChatService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      return await evolutionApi.sendMessage(instanceName, remoteJid, message, instanceApiKey);
+      return await evolutionApi.sendMessage(instanceName, remoteJid, message);
     } catch (error) {
       console.error("Erro ao enviar mensagem Evolution:", error);
       throw error;

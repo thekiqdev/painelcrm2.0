@@ -1,6 +1,40 @@
 
 const EVOLUTION_API_BASE_URL = 'https://api.evolution.com.br'; // URL base padrão
 
+export interface EvolutionApiConfig {
+  id: string;
+  name: string;
+  api_url: string;
+  global_key: string;
+  is_active: boolean;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EvolutionMessage {
+  key: {
+    id: string;
+    fromMe: boolean;
+    remoteJid: string;
+  };
+  message?: {
+    conversation?: string;
+    extendedTextMessage?: {
+      text: string;
+    };
+  };
+  messageTimestamp: number;
+}
+
+export interface EvolutionContact {
+  id: string;
+  remoteJid: string;
+  pushName?: string;
+  profilePictureUrl?: string;
+  unreadMessages?: number;
+}
+
 export class EvolutionAPI {
   private baseUrl: string = '';
   private globalKey: string = '';
@@ -121,10 +155,54 @@ export class EvolutionAPI {
     return null;
   }
 
-  async saveConfig(config: { api_url: string; global_key: string; name: string }) {
+  async saveConfig(name: string, apiUrl: string, globalKey: string) {
     // Salvar configuração no localStorage por enquanto
+    const config = {
+      id: `config_${Date.now()}`,
+      name,
+      api_url: apiUrl,
+      global_key: globalKey,
+      is_active: true,
+      user_id: 'current_user',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
     localStorage.setItem('evolution_config', JSON.stringify(config));
-    this.setCredentials(config.api_url, config.global_key);
+    this.setCredentials(apiUrl, globalKey);
+    return config;
+  }
+
+  async getAllConfigs(): Promise<EvolutionApiConfig[]> {
+    // Por enquanto retornar apenas a configuração ativa do localStorage
+    const activeConfig = await this.getActiveConfig();
+    return activeConfig ? [activeConfig] : [];
+  }
+
+  async setActiveConfig(configId: string) {
+    // Por enquanto apenas log, pois usamos localStorage
+    console.log("Definindo configuração ativa:", configId);
+  }
+
+  async updateConfig(configId: string, updates: Partial<EvolutionApiConfig>) {
+    const config = await this.getActiveConfig();
+    if (config && config.id === configId) {
+      const updatedConfig = { ...config, ...updates, updated_at: new Date().toISOString() };
+      localStorage.setItem('evolution_config', JSON.stringify(updatedConfig));
+      if (updates.api_url && updates.global_key) {
+        this.setCredentials(updates.api_url, updates.global_key);
+      }
+      return updatedConfig;
+    }
+    throw new Error('Configuração não encontrada');
+  }
+
+  async deleteConfig(configId: string) {
+    const config = await this.getActiveConfig();
+    if (config && config.id === configId) {
+      localStorage.removeItem('evolution_config');
+      return true;
+    }
+    throw new Error('Configuração não encontrada');
   }
 }
 
