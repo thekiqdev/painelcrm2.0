@@ -19,70 +19,95 @@ export const evolutionInstanceService = {
       
       // Verificar se a instância foi criada com sucesso
       if (result?.instance?.instanceName) {
-        // Verificar se há QR code na resposta
-        if (result.qrcode?.base64) {
-          // Salvar conexão no banco de dados com QR code
-          await connectionDatabaseService.saveConnection({
-            name: instanceName,
-            type: "evolution",
-            status: "awaiting_scan",
-            instance_name: instanceName,
-            phone_number: phoneNumber,
-            webhook_url: webhookUrl,
-            config_data: {
-              instanceName,
-              phoneNumber,
-              webhookUrl,
-              apikey: result.hash?.apikey
-            },
-            qr_code: result.qrcode.base64
-          });
+        // Aguardar um pouco antes de tentar obter o QR code
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Tentar obter QR code
+        try {
+          console.log("Tentando obter QR Code...");
+          const qrCodeResult = await evolutionApi.getInstanceQrCode(instanceName);
           
-          return {
-            success: true,
-            qrCode: result.qrcode.base64,
-            status: "awaiting_scan"
-          };
-        } else {
-          // Tentar obter QR code separadamente
-          try {
-            console.log("QR Code não obtido na criação, tentando obter separadamente...");
-            const { evolutionQRService } = await import("./evolutionQRService");
-            return await evolutionQRService.getEvolutionQRCode(instanceName);
-          } catch (qrError) {
-            console.error("Erro ao obter QR Code:", qrError);
+          if (qrCodeResult) {
+            // Salvar conexão no banco de dados com QR code
+            await connectionDatabaseService.saveConnection({
+              name: instanceName,
+              type: "evolution",
+              status: "awaiting_scan",
+              instance_name: instanceName,
+              phone_number: phoneNumber,
+              webhook_url: webhookUrl,
+              config_data: {
+                instanceName,
+                phoneNumber,
+                webhookUrl,
+                apikey: result.hash?.apikey
+              },
+              qr_code: qrCodeResult
+            });
             
-            // Verificar se a instância já está conectada
-            try {
-              const status = await evolutionApi.getInstanceStatus(instanceName);
-              if (status?.instance?.state === "open") {
-                // Salvar conexão conectada no banco
-                await connectionDatabaseService.saveConnection({
-                  name: instanceName,
-                  type: "evolution",
-                  status: "connected",
-                  instance_name: instanceName,
-                  phone_number: phoneNumber,
-                  webhook_url: webhookUrl,
-                  config_data: {
-                    instanceName,
-                    phoneNumber,
-                    webhookUrl,
-                    apikey: result.hash?.apikey
-                  }
-                });
-                
-                return {
-                  success: true,
-                  status: "connected"
-                };
-              }
-            } catch (statusError) {
-              console.error("Erro ao verificar status:", statusError);
-            }
-            
-            throw qrError;
+            return {
+              success: true,
+              qrCode: qrCodeResult,
+              status: "awaiting_scan"
+            };
           }
+        } catch (qrError: any) {
+          console.error("Erro ao obter QR Code:", qrError);
+          
+          // Se o erro é que já está conectado
+          if (qrError.message?.includes("ALREADY_CONNECTED")) {
+            // Salvar conexão conectada no banco
+            await connectionDatabaseService.saveConnection({
+              name: instanceName,
+              type: "evolution",
+              status: "connected",
+              instance_name: instanceName,
+              phone_number: phoneNumber,
+              webhook_url: webhookUrl,
+              config_data: {
+                instanceName,
+                phoneNumber,
+                webhookUrl,
+                apikey: result.hash?.apikey
+              }
+            });
+            
+            return {
+              success: true,
+              status: "connected"
+            };
+          }
+          
+          // Verificar se a instância já está conectada
+          try {
+            const status = await evolutionApi.getInstanceStatus(instanceName);
+            if (status?.instance?.state === "open") {
+              // Salvar conexão conectada no banco
+              await connectionDatabaseService.saveConnection({
+                name: instanceName,
+                type: "evolution",
+                status: "connected",
+                instance_name: instanceName,
+                phone_number: phoneNumber,
+                webhook_url: webhookUrl,
+                config_data: {
+                  instanceName,
+                  phoneNumber,
+                  webhookUrl,
+                  apikey: result.hash?.apikey
+                }
+              });
+              
+              return {
+                success: true,
+                status: "connected"
+              };
+            }
+          } catch (statusError) {
+            console.error("Erro ao verificar status:", statusError);
+          }
+          
+          throw qrError;
         }
       } else {
         throw new Error("Erro ao criar instância: resposta inválida da API");

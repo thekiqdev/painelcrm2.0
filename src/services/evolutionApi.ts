@@ -1,3 +1,4 @@
+
 import { getActiveConfig, getAllConfigs, saveConfig, updateConfig, deleteConfig, setActiveConfig } from "../config";
 
 // Types for Evolution API
@@ -198,11 +199,12 @@ class EvolutionAPI {
     try {
       console.log("Obtendo QR Code da instância:", instanceName);
       
-      const result = await this.makeRequest(`instance/qr/${instanceName}`, {
+      // Usar o endpoint correto conforme documentação
+      const result = await this.makeRequest(`instance/connect/${instanceName}`, {
         method: 'GET',
       });
 
-      // A Evolution API pode retornar o QR code de diferentes formas
+      // A Evolution API retorna o QR code de diferentes formas
       if (typeof result === 'string') {
         return result;
       }
@@ -217,6 +219,11 @@ class EvolutionAPI {
       
       if (result?.base64) {
         return result.base64;
+      }
+
+      // Se não há QR code, pode ser que já esteja conectado
+      if (result?.instance?.state === "open") {
+        throw new Error("ALREADY_CONNECTED");
       }
 
       throw new Error("QR Code não encontrado na resposta");
