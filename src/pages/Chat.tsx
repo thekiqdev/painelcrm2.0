@@ -34,13 +34,13 @@ type ProfileWithConnection = {
 const Chat = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [contactFilter, setContactFilter] = useState("");
   const [connectedNumber, setConnectedNumber] = useState<string>("");
   const [activeInstanceName, setActiveInstanceName] = useState<string>("");
-  const [activeConnectionId, setActiveConnectionId] = useState<string>("");
 
   const {
     chats,
@@ -48,12 +48,10 @@ const Chat = () => {
     isLoading,
     isSending,
     sendMessage,
-    attendConversation,
     refreshChats
   } = useEvolutionChatCache({
     instanceName: activeInstanceName,
-    enabled: connectionStatus === "connected" && !!activeInstanceName,
-    connectionId: activeConnectionId
+    enabled: connectionStatus === "connected" && !!activeInstanceName
   });
 
   useEffect(() => {
@@ -89,7 +87,6 @@ const Chat = () => {
             if (activeConnection && activeConnection.instance_name) {
               console.log("Conexão ativa encontrada:", activeConnection);
               setActiveInstanceName(activeConnection.instance_name);
-              setActiveConnectionId(activeConnection.id);
               setConnectedNumber(activeConnection.phone_number || "Número não identificado");
             } else {
               console.log("Nenhuma conexão ativa encontrada no banco");
@@ -113,23 +110,44 @@ const Chat = () => {
     }
   }, [user]);
 
-  // Converter chats do cache para conversações com status persistido
-  const conversations: ChatConversation[] = chats.map(chat => ({
-    id: chat.id,
-    remoteJid: chat.remoteJid,
-    pushName: chat.pushName,
-    profilePictureUrl: chat.profilePictureUrl,
-    lastMessage: "Conversa ativa",
-    unreadCount: chat.unreadMessages || 0,
-    updatedAt: new Date(),
-    status: chat.status === 'active' ? 'active' : 'pending',
-    attendant: chat.attendant ? user?.email || "Atendente" : undefined
-  }));
+  // Converter chats do cache para conversações
+  useEffect(() => {
+    if (chats.length > 0) {
+      const convertedConversations: ChatConversation[] = chats.map(chat => ({
+        id: chat.id,
+        remoteJid: chat.remoteJid,
+        pushName: chat.pushName,
+        profilePictureUrl: chat.profilePictureUrl,
+        lastMessage: "Conversa ativa",
+        unreadCount: chat.unreadMessages || 0,
+        updatedAt: new Date(),
+        status: "pending" as const
+      }));
+      
+      setConversations(convertedConversations);
+    }
+  }, [chats]);
 
   const getMessageText = (message: EvolutionMessage) => {
     return message.message?.conversation || 
            message.message?.extendedTextMessage?.text || 
            "Mensagem sem texto";
+  };
+
+  const handleAttendConversation = (conversationId: string) => {
+    setConversations(prev => 
+      prev.map(conv => 
+        conv.id === conversationId 
+          ? { ...conv, status: "active", attendant: user?.email || "Você" }
+          : conv
+      )
+    );
+    
+    setActiveConversation(conversationId);
+    
+    toast.success("Conversa atendida!", {
+      description: "Você agora está atendendo esta conversa"
+    });
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -173,12 +191,16 @@ const Chat = () => {
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   };
 
-  const handleAttendConversation = async (conversationId: string) => {
-    const conversation = conversations.find(c => c.id === conversationId);
-    if (!conversation) return;
+  const filteredConversations = conversations.filter(conv =>
+    (conv.pushName && conv.pushName.toLowerCase().includes(contactFilter.toLowerCase())) ||
+    conv.remoteJid.includes(contactFilter)
+  );
 
-    await attendConversation(conversation.remoteJid);
-    setActiveConversation(conversationId);
+  const pendingConversations = filteredConversations.filter(conv => conv.status === "pending");
+  const activeConversations = filteredConversations.filter(conv => conv.status === "active");
+
+  const handleNavigateToSettings = () => {
+    navigate("/settings?tab=whatsapp");
   };
 
   const renderConversationItem = (conversation: ChatConversation, showAttendButton = false) => (
@@ -246,18 +268,6 @@ const Chat = () => {
       </div>
     </li>
   );
-
-  const filteredConversations = conversations.filter(conv =>
-    (conv.pushName && conv.pushName.toLowerCase().includes(contactFilter.toLowerCase())) ||
-    conv.remoteJid.includes(contactFilter)
-  );
-
-  const pendingConversations = filteredConversations.filter(conv => conv.status === "pending");
-  const activeConversations = filteredConversations.filter(conv => conv.status === "active");
-
-  const handleNavigateToSettings = () => {
-    navigate("/settings?tab=whatsapp");
-  };
 
   const activeConversationData = conversations.find(c => c.id === activeConversation);
 
