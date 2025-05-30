@@ -266,80 +266,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     }
   }, [enabled]);
 
-    // Marcar mensagens como lidas
-  const markMessagesAsRead = async (remoteJid: string) => {
-    if (!enabled || !instanceName) return;
-    
-    try {
-      console.log("Marcando mensagens como lidas:", remoteJid);
-      await whatsappService.readMessages(instanceName, remoteJid);
-      toast.success("Mensagens marcadas como lidas!");
-    } catch (error) {
-      console.error("Erro ao marcar mensagens como lidas:", error);
-      toast.error("Erro ao marcar mensagens como lidas", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  };
-
-  // Marcar mensagens como não lidas
-  const markMessagesAsUnread = async (remoteJid: string) => {
-    if (!enabled || !instanceName) return;
-    
-    try {
-      console.log("Marcando mensagens como não lidas:", remoteJid);
-      await whatsappService.markMessageAsUnread(instanceName, remoteJid);
-      toast.success("Mensagens marcadas como não lidas!");
-    } catch (error) {
-      console.error("Erro ao marcar mensagens como não lidas:", error);
-      toast.error("Erro ao marcar mensagens como não lidas", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  };
-
-  // Arquivar conversa
-  const archiveConversation = async (remoteJid: string, archive: boolean = true) => {
-    if (!enabled || !instanceName) return;
-    
-    try {
-      console.log(`${archive ? 'Arquivando' : 'Desarquivando'} conversa:`, remoteJid);
-      await whatsappService.archiveChat(instanceName, remoteJid, archive);
-      
-      // Atualizar cache removendo ou adicionando a conversa
-      setChats(prev => {
-        if (archive) {
-          return prev.filter(chat => chat.remoteJid !== remoteJid);
-        } else {
-          // Se desarquivando, recarregar a lista
-          loadChats(true);
-          return prev;
-        }
-      });
-      
-      toast.success(`Conversa ${archive ? 'arquivada' : 'desarquivada'} com sucesso!`);
-    } catch (error) {
-      console.error(`Erro ao ${archive ? 'arquivar' : 'desarquivar'} conversa:`, error);
-      toast.error(`Erro ao ${archive ? 'arquivar' : 'desarquivar'} conversa`, {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  };
-
-  // Buscar foto de perfil
-  const fetchProfilePicture = async (remoteJid: string) => {
-    if (!enabled || !instanceName) return null;
-    
-    try {
-      console.log("Buscando foto de perfil:", remoteJid);
-      const result = await whatsappService.fetchProfilePictureUrl(instanceName, remoteJid);
-      return result;
-    } catch (error) {
-      console.error("Erro ao buscar foto de perfil:", error);
-      return null;
-    }
-  };
-
   return {
     chats,
     messages,
@@ -353,12 +279,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     attendConversation,
     getActiveChatInfo,
     refreshChats: () => loadChats(true),
-    refreshMessages: (remoteJid: string) => loadMessages(remoteJid, true),
-    
-    // Novas funcionalidades
-    markMessagesAsRead,
-    markMessagesAsUnread,
-    archiveConversation,
-    fetchProfilePicture
+    refreshMessages: (remoteJid: string) => loadMessages(remoteJid, true)
   };
 };

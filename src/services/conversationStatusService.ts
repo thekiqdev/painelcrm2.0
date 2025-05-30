@@ -13,30 +13,6 @@ export interface ConversationAttendance {
   updated_at: string;
 }
 
-// Tipo para dados vindos do Supabase
-interface SupabaseConversationAttendance {
-  id: string;
-  user_id: string;
-  connection_id: string;
-  remote_jid: string;
-  status: string; // Supabase retorna como string genérica
-  attendant_id?: string;
-  attended_at?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-// Função para converter dados do Supabase para o tipo correto
-const convertToConversationAttendance = (data: SupabaseConversationAttendance): ConversationAttendance => {
-  const validStatuses: ('pending' | 'active' | 'closed')[] = ['pending', 'active', 'closed'];
-  const status = validStatuses.includes(data.status as any) ? data.status as 'pending' | 'active' | 'closed' : 'pending';
-  
-  return {
-    ...data,
-    status
-  };
-};
-
 export const conversationStatusService = {
   async getConversationStatus(connectionId: string, remoteJid: string): Promise<ConversationAttendance | null> {
     try {
@@ -48,26 +24,19 @@ export const conversationStatusService = {
 
       console.log("Buscando status da conversa:", { userId: user.id, connectionId, remoteJid });
 
-      const { data, error } = await supabase
-        .from('conversation_attendances')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('connection_id', connectionId)
-        .eq('remote_jid', remoteJid)
-        .single();
+      const { data, error } = await (supabase as any).rpc('get_conversation_status', {
+        p_user_id: user.id,
+        p_connection_id: connectionId,
+        p_remote_jid: remoteJid
+      });
 
       if (error) {
-        if (error.code === 'PGRST116') {
-          // Nenhum registro encontrado
-          console.log("Nenhum status de conversa encontrado");
-          return null;
-        }
-        console.error("Erro ao buscar status da conversa:", error);
+        console.error("Erro na função get_conversation_status:", error);
         return null;
       }
       
       console.log("Status da conversa encontrado:", data);
-      return data ? convertToConversationAttendance(data) : null;
+      return data?.[0] || null;
     } catch (error) {
       console.error("Erro ao obter status da conversa:", error);
       return null;
@@ -99,24 +68,18 @@ export const conversationStatusService = {
         updatedAt: now
       });
 
-      const { data, error } = await supabase
-        .from('conversation_attendances')
-        .upsert({
-          user_id: user.id,
-          connection_id: connectionId,
-          remote_jid: remoteJid,
-          status: status,
-          attendant_id: status === 'active' ? user.id : null,
-          attended_at: attendedAt,
-          updated_at: now
-        }, {
-          onConflict: 'user_id,connection_id,remote_jid'
-        })
-        .select()
-        .single();
+      const { data, error } = await (supabase as any).rpc('upsert_conversation_status', {
+        p_user_id: user.id,
+        p_connection_id: connectionId,
+        p_remote_jid: remoteJid,
+        p_status: status,
+        p_attendant_id: status === 'active' ? user.id : null,
+        p_attended_at: attendedAt,
+        p_updated_at: now
+      });
 
       if (error) {
-        console.error("Erro ao atualizar status da conversa:", error);
+        console.error("Erro na função upsert_conversation_status:", error);
         console.error("Detalhes do erro:", {
           message: error.message,
           details: error.details,
@@ -127,10 +90,10 @@ export const conversationStatusService = {
       }
       
       console.log("Status da conversa atualizado com sucesso:", data);
-      return data ? convertToConversationAttendance(data) : null;
+      return data?.[0] || null;
     } catch (error) {
       console.error("Erro ao atualizar status da conversa:", error);
-      throw error;
+      throw error; // Re-throw para que o erro chegue até o componente
     }
   },
 
@@ -144,21 +107,20 @@ export const conversationStatusService = {
 
       console.log("Buscando todos os status de conversas:", { userId: user.id, connectionId });
 
-      const { data, error } = await supabase
-        .from('conversation_attendances')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('connection_id', connectionId);
+      const { data, error } = await (supabase as any).rpc('get_all_conversation_statuses', {
+        p_user_id: user.id,
+        p_connection_id: connectionId
+      });
 
       if (error) {
-        console.error("Erro ao buscar status de conversas:", error);
+        console.error("Erro na função get_all_conversation_statuses:", error);
         return {};
       }
 
       const statusMap: Record<string, ConversationAttendance> = {};
       if (Array.isArray(data)) {
-        data.forEach((attendance: SupabaseConversationAttendance) => {
-          statusMap[attendance.remote_jid] = convertToConversationAttendance(attendance);
+        data.forEach((attendance: ConversationAttendance) => {
+          statusMap[attendance.remote_jid] = attendance;
         });
       }
 
