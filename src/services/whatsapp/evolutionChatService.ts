@@ -1,4 +1,3 @@
-
 import { evolutionApi } from "../evolutionApi";
 import { evolutionConnectionService } from "./evolutionConnectionService";
 
@@ -54,8 +53,8 @@ export const evolutionChatService = {
             id: chatId,
             remoteJid: remoteJid,
             pushName: chat.pushName || remoteJid,
-            profilePictureUrl: chat.profilePictureUrl || chat.profilePicUrl,
-            unreadMessages: chat.unreadMessages || chat.unreadCount || 0
+            profilePictureUrl: chat.profilePictureUrl,
+            unreadMessages: chat.unreadMessages || 0
           };
         });
     } catch (error) {

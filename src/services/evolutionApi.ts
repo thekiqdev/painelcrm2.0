@@ -1,5 +1,4 @@
-
-import { getActiveConfig } from "../config";
+import { getActiveConfig, getAllConfigs, saveConfig, updateConfig, deleteConfig, setActiveConfig } from "../config";
 
 // Types for Evolution API
 export interface EvolutionMessage {
@@ -732,6 +731,52 @@ class EvolutionAPI {
       return result;
     } catch (error) {
       console.error("Erro ao buscar foto de perfil:", error);
+      throw error;
+    }
+  }
+
+  // Configuration management methods
+  async getAllConfigs() {
+    try {
+      return await getAllConfigs();
+    } catch (error) {
+      console.error("Erro ao obter todas as configurações:", error);
+      throw error;
+    }
+  }
+
+  async saveConfig(name: string, apiUrl: string, globalKey: string) {
+    try {
+      return await saveConfig(name, apiUrl, globalKey);
+    } catch (error) {
+      console.error("Erro ao salvar configuração:", error);
+      throw error;
+    }
+  }
+
+  async updateConfig(id: string, updates: Partial<EvolutionApiConfig>) {
+    try {
+      return await updateConfig(id, updates);
+    } catch (error) {
+      console.error("Erro ao atualizar configuração:", error);
+      throw error;
+    }
+  }
+
+  async deleteConfig(id: string) {
+    try {
+      return await deleteConfig(id);
+    } catch (error) {
+      console.error("Erro ao deletar configuração:", error);
+      throw error;
+    }
+  }
+
+  async setActiveConfig(id: string) {
+    try {
+      return await setActiveConfig(id);
+    } catch (error) {
+      console.error("Erro ao definir configuração ativa:", error);
       throw error;
     }
   }

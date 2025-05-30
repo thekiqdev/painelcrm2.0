@@ -17,7 +17,7 @@ export const evolutionInstanceService = {
       const result = await evolutionApi.createInstance(instanceName, phoneNumber);
       console.log("Resultado da criação da instância:", result);
       
-      if (result?.qrcode) {
+      if (result?.success && result?.data?.qrcode) {
         // Salvar conexão no banco de dados
         await connectionDatabaseService.saveConnection({
           name: instanceName,
@@ -31,12 +31,12 @@ export const evolutionInstanceService = {
             phoneNumber,
             webhookUrl
           },
-          qr_code: result.qrcode
+          qr_code: result.data.qrcode
         });
         
         return {
           success: true,
-          qrCode: result.qrcode,
+          qrCode: result.data.qrcode,
           status: "awaiting_scan"
         };
       } else {
