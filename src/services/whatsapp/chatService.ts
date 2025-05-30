@@ -8,7 +8,7 @@ export const chatService = {
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getChats(instanceName);
+      return await evolutionApi.findChats(instanceName);
     } catch (error) {
       console.error("Erro ao obter conversas Evolution:", error);
       throw error;
@@ -21,7 +21,7 @@ export const chatService = {
       if (!config) throw new Error("Nenhuma configuração ativa encontrada");
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
-      return await evolutionApi.getMessages(instanceName, remoteJid);
+      return await evolutionApi.findMessages(instanceName, { remoteJid });
     } catch (error) {
       console.error("Erro ao obter mensagens Evolution:", error);
       throw error;
