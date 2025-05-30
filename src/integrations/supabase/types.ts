@@ -143,50 +143,6 @@ export type Database = {
           },
         ]
       }
-      conversation_attendances: {
-        Row: {
-          attendant_id: string | null
-          attended_at: string | null
-          connection_id: string
-          created_at: string | null
-          id: string
-          remote_jid: string
-          status: string
-          updated_at: string | null
-          user_id: string
-        }
-        Insert: {
-          attendant_id?: string | null
-          attended_at?: string | null
-          connection_id: string
-          created_at?: string | null
-          id?: string
-          remote_jid: string
-          status?: string
-          updated_at?: string | null
-          user_id: string
-        }
-        Update: {
-          attendant_id?: string | null
-          attended_at?: string | null
-          connection_id?: string
-          created_at?: string | null
-          id?: string
-          remote_jid?: string
-          status?: string
-          updated_at?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "conversation_attendances_connection_id_fkey"
-            columns: ["connection_id"]
-            isOneToOne: false
-            referencedRelation: "whatsapp_connections"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       evolution_api_configs: {
         Row: {
           api_url: string

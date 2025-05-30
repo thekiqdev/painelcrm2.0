@@ -40,62 +40,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     return Date.now() - timestamp < duration;
   };
 
-  // Atender conversa
-  const attendConversation = async (remoteJid: string) => {
-    if (!connectionId) {
-      console.error("Connection ID não encontrado para atender conversa");
-      toast.error("ID da conexão não encontrado");
-      return false;
-    }
-
-    console.log("Iniciando atendimento da conversa:", { remoteJid, connectionId });
-
-    try {
-      const attendance = await conversationStatusService.updateConversationStatus(
-        connectionId,
-        remoteJid,
-        'active'
-      );
-
-      if (attendance) {
-        console.log("Status atualizado com sucesso:", attendance);
-        
-        // Atualizar o chat local
-        setChats(prev => prev.map(chat => 
-          chat.remoteJid === remoteJid 
-            ? { 
-                ...chat, 
-                status: 'active',
-                attendant: attendance.attendant_id,
-                attended_at: attendance.attended_at
-              }
-            : chat
-        ));
-
-        // Invalidar cache para forçar atualização
-        const cacheKey = getCacheKey(instanceName);
-        chatsCache.current.delete(cacheKey);
-
-        // Carregar mensagens automaticamente após atender
-        await loadMessages(remoteJid, true);
-
-        toast.success("Conversa atendida com sucesso!");
-        return true;
-      } else {
-        console.error("Não foi possível obter dados do atendimento");
-        toast.error("Erro ao confirmar atendimento da conversa");
-        return false;
-      }
-    } catch (error) {
-      console.error("Erro ao atender conversa:", error);
-      const errorMessage = error instanceof Error ? error.message : "Erro desconhecido";
-      toast.error("Erro ao atender conversa", {
-        description: errorMessage
-      });
-      return false;
-    }
-  };
-
   // Carregar conversas com cache e status
   const loadChats = async (forceRefresh = false) => {
     if (!enabled || !instanceName) return;
@@ -162,8 +106,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
   // Carregar mensagens com cache
   const loadMessages = async (remoteJid: string, forceRefresh = false) => {
     if (!enabled || !instanceName) return;
-    
-    console.log("Carregando mensagens para:", remoteJid);
     
     const cacheKey = getMessageCacheKey(instanceName, remoteJid);
     const cached = messagesCache.current.get(cacheKey);
@@ -242,10 +184,43 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     }
   };
 
-  // Função para obter informações do chat ativo
-  const getActiveChatInfo = () => {
-    if (!activeChat) return null;
-    return chats.find(chat => chat.remoteJid === activeChat);
+  // Atender conversa
+  const attendConversation = async (remoteJid: string) => {
+    if (!connectionId) {
+      toast.error("ID da conexão não encontrado");
+      return;
+    }
+
+    try {
+      const attendance = await conversationStatusService.updateConversationStatus(
+        connectionId,
+        remoteJid,
+        'active'
+      );
+
+      if (attendance) {
+        // Atualizar o chat local
+        setChats(prev => prev.map(chat => 
+          chat.remoteJid === remoteJid 
+            ? { 
+                ...chat, 
+                status: 'active',
+                attendant: attendance.attendant_id,
+                attended_at: attendance.attended_at
+              }
+            : chat
+        ));
+
+        // Invalidar cache para forçar atualização
+        const cacheKey = getCacheKey(instanceName);
+        chatsCache.current.delete(cacheKey);
+
+        toast.success("Conversa atendida com sucesso!");
+      }
+    } catch (error) {
+      console.error("Erro ao atender conversa:", error);
+      toast.error("Erro ao atender conversa");
+    }
   };
 
   // Carregar conversas quando os parâmetros mudarem (apenas na primeira vez)
@@ -277,7 +252,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     sendMessage,
     setActiveChat,
     attendConversation,
-    getActiveChatInfo,
     refreshChats: () => loadChats(true),
     refreshMessages: (remoteJid: string) => loadMessages(remoteJid, true)
   };
