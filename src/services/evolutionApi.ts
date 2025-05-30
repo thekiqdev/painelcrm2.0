@@ -1,571 +1,131 @@
-import { supabase } from '@/integrations/supabase/client';
 
-export interface EvolutionApiConfig {
-  id: string;
-  name: string;
-  api_url: string;
-  global_key: string;
-  is_active: boolean;
-  user_id: string;
-  created_at: string;
-  updated_at: string;
-}
+const EVOLUTION_API_BASE_URL = 'https://api.evolution.com.br'; // URL base padrão
 
-export interface EvolutionInstance {
-  instanceName: string;
-  phone?: string;
-  status?: string;
-  apikey?: string;
-}
-
-export interface EvolutionQRResponse {
-  qrcode?: {
-    base64: string;
-    code: string;
-  };
-  pairingCode?: string;
-}
-
-export interface EvolutionInstanceStatus {
-  instance: {
-    instanceName: string;
-    state: string;
-    status: string;
-  };
-}
-
-export interface EvolutionMessage {
-  key: {
-    remoteJid: string;
-    fromMe: boolean;
-    id: string;
-  };
-  message: {
-    conversation?: string;
-    extendedTextMessage?: {
-      text: string;
-    };
-  };
-  messageTimestamp: number;
-  pushName?: string;
-}
-
-export interface EvolutionContact {
-  id: string;
-  pushName?: string;
-  remoteJid: string;
-  unreadMessages?: number;
-  unreadCount?: number;
-  profilePictureUrl?: string;
-  profilePicUrl?: string;
-}
-
-export interface EvolutionChat {
-  chat: {
-    id: string;
-    conversationTimestamp: number;
-    unreadCount: number;
-  };
-}
-
-class EvolutionApi {
-  private apiUrl: string = '';
+export class EvolutionAPI {
+  private baseUrl: string = '';
   private globalKey: string = '';
-  private instanceApiKey: string = '';
 
-  setCredentials(apiUrl: string, globalKey: string) {
-    this.apiUrl = apiUrl.replace(/\/$/, '');
+  setCredentials(baseUrl: string, globalKey: string) {
+    // Remover barra final se existir
+    this.baseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
     this.globalKey = globalKey;
+    console.log("Credenciais Evolution definidas:", { baseUrl: this.baseUrl });
   }
 
-  setInstanceApiKey(apiKey: string) {
-    this.instanceApiKey = apiKey;
-  }
+  private async makeRequest(endpoint: string, options: RequestInit = {}) {
+    if (!this.baseUrl || !this.globalKey) {
+      throw new Error('Credenciais da Evolution API não configuradas');
+    }
 
-  private getHeaders(useInstanceKey: boolean = false) {
-    return {
-      'Content-Type': 'application/json',
-      'apikey': useInstanceKey ? this.instanceApiKey : this.globalKey,
-    };
-  }
+    const url = `${this.baseUrl}${endpoint}`;
+    console.log("Fazendo requisição para:", url);
 
-  private async makeRequest(endpoint: string, options: RequestInit = {}, useInstanceKey: boolean = false) {
-    const url = `${this.apiUrl}${endpoint}`;
-    console.log(`Fazendo requisição para: ${url}`);
-    console.log(`Usando ${useInstanceKey ? 'instance apikey' : 'global key'}`);
-    
     const response = await fetch(url, {
       ...options,
       headers: {
-        ...this.getHeaders(useInstanceKey),
+        'Content-Type': 'application/json',
+        'apikey': this.globalKey,
         ...options.headers,
       },
     });
 
-    console.log(`Status da resposta: ${response.status}`);
-    
+    const data = await response.json();
+
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Erro na requisição: ${response.status} - ${errorText}`);
-      throw new Error(`Erro na API: ${response.status} - ${errorText}`);
+      console.error("Erro na API Evolution:", { status: response.status, data });
+      throw new Error(`Erro na API: ${response.status} - ${JSON.stringify(data)}`);
     }
 
-    const data = await response.json();
-    console.log('Resposta da API:', data);
     return data;
   }
 
-  async getAllConfigs(): Promise<EvolutionApiConfig[]> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        console.error('Usuário não autenticado:', userError);
-        return [];
-      }
-
-      const { data, error } = await supabase
-        .from('evolution_api_configs')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Erro ao buscar configurações:', error);
-        return [];
-      }
-
-      return data || [];
-    } catch (error) {
-      console.error('Erro ao obter configurações:', error);
-      return [];
-    }
-  }
-
-  async getActiveConfig(): Promise<EvolutionApiConfig | null> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        console.error('Usuário não autenticado:', userError);
-        return null;
-      }
-
-      const { data, error } = await supabase
-        .from('evolution_api_configs')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .single();
-
-      if (error) {
-        console.error('Erro ao buscar configuração ativa:', error);
-        return null;
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Erro ao obter configuração ativa:', error);
-      return null;
-    }
-  }
-
-  async saveConfig(name: string, apiUrl: string, globalKey: string): Promise<void> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      const { data: existingConfigs } = await supabase
-        .from('evolution_api_configs')
-        .select('id')
-        .eq('user_id', user.id);
-
-      const isFirstConfig = !existingConfigs || existingConfigs.length === 0;
-
-      const { error } = await supabase
-        .from('evolution_api_configs')
-        .insert({
-          name,
-          api_url: apiUrl,
-          global_key: globalKey,
-          user_id: user.id,
-          is_active: isFirstConfig
-        });
-
-      if (error) {
-        throw new Error(`Erro ao salvar configuração: ${error.message}`);
-      }
-    } catch (error) {
-      console.error('Erro ao salvar configuração:', error);
-      throw error;
-    }
-  }
-
-  async updateConfig(configId: string, updates: { name: string; api_url: string; global_key: string }): Promise<void> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      const { error } = await supabase
-        .from('evolution_api_configs')
-        .update({
-          ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', configId)
-        .eq('user_id', user.id);
-
-      if (error) {
-        throw new Error(`Erro ao atualizar configuração: ${error.message}`);
-      }
-    } catch (error) {
-      console.error('Erro ao atualizar configuração:', error);
-      throw error;
-    }
-  }
-
-  async setActiveConfig(configId: string): Promise<void> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      await supabase
-        .from('evolution_api_configs')
-        .update({ is_active: false })
-        .eq('user_id', user.id);
-
-      const { error } = await supabase
-        .from('evolution_api_configs')
-        .update({ is_active: true })
-        .eq('id', configId)
-        .eq('user_id', user.id);
-
-      if (error) {
-        throw new Error(`Erro ao ativar configuração: ${error.message}`);
-      }
-    } catch (error) {
-      console.error('Erro ao ativar configuração:', error);
-      throw error;
-    }
-  }
-
-  async deleteConfig(configId: string): Promise<void> {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error('Usuário não autenticado');
-      }
-
-      const { error } = await supabase
-        .from('evolution_api_configs')
-        .delete()
-        .eq('id', configId)
-        .eq('user_id', user.id);
-
-      if (error) {
-        throw new Error(`Erro ao excluir configuração: ${error.message}`);
-      }
-    } catch (error) {
-      console.error('Erro ao excluir configuração:', error);
-      throw error;
-    }
-  }
-
-  async getAllInstances(): Promise<EvolutionInstance[]> {
-    console.log('Obtendo todas as instâncias disponíveis');
-    
-    try {
-      const response = await this.makeRequest('/instance/fetchInstances', {
-        method: 'GET',
-      });
-
-      console.log('Instâncias encontradas:', response);
-      
-      if (Array.isArray(response)) {
-        return response.map((instance: any) => ({
-          instanceName: instance.instance?.instanceName || instance.instanceName,
-          phone: instance.instance?.phone || instance.phone,
-          status: instance.instance?.state || instance.state,
-          apikey: instance.apikey || instance.instance?.apikey
-        }));
-      }
-      
-      return [];
-    } catch (error) {
-      console.error('Erro ao obter instâncias:', error);
-      return [];
-    }
-  }
-
-  async createInstance(instanceName: string, phoneNumber?: string): Promise<EvolutionInstance & { qrcode?: string }> {
-    const sanitizedNumber = phoneNumber ? phoneNumber.replace(/[^\d]/g, '') : undefined;
+  // Criar instância
+  async createInstance(instanceName: string, phoneNumber?: string) {
+    console.log("Criando instância:", { instanceName, phoneNumber });
     
     const payload: any = {
       instanceName,
-      qrcode: true,
       integration: "WHATSAPP-BAILEYS"
     };
 
-    if (sanitizedNumber) {
-      payload.number = sanitizedNumber;
+    if (phoneNumber) {
+      payload.number = phoneNumber;
     }
 
-    console.log('Criando instância com payload:', payload);
-    
-    try {
-      const response = await this.makeRequest('/instance/create', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-
-      console.log('Instância criada com sucesso:', response);
-      
-      let qrCodeData = null;
-      if (response.qrcode) {
-        if (response.qrcode.base64) {
-          qrCodeData = response.qrcode.base64.replace('data:image/png;base64,', '');
-        } else if (typeof response.qrcode === 'string') {
-          qrCodeData = response.qrcode.replace('data:image/png;base64,', '');
-        }
-      }
-      
-      return {
-        instanceName,
-        qrcode: qrCodeData
-      };
-    } catch (error) {
-      console.error('Erro ao criar instância:', error);
-      
-      if (error instanceof Error && (
-        error.message.includes('already exists') || 
-        error.message.includes('já existe') ||
-        error.message.includes('409')
-      )) {
-        console.log('Instância já existe, tentando obter QR code...');
-        try {
-          const qrResult = await this.connectInstance(instanceName);
-          return {
-            instanceName,
-            qrcode: qrResult.qrcode?.base64
-          };
-        } catch (connectError) {
-          console.error('Erro ao conectar instância existente:', connectError);
-          return { instanceName };
-        }
-      }
-      
-      throw error;
-    }
+    return this.makeRequest('/instance/create', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
 
-  async getQRCode(instanceName: string): Promise<EvolutionQRResponse> {
-    console.log(`Obtendo QR code para instância: ${instanceName}`);
-    
-    try {
-      const response = await this.makeRequest(`/instance/qrcode/${instanceName}`, {
-        method: 'GET',
-      });
-
-      console.log('Resposta do QR code:', response);
-      
-      if (response && response.base64) {
-        return {
-          qrcode: {
-            base64: response.base64.replace('data:image/png;base64,', ''),
-            code: response.code || ''
-          }
-        };
-      }
-      
-      throw new Error('QR code não encontrado na resposta da API');
-      
-    } catch (error) {
-      console.error('Erro ao obter QR code via endpoint específico:', error);
-      
-      console.log('Tentando obter QR code via connect...');
-      try {
-        return await this.connectInstance(instanceName);
-      } catch (connectError) {
-        console.error('Erro ao conectar instância:', connectError);
-        throw error;
-      }
-    }
+  // Obter QR Code da instância
+  async getQRCode(instanceName: string) {
+    console.log("Obtendo QR Code para:", instanceName);
+    return this.makeRequest(`/instance/connect/${instanceName}`);
   }
 
-  async connectInstance(instanceName: string): Promise<EvolutionQRResponse> {
-    console.log(`Conectando instância: ${instanceName}`);
-    
-    try {
-      const response = await this.makeRequest(`/instance/connect/${instanceName}`, {
-        method: 'GET',
-      });
-
-      console.log('Resposta do connect:', response);
-      
-      if (response && response.qrcode) {
-        if (response.qrcode.base64) {
-          return {
-            qrcode: {
-              base64: response.qrcode.base64.replace('data:image/png;base64,', ''),
-              code: response.qrcode.code || ''
-            }
-          };
-        } else if (typeof response.qrcode === 'string') {
-          return {
-            qrcode: {
-              base64: response.qrcode.replace('data:image/png;base64,', ''),
-              code: response.code || ''
-            }
-          };
-        }
-      }
-      
-      if (response && response.base64) {
-        return {
-          qrcode: {
-            base64: response.base64.replace('data:image/png;base64,', ''),
-            code: response.code || ''
-          }
-        };
-      }
-      
-      throw new Error('QR code não encontrado na resposta do connect');
-      
-    } catch (error) {
-      console.error('Erro ao conectar instância:', error);
-      throw error;
-    }
+  // Verificar status da instância
+  async getInstanceStatus(instanceName: string) {
+    console.log("Verificando status da instância:", instanceName);
+    return this.makeRequest(`/instance/connectionState/${instanceName}`);
   }
 
-  async getInstanceStatus(instanceName: string): Promise<EvolutionInstanceStatus> {
-    console.log(`Verificando status da instância: ${instanceName}`);
-    
-    return await this.makeRequest(`/instance/connectionState/${instanceName}`);
-  }
-
-  async deleteInstance(instanceName: string): Promise<any> {
-    console.log(`Deletando instância: ${instanceName}`);
-    
-    return await this.makeRequest(`/instance/delete/${instanceName}`, {
+  // Deletar instância
+  async deleteInstance(instanceName: string) {
+    console.log("Deletando instância:", instanceName);
+    return this.makeRequest(`/instance/delete/${instanceName}`, {
       method: 'DELETE',
     });
   }
 
-  async getChats(instanceName: string, instanceApiKey?: string): Promise<EvolutionContact[]> {
-    console.log(`Obtendo conversas para instância: ${instanceName}`);
-    
-    const cleanInstanceName = instanceName.replace(/"/g, '');
-    
-    if (instanceApiKey) {
-      this.setInstanceApiKey(instanceApiKey);
-    }
-    
-    try {
-      const response = await this.makeRequest(`/chat/findChats/${cleanInstanceName}`, {
-        method: 'POST',
-        body: JSON.stringify({})
-      }, !!instanceApiKey);
-      
-      console.log('Resposta raw do findChats:', response);
-      
-      // Verificar se response é válido
-      if (!response) {
-        console.log('Resposta vazia da API');
-        return [];
-      }
-      
-      // Se é um array diretamente
-      if (Array.isArray(response)) {
-        return response
-          .filter(item => item && typeof item === 'object')
-          .map((item, index) => {
-            // Verificar se tem a estrutura esperada
-            const chatData = item.chat || item;
-            
-            return {
-              id: chatData.id || item.id || item.remoteJid || `chat_${index}_${Date.now()}`,
-              remoteJid: chatData.id || item.remoteJid || `unknown_${index}`,
-              pushName: item.pushName || chatData.pushName || '',
-              unreadMessages: chatData.unreadCount || item.unreadCount || 0,
-              profilePictureUrl: item.profilePicUrl || item.profilePictureUrl
-            };
-          });
-      }
-      
-      console.log('Formato de resposta inesperado:', response);
-      return [];
-      
-    } catch (error) {
-      console.error('Erro ao obter chats:', error);
-      throw error;
-    }
+  // Buscar conversas
+  async findChats(instanceName: string) {
+    console.log("Buscando conversas para:", instanceName);
+    return this.makeRequest(`/chat/findChats/${instanceName}`);
   }
 
-  async getMessages(instanceName: string, remoteJid: string, limit: number = 10, instanceApiKey?: string): Promise<EvolutionMessage[]> {
-    console.log(`Obtendo mensagens para ${remoteJid} na instância: ${instanceName}`);
-    
-    const cleanInstanceName = instanceName.replace(/"/g, '');
-    
-    if (instanceApiKey) {
-      this.setInstanceApiKey(instanceApiKey);
-    }
-    
-    const payload = {
-      where: {
-        key: {
-          remoteJid: remoteJid
-        }
-      },
-      page: 1,
-      offset: limit
-    };
-    
-    try {
-      const response = await this.makeRequest(`/chat/findMessages/${cleanInstanceName}`, {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      }, !!instanceApiKey);
-      
-      if (Array.isArray(response)) {
-        return response;
-      } else if (response.messages && Array.isArray(response.messages)) {
-        return response.messages;
-      } else if (response.data && Array.isArray(response.data)) {
-        return response.data;
-      }
-      
-      console.log('Formato de resposta inesperado para mensagens:', response);
-      return [];
-      
-    } catch (error) {
-      console.error('Erro ao obter mensagens:', error);
-      throw error;
-    }
-  }
-
-  async sendMessage(instanceName: string, remoteJid: string, message: string, instanceApiKey?: string): Promise<any> {
-    console.log(`Enviando mensagem para ${remoteJid} na instância: ${instanceName}`);
-    
-    const cleanInstanceName = instanceName.replace(/"/g, '');
-    
-    if (instanceApiKey) {
-      this.setInstanceApiKey(instanceApiKey);
-    }
-    
-    const payload = {
-      number: remoteJid,
-      text: message
-    };
-
-    return await this.makeRequest(`/message/sendText/${cleanInstanceName}`, {
+  // Buscar mensagens
+  async findMessages(instanceName: string, remoteJid: string) {
+    console.log("Buscando mensagens para:", { instanceName, remoteJid });
+    return this.makeRequest(`/chat/findMessages/${instanceName}`, {
       method: 'POST',
-      body: JSON.stringify(payload),
-    }, !!instanceApiKey);
+      body: JSON.stringify({
+        where: {
+          key: {
+            remoteJid: remoteJid
+          }
+        }
+      }),
+    });
+  }
+
+  // Enviar mensagem
+  async sendMessage(instanceName: string, remoteJid: string, message: string) {
+    console.log("Enviando mensagem:", { instanceName, remoteJid, message });
+    return this.makeRequest(`/message/sendText/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: remoteJid,
+        text: message,
+      }),
+    });
+  }
+
+  // Métodos para configuração
+  async getActiveConfig() {
+    // Buscar configuração ativa do banco de dados ou localStorage
+    const savedConfig = localStorage.getItem('evolution_config');
+    if (savedConfig) {
+      return JSON.parse(savedConfig);
+    }
+    return null;
+  }
+
+  async saveConfig(config: { api_url: string; global_key: string; name: string }) {
+    // Salvar configuração no localStorage por enquanto
+    localStorage.setItem('evolution_config', JSON.stringify(config));
+    this.setCredentials(config.api_url, config.global_key);
   }
 }
 
-export const evolutionApi = new EvolutionApi();
+export const evolutionApi = new EvolutionAPI();

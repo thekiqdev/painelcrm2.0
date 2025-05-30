@@ -143,6 +143,50 @@ export type Database = {
           },
         ]
       }
+      conversation_attendances: {
+        Row: {
+          attendant_id: string | null
+          attended_at: string | null
+          connection_id: string
+          created_at: string | null
+          id: string
+          remote_jid: string
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          attendant_id?: string | null
+          attended_at?: string | null
+          connection_id: string
+          created_at?: string | null
+          id?: string
+          remote_jid: string
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          attendant_id?: string | null
+          attended_at?: string | null
+          connection_id?: string
+          created_at?: string | null
+          id?: string
+          remote_jid?: string
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_attendances_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       evolution_api_configs: {
         Row: {
           api_url: string
@@ -664,6 +708,38 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_all_conversation_statuses: {
+        Args: { p_user_id: string; p_connection_id: string }
+        Returns: {
+          id: string
+          user_id: string
+          connection_id: string
+          remote_jid: string
+          status: string
+          attendant_id: string
+          attended_at: string
+          created_at: string
+          updated_at: string
+        }[]
+      }
+      get_conversation_status: {
+        Args: {
+          p_user_id: string
+          p_connection_id: string
+          p_remote_jid: string
+        }
+        Returns: {
+          id: string
+          user_id: string
+          connection_id: string
+          remote_jid: string
+          status: string
+          attendant_id: string
+          attended_at: string
+          created_at: string
+          updated_at: string
+        }[]
+      }
       has_permission: {
         Args:
           | {
@@ -675,8 +751,32 @@ export type Database = {
         Returns: boolean
       }
       is_profile_member: {
-        Args: { profile_id: string; user_id?: string }
+        Args:
+          | { profile_id: string; user_id?: string }
+          | { user_id: number; profile_id: number }
         Returns: boolean
+      }
+      upsert_conversation_status: {
+        Args: {
+          p_user_id: string
+          p_connection_id: string
+          p_remote_jid: string
+          p_status: string
+          p_attendant_id?: string
+          p_attended_at?: string
+          p_updated_at?: string
+        }
+        Returns: {
+          id: string
+          user_id: string
+          connection_id: string
+          remote_jid: string
+          status: string
+          attendant_id: string
+          attended_at: string
+          created_at: string
+          updated_at: string
+        }[]
       }
     }
     Enums: {

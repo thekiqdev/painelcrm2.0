@@ -14,64 +14,73 @@ export const evolutionInstanceService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
+      // Usar o nome da instância exatamente como fornecido, sem adicionar timestamp
       const result = await evolutionApi.createInstance(instanceName, phoneNumber);
       console.log("Resultado da criação da instância:", result);
       
-      if (result?.qrcode) {
-        // Salvar conexão no banco de dados
-        await connectionDatabaseService.saveConnection({
-          name: instanceName,
-          type: "evolution",
-          status: "awaiting_scan",
-          instance_name: instanceName,
-          phone_number: phoneNumber,
-          webhook_url: webhookUrl,
-          config_data: {
-            instanceName,
-            phoneNumber,
-            webhookUrl
-          },
-          qr_code: result.qrcode
-        });
+      // Após criar a instância, tentar obter o QR code
+      try {
+        const qrResult = await evolutionApi.getQRCode(instanceName);
+        console.log("QR Code obtido:", qrResult);
         
-        return {
-          success: true,
-          qrCode: result.qrcode,
-          status: "awaiting_scan"
-        };
-      } else {
-        try {
-          const status = await evolutionApi.getInstanceStatus(instanceName);
-          if (status?.instance?.state === "open") {
-            // Salvar conexão conectada no banco
-            await connectionDatabaseService.saveConnection({
-              name: instanceName,
-              type: "evolution",
-              status: "connected",
-              instance_name: instanceName,
-              phone_number: phoneNumber,
-              webhook_url: webhookUrl,
-              config_data: {
-                instanceName,
-                phoneNumber,
-                webhookUrl
-              }
-            });
-            
-            return {
-              success: true,
-              status: "connected"
-            };
-          }
-        } catch (statusError) {
-          console.error("Erro ao verificar status:", statusError);
+        if (qrResult && qrResult.qrcode) {
+          // Salvar conexão no banco de dados com QR code
+          await connectionDatabaseService.saveConnection({
+            name: instanceName,
+            type: "evolution",
+            status: "awaiting_scan",
+            instance_name: instanceName,
+            phone_number: phoneNumber,
+            webhook_url: webhookUrl,
+            config_data: {
+              instanceName,
+              phoneNumber,
+              webhookUrl
+            },
+            qr_code: qrResult.qrcode
+          });
+          
+          return {
+            success: true,
+            qrCode: qrResult.qrcode,
+            status: "awaiting_scan"
+          };
         }
-        
-        console.log("QR Code não obtido na criação, tentando obter separadamente...");
-        // Import dynamically to avoid circular dependency
-        const { evolutionQRService } = await import("./evolutionQRService");
-        return await evolutionQRService.getEvolutionQRCode(instanceName);
+      } catch (qrError) {
+        console.log("Erro ao obter QR Code, verificando se já está conectada:", qrError);
       }
+      
+      // Se não conseguiu obter QR code, verificar se já está conectada
+      try {
+        const status = await evolutionApi.getInstanceStatus(instanceName);
+        console.log("Status da instância:", status);
+        
+        if (status?.instance?.state === "open") {
+          // Salvar conexão conectada no banco
+          await connectionDatabaseService.saveConnection({
+            name: instanceName,
+            type: "evolution",
+            status: "connected",
+            instance_name: instanceName,
+            phone_number: phoneNumber,
+            webhook_url: webhookUrl,
+            config_data: {
+              instanceName,
+              phoneNumber,
+              webhookUrl
+            }
+          });
+          
+          return {
+            success: true,
+            status: "connected"
+          };
+        }
+      } catch (statusError) {
+        console.error("Erro ao verificar status:", statusError);
+      }
+      
+      throw new Error("Instância criada mas não foi possível obter QR code ou verificar status");
       
     } catch (error) {
       console.error("Erro ao criar instância Evolution:", error);
