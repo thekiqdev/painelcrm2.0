@@ -245,6 +245,7 @@ export const EvolutionApiConfigComponent = () => {
         </CardFooter>
       </Card>
       
+      
       <Dialog open={isConfigModalOpen} onOpenChange={setIsConfigModalOpen}>
         <DialogContent>
           <DialogHeader>
