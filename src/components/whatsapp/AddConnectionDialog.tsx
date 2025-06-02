@@ -48,9 +48,20 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     const checkConfig = async () => {
       try {
         const config = await evolutionApi.getActiveConfig();
-        setHasActiveConfig(!!config);
+        console.log("Configuração encontrada:", config);
+        
+        if (config && config.api_url && config.global_key) {
+          // Configurar as credenciais na API
+          evolutionApi.setCredentials(config.api_url, config.global_key);
+          setHasActiveConfig(true);
+          console.log("Credenciais configuradas com sucesso");
+        } else {
+          setHasActiveConfig(false);
+          console.log("Configuração não encontrada ou incompleta");
+        }
       } catch (error) {
         console.error("Erro ao verificar configuração:", error);
+        setHasActiveConfig(false);
       }
     };
     
@@ -86,6 +97,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     try {
       // Extrair apenas números do telefone
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
+      
+      console.log("Criando conexão com:", { connectionName, cleanPhoneNumber });
       
       const result = await whatsappConnectionManager.createConnection(connectionName, cleanPhoneNumber);
       
@@ -147,6 +160,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     <InfoIcon className="h-4 w-4 mr-2" />
                     <AlertDescription>
                       Você precisa configurar a Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {hasActiveConfig && (
+                  <Alert>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    <AlertDescription>
+                      Configuração da Evolution API encontrada e ativa!
                     </AlertDescription>
                   </Alert>
                 )}
