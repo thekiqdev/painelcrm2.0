@@ -19,14 +19,13 @@ interface Connection {
 export const whatsappConnectionManager = {
   async createConnection(name: string, phoneNumber: string): Promise<{ success: boolean; connection?: Connection; error?: string }> {
     try {
-      // Usar o nome fornecido, apenas limpando caracteres especiais
-      const instanceName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      // Usar apenas o nome fornecido, sem adicionar timestamp
+      // Limpar o nome para usar como instanceName (remover espaços e caracteres especiais)
+      const instanceName = name.toLowerCase()
+        .replace(/\s+/g, '')  // Remove espaços
+        .replace(/[^a-z0-9]/g, ''); // Remove caracteres especiais, mantém apenas letras e números
       
-      if (!instanceName) {
-        throw new Error("Nome da instância inválido");
-      }
-      
-      console.log("Criando conexão com nome:", instanceName);
+      console.log("Criando conexão:", { name, instanceName, phoneNumber });
       
       const result = await evolutionService.createEvolutionInstance(instanceName, phoneNumber);
       

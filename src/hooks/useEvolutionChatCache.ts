@@ -1,27 +1,23 @@
+
 import { useState, useEffect, useRef } from "react";
 import { whatsappService } from "@/services/whatsapp";
 import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
-import { conversationStatusService, ConversationAttendance } from "@/services/conversationStatusService";
 import { toast } from "sonner";
 
 interface CachedChat extends EvolutionContact {
   messages?: EvolutionMessage[];
   lastFetched?: number;
-  status?: 'pending' | 'active' | 'closed';
-  attendant?: string;
-  attended_at?: string;
 }
 
 interface UseEvolutionChatCacheProps {
   instanceName: string;
   enabled: boolean;
-  connectionId?: string;
 }
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
 const MESSAGE_CACHE_DURATION = 2 * 60 * 1000; // 2 minutos
 
-export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: UseEvolutionChatCacheProps) => {
+export const useEvolutionChatCache = ({ instanceName, enabled }: UseEvolutionChatCacheProps) => {
   const [chats, setChats] = useState<CachedChat[]>([]);
   const [messages, setMessages] = useState<EvolutionMessage[]>([]);
   const [activeChat, setActiveChat] = useState<string | null>(null);
@@ -40,63 +36,7 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     return Date.now() - timestamp < duration;
   };
 
-  // Atender conversa
-  const attendConversation = async (remoteJid: string) => {
-    if (!connectionId) {
-      console.error("Connection ID não encontrado para atender conversa");
-      toast.error("ID da conexão não encontrado");
-      return false;
-    }
-
-    console.log("Iniciando atendimento da conversa:", { remoteJid, connectionId });
-
-    try {
-      const attendance = await conversationStatusService.updateConversationStatus(
-        connectionId,
-        remoteJid,
-        'active'
-      );
-
-      if (attendance) {
-        console.log("Status atualizado com sucesso:", attendance);
-        
-        // Atualizar o chat local
-        setChats(prev => prev.map(chat => 
-          chat.remoteJid === remoteJid 
-            ? { 
-                ...chat, 
-                status: 'active',
-                attendant: attendance.attendant_id,
-                attended_at: attendance.attended_at
-              }
-            : chat
-        ));
-
-        // Invalidar cache para forçar atualização
-        const cacheKey = getCacheKey(instanceName);
-        chatsCache.current.delete(cacheKey);
-
-        // Carregar mensagens automaticamente após atender
-        await loadMessages(remoteJid, true);
-
-        toast.success("Conversa atendida com sucesso!");
-        return true;
-      } else {
-        console.error("Não foi possível obter dados do atendimento");
-        toast.error("Erro ao confirmar atendimento da conversa");
-        return false;
-      }
-    } catch (error) {
-      console.error("Erro ao atender conversa:", error);
-      const errorMessage = error instanceof Error ? error.message : "Erro desconhecido";
-      toast.error("Erro ao atender conversa", {
-        description: errorMessage
-      });
-      return false;
-    }
-  };
-
-  // Carregar conversas com cache e status
+  // Carregar conversas com cache
   const loadChats = async (forceRefresh = false) => {
     if (!enabled || !instanceName) return;
     
@@ -123,22 +63,10 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
       console.log("Carregando conversas da API:", instanceName);
       const chatData = await whatsappService.getEvolutionChats(instanceName);
       
-      // Carregar status das conversas se temos connectionId
-      let statusMap: Record<string, ConversationAttendance> = {};
-      if (connectionId) {
-        statusMap = await conversationStatusService.getAllConversationStatuses(connectionId);
-      }
-      
-      const cachedChats: CachedChat[] = chatData.map(chat => {
-        const attendance = statusMap[chat.remoteJid];
-        return {
-          ...chat,
-          lastFetched: Date.now(),
-          status: attendance?.status || 'pending',
-          attendant: attendance?.attendant_id,
-          attended_at: attendance?.attended_at
-        };
-      });
+      const cachedChats: CachedChat[] = chatData.map(chat => ({
+        ...chat,
+        lastFetched: Date.now()
+      }));
       
       // Atualizar cache
       chatsCache.current.set(cacheKey, {
@@ -162,8 +90,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
   // Carregar mensagens com cache
   const loadMessages = async (remoteJid: string, forceRefresh = false) => {
     if (!enabled || !instanceName) return;
-    
-    console.log("Carregando mensagens para:", remoteJid);
     
     const cacheKey = getMessageCacheKey(instanceName, remoteJid);
     const cached = messagesCache.current.get(cacheKey);
@@ -242,18 +168,12 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     }
   };
 
-  // Função para obter informações do chat ativo
-  const getActiveChatInfo = () => {
-    if (!activeChat) return null;
-    return chats.find(chat => chat.remoteJid === activeChat);
-  };
-
   // Carregar conversas quando os parâmetros mudarem (apenas na primeira vez)
   useEffect(() => {
     if (enabled && instanceName) {
       loadChats();
     }
-  }, [enabled, instanceName, connectionId]);
+  }, [enabled, instanceName]);
 
   // Limpar cache quando não habilitado
   useEffect(() => {
@@ -266,80 +186,6 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     }
   }, [enabled]);
 
-    // Marcar mensagens como lidas
-  const markMessagesAsRead = async (remoteJid: string) => {
-    if (!enabled || !instanceName) return;
-    
-    try {
-      console.log("Marcando mensagens como lidas:", remoteJid);
-      await whatsappService.readMessages(instanceName, remoteJid);
-      toast.success("Mensagens marcadas como lidas!");
-    } catch (error) {
-      console.error("Erro ao marcar mensagens como lidas:", error);
-      toast.error("Erro ao marcar mensagens como lidas", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  };
-
-  // Marcar mensagens como não lidas
-  const markMessagesAsUnread = async (remoteJid: string) => {
-    if (!enabled || !instanceName) return;
-    
-    try {
-      console.log("Marcando mensagens como não lidas:", remoteJid);
-      await whatsappService.markMessageAsUnread(instanceName, remoteJid);
-      toast.success("Mensagens marcadas como não lidas!");
-    } catch (error) {
-      console.error("Erro ao marcar mensagens como não lidas:", error);
-      toast.error("Erro ao marcar mensagens como não lidas", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  };
-
-  // Arquivar conversa
-  const archiveConversation = async (remoteJid: string, archive: boolean = true) => {
-    if (!enabled || !instanceName) return;
-    
-    try {
-      console.log(`${archive ? 'Arquivando' : 'Desarquivando'} conversa:`, remoteJid);
-      await whatsappService.archiveChat(instanceName, remoteJid, archive);
-      
-      // Atualizar cache removendo ou adicionando a conversa
-      setChats(prev => {
-        if (archive) {
-          return prev.filter(chat => chat.remoteJid !== remoteJid);
-        } else {
-          // Se desarquivando, recarregar a lista
-          loadChats(true);
-          return prev;
-        }
-      });
-      
-      toast.success(`Conversa ${archive ? 'arquivada' : 'desarquivada'} com sucesso!`);
-    } catch (error) {
-      console.error(`Erro ao ${archive ? 'arquivar' : 'desarquivar'} conversa:`, error);
-      toast.error(`Erro ao ${archive ? 'arquivar' : 'desarquivar'} conversa`, {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  };
-
-  // Buscar foto de perfil
-  const fetchProfilePicture = async (remoteJid: string) => {
-    if (!enabled || !instanceName) return null;
-    
-    try {
-      console.log("Buscando foto de perfil:", remoteJid);
-      const result = await whatsappService.fetchProfilePictureUrl(instanceName, remoteJid);
-      return result;
-    } catch (error) {
-      console.error("Erro ao buscar foto de perfil:", error);
-      return null;
-    }
-  };
-
   return {
     chats,
     messages,
@@ -350,15 +196,7 @@ export const useEvolutionChatCache = ({ instanceName, enabled, connectionId }: U
     loadMessages,
     sendMessage,
     setActiveChat,
-    attendConversation,
-    getActiveChatInfo,
     refreshChats: () => loadChats(true),
-    refreshMessages: (remoteJid: string) => loadMessages(remoteJid, true),
-    
-    // Novas funcionalidades
-    markMessagesAsRead,
-    markMessagesAsUnread,
-    archiveConversation,
-    fetchProfilePicture
+    refreshMessages: (remoteJid: string) => loadMessages(remoteJid, true)
   };
 };
