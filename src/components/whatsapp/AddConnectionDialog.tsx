@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -38,50 +39,71 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [isCreated, setIsCreated] = useState(false);
   const [showQRPopup, setShowQRPopup] = useState(false);
   const [configDetails, setConfigDetails] = useState<any>(null);
+  const [configurationError, setConfigurationError] = useState<string>("");
   
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
     return phone.replace(/\D/g, '');
   };
   
-  useEffect(() => {
-    const checkConfig = async () => {
-      try {
-        console.log("Verificando configuração...");
-        
-        // Buscar configuração do localStorage diretamente também
-        const localConfig = localStorage.getItem('evolution_config');
-        console.log("Config do localStorage:", localConfig);
-        
-        const config = await evolutionApi.getActiveConfig();
-        console.log("Configuração obtida da API:", config);
-        
-        if (config && config.api_url && config.global_key) {
-          console.log("Configuração válida encontrada:", {
-            name: config.name,
-            api_url: config.api_url,
-            has_global_key: !!config.global_key
-          });
-          
-          // Configurar as credenciais na API
-          evolutionApi.setCredentials(config.api_url, config.global_key);
-          setHasActiveConfig(true);
-          setConfigDetails(config);
-          console.log("Credenciais configuradas com sucesso");
-        } else {
-          console.log("Configuração não encontrada ou incompleta:", config);
-          setHasActiveConfig(false);
-          setConfigDetails(null);
-        }
-      } catch (error) {
-        console.error("Erro ao verificar configuração:", error);
-        setHasActiveConfig(false);
-        setConfigDetails(null);
+  const checkAndSetupConfiguration = async () => {
+    try {
+      console.log("=== INICIANDO VERIFICAÇÃO DE CONFIGURAÇÃO ===");
+      
+      // Limpar estado anterior
+      setConfigurationError("");
+      setHasActiveConfig(false);
+      setConfigDetails(null);
+      
+      // Buscar configuração
+      const config = await evolutionApi.getActiveConfig();
+      console.log("Configuração obtida:", config);
+      
+      if (!config) {
+        console.log("Nenhuma configuração encontrada");
+        setConfigurationError("Nenhuma configuração encontrada no localStorage");
+        return;
       }
-    };
-    
+      
+      // Validar campos obrigatórios
+      if (!config.api_url || config.api_url.trim() === '') {
+        console.log("URL da API não encontrada ou vazia");
+        setConfigurationError("URL da API não configurada");
+        return;
+      }
+      
+      if (!config.global_key || config.global_key.trim() === '') {
+        console.log("Chave global não encontrada ou vazia");
+        setConfigurationError("Chave global não configurada");
+        return;
+      }
+      
+      // Se chegou até aqui, a configuração é válida
+      console.log("Configuração válida encontrada:", {
+        name: config.name,
+        api_url: config.api_url,
+        has_global_key: !!config.global_key
+      });
+      
+      // Configurar as credenciais na API
+      evolutionApi.setCredentials(config.api_url, config.global_key);
+      
+      setHasActiveConfig(true);
+      setConfigDetails(config);
+      console.log("=== CONFIGURAÇÃO VALIDADA COM SUCESSO ===");
+      
+    } catch (error) {
+      console.error("Erro ao verificar configuração:", error);
+      setConfigurationError(`Erro ao carregar configuração: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      setHasActiveConfig(false);
+      setConfigDetails(null);
+    }
+  };
+  
+  useEffect(() => {
     if (isOpen) {
-      checkConfig();
+      console.log("Dialog aberto, verificando configuração...");
+      checkAndSetupConfiguration();
     }
   }, [isOpen]);
 
@@ -94,6 +116,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       setIsSubmitting(false);
       setIsCreated(false);
       setShowQRPopup(false);
+      setConfigurationError("");
     }
   }, [isOpen]);
   
@@ -176,8 +199,12 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     <InfoIcon className="h-4 w-4 mr-2" />
                     <AlertDescription>
                       Você precisa configurar a Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
-                      <br />
-                      <small>Debug: Verificando localStorage e configuração da API...</small>
+                      {configurationError && (
+                        <>
+                          <br />
+                          <small>Erro: {configurationError}</small>
+                        </>
+                      )}
                     </AlertDescription>
                   </Alert>
                 )}
@@ -193,15 +220,21 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                   </Alert>
                 )}
                 
-                {/* Debug info */}
+                {/* Debug info detalhado */}
                 <div className="text-xs text-muted-foreground bg-gray-50 p-2 rounded">
                   <strong>Debug:</strong><br />
                   Config ativa: {hasActiveConfig ? "Sim" : "Não"}<br />
-                  {configDetails && (
+                  {configDetails ? (
                     <>
                       Nome: {configDetails.name}<br />
                       URL: {configDetails.api_url}<br />
-                      Tem API Key: {configDetails.global_key ? "Sim" : "Não"}
+                      Tem API Key: {configDetails.global_key ? "Sim" : "Não"}<br />
+                      Tamanho da chave: {configDetails.global_key?.length || 0} caracteres
+                    </>
+                  ) : (
+                    <>
+                      localStorage: {localStorage.getItem('evolution_config') ? "Existe" : "Não existe"}<br />
+                      Erro: {configurationError || "Nenhum"}
                     </>
                   )}
                 </div>
