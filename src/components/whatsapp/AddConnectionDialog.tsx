@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -38,6 +37,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [connectionId, setConnectionId] = useState("");
   const [isCreated, setIsCreated] = useState(false);
   const [showQRPopup, setShowQRPopup] = useState(false);
+  const [configDetails, setConfigDetails] = useState<any>(null);
   
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
@@ -47,21 +47,36 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   useEffect(() => {
     const checkConfig = async () => {
       try {
+        console.log("Verificando configuração...");
+        
+        // Buscar configuração do localStorage diretamente também
+        const localConfig = localStorage.getItem('evolution_config');
+        console.log("Config do localStorage:", localConfig);
+        
         const config = await evolutionApi.getActiveConfig();
-        console.log("Configuração encontrada:", config);
+        console.log("Configuração obtida da API:", config);
         
         if (config && config.api_url && config.global_key) {
+          console.log("Configuração válida encontrada:", {
+            name: config.name,
+            api_url: config.api_url,
+            has_global_key: !!config.global_key
+          });
+          
           // Configurar as credenciais na API
           evolutionApi.setCredentials(config.api_url, config.global_key);
           setHasActiveConfig(true);
+          setConfigDetails(config);
           console.log("Credenciais configuradas com sucesso");
         } else {
+          console.log("Configuração não encontrada ou incompleta:", config);
           setHasActiveConfig(false);
-          console.log("Configuração não encontrada ou incompleta");
+          setConfigDetails(null);
         }
       } catch (error) {
         console.error("Erro ao verificar configuração:", error);
         setHasActiveConfig(false);
+        setConfigDetails(null);
       }
     };
     
@@ -99,6 +114,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       
       console.log("Criando conexão com:", { connectionName, cleanPhoneNumber });
+      console.log("Configuração ativa:", configDetails);
       
       const result = await whatsappConnectionManager.createConnection(connectionName, cleanPhoneNumber);
       
@@ -160,18 +176,35 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     <InfoIcon className="h-4 w-4 mr-2" />
                     <AlertDescription>
                       Você precisa configurar a Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
+                      <br />
+                      <small>Debug: Verificando localStorage e configuração da API...</small>
                     </AlertDescription>
                   </Alert>
                 )}
                 
-                {hasActiveConfig && (
+                {hasActiveConfig && configDetails && (
                   <Alert>
                     <CheckCircle2 className="h-4 w-4 mr-2" />
                     <AlertDescription>
                       Configuração da Evolution API encontrada e ativa!
+                      <br />
+                      <small>Servidor: {configDetails.api_url}</small>
                     </AlertDescription>
                   </Alert>
                 )}
+                
+                {/* Debug info */}
+                <div className="text-xs text-muted-foreground bg-gray-50 p-2 rounded">
+                  <strong>Debug:</strong><br />
+                  Config ativa: {hasActiveConfig ? "Sim" : "Não"}<br />
+                  {configDetails && (
+                    <>
+                      Nome: {configDetails.name}<br />
+                      URL: {configDetails.api_url}<br />
+                      Tem API Key: {configDetails.global_key ? "Sim" : "Não"}
+                    </>
+                  )}
+                </div>
                 
                 <div className="grid gap-2">
                   <Label htmlFor="connectionName">Nome da Conexão</Label>

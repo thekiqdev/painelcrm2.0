@@ -1,4 +1,3 @@
-
 const EVOLUTION_API_BASE_URL = 'https://api.evolution.com.br'; // URL base padrão
 
 export interface EvolutionApiConfig {
@@ -147,29 +146,54 @@ export class EvolutionAPI {
 
   // Métodos para configuração
   async getActiveConfig() {
-    // Buscar configuração ativa do banco de dados ou localStorage
-    const savedConfig = localStorage.getItem('evolution_config');
-    if (savedConfig) {
-      return JSON.parse(savedConfig);
+    try {
+      // Buscar configuração ativa do localStorage
+      const savedConfig = localStorage.getItem('evolution_config');
+      console.log("Configuração no localStorage:", savedConfig);
+      
+      if (savedConfig) {
+        const config = JSON.parse(savedConfig);
+        console.log("Configuração parseada:", config);
+        
+        // Verificar se a configuração tem os campos necessários
+        if (config && config.api_url && config.global_key) {
+          return config;
+        }
+      }
+      
+      console.log("Nenhuma configuração válida encontrada");
+      return null;
+    } catch (error) {
+      console.error("Erro ao obter configuração ativa:", error);
+      return null;
     }
-    return null;
   }
 
   async saveConfig(name: string, apiUrl: string, globalKey: string) {
-    // Salvar configuração no localStorage por enquanto
-    const config = {
-      id: `config_${Date.now()}`,
-      name,
-      api_url: apiUrl,
-      global_key: globalKey,
-      is_active: true,
-      user_id: 'current_user',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    localStorage.setItem('evolution_config', JSON.stringify(config));
-    this.setCredentials(apiUrl, globalKey);
-    return config;
+    try {
+      // Salvar configuração no localStorage
+      const config = {
+        id: `config_${Date.now()}`,
+        name,
+        api_url: apiUrl,
+        global_key: globalKey,
+        is_active: true,
+        user_id: 'current_user',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      localStorage.setItem('evolution_config', JSON.stringify(config));
+      console.log("Configuração salva:", config);
+      
+      // Definir credenciais imediatamente
+      this.setCredentials(apiUrl, globalKey);
+      
+      return config;
+    } catch (error) {
+      console.error("Erro ao salvar configuração:", error);
+      throw error;
+    }
   }
 
   async getAllConfigs(): Promise<EvolutionApiConfig[]> {
