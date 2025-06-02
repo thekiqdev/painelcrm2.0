@@ -1,4 +1,3 @@
-
 import { connectionDatabaseService, DatabaseConnection } from "./whatsapp/connectionDatabaseService";
 import { evolutionService } from "./whatsapp/evolutionService";
 
@@ -19,8 +18,7 @@ interface Connection {
 export const whatsappConnectionManager = {
   async createConnection(name: string, phoneNumber: string): Promise<{ success: boolean; connection?: Connection; error?: string }> {
     try {
-      // Usar apenas o nome fornecido, sem adicionar timestamp
-      // Limpar o nome para usar como instanceName (remover espaços e caracteres especiais)
+      // Usar apenas o nome fornecido, limpo e sem timestamp
       const instanceName = name.toLowerCase()
         .replace(/\s+/g, '')  // Remove espaços
         .replace(/[^a-z0-9]/g, ''); // Remove caracteres especiais, mantém apenas letras e números

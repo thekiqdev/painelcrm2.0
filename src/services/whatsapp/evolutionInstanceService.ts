@@ -14,16 +14,19 @@ export const evolutionInstanceService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      // Usar o nome da instância exatamente como fornecido, sem adicionar timestamp
+      // Criar a instância usando o nome exato fornecido
       const result = await evolutionApi.createInstance(instanceName, phoneNumber);
       console.log("Resultado da criação da instância:", result);
       
-      // Após criar a instância, tentar obter o QR code
+      // Aguardar um momento para a instância ser inicializada
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Tentar obter o QR code
       try {
         const qrResult = await evolutionApi.getQRCode(instanceName);
         console.log("QR Code obtido:", qrResult);
         
-        if (qrResult && qrResult.qrcode) {
+        if (qrResult && qrResult.qrcode && qrResult.qrcode.base64) {
           // Salvar conexão no banco de dados com QR code
           await connectionDatabaseService.saveConnection({
             name: instanceName,
@@ -37,12 +40,12 @@ export const evolutionInstanceService = {
               phoneNumber,
               webhookUrl
             },
-            qr_code: qrResult.qrcode
+            qr_code: qrResult.qrcode.base64
           });
           
           return {
             success: true,
-            qrCode: qrResult.qrcode,
+            qrCode: qrResult.qrcode.base64,
             status: "awaiting_scan"
           };
         }
