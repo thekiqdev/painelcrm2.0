@@ -1,5 +1,5 @@
-
-const EVOLUTION_API_BASE_URL = 'https://api.evolution.com.br'; // URL base padrão
+const EVOLUTION_API_BASE_URL = 'https://evo.painelcrm.com';
+const EVOLUTION_API_KEY = '429683C4C977415CAAFCCE10F7D57E11';
 
 export interface EvolutionApiConfig {
   id: string;
@@ -36,8 +36,13 @@ export interface EvolutionContact {
 }
 
 export class EvolutionAPI {
-  private baseUrl: string = '';
-  private globalKey: string = '';
+  private baseUrl: string = EVOLUTION_API_BASE_URL;
+  private globalKey: string = EVOLUTION_API_KEY;
+
+  constructor() {
+    // Configurar automaticamente as credenciais pré-definidas
+    this.setCredentials(EVOLUTION_API_BASE_URL, EVOLUTION_API_KEY);
+  }
 
   setCredentials(baseUrl: string, globalKey: string) {
     // Remover barra final se existir
@@ -145,44 +150,30 @@ export class EvolutionAPI {
     });
   }
 
-  // Métodos para configuração
+  // Métodos para configuração - agora retornam a configuração padrão
   async getActiveConfig() {
     try {
-      console.log("Verificando configuração no localStorage...");
+      console.log("Retornando configuração pré-definida...");
       
-      // Buscar configuração ativa do localStorage
-      const savedConfig = localStorage.getItem('evolution_config');
-      console.log("Raw localStorage data:", savedConfig);
+      // Retornar sempre a configuração pré-definida
+      const defaultConfig = {
+        id: 'default_config',
+        name: 'Evolution API Padrão',
+        api_url: EVOLUTION_API_BASE_URL,
+        global_key: EVOLUTION_API_KEY,
+        is_active: true,
+        user_id: 'system',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
       
-      if (savedConfig) {
-        const config = JSON.parse(savedConfig);
-        console.log("Configuração parseada:", config);
-        
-        // Verificar se a configuração tem os campos necessários e não está vazia
-        if (config && 
-            typeof config.api_url === 'string' && config.api_url.trim() !== '' &&
-            typeof config.global_key === 'string' && config.global_key.trim() !== '') {
-          
-          console.log("Configuração válida encontrada:", {
-            name: config.name,
-            api_url: config.api_url,
-            has_global_key: !!config.global_key
-          });
-          
-          return config;
-        } else {
-          console.log("Configuração inválida ou incompleta:", {
-            has_api_url: !!config?.api_url,
-            api_url_length: config?.api_url?.length || 0,
-            has_global_key: !!config?.global_key,
-            global_key_length: config?.global_key?.length || 0
-          });
-        }
-      } else {
-        console.log("Nenhuma configuração encontrada no localStorage");
-      }
+      console.log("Configuração padrão ativa:", {
+        name: defaultConfig.name,
+        api_url: defaultConfig.api_url,
+        has_global_key: !!defaultConfig.global_key
+      });
       
-      return null;
+      return defaultConfig;
     } catch (error) {
       console.error("Erro ao obter configuração ativa:", error);
       return null;
@@ -191,28 +182,18 @@ export class EvolutionAPI {
 
   async saveConfig(name: string, apiUrl: string, globalKey: string) {
     try {
-      // Validar dados antes de salvar
-      if (!name || !apiUrl || !globalKey) {
-        throw new Error("Todos os campos são obrigatórios");
-      }
-      
-      // Limpar dados de entrada
-      const cleanApiUrl = apiUrl.trim();
-      const cleanGlobalKey = globalKey.trim();
-      const cleanName = name.trim();
-      
-      console.log("Salvando configuração:", {
-        name: cleanName,
-        api_url: cleanApiUrl,
-        global_key: cleanGlobalKey.substring(0, 8) + "..." // Log apenas parte da chave
+      console.log("Salvando configuração personalizada:", {
+        name,
+        api_url: apiUrl,
+        global_key: globalKey.substring(0, 8) + "..."
       });
       
-      // Salvar configuração no localStorage
+      // Salvar configuração personalizada no localStorage se fornecida
       const config = {
         id: `config_${Date.now()}`,
-        name: cleanName,
-        api_url: cleanApiUrl,
-        global_key: cleanGlobalKey,
+        name: name,
+        api_url: apiUrl,
+        global_key: globalKey,
         is_active: true,
         user_id: 'current_user',
         created_at: new Date().toISOString(),
@@ -220,14 +201,12 @@ export class EvolutionAPI {
       };
       
       localStorage.setItem('evolution_config', JSON.stringify(config));
-      console.log("Configuração salva com sucesso:", {
-        id: config.id,
-        name: config.name,
-        api_url: config.api_url
-      });
+      console.log("Configuração personalizada salva com sucesso");
       
-      // Definir credenciais imediatamente
-      this.setCredentials(cleanApiUrl, cleanGlobalKey);
+      // Atualizar credenciais se diferentes das padrão
+      if (apiUrl !== EVOLUTION_API_BASE_URL || globalKey !== EVOLUTION_API_KEY) {
+        this.setCredentials(apiUrl, globalKey);
+      }
       
       return config;
     } catch (error) {
@@ -237,9 +216,20 @@ export class EvolutionAPI {
   }
 
   async getAllConfigs(): Promise<EvolutionApiConfig[]> {
-    // Por enquanto retornar apenas a configuração ativa do localStorage
-    const activeConfig = await this.getActiveConfig();
-    return activeConfig ? [activeConfig] : [];
+    // Verificar se há configuração personalizada
+    const savedConfig = localStorage.getItem('evolution_config');
+    if (savedConfig) {
+      try {
+        const customConfig = JSON.parse(savedConfig);
+        return [customConfig];
+      } catch (error) {
+        console.error("Erro ao carregar configuração personalizada:", error);
+      }
+    }
+    
+    // Retornar configuração padrão
+    const defaultConfig = await this.getActiveConfig();
+    return defaultConfig ? [defaultConfig] : [];
   }
 
   async setActiveConfig(configId: string) {

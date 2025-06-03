@@ -34,12 +34,10 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [connectionName, setConnectionName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasActiveConfig, setHasActiveConfig] = useState(false);
   const [connectionId, setConnectionId] = useState("");
   const [isCreated, setIsCreated] = useState(false);
   const [showQRPopup, setShowQRPopup] = useState(false);
   const [configDetails, setConfigDetails] = useState<any>(null);
-  const [configurationError, setConfigurationError] = useState<string>("");
   
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
@@ -48,61 +46,26 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   
   const checkAndSetupConfiguration = async () => {
     try {
-      console.log("=== INICIANDO VERIFICAÇÃO DE CONFIGURAÇÃO ===");
+      console.log("=== VERIFICANDO CONFIGURAÇÃO PRÉ-DEFINIDA ===");
       
-      // Limpar estado anterior
-      setConfigurationError("");
-      setHasActiveConfig(false);
-      setConfigDetails(null);
-      
-      // Buscar configuração
+      // Buscar configuração (que agora sempre retornará a pré-definida)
       const config = await evolutionApi.getActiveConfig();
       console.log("Configuração obtida:", config);
       
-      if (!config) {
-        console.log("Nenhuma configuração encontrada");
-        setConfigurationError("Nenhuma configuração encontrada no localStorage");
-        return;
+      if (config) {
+        setConfigDetails(config);
+        console.log("=== CONFIGURAÇÃO PRÉ-DEFINIDA ATIVA ===");
       }
-      
-      // Validar campos obrigatórios
-      if (!config.api_url || config.api_url.trim() === '') {
-        console.log("URL da API não encontrada ou vazia");
-        setConfigurationError("URL da API não configurada");
-        return;
-      }
-      
-      if (!config.global_key || config.global_key.trim() === '') {
-        console.log("Chave global não encontrada ou vazia");
-        setConfigurationError("Chave global não configurada");
-        return;
-      }
-      
-      // Se chegou até aqui, a configuração é válida
-      console.log("Configuração válida encontrada:", {
-        name: config.name,
-        api_url: config.api_url,
-        has_global_key: !!config.global_key
-      });
-      
-      // Configurar as credenciais na API
-      evolutionApi.setCredentials(config.api_url, config.global_key);
-      
-      setHasActiveConfig(true);
-      setConfigDetails(config);
-      console.log("=== CONFIGURAÇÃO VALIDADA COM SUCESSO ===");
       
     } catch (error) {
       console.error("Erro ao verificar configuração:", error);
-      setConfigurationError(`Erro ao carregar configuração: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
-      setHasActiveConfig(false);
       setConfigDetails(null);
     }
   };
   
   useEffect(() => {
     if (isOpen) {
-      console.log("Dialog aberto, verificando configuração...");
+      console.log("Dialog aberto, carregando configuração pré-definida...");
       checkAndSetupConfiguration();
     }
   }, [isOpen]);
@@ -116,19 +79,11 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       setIsSubmitting(false);
       setIsCreated(false);
       setShowQRPopup(false);
-      setConfigurationError("");
     }
   }, [isOpen]);
   
   const handleCreateInstance = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!hasActiveConfig) {
-      toast.error("Configuração necessária", {
-        description: "Configure primeiro a Evolution API em Configurações."
-      });
-      return;
-    }
     
     setIsSubmitting(true);
     
@@ -137,7 +92,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       
       console.log("Criando conexão com:", { connectionName, cleanPhoneNumber });
-      console.log("Configuração ativa:", configDetails);
+      console.log("Usando configuração:", configDetails);
       
       const result = await whatsappConnectionManager.createConnection(connectionName, cleanPhoneNumber);
       
@@ -194,50 +149,16 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           {!isCreated ? (
             <form onSubmit={handleCreateInstance}>
               <div className="grid gap-4 py-4">
-                {!hasActiveConfig && (
-                  <Alert variant="destructive">
-                    <InfoIcon className="h-4 w-4 mr-2" />
-                    <AlertDescription>
-                      Você precisa configurar a Evolution API primeiro em Configurações {">"} WhatsApp {">"} Configurações Avançadas.
-                      {configurationError && (
-                        <>
-                          <br />
-                          <small>Erro: {configurationError}</small>
-                        </>
-                      )}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                
-                {hasActiveConfig && configDetails && (
+                {configDetails && (
                   <Alert>
                     <CheckCircle2 className="h-4 w-4 mr-2" />
                     <AlertDescription>
-                      Configuração da Evolution API encontrada e ativa!
+                      Evolution API configurada e pronta para uso!
                       <br />
                       <small>Servidor: {configDetails.api_url}</small>
                     </AlertDescription>
                   </Alert>
                 )}
-                
-                {/* Debug info detalhado */}
-                <div className="text-xs text-muted-foreground bg-gray-50 p-2 rounded">
-                  <strong>Debug:</strong><br />
-                  Config ativa: {hasActiveConfig ? "Sim" : "Não"}<br />
-                  {configDetails ? (
-                    <>
-                      Nome: {configDetails.name}<br />
-                      URL: {configDetails.api_url}<br />
-                      Tem API Key: {configDetails.global_key ? "Sim" : "Não"}<br />
-                      Tamanho da chave: {configDetails.global_key?.length || 0} caracteres
-                    </>
-                  ) : (
-                    <>
-                      localStorage: {localStorage.getItem('evolution_config') ? "Existe" : "Não existe"}<br />
-                      Erro: {configurationError || "Nenhum"}
-                    </>
-                  )}
-                </div>
                 
                 <div className="grid gap-2">
                   <Label htmlFor="connectionName">Nome da Conexão</Label>
@@ -265,7 +186,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                 <Alert>
                   <InfoIcon className="h-4 w-4 mr-2" />
                   <AlertDescription>
-                    Uma instância será criada automaticamente para esta conexão
+                    Uma instância será criada automaticamente para esta conexão usando a Evolution API pré-configurada
                   </AlertDescription>
                 </Alert>
               </div>
@@ -276,7 +197,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={isSubmitting || !connectionName || !phoneNumber || !hasActiveConfig || extractPhoneNumbers(phoneNumber).length < 10}
+                  disabled={isSubmitting || !connectionName || !phoneNumber || extractPhoneNumbers(phoneNumber).length < 10}
                 >
                   {isSubmitting ? "Criando..." : "Criar Instância"}
                 </Button>
