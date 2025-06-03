@@ -25,10 +25,10 @@ export const whatsappConnectionManager = {
       
       if (result.success) {
         const connection: Connection = {
-          id: `conn_${Date.now()}`,
-          name: instanceName, // Usar o instanceName como nome da conexão
+          id: result.connectionId || `conn_${Date.now()}`,
+          name: instanceName,
           type: "evolution",
-          status: result.status || "awaiting_scan",
+          status: result.status || "created",
           configData: {
             instanceName,
             phoneNumber,
@@ -52,9 +52,33 @@ export const whatsappConnectionManager = {
     }
   },
 
+  async generateQRCode(connectionId: string): Promise<{ success: boolean; qrCode?: string; error?: string }> {
+    try {
+      const connections = await connectionDatabaseService.getConnections();
+      const connection = connections.find(c => c.id === connectionId);
+      
+      if (!connection || !connection.instance_name) {
+        throw new Error("Conexão não encontrada");
+      }
+      
+      const result = await evolutionService.getEvolutionQRCode(connection.instance_name);
+      
+      return {
+        success: result.success,
+        qrCode: result.qrCode,
+        error: result.success ? undefined : "Erro ao gerar QR code"
+      };
+    } catch (error) {
+      console.error("Erro ao gerar QR code:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Erro desconhecido"
+      };
+    }
+  },
+
   async getQRCode(connectionId: string): Promise<{ success: boolean; qrCode?: string; error?: string }> {
     try {
-      // Buscar conexão no banco de dados
       const connections = await connectionDatabaseService.getConnections();
       const connection = connections.find(c => c.id === connectionId);
       
@@ -80,7 +104,6 @@ export const whatsappConnectionManager = {
 
   async checkConnectionStatus(connectionId: string): Promise<{ success: boolean; status?: string; error?: string }> {
     try {
-      // Buscar conexão no banco de dados
       const connections = await connectionDatabaseService.getConnections();
       const connection = connections.find(c => c.id === connectionId);
       
@@ -105,8 +128,6 @@ export const whatsappConnectionManager = {
   },
 
   getConnections(): Connection[] {
-    // Este método agora retorna um array vazio pois usamos o banco de dados
-    // Mantido apenas para compatibilidade
     return [];
   }
 };

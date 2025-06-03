@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -13,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { InfoIcon, CheckCircle2, QrCode } from "lucide-react";
+import { InfoIcon, CheckCircle2, QrCode, RefreshCw } from "lucide-react";
 import { ConnectionType } from "@/components/settings/types";
 import { evolutionApi } from "@/services/evolutionApi";
 import { toast } from "sonner";
@@ -38,6 +37,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [isCreated, setIsCreated] = useState(false);
   const [showQRPopup, setShowQRPopup] = useState(false);
   const [configDetails, setConfigDetails] = useState<any>(null);
+  const [isGeneratingQR, setIsGeneratingQR] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<string>("created");
   
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
@@ -90,6 +91,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       setIsSubmitting(false);
       setIsCreated(false);
       setShowQRPopup(false);
+      setIsGeneratingQR(false);
+      setConnectionStatus("created");
     }
   }, [isOpen]);
   
@@ -99,10 +102,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setIsSubmitting(true);
     
     try {
-      // Extrair apenas números do telefone
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
-      
-      // Criar nome da instância combinando nome + telefone
       const instanceName = createInstanceName(connectionName, phoneNumber);
       
       console.log("Criando conexão com:", { 
@@ -110,17 +110,23 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         instanceName, 
         cleanPhoneNumber 
       });
-      console.log("Usando configuração:", configDetails);
       
       const result = await whatsappConnectionManager.createConnection(instanceName, cleanPhoneNumber);
       
       if (result.success && result.connection) {
         setConnectionId(result.connection.id);
+        setConnectionStatus(result.connection.status);
         setIsCreated(true);
         
-        toast.success("Instância criada!", {
-          description: `Instância "${instanceName}" criada. Clique em 'Ler QR Code' para conectar o WhatsApp`,
-        });
+        if (result.connection.status === "awaiting_scan") {
+          toast.success("Instância criada e QR Code obtido!", {
+            description: `Instância "${instanceName}" criada. Clique em 'Ler QR Code' para conectar`,
+          });
+        } else {
+          toast.success("Instância criada com sucesso!", {
+            description: `Instância "${instanceName}" criada. Use 'Gerar QR Code' para conectar`,
+          });
+        }
       } else {
         throw new Error(result.error || "Erro ao criar conexão");
       }
@@ -135,12 +141,35 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     }
   };
 
+  const handleGenerateQRCode = async () => {
+    setIsGeneratingQR(true);
+    
+    try {
+      const result = await whatsappConnectionManager.generateQRCode(connectionId);
+      
+      if (result.success && result.qrCode) {
+        setConnectionStatus("awaiting_scan");
+        toast.success("QR Code gerado com sucesso!", {
+          description: "Clique em 'Ler QR Code' para conectar"
+        });
+      } else {
+        throw new Error(result.error || "Erro ao gerar QR code");
+      }
+    } catch (error) {
+      console.error("Erro ao gerar QR code:", error);
+      toast.error("Erro ao gerar QR Code", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro"
+      });
+    } finally {
+      setIsGeneratingQR(false);
+    }
+  };
+
   const handleShowQRCode = () => {
     setShowQRPopup(true);
   };
 
   const handleQRCodeConnect = () => {
-    // Finalizar conexão
     const connection = whatsappConnectionManager.getConnections().find(c => c.id === connectionId);
     if (connection) {
       onAddConnection(connection.name, "evolution", connection.configData);
@@ -158,7 +187,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
             <DialogTitle>Nova Conexão WhatsApp</DialogTitle>
             <DialogDescription>
               {isCreated 
-                ? "Instância criada! Clique em 'Ler QR Code' para conectar"
+                ? "Instância criada! Gere o QR Code para conectar"
                 : "Insira os dados para criar uma nova conexão WhatsApp"
               }
             </DialogDescription>
@@ -208,21 +237,35 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
               <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Instância Criada!</h3>
               <p className="text-muted-foreground mb-6">
-                Sua instância foi criada com sucesso e está pronta para conectar.
+                Sua instância foi criada com sucesso e está salva no sistema.
               </p>
               
               <Alert className="mb-4">
                 <InfoIcon className="h-4 w-4 mr-2" />
                 <AlertDescription>
-                  Clique no botão abaixo para abrir o QR Code e conectar seu WhatsApp
+                  {connectionStatus === "awaiting_scan" 
+                    ? "QR Code disponível! Clique para conectar seu WhatsApp"
+                    : "Gere o QR Code para conectar seu WhatsApp"
+                  }
                 </AlertDescription>
               </Alert>
               
               <DialogFooter className="flex-col gap-2">
-                <Button onClick={handleShowQRCode} className="w-full">
-                  <QrCode className="h-4 w-4 mr-2" />
-                  Ler QR Code
-                </Button>
+                {connectionStatus === "awaiting_scan" ? (
+                  <Button onClick={handleShowQRCode} className="w-full">
+                    <QrCode className="h-4 w-4 mr-2" />
+                    Ler QR Code
+                  </Button>
+                ) : (
+                  <Button 
+                    onClick={handleGenerateQRCode} 
+                    className="w-full"
+                    disabled={isGeneratingQR}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${isGeneratingQR ? 'animate-spin' : ''}`} />
+                    {isGeneratingQR ? "Gerando..." : "Gerar QR Code"}
+                  </Button>
+                )}
                 <Button variant="outline" onClick={onClose} className="w-full">
                   Fechar
                 </Button>

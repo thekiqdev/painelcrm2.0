@@ -1,9 +1,10 @@
-
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plus, Edit, CheckCircle2, Trash2 } from "lucide-react";
+import { Plus, Edit, CheckCircle2, Trash2, QrCode, RefreshCw } from "lucide-react";
 import { Connection, ConnectionStatus } from "@/components/settings/types";
+import { whatsappConnectionManager } from "@/services/whatsappConnectionManager";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +36,7 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
   const [editingConnection, setEditingConnection] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [connectionToDelete, setConnectionToDelete] = useState<string | null>(null);
+  const [generatingQR, setGeneratingQR] = useState<string | null>(null);
 
   // Function to handle editing a connection
   const handleEditClick = (connectionId: string, event: React.MouseEvent) => {
@@ -73,6 +75,32 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
     }
   };
 
+  const handleGenerateQRCode = async (connectionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setGeneratingQR(connectionId);
+    
+    try {
+      const result = await whatsappConnectionManager.generateQRCode(connectionId);
+      
+      if (result.success) {
+        toast.success("QR Code gerado!", {
+          description: "QR Code gerado com sucesso. A conexão foi atualizada."
+        });
+        // Trigger a reload of connections to get updated status
+        window.location.reload();
+      } else {
+        throw new Error(result.error || "Erro ao gerar QR code");
+      }
+    } catch (error) {
+      console.error("Erro ao gerar QR code:", error);
+      toast.error("Erro ao gerar QR Code", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro"
+      });
+    } finally {
+      setGeneratingQR(null);
+    }
+  };
+
   // Render empty state
   if (connections.length === 0) {
     return (
@@ -103,6 +131,9 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                 <p className="text-sm text-muted-foreground">
                   Tipo: {getConnectionTypeDisplay(connection.type)}
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  Status: {connection.status === "created" ? "Criada" : connection.status === "awaiting_scan" ? "Aguardando QR" : connection.status === "connected" ? "Conectada" : connection.status}
+                </p>
               </div>
               
               <div className="flex items-center gap-2">
@@ -111,6 +142,18 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                     <CheckCircle2 className="h-4 w-4 mr-1" />
                     Conectado
                   </span>
+                )}
+                
+                {/* Botão para gerar QR Code para conexões criadas mas não conectadas */}
+                {(connection.status === "created" || connection.status === "disconnected") && (
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={(e) => handleGenerateQRCode(connection.id, e)}
+                    disabled={generatingQR === connection.id}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${generatingQR === connection.id ? 'animate-spin' : ''}`} />
+                  </Button>
                 )}
                 
                 <Button 
@@ -129,7 +172,7 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                   <Trash2 className="h-4 w-4" />
                 </Button>
                 
-                {connection.status === "disconnected" ? (
+                {connection.status === "disconnected" || connection.status === "created" ? (
                   <Button 
                     size="sm" 
                     onClick={(e) => {

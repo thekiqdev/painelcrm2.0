@@ -18,39 +18,49 @@ export const evolutionInstanceService = {
       const result = await evolutionApi.createInstance(instanceName, phoneNumber);
       console.log("Resultado da criação da instância:", result);
       
+      // Salvar conexão no banco de dados imediatamente após criação bem-sucedida
+      const savedConnection = await connectionDatabaseService.saveConnection({
+        name: instanceName,
+        type: "evolution",
+        status: "created", // Status inicial: criada mas não conectada
+        instance_name: instanceName,
+        phone_number: phoneNumber,
+        webhook_url: webhookUrl,
+        config_data: {
+          instanceName,
+          phoneNumber,
+          webhookUrl
+        }
+      });
+      
+      console.log("Conexão salva no banco após criação:", savedConnection);
+      
       // Aguardar um momento para a instância ser inicializada
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // Tentar obter o QR code
+      // Tentar obter o QR code (não crítico)
       try {
         const qrResult = await evolutionApi.getQRCode(instanceName);
         console.log("QR Code obtido:", qrResult);
         
         if (qrResult && qrResult.qrcode && qrResult.qrcode.base64) {
-          // Salvar conexão no banco de dados com QR code
-          await connectionDatabaseService.saveConnection({
-            name: instanceName,
-            type: "evolution",
-            status: "awaiting_scan",
-            instance_name: instanceName,
-            phone_number: phoneNumber,
-            webhook_url: webhookUrl,
-            config_data: {
-              instanceName,
-              phoneNumber,
-              webhookUrl
-            },
-            qr_code: qrResult.qrcode.base64
-          });
+          // Atualizar conexão com QR code
+          if (savedConnection?.id) {
+            await connectionDatabaseService.updateConnection(savedConnection.id, {
+              status: "awaiting_scan",
+              qr_code: qrResult.qrcode.base64
+            });
+          }
           
           return {
             success: true,
             qrCode: qrResult.qrcode.base64,
-            status: "awaiting_scan"
+            status: "awaiting_scan",
+            connectionId: savedConnection?.id
           };
         }
       } catch (qrError) {
-        console.log("Erro ao obter QR Code, verificando se já está conectada:", qrError);
+        console.log("Erro ao obter QR Code inicial (não crítico):", qrError);
       }
       
       // Se não conseguiu obter QR code, verificar se já está conectada
@@ -59,31 +69,30 @@ export const evolutionInstanceService = {
         console.log("Status da instância:", status);
         
         if (status?.instance?.state === "open") {
-          // Salvar conexão conectada no banco
-          await connectionDatabaseService.saveConnection({
-            name: instanceName,
-            type: "evolution",
-            status: "connected",
-            instance_name: instanceName,
-            phone_number: phoneNumber,
-            webhook_url: webhookUrl,
-            config_data: {
-              instanceName,
-              phoneNumber,
-              webhookUrl
-            }
-          });
+          // Atualizar para conectado
+          if (savedConnection?.id) {
+            await connectionDatabaseService.updateConnection(savedConnection.id, {
+              status: "connected"
+            });
+          }
           
           return {
             success: true,
-            status: "connected"
+            status: "connected",
+            connectionId: savedConnection?.id
           };
         }
       } catch (statusError) {
         console.error("Erro ao verificar status:", statusError);
       }
       
-      throw new Error("Instância criada mas não foi possível obter QR code ou verificar status");
+      // Instância criada e salva, mas sem QR code - isso é OK
+      return {
+        success: true,
+        status: "created",
+        message: "Instância criada com sucesso. Use o botão 'Gerar QR Code' para conectar.",
+        connectionId: savedConnection?.id
+      };
       
     } catch (error) {
       console.error("Erro ao criar instância Evolution:", error);
