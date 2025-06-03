@@ -150,14 +150,6 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     onClose();
   };
 
-  // Criar preview do nome da instância para mostrar ao usuário
-  const getInstancePreview = () => {
-    if (connectionName && phoneNumber) {
-      return createInstanceName(connectionName, phoneNumber);
-    }
-    return "";
-  };
-
   return (
     <>
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -175,17 +167,6 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           {!isCreated ? (
             <form onSubmit={handleCreateInstance}>
               <div className="grid gap-4 py-4">
-                {configDetails && (
-                  <Alert>
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    <AlertDescription>
-                      Evolution API configurada e pronta para uso!
-                      <br />
-                      <small>Servidor: {configDetails.api_url}</small>
-                    </AlertDescription>
-                  </Alert>
-                )}
-                
                 <div className="grid gap-2">
                   <Label htmlFor="connectionName">Nome da Conexão</Label>
                   <Input
@@ -208,24 +189,6 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     Digite o número no formato (XX) 9 XXXX-XXXX. O código do país (+55) será adicionado automaticamente.
                   </p>
                 </div>
-                
-                {getInstancePreview() && (
-                  <Alert>
-                    <InfoIcon className="h-4 w-4 mr-2" />
-                    <AlertDescription>
-                      <strong>Nome da instância:</strong> {getInstancePreview()}
-                      <br />
-                      <small>Este será o identificador único desta conexão</small>
-                    </AlertDescription>
-                  </Alert>
-                )}
-                
-                <Alert>
-                  <InfoIcon className="h-4 w-4 mr-2" />
-                  <AlertDescription>
-                    Uma instância será criada automaticamente combinando o nome + telefone para facilitar a identificação do cliente
-                  </AlertDescription>
-                </Alert>
               </div>
               
               <DialogFooter>
