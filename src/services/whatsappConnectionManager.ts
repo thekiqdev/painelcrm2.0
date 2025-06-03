@@ -1,3 +1,4 @@
+
 import { connectionDatabaseService, DatabaseConnection } from "./whatsapp/connectionDatabaseService";
 import { evolutionService } from "./whatsapp/evolutionService";
 
@@ -16,21 +17,16 @@ interface Connection {
 }
 
 export const whatsappConnectionManager = {
-  async createConnection(name: string, phoneNumber: string): Promise<{ success: boolean; connection?: Connection; error?: string }> {
+  async createConnection(instanceName: string, phoneNumber: string): Promise<{ success: boolean; connection?: Connection; error?: string }> {
     try {
-      // Usar apenas o nome fornecido, limpo e sem timestamp
-      const instanceName = name.toLowerCase()
-        .replace(/\s+/g, '')  // Remove espaços
-        .replace(/[^a-z0-9]/g, ''); // Remove caracteres especiais, mantém apenas letras e números
-      
-      console.log("Criando conexão:", { name, instanceName, phoneNumber });
+      console.log("Criando conexão:", { instanceName, phoneNumber });
       
       const result = await evolutionService.createEvolutionInstance(instanceName, phoneNumber);
       
       if (result.success) {
         const connection: Connection = {
           id: `conn_${Date.now()}`,
-          name,
+          name: instanceName, // Usar o instanceName como nome da conexão
           type: "evolution",
           status: result.status || "awaiting_scan",
           configData: {

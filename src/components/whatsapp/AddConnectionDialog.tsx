@@ -44,6 +44,17 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     return phone.replace(/\D/g, '');
   };
   
+  // Função para criar nome da instância combinando nome + telefone
+  const createInstanceName = (name: string, phone: string): string => {
+    const cleanName = name.toLowerCase()
+      .replace(/\s+/g, '')  // Remove espaços
+      .replace(/[^a-z0-9]/g, ''); // Remove caracteres especiais
+    
+    const cleanPhone = extractPhoneNumbers(phone);
+    
+    return `${cleanName}_${cleanPhone}`;
+  };
+  
   const checkAndSetupConfiguration = async () => {
     try {
       console.log("=== VERIFICANDO CONFIGURAÇÃO PRÉ-DEFINIDA ===");
@@ -91,17 +102,24 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       // Extrair apenas números do telefone
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       
-      console.log("Criando conexão com:", { connectionName, cleanPhoneNumber });
+      // Criar nome da instância combinando nome + telefone
+      const instanceName = createInstanceName(connectionName, phoneNumber);
+      
+      console.log("Criando conexão com:", { 
+        connectionName, 
+        instanceName, 
+        cleanPhoneNumber 
+      });
       console.log("Usando configuração:", configDetails);
       
-      const result = await whatsappConnectionManager.createConnection(connectionName, cleanPhoneNumber);
+      const result = await whatsappConnectionManager.createConnection(instanceName, cleanPhoneNumber);
       
       if (result.success && result.connection) {
         setConnectionId(result.connection.id);
         setIsCreated(true);
         
         toast.success("Instância criada!", {
-          description: "Clique em 'Ler QR Code' para conectar o WhatsApp",
+          description: `Instância "${instanceName}" criada. Clique em 'Ler QR Code' para conectar o WhatsApp`,
         });
       } else {
         throw new Error(result.error || "Erro ao criar conexão");
@@ -130,6 +148,14 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     
     setShowQRPopup(false);
     onClose();
+  };
+
+  // Criar preview do nome da instância para mostrar ao usuário
+  const getInstancePreview = () => {
+    if (connectionName && phoneNumber) {
+      return createInstanceName(connectionName, phoneNumber);
+    }
+    return "";
   };
 
   return (
@@ -164,7 +190,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                   <Label htmlFor="connectionName">Nome da Conexão</Label>
                   <Input
                     id="connectionName"
-                    placeholder="Ex: WhatsApp Principal"
+                    placeholder="Ex: João Silva"
                     value={connectionName}
                     onChange={(e) => setConnectionName(e.target.value)}
                     required
@@ -183,10 +209,21 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                   </p>
                 </div>
                 
+                {getInstancePreview() && (
+                  <Alert>
+                    <InfoIcon className="h-4 w-4 mr-2" />
+                    <AlertDescription>
+                      <strong>Nome da instância:</strong> {getInstancePreview()}
+                      <br />
+                      <small>Este será o identificador único desta conexão</small>
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
                 <Alert>
                   <InfoIcon className="h-4 w-4 mr-2" />
                   <AlertDescription>
-                    Uma instância será criada automaticamente para esta conexão usando a Evolution API pré-configurada
+                    Uma instância será criada automaticamente combinando o nome + telefone para facilitar a identificação do cliente
                   </AlertDescription>
                 </Alert>
               </div>
