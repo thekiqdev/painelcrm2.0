@@ -9,7 +9,7 @@ export interface SettingsSectionProps {
   handleSave?: (e: React.FormEvent) => void;
 }
 
-export type ConnectionStatus = "disconnected" | "connecting" | "connected";
+export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "created" | "awaiting_scan";
 
 export type ConnectionType = "qrcode" | "evolution" | "webjs";
 
