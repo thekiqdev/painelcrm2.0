@@ -2,9 +2,10 @@
 import React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { ConnectionStatus as ConnectionStatusType } from "@/components/settings/types";
 
 interface ConnectionStatusProps {
-  status: "disconnected" | "connecting" | "connected";
+  status: ConnectionStatusType;
 }
 
 const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ status }) => {
@@ -25,6 +26,22 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ status }) => {
           textColor: "text-yellow-500",
           progress: 50,
           description: "Aguardando escaneamento do QR code."
+        };
+      case "awaiting_scan":
+        return {
+          label: "Aguardando QR",
+          color: "bg-orange-500",
+          textColor: "text-orange-500",
+          progress: 75,
+          description: "QR Code gerado, aguardando escaneamento."
+        };
+      case "created":
+        return {
+          label: "Criada",
+          color: "bg-blue-500",
+          textColor: "text-blue-500",
+          progress: 25,
+          description: "Instância criada, aguardando geração do QR code."
         };
       default:
         return {
