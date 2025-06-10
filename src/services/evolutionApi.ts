@@ -1,4 +1,3 @@
-
 import { Config, EvolutionApiConfig, EvolutionContact, EvolutionMessage, InstanceStatus } from "@/types";
 
 class EvolutionApiService {
@@ -67,7 +66,7 @@ class EvolutionApiService {
     localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
   }
 
-  async setActiveConfig(id: string): Promise<void> {
+  async setActiveConfigById(id: string): Promise<void> {
     const configs = await this.getAllConfigs();
     const updatedConfigs = configs.map(config => ({
       ...config,
