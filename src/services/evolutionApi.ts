@@ -1,10 +1,5 @@
-import { Config } from "@/types";
 
-interface InstanceStatus {
-  instance: {
-    state: string;
-  };
-}
+import { Config, EvolutionApiConfig, EvolutionContact, EvolutionMessage, InstanceStatus } from "@/types";
 
 class EvolutionApiService {
   private baseUrl: string = "";
@@ -25,6 +20,70 @@ class EvolutionApiService {
     return this.activeConfig;
   }
 
+  // Métodos de configuração (mock - precisariam de implementação real com banco de dados)
+  async getAllConfigs(): Promise<EvolutionApiConfig[]> {
+    // Mock implementation - na prática, isso viria do banco de dados
+    const configs = localStorage.getItem('evolution_configs');
+    return configs ? JSON.parse(configs) : [];
+  }
+
+  async saveConfig(name: string, apiUrl: string, globalKey: string): Promise<EvolutionApiConfig> {
+    const configs = await this.getAllConfigs();
+    const newConfig: EvolutionApiConfig = {
+      id: Date.now().toString(),
+      name,
+      api_url: apiUrl,
+      global_key: globalKey,
+      is_active: configs.length === 0, // Primeira configuração é ativa por padrão
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    const updatedConfigs = [...configs, newConfig];
+    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
+    
+    return newConfig;
+  }
+
+  async updateConfig(id: string, data: Partial<EvolutionApiConfig>): Promise<EvolutionApiConfig> {
+    const configs = await this.getAllConfigs();
+    const updatedConfigs = configs.map(config => 
+      config.id === id 
+        ? { ...config, ...data, updated_at: new Date().toISOString() }
+        : config
+    );
+    
+    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
+    
+    const updatedConfig = updatedConfigs.find(c => c.id === id);
+    if (!updatedConfig) throw new Error('Configuração não encontrada');
+    
+    return updatedConfig;
+  }
+
+  async deleteConfig(id: string): Promise<void> {
+    const configs = await this.getAllConfigs();
+    const updatedConfigs = configs.filter(config => config.id !== id);
+    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
+  }
+
+  async setActiveConfig(id: string): Promise<void> {
+    const configs = await this.getAllConfigs();
+    const updatedConfigs = configs.map(config => ({
+      ...config,
+      is_active: config.id === id
+    }));
+    
+    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
+    
+    const activeConfig = updatedConfigs.find(c => c.is_active);
+    if (activeConfig) {
+      this.activeConfig = activeConfig;
+      this.setCredentials(activeConfig.api_url, activeConfig.global_key);
+    }
+  }
+
+  // Métodos de instância
   async createInstance(instanceName: string, number: string): Promise<any> {
     try {
       const response = await fetch(`${this.baseUrl}/instance/create`, {
@@ -227,6 +286,88 @@ class EvolutionApiService {
       throw error;
     }
   }
+
+  // Métodos de chat
+  async findChats(instanceName: string): Promise<EvolutionContact[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/chat/findChats/${instanceName}`, {
+        method: 'GET',
+        headers: {
+          'apikey': this.apiKey,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Erro ao buscar conversas:", errorText);
+        throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log("Conversas encontradas:", data);
+      return data;
+    } catch (error) {
+      console.error("Erro ao buscar conversas:", error);
+      throw error;
+    }
+  }
+
+  async findMessages(instanceName: string, remoteJid: string): Promise<EvolutionMessage[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/chat/findMessages/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'apikey': this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ remoteJid }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Erro ao buscar mensagens:", errorText);
+        throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log("Mensagens encontradas:", data);
+      return data;
+    } catch (error) {
+      console.error("Erro ao buscar mensagens:", error);
+      throw error;
+    }
+  }
+
+  async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
+    try {
+      const response = await fetch(`${this.baseUrl}/message/sendText/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'apikey': this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          number: remoteJid,
+          text: message 
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Erro ao enviar mensagem:", errorText);
+        throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log("Mensagem enviada:", data);
+      return data;
+    } catch (error) {
+      console.error("Erro ao enviar mensagem:", error);
+      throw error;
+    }
+  }
 }
 
 export const evolutionApi = new EvolutionApiService();
+export type { EvolutionApiConfig, EvolutionContact, EvolutionMessage, InstanceStatus };
