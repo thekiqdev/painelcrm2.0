@@ -1,3 +1,5 @@
+
+import { supabase } from "@/integrations/supabase/client";
 import { Config, EvolutionApiConfig, EvolutionContact, EvolutionMessage, InstanceStatus } from "@/types";
 
 class EvolutionApiService {
@@ -15,70 +17,161 @@ class EvolutionApiService {
     this.setCredentials(config.api_url, config.global_key);
   }
 
-  async getActiveConfig(): Promise<Config | null> {
-    return this.activeConfig;
+  async getActiveConfig(): Promise<EvolutionApiConfig | null> {
+    try {
+      const { data: activeConfig, error } = await supabase
+        .from('evolution_api_configs')
+        .select('*')
+        .eq('is_active', true)
+        .single();
+
+      if (error) {
+        console.error("Erro ao buscar configuração ativa:", error);
+        return null;
+      }
+
+      if (activeConfig) {
+        this.activeConfig = activeConfig;
+        this.setCredentials(activeConfig.api_url, activeConfig.global_key);
+      }
+
+      return activeConfig;
+    } catch (error) {
+      console.error("Erro ao obter configuração ativa:", error);
+      return null;
+    }
   }
 
-  // Métodos de configuração (mock - precisariam de implementação real com banco de dados)
+  // Métodos de configuração usando Supabase
   async getAllConfigs(): Promise<EvolutionApiConfig[]> {
-    // Mock implementation - na prática, isso viria do banco de dados
-    const configs = localStorage.getItem('evolution_configs');
-    return configs ? JSON.parse(configs) : [];
+    try {
+      const { data: configs, error } = await supabase
+        .from('evolution_api_configs')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("Erro ao buscar configurações:", error);
+        return [];
+      }
+
+      return configs || [];
+    } catch (error) {
+      console.error("Erro ao obter configurações:", error);
+      return [];
+    }
   }
 
   async saveConfig(name: string, apiUrl: string, globalKey: string): Promise<EvolutionApiConfig> {
-    const configs = await this.getAllConfigs();
-    const newConfig: EvolutionApiConfig = {
-      id: Date.now().toString(),
-      name,
-      api_url: apiUrl,
-      global_key: globalKey,
-      is_active: configs.length === 0, // Primeira configuração é ativa por padrão
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    
-    const updatedConfigs = [...configs, newConfig];
-    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
-    
-    return newConfig;
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      if (!user.user) throw new Error("Usuário não autenticado");
+
+      // Verificar se já existe uma configuração ativa
+      const { data: existingConfigs } = await supabase
+        .from('evolution_api_configs')
+        .select('id')
+        .eq('user_id', user.user.id);
+
+      const isFirstConfig = !existingConfigs || existingConfigs.length === 0;
+
+      const { data: newConfig, error } = await supabase
+        .from('evolution_api_configs')
+        .insert({
+          name,
+          api_url: apiUrl,
+          global_key: globalKey,
+          user_id: user.user.id,
+          is_active: isFirstConfig // Primeira configuração é ativa por padrão
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Erro ao salvar configuração:", error);
+        throw error;
+      }
+
+      return newConfig;
+    } catch (error) {
+      console.error("Erro ao salvar configuração:", error);
+      throw error;
+    }
   }
 
   async updateConfig(id: string, data: Partial<EvolutionApiConfig>): Promise<EvolutionApiConfig> {
-    const configs = await this.getAllConfigs();
-    const updatedConfigs = configs.map(config => 
-      config.id === id 
-        ? { ...config, ...data, updated_at: new Date().toISOString() }
-        : config
-    );
-    
-    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
-    
-    const updatedConfig = updatedConfigs.find(c => c.id === id);
-    if (!updatedConfig) throw new Error('Configuração não encontrada');
-    
-    return updatedConfig;
+    try {
+      const { data: updatedConfig, error } = await supabase
+        .from('evolution_api_configs')
+        .update({
+          ...data,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Erro ao atualizar configuração:", error);
+        throw error;
+      }
+
+      return updatedConfig;
+    } catch (error) {
+      console.error("Erro ao atualizar configuração:", error);
+      throw error;
+    }
   }
 
   async deleteConfig(id: string): Promise<void> {
-    const configs = await this.getAllConfigs();
-    const updatedConfigs = configs.filter(config => config.id !== id);
-    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
+    try {
+      const { error } = await supabase
+        .from('evolution_api_configs')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error("Erro ao excluir configuração:", error);
+        throw error;
+      }
+    } catch (error) {
+      console.error("Erro ao excluir configuração:", error);
+      throw error;
+    }
   }
 
   async setActiveConfigById(id: string): Promise<void> {
-    const configs = await this.getAllConfigs();
-    const updatedConfigs = configs.map(config => ({
-      ...config,
-      is_active: config.id === id
-    }));
-    
-    localStorage.setItem('evolution_configs', JSON.stringify(updatedConfigs));
-    
-    const activeConfig = updatedConfigs.find(c => c.is_active);
-    if (activeConfig) {
-      this.activeConfig = activeConfig;
-      this.setCredentials(activeConfig.api_url, activeConfig.global_key);
+    try {
+      const { data: user } = await supabase.auth.getUser();
+      if (!user.user) throw new Error("Usuário não autenticado");
+
+      // Desativar todas as configurações do usuário
+      await supabase
+        .from('evolution_api_configs')
+        .update({ is_active: false })
+        .eq('user_id', user.user.id);
+
+      // Ativar a configuração específica
+      const { data: activeConfig, error } = await supabase
+        .from('evolution_api_configs')
+        .update({ is_active: true })
+        .eq('id', id)
+        .eq('user_id', user.user.id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Erro ao ativar configuração:", error);
+        throw error;
+      }
+
+      if (activeConfig) {
+        this.activeConfig = activeConfig;
+        this.setCredentials(activeConfig.api_url, activeConfig.global_key);
+      }
+    } catch (error) {
+      console.error("Erro ao definir configuração ativa:", error);
+      throw error;
     }
   }
 
