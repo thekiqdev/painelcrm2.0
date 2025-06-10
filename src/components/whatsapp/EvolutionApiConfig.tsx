@@ -90,7 +90,7 @@ export const EvolutionApiConfigComponent = () => {
   const handleSetActiveConfig = async (config: EvolutionApiConfig) => {
     setIsLoading(true);
     try {
-      await evolutionApi.setActiveConfig(config.id);
+      await evolutionApi.setActiveConfigById(config.id);
       toast.success("Configuração ativada com sucesso!");
       await fetchConfigs();
     } catch (error) {
