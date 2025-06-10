@@ -35,35 +35,65 @@ export const evolutionInstanceService = {
       
       console.log("Conexão salva no banco após criação:", savedConnection);
       
-      // Aguardar um momento para a instância ser inicializada
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Aguardar 3 segundos para a instância ser inicializada completamente
+      console.log("Aguardando inicialização da instância...");
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
-      // Tentar obter o QR code (não crítico)
-      try {
-        const qrResult = await evolutionApi.getQRCode(instanceName);
-        console.log("QR Code obtido:", qrResult);
-        
-        if (qrResult && qrResult.qrcode && qrResult.qrcode.base64) {
-          // Atualizar conexão com QR code
-          if (savedConnection?.id) {
-            await connectionDatabaseService.updateConnection(savedConnection.id, {
+      // Tentar obter o QR code com retry
+      let qrCodeResult = null;
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts && !qrCodeResult) {
+        try {
+          attempts++;
+          console.log(`Tentativa ${attempts} de obter QR Code...`);
+          
+          const qrResult = await evolutionApi.getQRCode(instanceName);
+          console.log("Resultado do QR Code:", qrResult);
+          
+          if (qrResult && qrResult.qrcode && qrResult.qrcode.base64) {
+            qrCodeResult = qrResult.qrcode.base64;
+            console.log("QR Code obtido com sucesso!");
+            
+            // Atualizar conexão com QR code
+            if (savedConnection?.id) {
+              await connectionDatabaseService.updateConnection(savedConnection.id, {
+                status: "awaiting_scan",
+                qr_code: qrCodeResult
+              });
+              console.log("Conexão atualizada com QR Code");
+            }
+            
+            return {
+              success: true,
+              qrCode: qrCodeResult,
               status: "awaiting_scan",
-              qr_code: qrResult.qrcode.base64
-            });
+              connectionId: savedConnection?.id,
+              message: "Instância criada e QR Code gerado com sucesso!"
+            };
           }
           
-          return {
-            success: true,
-            qrCode: qrResult.qrcode.base64,
-            status: "awaiting_scan",
-            connectionId: savedConnection?.id
-          };
+          // Se não obteve QR code, aguardar antes da próxima tentativa
+          if (attempts < maxAttempts) {
+            console.log("QR Code não disponível, aguardando 2 segundos...");
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+          
+        } catch (qrError) {
+          console.log(`Erro na tentativa ${attempts} de obter QR Code:`, qrError);
+          
+          // Se não é a última tentativa, aguardar antes de tentar novamente
+          if (attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
         }
-      } catch (qrError) {
-        console.log("Erro ao obter QR Code inicial (não crítico):", qrError);
       }
       
-      // Se não conseguiu obter QR code, verificar se já está conectada
+      // Se chegou aqui, não conseguiu obter QR code após todas as tentativas
+      console.log("Não foi possível obter QR Code após", maxAttempts, "tentativas");
+      
+      // Verificar se a instância já está conectada
       try {
         const status = await evolutionApi.getInstanceStatus(instanceName);
         console.log("Status da instância:", status);
@@ -79,14 +109,15 @@ export const evolutionInstanceService = {
           return {
             success: true,
             status: "connected",
-            connectionId: savedConnection?.id
+            connectionId: savedConnection?.id,
+            message: "Instância criada e já está conectada!"
           };
         }
       } catch (statusError) {
         console.error("Erro ao verificar status:", statusError);
       }
       
-      // Instância criada e salva, mas sem QR code - isso é OK
+      // Instância criada e salva, mas sem QR code disponível no momento
       return {
         success: true,
         status: "created",
