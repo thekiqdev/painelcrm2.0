@@ -12,13 +12,13 @@ export const evolutionQRService = {
       
       evolutionApi.setCredentials(config.api_url, config.global_key);
       
-      // Primeiro verificar se a instância já está conectada
+      // Primeiro verificar se a instância existe e seu status atual
       try {
         const status = await evolutionApi.getInstanceStatus(instanceName);
         console.log("Status atual da instância:", status);
         
+        // Se já está conectada, retornar sucesso
         if (status?.instance?.state === "open") {
-          // Instância já conectada
           const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
           if (existingConnection?.id) {
             await connectionDatabaseService.updateConnection(existingConnection.id, {
@@ -33,81 +33,122 @@ export const evolutionQRService = {
             message: "Instância já está conectada!"
           };
         }
+        
+        // Se está em estado de inicialização, aguardar um pouco
+        if (status?.instance?.state === "starting") {
+          console.log("Instância está iniciando, aguardando...");
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
       } catch (statusError) {
-        console.log("Erro ao verificar status inicial:", statusError);
+        console.log("Erro ao verificar status inicial, tentando criar/conectar:", statusError);
       }
       
-      // Tentar obter QR code com retry
+      // Tentar conectar a instância primeiro (caso ela exista mas não esteja conectada)
+      try {
+        console.log("Tentando conectar instância...");
+        await evolutionApi.connectInstance(instanceName);
+        
+        // Aguardar um momento após conectar
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (connectError) {
+        console.log("Erro ao conectar instância ou instância não existe:", connectError);
+      }
+      
+      // Agora tentar obter QR code com retry
       let attempts = 0;
-      const maxAttempts = 3;
+      const maxAttempts = 5;
       
       while (attempts < maxAttempts) {
         try {
           attempts++;
           console.log(`Tentativa ${attempts} de obter QR Code...`);
           
-          const qrResult = await evolutionApi.getQRCode(instanceName);
-          console.log("Resultado do QR Code:", qrResult);
+          // Verificar status antes de tentar obter QR
+          const currentStatus = await evolutionApi.getInstanceStatus(instanceName);
+          console.log(`Status na tentativa ${attempts}:`, currentStatus);
           
-          if (qrResult && qrResult.qrcode && qrResult.qrcode.base64) {
-            console.log("QR Code obtido com sucesso");
-            
-            // Atualizar conexão existente
+          // Se conectou durante as tentativas
+          if (currentStatus?.instance?.state === "open") {
             const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-            
             if (existingConnection?.id) {
               await connectionDatabaseService.updateConnection(existingConnection.id, {
-                status: "awaiting_scan",
-                qr_code: qrResult.qrcode.base64
+                status: "connected",
+                qr_code: null
               });
             }
             
             return {
               success: true,
-              qrCode: qrResult.qrcode.base64,
-              status: "awaiting_scan",
-              message: "QR Code gerado com sucesso!"
+              status: "connected",
+              message: "Instância conectada com sucesso!"
             };
-          } else {
-            console.log("QR Code não disponível na resposta");
+          }
+          
+          // Se está no estado correto para gerar QR (close significa desconectada mas pronta)
+          if (currentStatus?.instance?.state === "close" || currentStatus?.instance?.state === "connecting") {
+            const qrResult = await evolutionApi.getQRCode(instanceName);
+            console.log("Resultado do QR Code:", qrResult);
             
-            // Se não há QR code, verificar novamente o status
-            const status = await evolutionApi.getInstanceStatus(instanceName);
-            if (status?.instance?.state === "open") {
-              const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-              if (existingConnection?.id) {
-                await connectionDatabaseService.updateConnection(existingConnection.id, {
-                  status: "connected",
-                  qr_code: null
-                });
+            if (qrResult && qrResult.qrcode) {
+              let qrCodeData = null;
+              
+              // Verificar se o QR code está em base64 ou texto
+              if (qrResult.qrcode.base64) {
+                qrCodeData = qrResult.qrcode.base64;
+              } else if (qrResult.qrcode.code) {
+                qrCodeData = qrResult.qrcode.code;
+              } else if (typeof qrResult.qrcode === 'string') {
+                qrCodeData = qrResult.qrcode;
               }
               
-              return {
-                success: true,
-                status: "connected",
-                message: "Instância já está conectada!"
-              };
+              if (qrCodeData) {
+                console.log("QR Code obtido com sucesso");
+                
+                // Atualizar conexão existente
+                const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
+                
+                if (existingConnection?.id) {
+                  await connectionDatabaseService.updateConnection(existingConnection.id, {
+                    status: "awaiting_scan",
+                    qr_code: qrCodeData
+                  });
+                }
+                
+                return {
+                  success: true,
+                  qrCode: qrCodeData,
+                  status: "awaiting_scan",
+                  message: "QR Code gerado com sucesso!"
+                };
+              }
             }
           }
           
-          // Aguardar antes da próxima tentativa
+          // Se não obteve QR code, aguardar antes da próxima tentativa
           if (attempts < maxAttempts) {
-            console.log("Aguardando 2 segundos antes da próxima tentativa...");
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log(`Aguardando ${3 + attempts} segundos antes da próxima tentativa...`);
+            await new Promise(resolve => setTimeout(resolve, (3 + attempts) * 1000));
           }
           
         } catch (error) {
           console.error(`Erro na tentativa ${attempts}:`, error);
           
-          // Se não é a última tentativa, aguardar antes de tentar novamente
+          // Se é erro de instância não encontrada, tentar recriar
+          if (error instanceof Error && error.message.includes("not found")) {
+            console.log("Instância não encontrada, pode precisar ser recriada");
+            throw new Error("Instância não encontrada na Evolution API. Crie uma nova conexão.");
+          }
+          
+          // Para outros erros, aguardar antes de tentar novamente
           if (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, (2 + attempts) * 1000));
           }
         }
       }
       
-      // Se chegou aqui, não conseguiu obter QR code
-      throw new Error("Não foi possível gerar o QR Code após várias tentativas. Verifique se a instância está ativa na Evolution API.");
+      // Se chegou aqui, não conseguiu obter QR code após todas as tentativas
+      throw new Error(`Não foi possível gerar o QR Code após ${maxAttempts} tentativas. Verifique se a instância '${instanceName}' está ativa na Evolution API ou tente criar uma nova conexão.`);
       
     } catch (error) {
       console.error("Erro ao obter QR code Evolution:", error);
