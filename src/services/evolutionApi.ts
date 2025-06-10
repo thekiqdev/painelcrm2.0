@@ -225,7 +225,7 @@ class EvolutionApiService {
     }
   }
 
-  async createInstance(instanceName: string, number: string): Promise<any> {
+  async createInstance(instanceName: string, number?: string): Promise<any> {
     try {
       // Garantir que temos uma configuração ativa antes de fazer a requisição
       if (!this.baseUrl || !this.apiKey) {
@@ -238,13 +238,23 @@ class EvolutionApiService {
 
       console.log("Criando instância com URL:", `${this.baseUrl}/instance/create`);
       
+      // Estrutura correta para Evolution API v2 conforme documentação
+      const requestBody = {
+        instanceName: instanceName,
+        qrcode: true,
+        integration: "WHATSAPP-BAILEYS",
+        ...(number && { number: number })
+      };
+
+      console.log("Payload da requisição:", requestBody);
+      
       const response = await fetch(`${this.baseUrl}/instance/create`, {
         method: 'POST',
         headers: {
           'apikey': this.apiKey,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ instanceName, number }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
