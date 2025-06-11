@@ -281,7 +281,7 @@ class EvolutionApiService {
         }
       }
 
-      const response = await fetch(`${this.baseUrl}/instance/status/${instanceName}`, {
+      const response = await fetch(`${this.baseUrl}/instance/fetchInstances`, {
         method: 'GET',
         headers: {
           'apikey': this.apiKey,
@@ -295,9 +295,18 @@ class EvolutionApiService {
         throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
       }
 
-      const data: InstanceStatus = await response.json();
-      console.log("Status da instância:", data);
-      return data;
+      const instances = await response.json();
+      console.log("Instâncias encontradas:", instances);
+      
+      // Procurar pela instância específica
+      const instance = instances.find((inst: any) => inst.instance.instanceName === instanceName);
+      
+      if (instance) {
+        console.log("Status da instância:", instance);
+        return instance;
+      } else {
+        throw new Error(`Instância ${instanceName} não encontrada`);
+      }
     } catch (error) {
       console.error("Erro ao obter status da instância:", error);
       throw error;
@@ -331,7 +340,31 @@ class EvolutionApiService {
 
   async getQRCode(instanceName: string): Promise<any> {
     try {
-      const response = await fetch(`${this.baseUrl}/instance/qr/${instanceName}`, {
+      if (!this.baseUrl || !this.apiKey) {
+        const config = await this.getActiveConfig();
+        if (!config) {
+          throw new Error("Nenhuma configuração encontrada. Configure primeiro em Configurações > Configuração API.");
+        }
+      }
+
+      console.log("Obtendo QR Code para instância:", instanceName);
+      console.log("URL da requisição:", `${this.baseUrl}/instance/connect/${instanceName}`);
+
+      // Primeiro, verificar se a instância existe e seu status
+      const status = await this.getInstanceStatus(instanceName);
+      console.log("Status atual da instância:", status);
+
+      // Se já está conectada, retornar informação
+      if (status?.instance?.state === "open") {
+        return {
+          success: true,
+          status: "connected",
+          message: "Instância já está conectada"
+        };
+      }
+
+      // Se não está conectada, tentar obter QR code
+      const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
         method: 'GET',
         headers: {
           'apikey': this.apiKey,
@@ -346,8 +379,46 @@ class EvolutionApiService {
       }
 
       const data = await response.json();
-      console.log("QR code obtido:", data);
-      return data;
+      console.log("Resposta do connect:", data);
+
+      // A resposta do connect pode conter o QR code diretamente
+      if (data?.qrcode?.base64) {
+        return {
+          qrcode: {
+            base64: data.qrcode.base64
+          }
+        };
+      }
+
+      // Se não há QR code na resposta do connect, aguardar um momento e tentar novamente
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Fazer nova requisição para fetchInstances para ver se o QR code está disponível
+      const instancesResponse = await fetch(`${this.baseUrl}/instance/fetchInstances`, {
+        method: 'GET',
+        headers: {
+          'apikey': this.apiKey,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (instancesResponse.ok) {
+        const instances = await instancesResponse.json();
+        const instance = instances.find((inst: any) => inst.instance.instanceName === instanceName);
+        
+        if (instance && instance.qrcode && instance.qrcode.base64) {
+          console.log("QR Code encontrado nas instâncias:", instance.qrcode);
+          return {
+            qrcode: {
+              base64: instance.qrcode.base64
+            }
+          };
+        }
+      }
+
+      // Se chegou aqui, não conseguiu obter QR code
+      throw new Error("QR Code não disponível no momento. Tente novamente em alguns segundos.");
+
     } catch (error) {
       console.error("Erro ao obter QR code:", error);
       throw error;
