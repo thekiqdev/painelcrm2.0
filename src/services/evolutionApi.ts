@@ -212,6 +212,9 @@ class EvolutionApi {
   async getInstanceStatus(instanceName: string) {
     try {
       console.log(`Obtendo status da instância: ${instanceName}`);
+      console.log(`URL: ${this.baseUrl}/instance/info/${instanceName}`);
+      console.log(`API Key presente: ${!!this.apiKey}`);
+      
       const response = await fetch(`${this.baseUrl}/instance/info/${instanceName}`, {
         method: 'GET',
         headers: {
@@ -220,9 +223,20 @@ class EvolutionApi {
         }
       });
 
+      console.log(`Status da resposta: ${response.status}`);
+      
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`Erro HTTP ${response.status}:`, errorText);
+        
+        // Se for 404, verificar se é problema de nome ou se a instância realmente não existe
+        if (response.status === 404) {
+          throw new Error(`Instância '${instanceName}' não encontrada (404). Verifique:
+          - Se o nome da instância está correto
+          - Se a instância está ativa na Evolution API
+          - Se a URL da API está correta`);
+        }
+        
         throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
       }
 
@@ -238,8 +252,8 @@ class EvolutionApi {
   async getQRCode(instanceName: string) {
     try {
       console.log(`Solicitando QR Code para instância: ${instanceName}`);
+      console.log(`URL: ${this.baseUrl}/instance/connect/${instanceName}`);
       
-      // Usar o endpoint correto da documentação: /instance/connect/{instanceName}
       const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
         method: 'GET',
         headers: {
@@ -253,6 +267,11 @@ class EvolutionApi {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`Erro HTTP ${response.status}:`, errorText);
+        
+        if (response.status === 404) {
+          throw new Error(`Erro 404 ao solicitar QR Code para '${instanceName}'. A instância pode estar em processo de inicialização ou inativa.`);
+        }
+        
         throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
       }
 
