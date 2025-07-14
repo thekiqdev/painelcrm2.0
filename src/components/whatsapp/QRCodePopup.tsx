@@ -85,7 +85,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           startConnectionPolling(connection.instance_name);
         }
       } else {
-        throw new Error(result.error || "Erro ao gerar QR code");
+        throw new Error(result.message || "Erro ao gerar QR code");
       }
       
     } catch (error) {
