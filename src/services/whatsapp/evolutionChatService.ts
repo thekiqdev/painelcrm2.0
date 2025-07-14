@@ -57,8 +57,8 @@ export const evolutionChatService = {
             id: chatId,
             remoteJid: chat.remoteJid,
             pushName: chat.pushName || chat.remoteJid,
-            profilePictureUrl: chat.profilePictureUrl || chat.profilePicUrl,
-            unreadMessages: chat.unreadMessages || chat.unreadCount || 0
+            profilePictureUrl: chat.profilePictureUrl,
+            unreadMessages: chat.unreadMessages || 0
           };
         });
     } catch (error) {
