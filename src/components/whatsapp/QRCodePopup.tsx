@@ -65,15 +65,17 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       
       // Verificar se tem instance_name
       if (!connection.instance_name) {
-        throw new Error("Nome da instância não encontrado na conexão");
+        throw new Error("Nome da instância não encontrado na conexão. Verifique se a instância foi criada corretamente na Evolution API.");
       }
       
       console.log("Chamando evolutionQRService com instance_name:", connection.instance_name);
       
       const result = await evolutionQRService.getEvolutionQRCode(connection.instance_name);
       
+      console.log("Resultado do evolutionQRService:", result);
+      
       if (result.success) {
-        if (result.qrCode === "already_connected") {
+        if (result.qrCode === "already_connected" || result.status === "connected") {
           setIsConnected(true);
           toast.success("Já conectado!", {
             description: "Esta instância já estava conectada",
@@ -89,14 +91,21 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           
           // Iniciar verificação de conexão
           startConnectionPolling(connection.instance_name);
+        } else {
+          throw new Error("QR Code não foi retornado pela API");
         }
       } else {
         throw new Error(result.message || "Erro ao gerar QR code");
       }
       
     } catch (error) {
-      console.error("Erro ao gerar QR code:", error);
-      setErrorMessage(error instanceof Error ? error.message : "Erro ao gerar QR code");
+      console.error("Erro detalhado ao gerar QR code:", error);
+      const errorMsg = error instanceof Error ? error.message : "Erro desconhecido ao gerar QR code";
+      setErrorMessage(errorMsg);
+      
+      toast.error("Erro ao gerar QR Code", {
+        description: errorMsg
+      });
     } finally {
       setIsLoading(false);
     }
@@ -105,25 +114,25 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   const startConnectionPolling = async (instanceName: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        const connections = await connectionDatabaseService.getConnections();
-        const connection = connections.find(c => c.instance_name === instanceName);
-        
-        if (!connection) {
-          console.error("Conexão não encontrada durante polling");
-          return;
-        }
+        console.log("Verificando status da conexão para:", instanceName);
         
         const result = await evolutionQRService.getEvolutionQRCode(instanceName);
         
         if (result.success && result.status === "connected") {
+          console.log("Conexão estabelecida!");
           setIsConnected(true);
           clearInterval(pollInterval);
           
           // Atualizar status no banco
-          await connectionDatabaseService.updateConnection(connection.id, {
-            status: "connected",
-            qr_code: null
-          });
+          const connections = await connectionDatabaseService.getConnections();
+          const connection = connections.find(c => c.instance_name === instanceName);
+          
+          if (connection) {
+            await connectionDatabaseService.updateConnection(connection.id, {
+              status: "connected",
+              qr_code: null
+            });
+          }
           
           toast.success("Conectado com sucesso!", {
             description: "WhatsApp foi conectado com sucesso",
@@ -144,11 +153,16 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       clearInterval(pollInterval);
       if (!isConnected) {
         setErrorMessage("QR Code expirou. Tente gerar novamente.");
+        toast.error("QR Code expirado", {
+          description: "O QR Code expirou após 5 minutos. Gere um novo."
+        });
       }
     }, 300000);
   };
 
   const handleRetry = () => {
+    setErrorMessage("");
+    setIsConnected(false);
     generateQRCode();
   };
 
@@ -217,12 +231,15 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           )}
           
           {errorMessage && (
-            <div className="flex flex-col items-center gap-4">
+            <div className="flex flex-col items-center gap-4 w-full">
               <Alert variant="destructive">
                 <AlertDescription>
                   {errorMessage}
                 </AlertDescription>
               </Alert>
+              <p className="text-sm text-muted-foreground text-center">
+                Verifique se a instância foi criada corretamente na Evolution API e se o nome está correto.
+              </p>
             </div>
           )}
         </div>
@@ -231,7 +248,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           {!isConnected && !isLoading && (
             <Button variant="outline" onClick={handleRetry}>
               <RefreshCw className="h-4 w-4 mr-2" />
-              Gerar Novo QR Code
+              Tentar Novamente
             </Button>
           )}
           
