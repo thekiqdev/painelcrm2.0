@@ -57,7 +57,7 @@ export const evolutionQRService = {
         }
       }
       
-      // Tentar obter QR code
+      // Solicitar QR code usando o endpoint correto
       console.log("evolutionQRService: Solicitando QR Code para:", instanceName);
       const qrResult = await evolutionApi.getQRCode(instanceName);
       console.log("evolutionQRService: Resultado do QR Code:", qrResult);
@@ -90,6 +90,8 @@ export const evolutionQRService = {
           qrCodeData = qrResult.qrcode.base64;
         } else if (typeof qrResult.qrcode === 'string') {
           qrCodeData = qrResult.qrcode;
+        } else if (qrResult.qrcode.code) {
+          qrCodeData = qrResult.qrcode.code;
         }
         
         if (qrCodeData) {
