@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar } from "@/components/ui/avatar";
 import { Send, MessageSquare, Phone, RefreshCw } from "lucide-react";
 import { useEvolutionChatCache } from "@/hooks/useEvolutionChatCache";
-import { EvolutionMessage } from "@/services/evolutionApi";
+import { EvolutionMessage } from "@/types/evolution";
 
 interface EvolutionChatPanelProps {
   instanceName: string;

@@ -1,6 +1,7 @@
+
 import { useState, useEffect } from "react";
 import { whatsappService } from "@/services/whatsapp";
-import { EvolutionMessage, EvolutionContact } from "@/services/evolutionApi";
+import { EvolutionMessage, EvolutionContact } from "@/types/evolution";
 import { toast } from "sonner";
 
 interface UseEvolutionChatProps {
