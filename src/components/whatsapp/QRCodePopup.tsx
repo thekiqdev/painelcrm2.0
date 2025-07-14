@@ -35,11 +35,17 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
 
   useEffect(() => {
     if (isOpen && connectionId) {
+      console.log("QRCodePopup aberto para conexão:", connectionId);
       generateQRCode();
     }
   }, [isOpen, connectionId]);
 
   const generateQRCode = async () => {
+    if (!connectionId) {
+      setErrorMessage("ID da conexão não fornecido");
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage("");
     setQrCode(null);
@@ -146,8 +152,15 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     generateQRCode();
   };
 
+  const handleClose = () => {
+    setQrCode(null);
+    setIsConnected(false);
+    setErrorMessage("");
+    onClose();
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-[450px]">
         <DialogHeader>
           <DialogTitle>
@@ -227,7 +240,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
               Finalizar Conexão
             </Button>
           ) : (
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="outline" onClick={handleClose}>
               Cancelar
             </Button>
           )}

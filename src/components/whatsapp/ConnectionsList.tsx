@@ -1,9 +1,9 @@
+
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Plus, Edit, CheckCircle2, Trash2, QrCode, RefreshCw } from "lucide-react";
 import { Connection, ConnectionStatus } from "@/components/settings/types";
-import { whatsappConnectionManager } from "@/services/whatsappConnectionManager";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -23,6 +23,7 @@ interface ConnectionsListProps {
   handleDisconnect: () => void;
   handleDeleteConnection: (connectionId: string) => void;
   onAddConnectionClick: () => void;
+  onOpenQRPopup: (connectionId: string) => void;
 }
 
 const ConnectionsList: React.FC<ConnectionsListProps> = ({
@@ -32,17 +33,17 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
   handleDisconnect,
   handleDeleteConnection,
   onAddConnectionClick,
+  onOpenQRPopup,
 }) => {
   const [editingConnection, setEditingConnection] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [connectionToDelete, setConnectionToDelete] = useState<string | null>(null);
-  const [generatingQR, setGeneratingQR] = useState<string | null>(null);
 
   // Function to handle editing a connection
   const handleEditClick = (connectionId: string, event: React.MouseEvent) => {
-    event.stopPropagation(); // Prevent the card click event from firing
+    event.stopPropagation();
     setEditingConnection(connectionId);
-    onAddConnectionClick(); // Open the dialog to edit
+    onAddConnectionClick();
   };
 
   // Function to handle delete confirmation
@@ -75,30 +76,10 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
     }
   };
 
-  const handleGenerateQRCode = async (connectionId: string, event: React.MouseEvent) => {
+  const handleReconnectClick = (connectionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
-    setGeneratingQR(connectionId);
-    
-    try {
-      const result = await whatsappConnectionManager.generateQRCode(connectionId);
-      
-      if (result.success) {
-        toast.success("QR Code gerado!", {
-          description: "QR Code gerado com sucesso. A conexão foi atualizada."
-        });
-        // Trigger a reload of connections to get updated status
-        window.location.reload();
-      } else {
-        throw new Error(result.error || "Erro ao gerar QR code");
-      }
-    } catch (error) {
-      console.error("Erro ao gerar QR code:", error);
-      toast.error("Erro ao gerar QR Code", {
-        description: error instanceof Error ? error.message : "Ocorreu um erro"
-      });
-    } finally {
-      setGeneratingQR(null);
-    }
+    console.log("Clicado em reconectar para conexão:", connectionId);
+    onOpenQRPopup(connectionId);
   };
 
   // Render empty state
@@ -123,7 +104,6 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
           <Card 
             key={connection.id} 
             className="overflow-hidden cursor-pointer hover:bg-accent/50 transition-colors"
-            onClick={() => connection.status !== "connected" && handleConnect(connection)}
           >
             <div className="flex items-center justify-between p-4">
               <div>
@@ -149,10 +129,11 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                   <Button 
                     size="sm" 
                     variant="outline"
-                    onClick={(e) => handleGenerateQRCode(connection.id, e)}
-                    disabled={generatingQR === connection.id}
+                    onClick={(e) => handleReconnectClick(connection.id, e)}
+                    disabled={isLoading}
                   >
-                    <RefreshCw className={`h-4 w-4 ${generatingQR === connection.id ? 'animate-spin' : ''}`} />
+                    <QrCode className="h-4 w-4 mr-1" />
+                    Conectar
                   </Button>
                 )}
                 
@@ -172,20 +153,9 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                   <Trash2 className="h-4 w-4" />
                 </Button>
                 
-                {connection.status === "disconnected" || connection.status === "created" ? (
-                  <Button 
-                    size="sm" 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleConnect(connection);
-                    }}
-                    disabled={isLoading}
-                  >
-                    Conectar
-                  </Button>
-                ) : connection.status === "connecting" ? (
+                {connection.status === "connecting" ? (
                   <Button size="sm" disabled>Conectando...</Button>
-                ) : (
+                ) : connection.status === "connected" ? (
                   <Button 
                     size="sm" 
                     variant="destructive" 
@@ -197,7 +167,7 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                   >
                     Desconectar
                   </Button>
-                )}
+                ) : null}
               </div>
             </div>
           </Card>
