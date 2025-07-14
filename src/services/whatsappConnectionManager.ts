@@ -57,9 +57,15 @@ export const whatsappConnectionManager = {
       const connections = await connectionDatabaseService.getConnections();
       const connection = connections.find(c => c.id === connectionId);
       
-      if (!connection || !connection.instance_name) {
+      if (!connection) {
         throw new Error("Conexão não encontrada");
       }
+      
+      if (!connection.instance_name) {
+        throw new Error("Nome da instância não encontrado na conexão");
+      }
+      
+      console.log("Gerando QR code para instância:", connection.instance_name);
       
       const result = await evolutionService.getEvolutionQRCode(connection.instance_name);
       
@@ -82,9 +88,15 @@ export const whatsappConnectionManager = {
       const connections = await connectionDatabaseService.getConnections();
       const connection = connections.find(c => c.id === connectionId);
       
-      if (!connection || !connection.instance_name) {
+      if (!connection) {
         throw new Error("Conexão não encontrada");
       }
+      
+      if (!connection.instance_name) {
+        throw new Error("Nome da instância não encontrado na conexão");
+      }
+      
+      console.log("Obtendo QR code para instância:", connection.instance_name);
       
       const result = await evolutionService.getEvolutionQRCode(connection.instance_name);
       
@@ -107,8 +119,12 @@ export const whatsappConnectionManager = {
       const connections = await connectionDatabaseService.getConnections();
       const connection = connections.find(c => c.id === connectionId);
       
-      if (!connection || !connection.instance_name) {
+      if (!connection) {
         throw new Error("Conexão não encontrada");
+      }
+      
+      if (!connection.instance_name) {
+        throw new Error("Nome da instância não encontrado na conexão");
       }
       
       const result = await evolutionService.checkEvolutionConnection(connection.instance_name);

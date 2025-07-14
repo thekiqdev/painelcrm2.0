@@ -11,7 +11,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, RefreshCw, CheckCircle2, InfoIcon } from "lucide-react";
-import { whatsappConnectionManager } from "@/services/whatsappConnectionManager";
+import { connectionDatabaseService } from "@/services/whatsapp/connectionDatabaseService";
+import { evolutionQRService } from "@/services/whatsapp/evolutionQRService";
 import { toast } from "sonner";
 
 interface QRCodePopupProps {
@@ -46,7 +47,24 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     try {
       console.log("Gerando QR code para conexão:", connectionId);
       
-      const result = await whatsappConnectionManager.getQRCode(connectionId);
+      // Buscar a conexão no banco de dados
+      const connections = await connectionDatabaseService.getConnections();
+      const connection = connections.find(c => c.id === connectionId);
+      
+      if (!connection) {
+        throw new Error("Conexão não encontrada no banco de dados");
+      }
+      
+      console.log("Dados da conexão encontrada:", connection);
+      
+      // Verificar se tem instance_name
+      if (!connection.instance_name) {
+        throw new Error("Nome da instância não encontrado na conexão");
+      }
+      
+      console.log("Chamando evolutionQRService com instance_name:", connection.instance_name);
+      
+      const result = await evolutionQRService.getEvolutionQRCode(connection.instance_name);
       
       if (result.success) {
         if (result.qrCode === "already_connected") {
@@ -64,7 +82,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           });
           
           // Iniciar verificação de conexão
-          startConnectionPolling();
+          startConnectionPolling(connection.instance_name);
         }
       } else {
         throw new Error(result.error || "Erro ao gerar QR code");
@@ -78,14 +96,28 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     }
   };
 
-  const startConnectionPolling = () => {
+  const startConnectionPolling = async (instanceName: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        const result = await whatsappConnectionManager.checkConnectionStatus(connectionId);
+        const connections = await connectionDatabaseService.getConnections();
+        const connection = connections.find(c => c.instance_name === instanceName);
+        
+        if (!connection) {
+          console.error("Conexão não encontrada durante polling");
+          return;
+        }
+        
+        const result = await evolutionQRService.getEvolutionQRCode(instanceName);
         
         if (result.success && result.status === "connected") {
           setIsConnected(true);
           clearInterval(pollInterval);
+          
+          // Atualizar status no banco
+          await connectionDatabaseService.updateConnection(connection.id, {
+            status: "connected",
+            qr_code: null
+          });
           
           toast.success("Conectado com sucesso!", {
             description: "WhatsApp foi conectado com sucesso",
