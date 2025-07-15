@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, RefreshCw, CheckCircle2, InfoIcon, AlertTriangle, Settings } from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle2, InfoIcon, AlertTriangle, Settings, Plus } from "lucide-react";
 import { connectionDatabaseService } from "@/services/whatsapp/connectionDatabaseService";
 import { evolutionQRService } from "@/services/whatsapp/evolutionQRService";
 import { evolutionApi } from "@/services/evolutionApi";
@@ -37,6 +37,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   const [diagnosticInfo, setDiagnosticInfo] = useState<string>("");
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isCreatingInstance, setIsCreatingInstance] = useState(false);
 
   useEffect(() => {
     if (isOpen && connectionId) {
@@ -59,7 +60,25 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       diagnostics += `API URL: ${config.api_url}\n`;
       diagnostics += `Hora: ${new Date().toLocaleString()}\n\n`;
 
-      // Teste 1: Verificar se a instância existe na lista
+      // Teste 1: Verificar conectividade com a API
+      try {
+        const healthResponse = await fetch(`${config.api_url}/`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        diagnostics += `${healthResponse.ok ? '✓' : '✗'} Conectividade com API: ${healthResponse.status}\n`;
+        
+        if (!healthResponse.ok) {
+          diagnostics += `  Erro: API não está respondendo corretamente\n`;
+        }
+      } catch (error) {
+        diagnostics += `✗ Erro de conectividade: ${error}\n`;
+      }
+
+      // Teste 2: Verificar se a instância existe na lista
       try {
         const listResponse = await fetch(`${config.api_url}/instance/fetchInstances`, {
           method: 'GET',
@@ -76,7 +95,8 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
             instance.instanceName === instanceName
           );
           
-          diagnostics += `✓ Instância encontrada na lista: ${instanceExists ? 'SIM' : 'NÃO'}\n`;
+          diagnostics += `${instanceExists ? '✓' : '✗'} Instância encontrada na lista: ${instanceExists ? 'SIM' : 'NÃO'}\n`;
+          diagnostics += `  Total de instâncias na API: ${instances.length}\n`;
           
           if (instanceExists) {
             const instanceData = instances.find((instance: any) => 
@@ -85,15 +105,20 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
             );
             diagnostics += `  Estado: ${instanceData?.instance?.state || instanceData?.state || 'indefinido'}\n`;
             diagnostics += `  Status: ${instanceData?.status || 'indefinido'}\n`;
+          } else {
+            diagnostics += `\n⚠️  SOLUÇÃO SUGERIDA: A instância não existe na API.\n`;
+            diagnostics += `   Use o botão "Criar Instância" para criá-la automaticamente.\n`;
           }
         } else {
           diagnostics += `✗ Erro ao listar instâncias: ${listResponse.status}\n`;
+          const errorText = await listResponse.text();
+          diagnostics += `  Detalhes: ${errorText}\n`;
         }
       } catch (error) {
         diagnostics += `✗ Erro ao listar instâncias: ${error}\n`;
       }
 
-      // Teste 2: Verificar status específico
+      // Teste 3: Verificar status específico (apenas se a instância existir)
       try {
         const status = await evolutionApi.getInstanceStatus(instanceName);
         diagnostics += `✓ Status específico obtido:\n`;
@@ -104,26 +129,6 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         diagnostics += `✗ Erro ao obter status: ${error}\n`;
       }
 
-      // Teste 3: Tentar conectar
-      try {
-        const connectResponse = await fetch(`${config.api_url}/instance/connect/${instanceName}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': config.global_key || ''
-          }
-        });
-        
-        diagnostics += `${connectResponse.ok ? '✓' : '✗'} Teste de conexão: ${connectResponse.status}\n`;
-        
-        if (connectResponse.ok) {
-          const connectData = await connectResponse.json();
-          diagnostics += `  Resposta: ${JSON.stringify(connectData, null, 2)}\n`;
-        }
-      } catch (error) {
-        diagnostics += `✗ Erro no teste de conexão: ${error}\n`;
-      }
-
       setDiagnosticInfo(diagnostics);
       setShowDiagnostics(true);
 
@@ -131,6 +136,48 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       console.error("Erro nos diagnósticos:", error);
       setDiagnosticInfo(`Erro ao executar diagnósticos: ${error}`);
       setShowDiagnostics(true);
+    }
+  };
+
+  const createInstance = async (instanceName: string) => {
+    try {
+      setIsCreatingInstance(true);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) {
+        throw new Error("Configuração não encontrada");
+      }
+
+      console.log("Criando instância:", instanceName);
+      
+      const result = await evolutionApi.createInstance(instanceName);
+      
+      if (result) {
+        console.log("Instância criada com sucesso:", result);
+        
+        toast.success("Instância criada", {
+          description: "Aguarde alguns segundos para a inicialização...",
+        });
+
+        // Aguardar alguns segundos para a instância inicializar
+        setTimeout(() => {
+          setIsCreatingInstance(false);
+          setErrorMessage("");
+          setShowDiagnostics(false);
+          generateQRCode();
+        }, 5000);
+        
+      } else {
+        throw new Error("Resposta inválida ao criar instância");
+      }
+      
+    } catch (error) {
+      console.error("Erro ao criar instância:", error);
+      setIsCreatingInstance(false);
+      
+      toast.error("Erro ao criar instância", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      });
     }
   };
 
@@ -338,6 +385,15 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     }
   };
 
+  const handleCreateInstance = async () => {
+    const connections = await connectionDatabaseService.getConnections();
+    const connection = connections.find(c => c.id === connectionId);
+    
+    if (connection?.instance_name) {
+      await createInstance(connection.instance_name);
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
@@ -354,7 +410,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         </DialogHeader>
         
         <div className="flex flex-col items-center py-6 space-y-4">
-          {isLoading && !isRestarting && (
+          {isLoading && !isRestarting && !isCreatingInstance && (
             <div className="flex flex-col items-center gap-4">
               <Loader2 className="h-16 w-16 animate-spin text-primary" />
               <p className="text-center">Gerando QR code...</p>
@@ -367,6 +423,16 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
               <p className="text-center">Reiniciando instância...</p>
               <p className="text-sm text-muted-foreground text-center">
                 Aguarde enquanto a instância é reiniciada
+              </p>
+            </div>
+          )}
+
+          {isCreatingInstance && (
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="h-16 w-16 animate-spin text-blue-500" />
+              <p className="text-center">Criando instância...</p>
+              <p className="text-sm text-muted-foreground text-center">
+                Aguarde enquanto a instância é criada na Evolution API
               </p>
             </div>
           )}
@@ -416,7 +482,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
               
               <div className="flex flex-col gap-2 w-full">
                 <p className="text-sm text-muted-foreground text-center">
-                  A instância existe mas pode não estar respondendo. Opções de recuperação:
+                  Opções de recuperação disponíveis:
                 </p>
                 
                 <div className="flex flex-wrap gap-2 justify-center">
@@ -432,6 +498,20 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
                   <Button
                     size="sm"
                     variant="outline"
+                    onClick={handleCreateInstance}
+                    disabled={isCreatingInstance}
+                  >
+                    {isCreatingInstance ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4 mr-2" />
+                    )}
+                    Criar Instância
+                  </Button>
+                  
+                  <Button
+                    size="sm"
+                    variant="outline"
                     onClick={handleRestart}
                     disabled={isRestarting}
                   >
@@ -440,7 +520,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
                     ) : (
                       <RefreshCw className="h-4 w-4 mr-2" />
                     )}
-                    Reiniciar Instância
+                    Reiniciar
                   </Button>
                 </div>
               </div>
@@ -462,7 +542,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         </div>
         
         <DialogFooter>
-          {!isConnected && !isLoading && !isRestarting && (
+          {!isConnected && !isLoading && !isRestarting && !isCreatingInstance && (
             <Button variant="outline" onClick={handleRetry}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Tentar Novamente
