@@ -252,9 +252,9 @@ class EvolutionApi {
   async getQRCode(instanceName: string) {
     try {
       console.log(`Solicitando QR Code para instância: ${instanceName}`);
-      console.log(`URL: ${this.baseUrl}/instance/connect/${instanceName}`);
+      console.log(`URL: ${this.baseUrl}/instance/${instanceName}/qrcode`);
       
-      const response = await fetch(`${this.baseUrl}/instance/connect/${instanceName}`, {
+      const response = await fetch(`${this.baseUrl}/instance/${instanceName}/qrcode`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -280,10 +280,13 @@ class EvolutionApi {
 
       // Verificar se a resposta contém o QR code em base64
       if (data.base64) {
+        // Remover o prefixo data:image/png;base64, se existir
+        const base64Data = data.base64.replace(/^data:image\/png;base64,/, '');
+        
         return {
           success: true,
           qrcode: {
-            base64: data.base64
+            base64: base64Data
           },
           status: data.status || "connecting"
         };
