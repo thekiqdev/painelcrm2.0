@@ -10,9 +10,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, RefreshCw, CheckCircle2, InfoIcon } from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle2, InfoIcon, AlertTriangle, Settings } from "lucide-react";
 import { connectionDatabaseService } from "@/services/whatsapp/connectionDatabaseService";
 import { evolutionQRService } from "@/services/whatsapp/evolutionQRService";
+import { evolutionApi } from "@/services/evolutionApi";
 import { toast } from "sonner";
 
 interface QRCodePopupProps {
@@ -32,6 +33,10 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [instanceStatus, setInstanceStatus] = useState<any>(null);
+  const [diagnosticInfo, setDiagnosticInfo] = useState<string>("");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
 
   useEffect(() => {
     if (isOpen && connectionId) {
@@ -39,6 +44,145 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       generateQRCode();
     }
   }, [isOpen, connectionId]);
+
+  const runDiagnostics = async (instanceName: string) => {
+    try {
+      console.log("Executando diagnósticos para:", instanceName);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) {
+        throw new Error("Configuração não encontrada");
+      }
+
+      let diagnostics = `=== DIAGNÓSTICO DA INSTÂNCIA ===\n`;
+      diagnostics += `Instância: ${instanceName}\n`;
+      diagnostics += `API URL: ${config.api_url}\n`;
+      diagnostics += `Hora: ${new Date().toLocaleString()}\n\n`;
+
+      // Teste 1: Verificar se a instância existe na lista
+      try {
+        const listResponse = await fetch(`${config.api_url}/instance/fetchInstances`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': config.global_key || ''
+          }
+        });
+        
+        if (listResponse.ok) {
+          const instances = await listResponse.json();
+          const instanceExists = instances.some((instance: any) => 
+            instance.instance?.instanceName === instanceName || 
+            instance.instanceName === instanceName
+          );
+          
+          diagnostics += `✓ Instância encontrada na lista: ${instanceExists ? 'SIM' : 'NÃO'}\n`;
+          
+          if (instanceExists) {
+            const instanceData = instances.find((instance: any) => 
+              instance.instance?.instanceName === instanceName || 
+              instance.instanceName === instanceName
+            );
+            diagnostics += `  Estado: ${instanceData?.instance?.state || instanceData?.state || 'indefinido'}\n`;
+            diagnostics += `  Status: ${instanceData?.status || 'indefinido'}\n`;
+          }
+        } else {
+          diagnostics += `✗ Erro ao listar instâncias: ${listResponse.status}\n`;
+        }
+      } catch (error) {
+        diagnostics += `✗ Erro ao listar instâncias: ${error}\n`;
+      }
+
+      // Teste 2: Verificar status específico
+      try {
+        const status = await evolutionApi.getInstanceStatus(instanceName);
+        diagnostics += `✓ Status específico obtido:\n`;
+        diagnostics += `  Estado: ${status?.instance?.state || 'indefinido'}\n`;
+        diagnostics += `  Status geral: ${status?.status || 'indefinido'}\n`;
+        setInstanceStatus(status);
+      } catch (error) {
+        diagnostics += `✗ Erro ao obter status: ${error}\n`;
+      }
+
+      // Teste 3: Tentar conectar
+      try {
+        const connectResponse = await fetch(`${config.api_url}/instance/connect/${instanceName}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': config.global_key || ''
+          }
+        });
+        
+        diagnostics += `${connectResponse.ok ? '✓' : '✗'} Teste de conexão: ${connectResponse.status}\n`;
+        
+        if (connectResponse.ok) {
+          const connectData = await connectResponse.json();
+          diagnostics += `  Resposta: ${JSON.stringify(connectData, null, 2)}\n`;
+        }
+      } catch (error) {
+        diagnostics += `✗ Erro no teste de conexão: ${error}\n`;
+      }
+
+      setDiagnosticInfo(diagnostics);
+      setShowDiagnostics(true);
+
+    } catch (error) {
+      console.error("Erro nos diagnósticos:", error);
+      setDiagnosticInfo(`Erro ao executar diagnósticos: ${error}`);
+      setShowDiagnostics(true);
+    }
+  };
+
+  const restartInstance = async (instanceName: string) => {
+    try {
+      setIsRestarting(true);
+      
+      const config = await evolutionApi.getActiveConfig();
+      if (!config) {
+        throw new Error("Configuração não encontrada");
+      }
+
+      console.log("Reiniciando instância:", instanceName);
+      
+      const restartResponse = await fetch(`${config.api_url}/instance/restart/${instanceName}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': config.global_key || ''
+        }
+      });
+
+      if (restartResponse.ok) {
+        const result = await restartResponse.json();
+        console.log("Instância reiniciada:", result);
+        
+        toast.success("Instância reiniciada", {
+          description: "Aguardando reinicialização completa...",
+        });
+
+        // Aguardar alguns segundos antes de tentar novamente
+        setTimeout(() => {
+          setIsRestarting(false);
+          setErrorMessage("");
+          setShowDiagnostics(false);
+          generateQRCode();
+        }, 5000);
+        
+      } else {
+        const errorText = await restartResponse.text();
+        throw new Error(`Erro ao reiniciar: ${restartResponse.status} - ${errorText}`);
+      }
+      
+    } catch (error) {
+      console.error("Erro ao reiniciar instância:", error);
+      setIsRestarting(false);
+      
+      toast.error("Erro ao reiniciar", {
+        description: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    }
+  };
 
   const generateQRCode = async () => {
     if (!connectionId) {
@@ -49,6 +193,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     setIsLoading(true);
     setErrorMessage("");
     setQrCode(null);
+    setShowDiagnostics(false);
     
     try {
       console.log("Gerando QR code para conexão:", connectionId);
@@ -163,6 +308,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   const handleRetry = () => {
     setErrorMessage("");
     setIsConnected(false);
+    setShowDiagnostics(false);
     generateQRCode();
   };
 
@@ -170,12 +316,31 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     setQrCode(null);
     setIsConnected(false);
     setErrorMessage("");
+    setShowDiagnostics(false);
     onClose();
+  };
+
+  const handleDiagnostics = async () => {
+    const connections = await connectionDatabaseService.getConnections();
+    const connection = connections.find(c => c.id === connectionId);
+    
+    if (connection?.instance_name) {
+      await runDiagnostics(connection.instance_name);
+    }
+  };
+
+  const handleRestart = async () => {
+    const connections = await connectionDatabaseService.getConnections();
+    const connection = connections.find(c => c.id === connectionId);
+    
+    if (connection?.instance_name) {
+      await restartInstance(connection.instance_name);
+    }
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-[450px]">
+      <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {isConnected ? "Conectado!" : "Escaneie o QR Code"}
@@ -188,11 +353,21 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           </DialogDescription>
         </DialogHeader>
         
-        <div className="flex flex-col items-center py-6">
-          {isLoading && (
+        <div className="flex flex-col items-center py-6 space-y-4">
+          {isLoading && !isRestarting && (
             <div className="flex flex-col items-center gap-4">
               <Loader2 className="h-16 w-16 animate-spin text-primary" />
               <p className="text-center">Gerando QR code...</p>
+            </div>
+          )}
+
+          {isRestarting && (
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="h-16 w-16 animate-spin text-orange-500" />
+              <p className="text-center">Reiniciando instância...</p>
+              <p className="text-sm text-muted-foreground text-center">
+                Aguarde enquanto a instância é reiniciada
+              </p>
             </div>
           )}
           
@@ -233,19 +408,61 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           {errorMessage && (
             <div className="flex flex-col items-center gap-4 w-full">
               <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
                 <AlertDescription>
                   {errorMessage}
                 </AlertDescription>
               </Alert>
-              <p className="text-sm text-muted-foreground text-center">
-                Verifique se a instância foi criada corretamente na Evolution API e se o nome está correto.
-              </p>
+              
+              <div className="flex flex-col gap-2 w-full">
+                <p className="text-sm text-muted-foreground text-center">
+                  A instância existe mas pode não estar respondendo. Opções de recuperação:
+                </p>
+                
+                <div className="flex flex-wrap gap-2 justify-center">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleDiagnostics}
+                  >
+                    <Settings className="h-4 w-4 mr-2" />
+                    Diagnóstico
+                  </Button>
+                  
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleRestart}
+                    disabled={isRestarting}
+                  >
+                    {isRestarting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                    )}
+                    Reiniciar Instância
+                  </Button>
+                </div>
+              </div>
+
+              {showDiagnostics && (
+                <div className="w-full">
+                  <Alert>
+                    <InfoIcon className="h-4 w-4" />
+                    <AlertDescription>
+                      <pre className="whitespace-pre-wrap text-xs mt-2 max-h-40 overflow-y-auto">
+                        {diagnosticInfo}
+                      </pre>
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
             </div>
           )}
         </div>
         
         <DialogFooter>
-          {!isConnected && !isLoading && (
+          {!isConnected && !isLoading && !isRestarting && (
             <Button variant="outline" onClick={handleRetry}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Tentar Novamente
