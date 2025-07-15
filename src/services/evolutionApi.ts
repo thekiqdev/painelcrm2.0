@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 
 // Types for Evolution API
@@ -44,6 +43,16 @@ class EvolutionApi {
   constructor() {
     // Carregar as credenciais do localStorage ao inicializar
     this.loadCredentials();
+  }
+
+  // Função para normalizar URL e evitar barras duplicadas
+  private normalizeUrl(baseUrl: string, path: string): string {
+    // Remove barras finais da baseUrl
+    const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
+    // Remove barras iniciais do path
+    const cleanPath = path.replace(/^\/+/, '');
+    // Junta com uma única barra
+    return `${cleanBaseUrl}/${cleanPath}`;
   }
 
   setCredentials(baseUrl: string, apiKey: string | null) {
@@ -177,10 +186,66 @@ class EvolutionApi {
     this.setCredentials(data.api_url, data.global_key);
   }
 
+  // Método para testar conectividade da API
+  async testApiConnectivity(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const url = this.normalizeUrl(this.baseUrl, '');
+      console.log("Testando conectividade da API:", url);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      return {
+        success: response.ok,
+        error: response.ok ? undefined : `HTTP ${response.status}: ${response.statusText}`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Erro de conectividade: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      };
+    }
+  }
+
+  // Método para listar instâncias
+  async fetchInstances(): Promise<any[]> {
+    try {
+      const url = this.normalizeUrl(this.baseUrl, 'instance/fetchInstances');
+      console.log("Listando instâncias na URL:", url);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': this.apiKey || ''
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Erro HTTP ${response.status}:`, errorText);
+        throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log("Instâncias encontradas:", data);
+      return data || [];
+    } catch (error) {
+      console.error("Erro ao listar instâncias:", error);
+      throw error;
+    }
+  }
+
   async createInstance(instanceName: string, token?: string): Promise<any> {
     try {
       console.log(`Criando instância: ${instanceName}`);
-      const response = await fetch(`${this.baseUrl}/instance/create`, {
+      const url = this.normalizeUrl(this.baseUrl, 'instance/create');
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -212,10 +277,11 @@ class EvolutionApi {
   async getInstanceStatus(instanceName: string) {
     try {
       console.log(`Obtendo status da instância: ${instanceName}`);
-      console.log(`URL: ${this.baseUrl}/instance/info/${instanceName}`);
+      const url = this.normalizeUrl(this.baseUrl, `instance/info/${instanceName}`);
+      console.log(`URL do status: ${url}`);
       console.log(`API Key presente: ${!!this.apiKey}`);
       
-      const response = await fetch(`${this.baseUrl}/instance/info/${instanceName}`, {
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -252,9 +318,10 @@ class EvolutionApi {
   async getQRCode(instanceName: string) {
     try {
       console.log(`Solicitando QR Code para instância: ${instanceName}`);
-      console.log(`URL: ${this.baseUrl}/instance/${instanceName}/qrcode`);
+      const url = this.normalizeUrl(this.baseUrl, `instance/${instanceName}/qrcode`);
+      console.log(`URL do QR Code: ${url}`);
       
-      const response = await fetch(`${this.baseUrl}/instance/${instanceName}/qrcode`, {
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -280,7 +347,7 @@ class EvolutionApi {
 
       // Verificar se a resposta contém o QR code em base64
       if (data.base64) {
-        // Remover o prefixo data:image/png;base64, se existir
+        // Remover o prefixo data:image/png;base64, se existir para evitar duplicação
         const base64Data = data.base64.replace(/^data:image\/png;base64,/, '');
         
         return {
@@ -326,7 +393,9 @@ class EvolutionApi {
   async findChats(instanceName: string): Promise<EvolutionContact[]> {
     try {
       console.log(`Buscando conversas para instância: ${instanceName}`);
-      const response = await fetch(`${this.baseUrl}/chat/findChats/${instanceName}`, {
+      const url = this.normalizeUrl(this.baseUrl, `chat/findChats/${instanceName}`);
+      
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -352,7 +421,9 @@ class EvolutionApi {
   async findMessages(instanceName: string, remoteJid: string): Promise<EvolutionMessage[]> {
     try {
       console.log(`Buscando mensagens para: ${instanceName}, ${remoteJid}`);
-      const response = await fetch(`${this.baseUrl}/chat/findMessages/${instanceName}`, {
+      const url = this.normalizeUrl(this.baseUrl, `chat/findMessages/${instanceName}`);
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -385,7 +456,9 @@ class EvolutionApi {
   async sendMessage(instanceName: string, remoteJid: string, message: string): Promise<any> {
     try {
       console.log(`Enviando mensagem para: ${instanceName}, ${remoteJid}`);
-      const response = await fetch(`${this.baseUrl}/message/sendText/${instanceName}`, {
+      const url = this.normalizeUrl(this.baseUrl, `message/sendText/${instanceName}`);
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -415,7 +488,9 @@ class EvolutionApi {
   async deleteInstance(instanceName: string) {
     try {
       console.log(`Deletando instância: ${instanceName}`);
-      const response = await fetch(`${this.baseUrl}/instance/delete/${instanceName}`, {
+      const url = this.normalizeUrl(this.baseUrl, `instance/delete/${instanceName}`);
+      
+      const response = await fetch(url, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',

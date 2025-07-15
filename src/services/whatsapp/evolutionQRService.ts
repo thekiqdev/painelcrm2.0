@@ -32,47 +32,37 @@ export const evolutionQRService = {
       let instanceData = null;
       
       try {
-        const listResponse = await fetch(`${config.api_url}/instance/fetchInstances`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': config.global_key || ''
-          }
-        });
+        const instances = await evolutionApi.fetchInstances();
+        console.log("evolutionQRService: Instâncias disponíveis:", instances);
         
-        if (listResponse.ok) {
-          const instances = await listResponse.json();
-          console.log("evolutionQRService: Instâncias disponíveis:", instances);
+        instanceData = instances.find((instance: any) => 
+          instance.instance?.instanceName === instanceName || 
+          instance.instanceName === instanceName
+        );
+        
+        instanceExists = !!instanceData;
+        
+        if (instanceExists) {
+          console.log("evolutionQRService: Instância encontrada na lista:", instanceData);
           
-          instanceData = instances.find((instance: any) => 
-            instance.instance?.instanceName === instanceName || 
-            instance.instanceName === instanceName
-          );
-          
-          instanceExists = !!instanceData;
-          
-          if (instanceExists) {
-            console.log("evolutionQRService: Instância encontrada na lista:", instanceData);
+          // Se o estado é "open", já está conectada
+          if (instanceData?.instance?.state === "open" || instanceData?.state === "open") {
+            console.log("evolutionQRService: Instância já está conectada");
             
-            // Se o estado é "open", já está conectada
-            if (instanceData?.instance?.state === "open" || instanceData?.state === "open") {
-              console.log("evolutionQRService: Instância já está conectada");
-              
-              const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-              if (existingConnection?.id) {
-                await connectionDatabaseService.updateConnection(existingConnection.id, {
-                  status: "connected",
-                  qr_code: null
-                });
-              }
-              
-              return {
-                success: true,
+            const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
+            if (existingConnection?.id) {
+              await connectionDatabaseService.updateConnection(existingConnection.id, {
                 status: "connected",
-                qrCode: "already_connected",
-                message: "Instância já está conectada!"
-              };
+                qr_code: null
+              });
             }
+            
+            return {
+              success: true,
+              status: "connected",
+              qrCode: "already_connected",
+              message: "Instância já está conectada!"
+            };
           }
         }
       } catch (listError) {
@@ -120,7 +110,9 @@ export const evolutionQRService = {
           try {
             console.log("evolutionQRService: Tentando reiniciar instância não responsiva");
             
-            const restartResponse = await fetch(`${config.api_url}/instance/restart/${instanceName}`, {
+            const url = `${config.api_url.replace(/\/+$/, '')}/instance/restart/${instanceName}`;
+            
+            const restartResponse = await fetch(url, {
               method: 'PUT',
               headers: {
                 'Content-Type': 'application/json',

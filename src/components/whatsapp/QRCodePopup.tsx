@@ -61,60 +61,48 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
 
       // Teste 1: Verificar conectividade com a API
       try {
-        const healthResponse = await fetch(`${config.api_url}/`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
+        const connectivityTest = await evolutionApi.testApiConnectivity();
+        diagnostics += `${connectivityTest.success ? '✓' : '✗'} Conectividade com API: ${connectivityTest.success ? 'OK' : connectivityTest.error}\n`;
         
-        diagnostics += `${healthResponse.ok ? '✓' : '✗'} Conectividade com API: ${healthResponse.status}\n`;
-        
-        if (!healthResponse.ok) {
+        if (!connectivityTest.success) {
           diagnostics += `  Erro: API não está respondendo corretamente\n`;
+          diagnostics += `  Verificar se a URL ${config.api_url} está correta\n`;
         }
       } catch (error) {
         diagnostics += `✗ Erro de conectividade: ${error}\n`;
       }
 
-      // Teste 2: Verificar se a instância existe na lista
+      // Teste 2: Verificar se consegue listar instâncias
       try {
-        const listResponse = await fetch(`${config.api_url}/instance/fetchInstances`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': config.global_key || ''
-          }
-        });
+        const instances = await evolutionApi.fetchInstances();
+        const instanceExists = instances.some((instance: any) => 
+          instance.instance?.instanceName === instanceName || 
+          instance.instanceName === instanceName
+        );
         
-        if (listResponse.ok) {
-          const instances = await listResponse.json();
-          const instanceExists = instances.some((instance: any) => 
+        diagnostics += `${instanceExists ? '✓' : '✗'} Instância encontrada na lista: ${instanceExists ? 'SIM' : 'NÃO'}\n`;
+        diagnostics += `  Total de instâncias na API: ${instances.length}\n`;
+        
+        if (instanceExists) {
+          const instanceData = instances.find((instance: any) => 
             instance.instance?.instanceName === instanceName || 
             instance.instanceName === instanceName
           );
-          
-          diagnostics += `${instanceExists ? '✓' : '✗'} Instância encontrada na lista: ${instanceExists ? 'SIM' : 'NÃO'}\n`;
-          diagnostics += `  Total de instâncias na API: ${instances.length}\n`;
-          
-          if (instanceExists) {
-            const instanceData = instances.find((instance: any) => 
-              instance.instance?.instanceName === instanceName || 
-              instance.instanceName === instanceName
-            );
-            diagnostics += `  Estado: ${instanceData?.instance?.state || instanceData?.state || 'indefinido'}\n`;
-            diagnostics += `  Status: ${instanceData?.status || 'indefinido'}\n`;
-          }
+          diagnostics += `  Estado: ${instanceData?.instance?.state || instanceData?.state || 'indefinido'}\n`;
+          diagnostics += `  Status: ${instanceData?.status || 'indefinido'}\n`;
         } else {
-          diagnostics += `✗ Erro ao listar instâncias: ${listResponse.status}\n`;
-          const errorText = await listResponse.text();
-          diagnostics += `  Detalhes: ${errorText}\n`;
+          diagnostics += `  ⚠️  A instância '${instanceName}' não foi encontrada!\n`;
+          diagnostics += `  Verificar se o nome está correto ou se precisa ser criada\n`;
         }
       } catch (error) {
         diagnostics += `✗ Erro ao listar instâncias: ${error}\n`;
+        if (error instanceof Error && error.message.includes('404')) {
+          diagnostics += `  ⚠️  Endpoint de listagem não encontrado\n`;
+          diagnostics += `  Verificar se a URL da API está correta\n`;
+        }
       }
 
-      // Teste 3: Verificar status específico
+      // Teste 3: Verificar status específico da instância
       try {
         const status = await evolutionApi.getInstanceStatus(instanceName);
         diagnostics += `✓ Status específico obtido:\n`;
@@ -123,6 +111,21 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         setInstanceStatus(status);
       } catch (error) {
         diagnostics += `✗ Erro ao obter status: ${error}\n`;
+        if (error instanceof Error && error.message.includes('404')) {
+          diagnostics += `  ⚠️  Instância não responde - pode estar inativa\n`;
+        }
+      }
+
+      // Teste 4: Verificar se consegue gerar QR Code
+      try {
+        const qrResult = await evolutionApi.getQRCode(instanceName);
+        if (qrResult.success) {
+          diagnostics += `✓ QR Code: ${qrResult.status === 'connected' ? 'Já conectado' : 'Gerado com sucesso'}\n`;
+        } else {
+          diagnostics += `✗ QR Code: ${qrResult.error || 'Erro desconhecido'}\n`;
+        }
+      } catch (error) {
+        diagnostics += `✗ Erro ao obter QR Code: ${error}\n`;
       }
 
       setDiagnosticInfo(diagnostics);
@@ -146,7 +149,10 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
 
       console.log("Reiniciando instância:", instanceName);
       
-      const restartResponse = await fetch(`${config.api_url}/instance/restart/${instanceName}`, {
+      // Usar URL normalizada para evitar problemas de barras duplas
+      const url = `${config.api_url.replace(/\/+$/, '')}/instance/restart/${instanceName}`;
+      
+      const restartResponse = await fetch(url, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
