@@ -132,8 +132,8 @@ export const evolutionQRService = {
         }
       }
       
-      // Etapa 3: Tentar obter QR code diretamente
-      console.log("evolutionQRService: Tentando obter QR Code diretamente para:", instanceName);
+      // Etapa 3: Tentar obter QR code usando o endpoint correto /instance/connect/{instance}
+      console.log("evolutionQRService: Tentando obter QR Code com endpoint /instance/connect para:", instanceName);
       
       try {
         const qrResult = await evolutionApi.getQRCode(instanceName);
@@ -161,13 +161,11 @@ export const evolutionQRService = {
         if (qrResult && qrResult.qrcode) {
           let qrCodeData = null;
           
-          // Verificar se o QR code está em base64
+          // Verificar se o QR code está em base64 (campo 'code' da resposta)
           if (qrResult.qrcode.base64) {
             qrCodeData = qrResult.qrcode.base64;
           } else if (typeof qrResult.qrcode === 'string') {
             qrCodeData = qrResult.qrcode;
-          } else if (qrResult.qrcode.code) {
-            qrCodeData = qrResult.qrcode.code;
           }
           
           if (qrCodeData) {
@@ -187,7 +185,8 @@ export const evolutionQRService = {
               success: true,
               qrCode: qrCodeData,
               status: "awaiting_scan",
-              message: "QR Code gerado com sucesso!"
+              message: "QR Code gerado com sucesso!",
+              pairingCode: qrResult.pairingCode // Incluir o pairingCode para uso alternativo
             };
           }
         }
@@ -226,11 +225,13 @@ Possíveis causas:
 • Instância em processo de inicialização
 • Estado inconsistente da instância
 • Problema temporário na API
+• Versão da Evolution API com bugs conhecidos
 
 Recomendações:
 1. Use "Reiniciar Instância" 
 2. Aguarde alguns minutos
-3. Tente novamente`);
+3. Verifique a versão da Evolution API
+4. Tente novamente`);
       
     } catch (error) {
       console.error("evolutionQRService: Erro ao obter QR code:", error);

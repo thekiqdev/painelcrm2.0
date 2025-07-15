@@ -30,6 +30,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   onConnect,
 }) => {
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -116,11 +117,14 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         }
       }
 
-      // Teste 4: Verificar se consegue gerar QR Code
+      // Teste 4: Verificar se consegue gerar QR Code (usando endpoint correto)
       try {
         const qrResult = await evolutionApi.getQRCode(instanceName);
         if (qrResult.success) {
-          diagnostics += `✓ QR Code: ${qrResult.status === 'connected' ? 'Já conectado' : 'Gerado com sucesso'}\n`;
+          diagnostics += `✓ QR Code (endpoint /instance/connect): ${qrResult.status === 'connected' ? 'Já conectado' : 'Gerado com sucesso'}\n`;
+          if (qrResult.pairingCode) {
+            diagnostics += `  Código de Emparelhamento: ${qrResult.pairingCode}\n`;
+          }
         } else {
           diagnostics += `✗ QR Code: ${qrResult.error || 'Erro desconhecido'}\n`;
         }
@@ -200,6 +204,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     setIsLoading(true);
     setErrorMessage("");
     setQrCode(null);
+    setPairingCode(null);
     setShowDiagnostics(false);
     
     try {
@@ -237,6 +242,12 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         
         if (result.qrCode) {
           setQrCode(result.qrCode);
+          
+          // Definir o código de emparelhamento se disponível
+          if (result.pairingCode) {
+            setPairingCode(result.pairingCode);
+          }
+          
           toast.success("QR Code gerado", {
             description: "Escaneie o QR code com seu WhatsApp",
           });
@@ -392,6 +403,16 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
                   Abra o WhatsApp no seu celular, toque em Menu ou Configurações e selecione WhatsApp Web. 
                   Aponte a câmera do seu celular para esta tela para capturar o código.
                 </p>
+                {pairingCode && (
+                  <Alert className="mt-4">
+                    <InfoIcon className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Código de Emparelhamento:</strong> {pairingCode}
+                      <br />
+                      <span className="text-xs">Use este código se não conseguir escanear o QR code</span>
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <p className="text-xs text-blue-600 font-medium mt-2">
                   ⏳ Aguardando escaneamento...
                 </p>

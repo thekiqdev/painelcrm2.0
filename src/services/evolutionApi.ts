@@ -318,7 +318,8 @@ class EvolutionApi {
   async getQRCode(instanceName: string) {
     try {
       console.log(`Solicitando QR Code para instância: ${instanceName}`);
-      const url = this.normalizeUrl(this.baseUrl, `instance/${instanceName}/qrcode`);
+      // Usar o endpoint correto conforme documentação: /instance/connect/{instance}
+      const url = this.normalizeUrl(this.baseUrl, `instance/connect/${instanceName}`);
       console.log(`URL do QR Code: ${url}`);
       
       const response = await fetch(url, {
@@ -345,30 +346,23 @@ class EvolutionApi {
       const data = await response.json();
       console.log("Resposta completa da API para QR Code:", data);
 
-      // Verificar se a resposta contém o QR code em base64
-      if (data.base64) {
-        // Remover o prefixo data:image/png;base64, se existir para evitar duplicação
-        const base64Data = data.base64.replace(/^data:image\/png;base64,/, '');
-        
+      // Processar resposta conforme documentação Evolution API
+      // Formato esperado: { "pairingCode": "WZYEH1YY", "code": "2@y8eK+bjtEjUWy9/FOM...", "count": 1 }
+      
+      if (data.code) {
+        // O campo 'code' contém os dados Base64 do QR code
         return {
           success: true,
           qrcode: {
-            base64: base64Data
+            base64: data.code // Usar diretamente o campo 'code'
           },
-          status: data.status || "connecting"
+          pairingCode: data.pairingCode,
+          count: data.count,
+          status: "connecting"
         };
       }
 
-      // Se não tem base64, mas tem qrcode
-      if (data.qrcode) {
-        return {
-          success: true,
-          qrcode: data.qrcode,
-          status: data.status || "connecting"
-        };
-      }
-
-      // Se já está conectado
+      // Se não tem código, verificar se já está conectado
       if (data.status === "open" || data.instance?.state === "open") {
         return {
           success: true,
@@ -381,7 +375,7 @@ class EvolutionApi {
       console.warn("Resposta inesperada da API:", data);
       return {
         success: false,
-        error: "Formato de resposta inesperado da API"
+        error: "Formato de resposta inesperado da API - campo 'code' não encontrado"
       };
 
     } catch (error) {
