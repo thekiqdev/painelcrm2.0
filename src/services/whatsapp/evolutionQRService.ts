@@ -158,12 +158,12 @@ export const evolutionQRService = {
           };
         }
         
-        if (qrResult && qrResult.code) {
+        if (qrResult && qrResult.qrcode) {
           let qrCodeData = null;
           
-          // O campo 'code' contém diretamente os dados Base64 do QR code
-          if (typeof qrResult.code === 'string') {
-            qrCodeData = qrResult.code;
+          // O QR code está no campo qrcode.base64 conforme retornado pela evolutionApi.getQRCode()
+          if (qrResult.qrcode.base64) {
+            qrCodeData = qrResult.qrcode.base64;
           }
           
           if (qrCodeData) {
