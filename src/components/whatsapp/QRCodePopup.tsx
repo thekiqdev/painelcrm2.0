@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -45,6 +44,26 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       generateQRCode();
     }
   }, [isOpen, connectionId]);
+
+  // Função para processar o base64 do QR Code
+  const processQRCodeBase64 = (base64Data: string): string => {
+    console.log("Processando base64 original:", base64Data?.substring(0, 100) + "...");
+    
+    // Se já tem o prefixo data:image/png;base64, usar diretamente
+    if (base64Data?.startsWith('data:image/')) {
+      console.log("Base64 já tem prefixo data:image");
+      return base64Data;
+    }
+    
+    // Se tem apenas base64, adicionar o prefixo
+    if (base64Data && !base64Data.startsWith('data:')) {
+      console.log("Adicionando prefixo data:image/png;base64 ao base64");
+      return `data:image/png;base64,${base64Data}`;
+    }
+    
+    console.warn("Formato de base64 inesperado:", base64Data);
+    return base64Data || '';
+  };
 
   const runDiagnostics = async (instanceName: string) => {
     try {
@@ -241,7 +260,11 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         }
         
         if (result.qrCode) {
-          setQrCode(result.qrCode);
+          // Processar o base64 corretamente
+          const processedQRCode = processQRCodeBase64(result.qrCode);
+          console.log("QR Code processado:", processedQRCode.substring(0, 100) + "...");
+          
+          setQrCode(processedQRCode);
           
           // Definir o código de emparelhamento se disponível
           if (result.pairingCode) {
@@ -393,9 +416,16 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
             <div className="flex flex-col items-center gap-4">
               <div className="border-4 border-white rounded-lg shadow-lg">
                 <img 
-                  src={`data:image/png;base64,${qrCode}`} 
+                  src={qrCode} 
                   alt="QR Code para conexão WhatsApp" 
                   className="w-[200px] h-[200px]" 
+                  onError={(e) => {
+                    console.error("Erro ao carregar imagem do QR Code:", e);
+                    console.log("URL da imagem:", qrCode);
+                  }}
+                  onLoad={() => {
+                    console.log("QR Code carregado com sucesso");
+                  }}
                 />
               </div>
               <div className="text-center max-w-sm">
