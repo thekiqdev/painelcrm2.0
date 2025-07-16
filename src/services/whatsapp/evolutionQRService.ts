@@ -1,4 +1,3 @@
-
 import { evolutionApi } from "../evolutionApi";
 import { connectionDatabaseService } from "./connectionDatabaseService";
 
@@ -114,47 +113,12 @@ export const evolutionQRService = {
         console.log("evolutionQRService: Instância não encontrada na lista, mas tentando obter QR code diretamente...");
       }
       
-      // Etapa 2: Verificar status específico da instância (mesmo que não encontrada na lista)
-      try {
-        console.log("evolutionQRService: Verificando status específico da instância:", instanceName);
-        const status = await evolutionApi.getInstanceStatus(instanceName);
-        console.log("evolutionQRService: Status obtido:", status);
-        
-        // Se já está conectada
-        if (status?.instance?.state === "open") {
-          console.log("evolutionQRService: Instância já conectada via status");
-          
-          const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
-          if (existingConnection?.id) {
-            await connectionDatabaseService.updateConnection(existingConnection.id, {
-              status: "connected",
-              qr_code: null
-            });
-          }
-          
-          return {
-            success: true,
-            status: "connected",
-            qrCode: "already_connected",
-            message: "Instância já está conectada!"
-          };
-        }
-        
-      } catch (statusError) {
-        console.log("evolutionQRService: Erro ao verificar status:", statusError);
-        
-        // Se for erro 404, a instância existe mas não responde (comum na Evolution API)
-        if (statusError instanceof Error && statusError.message.includes("404")) {
-          console.log("evolutionQRService: Instância não responde ao comando de status (404) - isso é normal, tentando QR code...");
-        }
-      }
-      
       // Etapa 3: Tentar obter QR code usando o endpoint correto /instance/connect/{instance}
       console.log("evolutionQRService: Tentando obter QR Code com endpoint /instance/connect para:", instanceName);
       
       try {
         const qrResult = await evolutionApi.getQRCode(instanceName);
-        console.log("evolutionQRService: Resultado do QR Code:", qrResult);
+        console.log("evolutionQRService: Resultado completo do QR Code:", qrResult);
         
         if (qrResult && qrResult.success && qrResult.status === "connected") {
           console.log("evolutionQRService: Instância conectada durante obtenção do QR");
@@ -178,13 +142,24 @@ export const evolutionQRService = {
         if (qrResult && qrResult.qrcode) {
           let qrCodeData = null;
           
-          // O QR code está no campo qrcode.base64 conforme retornado pela evolutionApi.getQRCode()
+          // Verificar diferentes formatos de retorno do QR code
+          console.log("evolutionQRService: Estrutura do qrcode:", qrResult.qrcode);
+          
           if (qrResult.qrcode.base64) {
             qrCodeData = qrResult.qrcode.base64;
+            console.log("evolutionQRService: QR Code encontrado em qrcode.base64");
+          } else if (typeof qrResult.qrcode === 'string') {
+            qrCodeData = qrResult.qrcode;
+            console.log("evolutionQRService: QR Code é string direta");
+          } else if (qrResult.qrcode.code) {
+            qrCodeData = qrResult.qrcode.code;
+            console.log("evolutionQRService: QR Code encontrado em qrcode.code");
           }
           
+          console.log("evolutionQRService: QR Code extraído:", qrCodeData?.substring(0, 100) + "...");
+          
           if (qrCodeData) {
-            console.log("evolutionQRService: QR Code obtido com sucesso");
+            console.log("evolutionQRService: QR Code obtido com sucesso, tamanho:", qrCodeData.length);
             
             // Atualizar conexão existente
             const existingConnection = await connectionDatabaseService.getConnectionByInstanceName(instanceName);
@@ -203,7 +178,13 @@ export const evolutionQRService = {
               message: "QR Code gerado com sucesso!",
               pairingCode: qrResult.pairingCode // Incluir o pairingCode para uso alternativo
             };
+          } else {
+            console.error("evolutionQRService: QR Code não encontrado na resposta:", qrResult);
+            throw new Error("QR Code não foi encontrado na resposta da API");
           }
+        } else {
+          console.error("evolutionQRService: Resposta não contém qrcode:", qrResult);
+          throw new Error("Resposta da API não contém dados do QR Code");
         }
         
       } catch (qrError) {

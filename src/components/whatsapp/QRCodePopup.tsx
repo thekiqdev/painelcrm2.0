@@ -47,22 +47,34 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
 
   // Função para processar o base64 do QR Code
   const processQRCodeBase64 = (base64Data: string): string => {
-    console.log("Processando base64 original:", base64Data?.substring(0, 100) + "...");
+    console.log("Processando base64 recebido:", base64Data);
     
-    // Se já tem o prefixo data:image/png;base64, usar diretamente
-    if (base64Data?.startsWith('data:image/')) {
+    // Verificar se o base64 está vazio ou inválido
+    if (!base64Data || base64Data.trim() === '') {
+      console.error("Base64 está vazio ou inválido");
+      return '';
+    }
+    
+    // Remover quebras de linha e espaços em branco
+    const cleanBase64 = base64Data.replace(/\s/g, '');
+    console.log("Base64 limpo:", cleanBase64.substring(0, 100) + "...");
+    
+    // Se já tem o prefixo data:image, usar diretamente
+    if (cleanBase64.startsWith('data:image/')) {
       console.log("Base64 já tem prefixo data:image");
-      return base64Data;
+      return cleanBase64;
     }
     
     // Se tem apenas base64, adicionar o prefixo
-    if (base64Data && !base64Data.startsWith('data:')) {
+    if (cleanBase64 && !cleanBase64.startsWith('data:')) {
       console.log("Adicionando prefixo data:image/png;base64 ao base64");
-      return `data:image/png;base64,${base64Data}`;
+      const processedData = `data:image/png;base64,${cleanBase64}`;
+      console.log("QR Code processado final:", processedData.substring(0, 100) + "...");
+      return processedData;
     }
     
-    console.warn("Formato de base64 inesperado:", base64Data);
-    return base64Data || '';
+    console.warn("Formato de base64 inesperado:", cleanBase64);
+    return cleanBase64 || '';
   };
 
   const runDiagnostics = async (instanceName: string) => {
@@ -248,7 +260,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       
       const result = await evolutionQRService.getEvolutionQRCode(connection.instance_name);
       
-      console.log("Resultado do evolutionQRService:", result);
+      console.log("Resultado completo do evolutionQRService:", result);
       
       if (result.success) {
         if (result.qrCode === "already_connected" || result.status === "connected") {
@@ -260,9 +272,16 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         }
         
         if (result.qrCode) {
+          console.log("QR Code recebido do service:", result.qrCode);
+          
           // Processar o base64 corretamente
           const processedQRCode = processQRCodeBase64(result.qrCode);
-          console.log("QR Code processado:", processedQRCode.substring(0, 100) + "...");
+          
+          if (!processedQRCode || processedQRCode.trim() === '') {
+            throw new Error("QR Code processado está vazio");
+          }
+          
+          console.log("QR Code processado para exibição:", processedQRCode.substring(0, 100) + "...");
           
           setQrCode(processedQRCode);
           
@@ -414,17 +433,20 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           
           {qrCode && !isConnected && (
             <div className="flex flex-col items-center gap-4">
-              <div className="border-4 border-white rounded-lg shadow-lg">
+              <div className="border-4 border-white rounded-lg shadow-lg bg-white p-2">
                 <img 
                   src={qrCode} 
                   alt="QR Code para conexão WhatsApp" 
-                  className="w-[200px] h-[200px]" 
+                  className="w-[200px] h-[200px] object-contain" 
                   onError={(e) => {
                     console.error("Erro ao carregar imagem do QR Code:", e);
-                    console.log("URL da imagem:", qrCode);
+                    console.error("URL da imagem que falhou:", qrCode);
+                    console.error("Primeiros 200 caracteres:", qrCode?.substring(0, 200));
+                    setErrorMessage("Erro ao carregar a imagem do QR Code. Tente gerar novamente.");
                   }}
                   onLoad={() => {
-                    console.log("QR Code carregado com sucesso");
+                    console.log("QR Code carregado com sucesso!");
+                    console.log("Tamanho da URL:", qrCode?.length);
                   }}
                 />
               </div>
