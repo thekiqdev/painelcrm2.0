@@ -82,6 +82,24 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
     onOpenQRPopup(connectionId);
   };
 
+  // Function to get status display in Portuguese
+  const getStatusDisplay = (status: string) => {
+    switch (status) {
+      case "created":
+        return "Criada";
+      case "awaiting_scan":
+        return "Aguardando QR";
+      case "connected":
+        return "Conectada";
+      case "disconnected":
+        return "Desconectada";
+      case "connecting":
+        return "Conectando";
+      default:
+        return status;
+    }
+  };
+
   // Render empty state
   if (connections.length === 0) {
     return (
@@ -112,7 +130,7 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                   Tipo: {getConnectionTypeDisplay(connection.type)}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Status: {connection.status === "created" ? "Criada" : connection.status === "awaiting_scan" ? "Aguardando QR" : connection.status === "connected" ? "Conectada" : connection.status}
+                  Status: {getStatusDisplay(connection.status)}
                 </p>
               </div>
               
@@ -124,8 +142,10 @@ const ConnectionsList: React.FC<ConnectionsListProps> = ({
                   </span>
                 )}
                 
-                {/* Botão para gerar QR Code para conexões criadas mas não conectadas */}
-                {(connection.status === "created" || connection.status === "disconnected") && (
+                {/* Botão para gerar QR Code para conexões criadas, desconectadas ou aguardando QR */}
+                {(connection.status === "created" || 
+                  connection.status === "disconnected" || 
+                  connection.status === "awaiting_scan") && (
                   <Button 
                     size="sm" 
                     variant="outline"
