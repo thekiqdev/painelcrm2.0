@@ -317,10 +317,14 @@ class EvolutionApi {
 
   async getQRCode(instanceName: string) {
     try {
-      console.log(`Solicitando QR Code para instância: ${instanceName}`);
+      console.log(`🔍 EVOLUTIONAPI: ===== INICIANDO GETQRCODE =====`);
+      console.log(`🔍 EVOLUTIONAPI: Instância solicitada:`, instanceName);
+      console.log(`🔍 EVOLUTIONAPI: Base URL configurada:`, this.baseUrl);
+      console.log(`🔍 EVOLUTIONAPI: API Key presente:`, !!this.apiKey);
+      
       // Usar o endpoint correto conforme documentação: /instance/connect/{instance}
       const url = this.normalizeUrl(this.baseUrl, `instance/connect/${instanceName}`);
-      console.log(`URL do QR Code: ${url}`);
+      console.log(`🔍 EVOLUTIONAPI: URL final do QR Code:`, url);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -330,11 +334,12 @@ class EvolutionApi {
         }
       });
 
-      console.log(`Status da resposta QR Code: ${response.status}`);
+      console.log(`🔍 EVOLUTIONAPI: Status da resposta QR Code:`, response.status);
+      console.log(`🔍 EVOLUTIONAPI: Headers da resposta:`, [...response.headers.entries()]);
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`Erro HTTP ${response.status}:`, errorText);
+        console.error(`❌ EVOLUTIONAPI: Erro HTTP ${response.status}:`, errorText);
         
         if (response.status === 404) {
           throw new Error(`Erro 404 ao solicitar QR Code para '${instanceName}'. A instância pode estar em processo de inicialização ou inativa.`);

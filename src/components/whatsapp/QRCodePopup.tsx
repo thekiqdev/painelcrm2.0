@@ -122,10 +122,37 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       // Teste 2: Verificar se consegue listar instâncias
       try {
         const instances = await evolutionApi.fetchInstances();
-        const instanceExists = instances.some((instance: any) => 
-          instance.instance?.instanceName === instanceName || 
-          instance.instanceName === instanceName
-        );
+        console.log("🔍 DIAGNÓSTICO: Todas as instâncias encontradas:", instances);
+        
+        // Logs detalhados de cada instância
+        instances.forEach((instance, index) => {
+          console.log(`🔍 DIAGNÓSTICO: Instância ${index + 1}:`, {
+            instanceName: instance.instance?.instanceName || instance.instanceName,
+            name: instance.name,
+            state: instance.instance?.state || instance.state,
+            status: instance.status,
+            objetoCompleto: instance
+          });
+        });
+        
+        const instanceExists = instances.some((instance: any) => {
+          const instanceName1 = instance.instance?.instanceName;
+          const instanceName2 = instance.instanceName;
+          const instanceName3 = instance.name;
+          
+          console.log(`🔍 DIAGNÓSTICO: Comparando '${instanceName}' com:`, {
+            instanceName1,
+            instanceName2,
+            instanceName3,
+            match1: instanceName1 === instanceName,
+            match2: instanceName2 === instanceName,
+            match3: instanceName3 === instanceName
+          });
+          
+          return instanceName1 === instanceName || 
+                 instanceName2 === instanceName || 
+                 instanceName3 === instanceName;
+        });
         
         diagnostics += `${instanceExists ? '✓' : '✗'} Instância encontrada na lista: ${instanceExists ? 'SIM' : 'NÃO'}\n`;
         diagnostics += `  Total de instâncias na API: ${instances.length}\n`;
@@ -133,13 +160,18 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         if (instanceExists) {
           const instanceData = instances.find((instance: any) => 
             instance.instance?.instanceName === instanceName || 
-            instance.instanceName === instanceName
+            instance.instanceName === instanceName ||
+            instance.name === instanceName
           );
           diagnostics += `  Estado: ${instanceData?.instance?.state || instanceData?.state || 'indefinido'}\n`;
           diagnostics += `  Status: ${instanceData?.status || 'indefinido'}\n`;
         } else {
           diagnostics += `  ⚠️  A instância '${instanceName}' não foi encontrada!\n`;
           diagnostics += `  Verificar se o nome está correto ou se precisa ser criada\n`;
+          diagnostics += `  Nomes encontrados na API:\n`;
+          instances.forEach((instance) => {
+            diagnostics += `    - ${instance.instance?.instanceName || instance.instanceName || instance.name || 'sem nome'}\n`;
+          });
         }
       } catch (error) {
         diagnostics += `✗ Erro ao listar instâncias: ${error}\n`;
@@ -165,9 +197,23 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
 
       // Teste 4: Verificar se consegue gerar QR Code (usando endpoint correto)
       try {
+        console.log("🔍 DIAGNÓSTICO: ===== TESTANDO GERAÇÃO DE QR CODE =====");
         const qrResult = await evolutionApi.getQRCode(instanceName);
+        console.log("🔍 DIAGNÓSTICO: Resultado completo do QR Code:", qrResult);
+        
         if (qrResult.success) {
           diagnostics += `✓ QR Code (endpoint /instance/connect): ${qrResult.status === 'connected' ? 'Já conectado' : 'Gerado com sucesso'}\n`;
+          
+          // IMPORTANTE: Se o QR Code foi gerado com sucesso, a instância DEVE existir
+          if (qrResult.status !== 'connected') {
+            diagnostics += `  ⚠️  INCONSISTÊNCIA DETECTADA!\n`;
+            diagnostics += `  ⚠️  QR Code gerado com sucesso, mas instância não foi encontrada na listagem\n`;
+            diagnostics += `  ⚠️  Isso indica que:\n`;
+            diagnostics += `  ⚠️  1. A instância existe e está funcionando\n`;
+            diagnostics += `  ⚠️  2. O endpoint de listagem pode estar retornando dados incompletos\n`;
+            diagnostics += `  ⚠️  3. O nome da instância pode estar em formato diferente na listagem\n`;
+          }
+          
           if (qrResult.pairingCode) {
             diagnostics += `  Código de Emparelhamento: ${qrResult.pairingCode}\n`;
           }
