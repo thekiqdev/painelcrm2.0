@@ -63,25 +63,83 @@ export const useWhatsAppConnection = () => {
   // Verificar status da conexão atual
   useEffect(() => {
     const checkConnectionStatus = async () => {
+      console.info('🔍 useWhatsAppConnection: ===== VERIFICAÇÃO DE STATUS =====');
+      console.info('🔍 useWhatsAppConnection: User presente?', !!user);
+      console.info('🔍 useWhatsAppConnection: Total de conexões:', connections.length);
+      
       try {
-        if (!user) return;
+        if (!user) {
+          console.info('🔍 useWhatsAppConnection: Usuário não autenticado, pulando verificação');
+          return;
+        }
         
         if (profile?.whatsapp_connected) {
+          console.info('🔍 useWhatsAppConnection: Profile indica WhatsApp conectado');
           setConnectionStatus("connected");
           return;
         }
         
-        const status = await whatsappService.getStatus();
-        if (status.connected) {
-          setConnectionStatus("connected");
-          if (!profile?.whatsapp_connected) {
-            await updateProfile({ whatsapp_connected: true });
+        // Verificar cada conexão individualmente
+        for (const connection of connections) {
+          console.info('🔍 useWhatsAppConnection: ===== VERIFICANDO CONEXÃO =====');
+          console.info('🔍 useWhatsAppConnection: Dados da conexão:', {
+            id: connection.id,
+            name: connection.name,
+            type: connection.type,
+            currentStatus: connection.status,
+            configData: connection.configData
+          });
+
+          // Verificar qual nome está sendo usado para a API
+          const instanceName = connection.configData?.instanceName || connection.name;
+          console.info('🔍 useWhatsAppConnection: Nome para API:', instanceName);
+
+          try {
+            console.info('🔍 useWhatsAppConnection: Chamando getStatus para:', instanceName);
+            const status = await whatsappService.getStatus();
+            console.info('🔍 useWhatsAppConnection: Status recebido:', {
+              connectionName: connection.name,
+              instanceName: instanceName,
+              status: status
+            });
+            
+            if (status?.connected) {
+              console.info('🔍 useWhatsAppConnection: Conexão ativa encontrada');
+              setConnectionStatus("connected");
+              if (!profile?.whatsapp_connected) {
+                await updateProfile({ whatsapp_connected: true });
+              }
+              break; // Para no primeiro conectado
+            }
+          } catch (error) {
+            console.error('❌ useWhatsAppConnection: Erro ao verificar status da conexão:', {
+              connectionName: connection.name,
+              instanceName: instanceName,
+              _type: 'Error',
+              value: error
+            });
+            
+            // Se o erro for 404, pode indicar problema de nome da instância
+            if (error instanceof Error && error.message.includes('404')) {
+              console.error('❌ useWhatsAppConnection: ERRO 404 - INSTÂNCIA NÃO ENCONTRADA!');
+              console.error('❌ useWhatsAppConnection: Possíveis causas:', {
+                incorrectName: 'Nome da instância pode estar incorreto',
+                nameMismatch: 'Diferença entre nome armazenado e nome real na API',
+                instanceDeleted: 'Instância pode ter sido deletada',
+                suggestion: 'Verificar lista de instâncias via fetchInstances'
+              });
+            }
           }
-        } else {
+        }
+        
+        // Se nenhuma conexão estava ativa
+        if (connections.length === 0) {
+          console.info('🔍 useWhatsAppConnection: Nenhuma conexão cadastrada');
           setConnectionStatus("disconnected");
         }
+        
       } catch (error) {
-        console.error("Error checking connection status:", error);
+        console.error("❌ useWhatsAppConnection: Erro geral na verificação:", error);
         toast.error("Erro ao verificar status da conexão", { 
           description: "Não foi possível verificar o status da conexão WhatsApp." 
         });
@@ -89,7 +147,7 @@ export const useWhatsAppConnection = () => {
     };
     
     checkConnectionStatus();
-  }, [user, profile, updateProfile]);
+  }, [user, profile, updateProfile, connections]);
   
   const handleAddConnection = async (connectionName: string, connectionType: string, configData?: any) => {
     try {

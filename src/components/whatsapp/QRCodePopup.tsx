@@ -47,48 +47,101 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
 
   // Função para processar o base64 do QR Code
   const processQRCodeBase64 = (base64Data: string): string => {
-    console.log("🔍 QRCodePopup: ===== INÍCIO DO PROCESSAMENTO BASE64 =====");
-    console.log("🔍 QRCodePopup: Base64 recebido (bruto):", base64Data);
-    console.log("🔍 QRCodePopup: Tipo do dado:", typeof base64Data);
-    console.log("🔍 QRCodePopup: Tamanho original:", base64Data?.length || 0);
+    console.info("🔍 QRCodePopup: ===== PROCESSAMENTO BASE64 =====");
+    console.info("🔍 QRCodePopup: Base64 recebido (bruto):", base64Data);
+    console.info("🔍 QRCodePopup: Tipo do dado:", typeof base64Data);
+    console.info("🔍 QRCodePopup: Tamanho original:", base64Data?.length || 0);
     
     if (!base64Data || base64Data.trim() === '') {
       console.error("❌ QRCodePopup: Base64 vazio ou undefined");
       return '';
     }
 
+    // Análise detalhada dos caracteres
+    console.info("🔍 QRCodePopup: ===== ANÁLISE DE CARACTERES =====");
+    console.info("🔍 QRCodePopup: Primeiros 100 chars:", base64Data.substring(0, 100));
+    console.info("🔍 QRCodePopup: Últimos 100 chars:", base64Data.substring(base64Data.length - 100));
+    console.info("🔍 QRCodePopup: Contém espaços?", base64Data.includes(' '));
+    console.info("🔍 QRCodePopup: Contém quebras de linha?", base64Data.includes('\n') || base64Data.includes('\r'));
+    console.info("🔍 QRCodePopup: Contém tabs?", base64Data.includes('\t'));
+
     // Limpar o base64
-    let cleanBase64 = base64Data.trim().replace(/\s/g, '');
-    console.log("🔍 QRCodePopup: Base64 após limpeza:", cleanBase64);
-    console.log("🔍 QRCodePopup: Tamanho após limpeza:", cleanBase64.length);
-    console.log("🔍 QRCodePopup: Primeiros 200 caracteres:", cleanBase64.substring(0, 200));
-    console.log("🔍 QRCodePopup: Últimos 50 caracteres:", cleanBase64.slice(-50));
+    let cleanBase64 = base64Data.trim().replace(/[\r\n\t\s]/g, '');
+    console.info("🔍 QRCodePopup: Base64 após limpeza:", cleanBase64);
+    console.info("🔍 QRCodePopup: Tamanho após limpeza:", cleanBase64.length);
+    console.info("🔍 QRCodePopup: Primeiros 200 caracteres limpos:", cleanBase64.substring(0, 200));
+    console.info("🔍 QRCodePopup: Últimos 50 caracteres limpos:", cleanBase64.slice(-50));
     
     // Verificar padrões conhecidos
-    console.log("🔍 QRCodePopup: Verificando padrões...");
-    console.log("🔍 QRCodePopup: Começa com 'data:image/'?", cleanBase64.startsWith('data:image/'));
-    console.log("🔍 QRCodePopup: Começa com número@?", /^\d+@/.test(cleanBase64));
-    console.log("🔍 QRCodePopup: Contém '@'?", cleanBase64.includes('@'));
-    console.log("🔍 QRCodePopup: Contém '='?", cleanBase64.includes('='));
-    console.log("🔍 QRCodePopup: Contém ','?", cleanBase64.includes(','));
-    console.log("🔍 QRCodePopup: É base64 válido?", /^[A-Za-z0-9+/=@,]+$/.test(cleanBase64));
+    console.info("🔍 QRCodePopup: ===== VERIFICAÇÃO DE PADRÕES =====");
+    console.info("🔍 QRCodePopup: Começa com 'data:image/'?", cleanBase64.startsWith('data:image/'));
+    console.info("🔍 QRCodePopup: Começa com número@?", /^\d+@/.test(cleanBase64));
+    console.info("🔍 QRCodePopup: Contém '@'?", cleanBase64.includes('@'));
+    console.info("🔍 QRCodePopup: Contém '='?", cleanBase64.includes('='));
+    console.info("🔍 QRCodePopup: Contém ','?", cleanBase64.includes(','));
+    console.info("🔍 QRCodePopup: É formato WhatsApp (número@)?", /^\d+@.*/.test(cleanBase64));
+    
+    // Verificar se é Base64 válido ou dados WhatsApp
+    const isValidBase64 = /^[A-Za-z0-9+/]*=*$/.test(cleanBase64);
+    const isWhatsAppData = /^[A-Za-z0-9+/=@,]+$/.test(cleanBase64);
+    console.info("🔍 QRCodePopup: É base64 tradicional?", isValidBase64);
+    console.info("🔍 QRCodePopup: É dados WhatsApp válidos?", isWhatsAppData);
     
     // Se já tem prefixo data:image, retornar como está
     if (cleanBase64.startsWith('data:image/')) {
-      console.log("✅ QRCodePopup: Base64 já tem prefixo data:image");
+      console.info("✅ QRCodePopup: Base64 já tem prefixo data:image");
       return cleanBase64;
     }
     
-    // Adicionar prefixo para qualquer conteúdo válido
-    if (cleanBase64) {
-      console.log("✅ QRCodePopup: Adicionando prefixo data:image/png;base64");
-      const finalBase64 = `data:image/png;base64,${cleanBase64}`;
-      console.log("🔍 QRCodePopup: Base64 final:", finalBase64.substring(0, 100) + "...");
-      console.log("🔍 QRCodePopup: Tamanho final:", finalBase64.length);
-      return finalBase64;
+    // IMPORTANTE: Não adicionar prefixo data:image se for dados do WhatsApp
+    if (cleanBase64.includes('@') && !cleanBase64.startsWith('data:')) {
+      console.info("🔍 QRCodePopup: Detectados dados do WhatsApp (contém @)");
+      console.info("🔍 QRCodePopup: ⚠️ ESTE NÃO É UM BASE64 DE IMAGEM!");
+      console.info("🔍 QRCodePopup: ⚠️ São dados de sessão do WhatsApp que devem ser convertidos em QR Code");
+      
+      // Para dados do WhatsApp, precisamos gerar um QR Code a partir dos dados
+      console.error("❌ QRCodePopup: Dados recebidos são de sessão WhatsApp, não uma imagem");
+      return '';
+    }
+    
+    // Verificar se parece com Base64 de imagem
+    if (isValidBase64 && cleanBase64.length > 100) {
+      console.info("✅ QRCodePopup: Parece ser Base64 de imagem válido");
+      console.info("✅ QRCodePopup: Adicionando prefixo data:image/png;base64");
+      
+      // Tentar detectar o tipo de imagem pelos primeiros bytes
+      try {
+        const firstBytes = atob(cleanBase64.substring(0, 12));
+        let imageType = 'png'; // padrão
+        
+        if (firstBytes.startsWith('\x89PNG')) {
+          imageType = 'png';
+          console.info("🔍 QRCodePopup: Tipo detectado: PNG");
+        } else if (firstBytes.startsWith('\xFF\xD8\xFF')) {
+          imageType = 'jpeg';
+          console.info("🔍 QRCodePopup: Tipo detectado: JPEG");
+        } else if (firstBytes.startsWith('GIF8')) {
+          imageType = 'gif';
+          console.info("🔍 QRCodePopup: Tipo detectado: GIF");
+        } else {
+          console.info("🔍 QRCodePopup: Tipo não detectado, usando PNG como padrão");
+        }
+        
+        const finalBase64 = `data:image/${imageType};base64,${cleanBase64}`;
+        console.info("🔍 QRCodePopup: Base64 final:", finalBase64.substring(0, 100) + "...");
+        console.info("🔍 QRCodePopup: Tamanho final:", finalBase64.length);
+        return finalBase64;
+        
+      } catch (e) {
+        console.warn("⚠️ QRCodePopup: Erro ao detectar tipo de imagem, usando PNG:", e);
+        const finalBase64 = `data:image/png;base64,${cleanBase64}`;
+        console.info("🔍 QRCodePopup: Base64 final (PNG padrão):", finalBase64.substring(0, 100) + "...");
+        return finalBase64;
+      }
     }
     
     console.error("❌ QRCodePopup: Não foi possível processar o base64");
+    console.error("❌ QRCodePopup: Dados não reconhecidos como Base64 de imagem válido");
     return '';
   };
 

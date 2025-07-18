@@ -214,9 +214,14 @@ class EvolutionApi {
   // Método para listar instâncias
   async fetchInstances(): Promise<any[]> {
     try {
+      console.info('🔍 fetchInstances: ===== INICIANDO BUSCA DE INSTÂNCIAS =====');
       const url = this.normalizeUrl(this.baseUrl, 'instance/fetchInstances');
-      console.log("Listando instâncias na URL:", url);
-      
+      console.info('🔍 fetchInstances: URL:', url);
+      console.info('🔍 fetchInstances: Headers:', {
+        'Content-Type': 'application/json',
+        'apikey': this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'N/A',
+      });
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -225,17 +230,46 @@ class EvolutionApi {
         }
       });
 
+      console.info('🔍 fetchInstances: Status da resposta:', response.status);
+      console.info('🔍 fetchInstances: Headers da resposta:', Object.fromEntries(response.headers.entries()));
+
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`Erro HTTP ${response.status}:`, errorText);
+        console.error('❌ fetchInstances: Erro na resposta:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText
+        });
         throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
-      console.log("Instâncias encontradas:", data);
+      console.info('🔍 fetchInstances: ===== ANÁLISE DA RESPOSTA =====');
+      console.info('🔍 fetchInstances: Resposta completa:', JSON.stringify(data, null, 2));
+      
+      if (Array.isArray(data)) {
+        console.info('🔍 fetchInstances: Total de instâncias encontradas:', data.length);
+        data.forEach((instance, index) => {
+          console.info(`🔍 fetchInstances: Instância ${index + 1}:`, {
+            instanceName: instance.instanceName || instance.instance?.instanceName,
+            name: instance.name,
+            instanceId: instance.instanceId || instance.instance?.instanceId || instance.id,
+            status: instance.connectionStatus || instance.status || instance.instance?.state,
+            state: instance.instance?.state,
+            objetoCompleto: instance
+          });
+        });
+      } else {
+        console.info('🔍 fetchInstances: Resposta não é array:', {
+          type: typeof data,
+          keys: Object.keys(data),
+          data: data
+        });
+      }
+      
       return data || [];
     } catch (error) {
-      console.error("Erro ao listar instâncias:", error);
+      console.error("❌ fetchInstances: Erro ao listar instâncias:", error);
       throw error;
     }
   }
@@ -317,45 +351,107 @@ class EvolutionApi {
 
   async getQRCode(instanceName: string) {
     try {
-      console.log(`🔍 EVOLUTIONAPI: ===== INICIANDO GETQRCODE =====`);
-      console.log(`🔍 EVOLUTIONAPI: Instância solicitada:`, instanceName);
-      console.log(`🔍 EVOLUTIONAPI: Base URL configurada:`, this.baseUrl);
-      console.log(`🔍 EVOLUTIONAPI: API Key presente:`, !!this.apiKey);
-      
-      // Usar o endpoint correto conforme documentação: /instance/connect/{instance}
+      console.info('🔍 evolutionApi.getQRCode: ===== CHAMADA GET QR CODE =====');
+      console.info('🔍 evolutionApi.getQRCode: Nome da instância:', instanceName);
+      console.info('🔍 evolutionApi.getQRCode: URL base:', this.baseUrl);
+      console.info('🔍 evolutionApi.getQRCode: API Key:', this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'N/A');
+
       const url = this.normalizeUrl(this.baseUrl, `instance/connect/${instanceName}`);
-      console.log(`🔍 EVOLUTIONAPI: URL final do QR Code:`, url);
+      console.info('🔍 evolutionApi.getQRCode: URL completa:', url);
+
+      const headers = {
+        'Content-Type': 'application/json',
+        'apikey': this.apiKey || '',
+      };
+      console.info('🔍 evolutionApi.getQRCode: Headers:', {
+        'Content-Type': headers['Content-Type'],
+        'apikey': this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'N/A'
+      });
+
+      const startTime = Date.now();
       
       const response = await fetch(url, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': this.apiKey || ''
-        }
+        headers: headers,
       });
 
-      console.log(`🔍 EVOLUTIONAPI: Status da resposta QR Code:`, response.status);
-      console.log(`🔍 EVOLUTIONAPI: Headers da resposta:`, [...response.headers.entries()]);
+      const endTime = Date.now();
+      console.info('🔍 evolutionApi.getQRCode: Tempo de resposta:', `${endTime - startTime}ms`);
+      console.info('🔍 evolutionApi.getQRCode: Status da resposta:', response.status);
+      console.info('🔍 evolutionApi.getQRCode: Status text:', response.statusText);
+      console.info('🔍 evolutionApi.getQRCode: Headers da resposta:', Object.fromEntries(response.headers.entries()));
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`❌ EVOLUTIONAPI: Erro HTTP ${response.status}:`, errorText);
+        console.error('❌ evolutionApi.getQRCode: Erro na resposta:', {
+          status: response.status,
+          statusText: response.statusText,
+          url: url,
+          body: errorText,
+          instanceRequested: instanceName
+        });
         
+        // Detectar se é 404 e explicar o problema
         if (response.status === 404) {
-          throw new Error(`Erro 404 ao solicitar QR Code para '${instanceName}'. A instância pode estar em processo de inicialização ou inativa.`);
+          console.error('❌ evolutionApi.getQRCode: INSTÂNCIA NÃO ENCONTRADA!');
+          console.error('❌ evolutionApi.getQRCode: Isso indica que:', {
+            possibleCauses: [
+              'O nome da instância está incorreto',
+              'A instância não existe na API',
+              'Há confusão entre ID e Nome da instância',
+              'A instância foi deletada ou está inativa'
+            ],
+            suggestedAction: 'Verificar a lista de instâncias via fetchInstances'
+          });
         }
         
-        throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Erro ao obter QR Code: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      console.log("Resposta completa da API para QR Code:", data);
+      console.info('🔍 evolutionApi.getQRCode: ===== ANÁLISE DA RESPOSTA =====');
+      console.info('🔍 evolutionApi.getQRCode: Resposta JSON completa:', JSON.stringify(data, null, 2));
+      console.info('🔍 evolutionApi.getQRCode: Tipo da resposta:', typeof data);
+      console.info('🔍 evolutionApi.getQRCode: Chaves do objeto:', Object.keys(data));
+      
+      // Análise específica do QR Code
+      if (data.qrcode) {
+        console.info('🔍 evolutionApi.getQRCode: QR Code encontrado na resposta');
+        console.info('🔍 evolutionApi.getQRCode: Tipo do qrcode:', typeof data.qrcode);
+        console.info('🔍 evolutionApi.getQRCode: Chaves do qrcode:', Object.keys(data.qrcode));
+        
+        if (data.qrcode.base64) {
+          const base64Data = data.qrcode.base64;
+          console.info('🔍 evolutionApi.getQRCode: Base64 encontrado:');
+          console.info('🔍 evolutionApi.getQRCode: - Tamanho:', base64Data.length);
+          console.info('🔍 evolutionApi.getQRCode: - Primeiros 50 chars:', base64Data.substring(0, 50));
+          console.info('🔍 evolutionApi.getQRCode: - Últimos 50 chars:', base64Data.substring(base64Data.length - 50));
+          console.info('🔍 evolutionApi.getQRCode: - Contém caracteres inválidos?', !/^[A-Za-z0-9+/=,@]+$/.test(base64Data));
+          
+          // Verificar se já tem prefixo data:
+          if (base64Data.startsWith('data:')) {
+            console.info('🔍 evolutionApi.getQRCode: ✅ Base64 já tem prefixo data:');
+          } else {
+            console.info('🔍 evolutionApi.getQRCode: ⚠️ Base64 NÃO tem prefixo data:');
+          }
+        }
+      } else if (data.code) {
+        console.info('🔍 evolutionApi.getQRCode: Campo "code" encontrado na resposta');
+        const codeData = data.code;
+        console.info('🔍 evolutionApi.getQRCode: Code data:');
+        console.info('🔍 evolutionApi.getQRCode: - Tamanho:', codeData.length);
+        console.info('🔍 evolutionApi.getQRCode: - Primeiros 50 chars:', codeData.substring(0, 50));
+        console.info('🔍 evolutionApi.getQRCode: - Últimos 50 chars:', codeData.substring(codeData.length - 50));
+      } else {
+        console.warn('⚠️ evolutionApi.getQRCode: Nenhum qrcode ou code encontrado na resposta!');
+      }
 
       // Processar resposta conforme documentação Evolution API
       // Formato esperado: { "pairingCode": "WZYEH1YY", "code": "2@y8eK+bjtEjUWy9/FOM...", "count": 1 }
       
       if (data.code) {
         // O campo 'code' contém os dados Base64 do QR code
+        console.info('✅ evolutionApi.getQRCode: QR Code extraído do campo "code"');
         return {
           success: true,
           qrcode: {
@@ -367,8 +463,23 @@ class EvolutionApi {
         };
       }
 
+      // Verificar se tem qrcode.base64
+      if (data.qrcode?.base64) {
+        console.info('✅ evolutionApi.getQRCode: QR Code extraído do campo "qrcode.base64"');
+        return {
+          success: true,
+          qrcode: {
+            base64: data.qrcode.base64
+          },
+          pairingCode: data.pairingCode,
+          count: data.count,
+          status: "connecting"
+        };
+      }
+
       // Se não tem código, verificar se já está conectado
       if (data.status === "open" || data.instance?.state === "open") {
+        console.info('✅ evolutionApi.getQRCode: Instância já conectada');
         return {
           success: true,
           status: "connected",
@@ -377,14 +488,14 @@ class EvolutionApi {
       }
 
       // Resposta inesperada
-      console.warn("Resposta inesperada da API:", data);
+      console.warn('⚠️ evolutionApi.getQRCode: Resposta inesperada da API:', data);
       return {
         success: false,
-        error: "Formato de resposta inesperado da API - campo 'code' não encontrado"
+        error: "Formato de resposta inesperado da API - nenhum campo de QR code encontrado"
       };
 
     } catch (error) {
-      console.error("Erro ao obter QR code:", error);
+      console.error("❌ evolutionApi.getQRCode: Erro ao obter QR code:", error);
       throw error;
     }
   }
