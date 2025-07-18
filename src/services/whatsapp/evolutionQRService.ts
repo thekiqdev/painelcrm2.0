@@ -131,7 +131,12 @@ export const evolutionQRService = {
       
       try {
         const qrResult = await evolutionApi.getQRCode(instanceName) as QRCodeResponse;
-        console.log("evolutionQRService: Resultado completo do QR Code:", qrResult);
+        console.log("🔍 evolutionQRService: ===== RESPOSTA COMPLETA DA API =====");
+        console.log("🔍 evolutionQRService: Resultado completo do QR Code:", JSON.stringify(qrResult, null, 2));
+        console.log("🔍 evolutionQRService: Tipo da resposta:", typeof qrResult);
+        console.log("🔍 evolutionQRService: Success:", qrResult?.success);
+        console.log("🔍 evolutionQRService: Status:", qrResult?.status);
+        console.log("🔍 evolutionQRService: QRCode presente?", !!qrResult?.qrcode);
         
         if (qrResult && qrResult.success && qrResult.status === "connected") {
           console.log("evolutionQRService: Instância conectada durante obtenção do QR");
@@ -156,24 +161,42 @@ export const evolutionQRService = {
           let qrCodeData: string | null = null;
           
           // Verificar diferentes formatos de retorno do QR code
-          console.log("evolutionQRService: Estrutura do qrcode:", qrResult.qrcode);
+          console.log("🔍 evolutionQRService: ===== EXTRAINDO QR CODE =====");
+          console.log("🔍 evolutionQRService: Estrutura do qrcode:", qrResult.qrcode);
+          console.log("🔍 evolutionQRService: Tipo do qrcode:", typeof qrResult.qrcode);
+          console.log("🔍 evolutionQRService: É objeto?", typeof qrResult.qrcode === 'object');
+          console.log("🔍 evolutionQRService: É string?", typeof qrResult.qrcode === 'string');
           
           if (typeof qrResult.qrcode === 'object' && qrResult.qrcode !== null) {
+            console.log("🔍 evolutionQRService: Analisando objeto qrcode...");
+            console.log("🔍 evolutionQRService: Chaves do objeto:", Object.keys(qrResult.qrcode));
+            console.log("🔍 evolutionQRService: Tem propriedade 'base64'?", 'base64' in qrResult.qrcode);
+            console.log("🔍 evolutionQRService: Tem propriedade 'code'?", 'code' in qrResult.qrcode);
+            
             // Se é objeto, verificar propriedades base64 e code
             if ('base64' in qrResult.qrcode && qrResult.qrcode.base64) {
               qrCodeData = qrResult.qrcode.base64;
-              console.log("evolutionQRService: QR Code encontrado em qrcode.base64");
+              console.log("✅ evolutionQRService: QR Code encontrado em qrcode.base64");
+              console.log("🔍 evolutionQRService: Valor base64:", qrResult.qrcode.base64);
             } else if ('code' in qrResult.qrcode && qrResult.qrcode.code) {
               qrCodeData = qrResult.qrcode.code;
-              console.log("evolutionQRService: QR Code encontrado em qrcode.code");
+              console.log("✅ evolutionQRService: QR Code encontrado em qrcode.code");
+              console.log("🔍 evolutionQRService: Valor code:", qrResult.qrcode.code);
+            } else {
+              console.log("❌ evolutionQRService: Objeto qrcode não tem base64 nem code válidos");
+              console.log("🔍 evolutionQRService: Conteúdo completo do objeto:", JSON.stringify(qrResult.qrcode, null, 2));
             }
           } else if (typeof qrResult.qrcode === 'string') {
             // Se é string direta
             qrCodeData = qrResult.qrcode;
-            console.log("evolutionQRService: QR Code é string direta");
+            console.log("✅ evolutionQRService: QR Code é string direta");
+            console.log("🔍 evolutionQRService: Valor da string:", qrResult.qrcode);
           }
           
-          console.log("evolutionQRService: QR Code extraído:", qrCodeData?.substring(0, 100) + "...");
+          console.log("🔍 evolutionQRService: QR Code final extraído:", qrCodeData);
+          console.log("🔍 evolutionQRService: Tamanho do QR Code:", qrCodeData?.length || 0);
+          console.log("🔍 evolutionQRService: Primeiros 200 chars:", qrCodeData?.substring(0, 200) + "...");
+          console.log("🔍 evolutionQRService: Últimos 50 chars:", qrCodeData?.slice(-50));
           
           if (qrCodeData) {
             console.log("evolutionQRService: QR Code obtido com sucesso, tamanho:", qrCodeData.length);

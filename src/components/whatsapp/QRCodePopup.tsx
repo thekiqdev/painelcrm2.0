@@ -47,34 +47,49 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
 
   // Função para processar o base64 do QR Code
   const processQRCodeBase64 = (base64Data: string): string => {
-    console.log("Processando base64 recebido:", base64Data);
+    console.log("🔍 QRCodePopup: ===== INÍCIO DO PROCESSAMENTO BASE64 =====");
+    console.log("🔍 QRCodePopup: Base64 recebido (bruto):", base64Data);
+    console.log("🔍 QRCodePopup: Tipo do dado:", typeof base64Data);
+    console.log("🔍 QRCodePopup: Tamanho original:", base64Data?.length || 0);
     
-    // Verificar se o base64 está vazio ou inválido
     if (!base64Data || base64Data.trim() === '') {
-      console.error("Base64 está vazio ou inválido");
+      console.error("❌ QRCodePopup: Base64 vazio ou undefined");
       return '';
     }
+
+    // Limpar o base64
+    let cleanBase64 = base64Data.trim().replace(/\s/g, '');
+    console.log("🔍 QRCodePopup: Base64 após limpeza:", cleanBase64);
+    console.log("🔍 QRCodePopup: Tamanho após limpeza:", cleanBase64.length);
+    console.log("🔍 QRCodePopup: Primeiros 200 caracteres:", cleanBase64.substring(0, 200));
+    console.log("🔍 QRCodePopup: Últimos 50 caracteres:", cleanBase64.slice(-50));
     
-    // Remover quebras de linha e espaços em branco
-    const cleanBase64 = base64Data.replace(/\s/g, '');
-    console.log("Base64 limpo:", cleanBase64.substring(0, 100) + "...");
+    // Verificar padrões conhecidos
+    console.log("🔍 QRCodePopup: Verificando padrões...");
+    console.log("🔍 QRCodePopup: Começa com 'data:image/'?", cleanBase64.startsWith('data:image/'));
+    console.log("🔍 QRCodePopup: Começa com número@?", /^\d+@/.test(cleanBase64));
+    console.log("🔍 QRCodePopup: Contém '@'?", cleanBase64.includes('@'));
+    console.log("🔍 QRCodePopup: Contém '='?", cleanBase64.includes('='));
+    console.log("🔍 QRCodePopup: Contém ','?", cleanBase64.includes(','));
+    console.log("🔍 QRCodePopup: É base64 válido?", /^[A-Za-z0-9+/=@,]+$/.test(cleanBase64));
     
-    // Se já tem o prefixo data:image, usar diretamente
+    // Se já tem prefixo data:image, retornar como está
     if (cleanBase64.startsWith('data:image/')) {
-      console.log("Base64 já tem prefixo data:image");
+      console.log("✅ QRCodePopup: Base64 já tem prefixo data:image");
       return cleanBase64;
     }
     
-    // Se tem apenas base64, adicionar o prefixo
-    if (cleanBase64 && !cleanBase64.startsWith('data:')) {
-      console.log("Adicionando prefixo data:image/png;base64 ao base64");
-      const processedData = `data:image/png;base64,${cleanBase64}`;
-      console.log("QR Code processado final:", processedData.substring(0, 100) + "...");
-      return processedData;
+    // Adicionar prefixo para qualquer conteúdo válido
+    if (cleanBase64) {
+      console.log("✅ QRCodePopup: Adicionando prefixo data:image/png;base64");
+      const finalBase64 = `data:image/png;base64,${cleanBase64}`;
+      console.log("🔍 QRCodePopup: Base64 final:", finalBase64.substring(0, 100) + "...");
+      console.log("🔍 QRCodePopup: Tamanho final:", finalBase64.length);
+      return finalBase64;
     }
     
-    console.warn("Formato de base64 inesperado:", cleanBase64);
-    return cleanBase64 || '';
+    console.error("❌ QRCodePopup: Não foi possível processar o base64");
+    return '';
   };
 
   const runDiagnostics = async (instanceName: string) => {
