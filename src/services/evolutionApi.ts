@@ -244,23 +244,74 @@ class EvolutionApi {
       }
 
       const data = await response.json();
-      console.info('🔍 fetchInstances: ===== ANÁLISE DA RESPOSTA =====');
-      console.info('🔍 fetchInstances: Resposta completa:', JSON.stringify(data, null, 2));
+      console.info('🔍 fetchInstances: ===== ANÁLISE DETALHADA DA RESPOSTA =====');
+      console.info('🔍 fetchInstances: Resposta RAW (texto):', await response.clone().text().catch(() => 'Erro ao ler texto'));
+      console.info('🔍 fetchInstances: Tipo da resposta:', typeof data);
+      console.info('🔍 fetchInstances: É array?:', Array.isArray(data));
+      console.info('🔍 fetchInstances: Tamanho:', data.length);
+      console.info('🔍 fetchInstances: Resposta JSON completa:', JSON.stringify(data, null, 2));
       
       if (Array.isArray(data)) {
+        console.info('🔍 fetchInstances: ===== ANÁLISE DE CADA INSTÂNCIA =====');
         console.info('🔍 fetchInstances: Total de instâncias encontradas:', data.length);
+        
         data.forEach((instance, index) => {
-          console.info(`🔍 fetchInstances: Instância ${index + 1}:`, {
-            instanceName: instance.instanceName || instance.instance?.instanceName,
-            name: instance.name,
-            instanceId: instance.instanceId || instance.instance?.instanceId || instance.id,
-            status: instance.connectionStatus || instance.status || instance.instance?.state,
-            state: instance.instance?.state,
-            objetoCompleto: instance
+          console.info(`🔍 fetchInstances: ===== INSTÂNCIA ${index + 1} =====`);
+          console.info(`🔍 fetchInstances: Objeto completo:`, instance);
+          console.info(`🔍 fetchInstances: Chaves do objeto:`, Object.keys(instance));
+          console.info(`🔍 fetchInstances: Valores por campo:`, {
+            // Campos básicos
+            instanceName: {
+              existe: 'instanceName' in instance,
+              tipo: typeof instance.instanceName,
+              valor: instance.instanceName
+            },
+            name: {
+              existe: 'name' in instance,
+              tipo: typeof instance.name,
+              valor: instance.name
+            },
+            id: {
+              existe: 'id' in instance,
+              tipo: typeof instance.id,
+              valor: instance.id
+            },
+            // Campos de status/state
+            connectionStatus: {
+              existe: 'connectionStatus' in instance,
+              tipo: typeof instance.connectionStatus,
+              valor: instance.connectionStatus
+            },
+            status: {
+              existe: 'status' in instance,
+              tipo: typeof instance.status,
+              valor: instance.status
+            },
+            state: {
+              existe: 'state' in instance,
+              tipo: typeof instance.state,
+              valor: instance.state
+            },
+            // Campos aninhados
+            instance_field: {
+              existe: 'instance' in instance,
+              tipo: typeof instance.instance,
+              valor: instance.instance
+            }
           });
+          
+          // Se tem campo instance aninhado, analisar também
+          if (instance.instance) {
+            console.info(`🔍 fetchInstances: Campo 'instance' aninhado:`, {
+              chaves: Object.keys(instance.instance),
+              state: instance.instance.state,
+              instanceName: instance.instance.instanceName,
+              instanceId: instance.instance.instanceId
+            });
+          }
         });
       } else {
-        console.info('🔍 fetchInstances: Resposta não é array:', {
+        console.info('🔍 fetchInstances: ⚠️ Resposta não é array:', {
           type: typeof data,
           keys: Object.keys(data),
           data: data
