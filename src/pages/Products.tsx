@@ -1,21 +1,20 @@
 
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Package, Wrench, Eye, Edit, Trash2, Store } from "lucide-react";
-import { ProductFormDialog } from "@/components/products/ProductFormDialog";
 import { StoreConfigDialog } from "@/components/products/StoreConfigDialog";
 import { Product, StoreProfile } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 
 const Products = () => {
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
   const [isStoreConfigOpen, setIsStoreConfigOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
@@ -88,7 +87,7 @@ const Products = () => {
             <Store className="mr-2 h-4 w-4" />
             Configurar Loja
           </Button>
-          <Button onClick={() => setIsFormOpen(true)}>
+          <Button onClick={() => navigate('/products/new')}>
             <Plus className="mr-2 h-4 w-4" />
             Adicionar Produto
           </Button>
@@ -142,7 +141,7 @@ const Products = () => {
               <p className="text-muted-foreground mb-6">
                 Comece adicionando seus primeiros produtos ou serviços para sua loja virtual.
               </p>
-              <Button onClick={() => setIsFormOpen(true)}>
+              <Button onClick={() => navigate('/products/new')}>
                 <Plus className="mr-2 h-4 w-4" />
                 Adicionar Primeiro Produto
               </Button>
@@ -200,10 +199,7 @@ const Products = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => {
-                        setEditingProduct(product);
-                        setIsFormOpen(true);
-                      }}
+                      onClick={() => navigate(`/products/edit/${product.id}`)}
                     >
                       <Edit className="h-4 w-4" />
                     </Button>
@@ -221,16 +217,6 @@ const Products = () => {
           ))}
         </div>
       )}
-
-      <ProductFormDialog
-        open={isFormOpen}
-        onOpenChange={(open) => {
-          setIsFormOpen(open);
-          if (!open) setEditingProduct(null);
-        }}
-        product={editingProduct}
-        onSuccess={loadData}
-      />
 
       <StoreConfigDialog
         open={isStoreConfigOpen}
