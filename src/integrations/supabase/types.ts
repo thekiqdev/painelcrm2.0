@@ -7,7 +7,7 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instanciate createClient with right options
+  // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "12.2.3 (519615d)"
@@ -423,6 +423,60 @@ export type Database = {
           },
         ]
       }
+      products: {
+        Row: {
+          category: string | null
+          created_at: string
+          currency: string
+          description: string | null
+          duration_hours: number | null
+          features: Json | null
+          id: string
+          images: Json | null
+          is_public: boolean
+          name: string
+          price: number | null
+          status: string
+          type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          currency?: string
+          description?: string | null
+          duration_hours?: number | null
+          features?: Json | null
+          id?: string
+          images?: Json | null
+          is_public?: boolean
+          name: string
+          price?: number | null
+          status?: string
+          type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          currency?: string
+          description?: string | null
+          duration_hours?: number | null
+          features?: Json | null
+          id?: string
+          images?: Json | null
+          is_public?: boolean
+          name?: string
+          price?: number | null
+          status?: string
+          type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profile_members: {
         Row: {
           created_at: string
@@ -567,6 +621,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      store_profiles: {
+        Row: {
+          contact_email: string | null
+          contact_phone: string | null
+          contact_whatsapp: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          store_description: string | null
+          store_logo: string | null
+          store_name: string
+          store_slug: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          contact_email?: string | null
+          contact_phone?: string | null
+          contact_whatsapp?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          store_description?: string | null
+          store_logo?: string | null
+          store_name: string
+          store_slug?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          contact_email?: string | null
+          contact_phone?: string | null
+          contact_whatsapp?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          store_description?: string | null
+          store_logo?: string | null
+          store_name?: string
+          store_slug?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       user_permissions: {
         Row: {
@@ -714,73 +813,73 @@ export type Database = {
     }
     Functions: {
       get_all_conversation_statuses: {
-        Args: { p_user_id: string; p_connection_id: string }
+        Args: { p_connection_id: string; p_user_id: string }
         Returns: {
-          id: string
-          user_id: string
-          connection_id: string
-          remote_jid: string
-          status: string
           attendant_id: string
           attended_at: string
+          connection_id: string
           created_at: string
+          id: string
+          remote_jid: string
+          status: string
           updated_at: string
+          user_id: string
         }[]
       }
       get_conversation_status: {
         Args: {
-          p_user_id: string
           p_connection_id: string
           p_remote_jid: string
+          p_user_id: string
         }
         Returns: {
-          id: string
-          user_id: string
-          connection_id: string
-          remote_jid: string
-          status: string
           attendant_id: string
           attended_at: string
+          connection_id: string
           created_at: string
+          id: string
+          remote_jid: string
+          status: string
           updated_at: string
+          user_id: string
         }[]
       }
       has_permission: {
         Args:
           | {
-              profile_id: string
               perm: Database["public"]["Enums"]["permission_type"]
+              profile_id: string
               user_id?: string
             }
-          | { user_id: number; permission: string }
+          | { permission: string; user_id: number }
         Returns: boolean
       }
       is_profile_member: {
         Args:
+          | { profile_id: number; user_id: number }
           | { profile_id: string; user_id?: string }
-          | { user_id: number; profile_id: number }
         Returns: boolean
       }
       upsert_conversation_status: {
         Args: {
-          p_user_id: string
+          p_attendant_id?: string
+          p_attended_at?: string
           p_connection_id: string
           p_remote_jid: string
           p_status: string
-          p_attendant_id?: string
-          p_attended_at?: string
           p_updated_at?: string
+          p_user_id: string
         }
         Returns: {
-          id: string
-          user_id: string
-          connection_id: string
-          remote_jid: string
-          status: string
           attendant_id: string
           attended_at: string
+          connection_id: string
           created_at: string
+          id: string
+          remote_jid: string
+          status: string
           updated_at: string
+          user_id: string
         }[]
       }
     }

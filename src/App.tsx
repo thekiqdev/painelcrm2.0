@@ -28,6 +28,8 @@ import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
 import FunnelDetails from "./pages/FunnelDetails";
 import ProposalDetails from "./pages/ProposalDetails";
+import { PublicStore } from "./pages/PublicStore";
+import { PublicProduct } from "./pages/PublicProduct";
 
 const queryClient = new QueryClient();
 
@@ -130,6 +132,10 @@ const App = () => (
                 <AppLayout><Settings /></AppLayout>
               </AuthGuard>
             } />
+            
+            {/* Public store routes */}
+            <Route path="/:storeSlug/loja" element={<PublicStore />} />
+            <Route path="/:storeSlug/loja/produto/:productId" element={<PublicProduct />} />
             
             <Route path="*" element={<NotFound />} />
           </Routes>
