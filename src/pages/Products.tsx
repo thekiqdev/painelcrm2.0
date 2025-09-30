@@ -87,7 +87,7 @@ const Products = () => {
             <Store className="mr-2 h-4 w-4" />
             Configurar Loja
           </Button>
-          <Button onClick={() => navigate('/products/new')}>
+          <Button onClick={() => navigate('/admin/products/new')}>
             <Plus className="mr-2 h-4 w-4" />
             Adicionar Produto
           </Button>
@@ -141,7 +141,7 @@ const Products = () => {
               <p className="text-muted-foreground mb-6">
                 Comece adicionando seus primeiros produtos ou serviços para sua loja virtual.
               </p>
-              <Button onClick={() => navigate('/products/new')}>
+              <Button onClick={() => navigate('/admin/products/new')}>
                 <Plus className="mr-2 h-4 w-4" />
                 Adicionar Primeiro Produto
               </Button>
@@ -199,7 +199,7 @@ const Products = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => navigate(`/products/edit/${product.id}`)}
+                      onClick={() => navigate(`/admin/products/${product.id}/edit`)}
                     >
                       <Edit className="h-4 w-4" />
                     </Button>

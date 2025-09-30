@@ -91,7 +91,7 @@ const ProductForm = () => {
         description: "Não foi possível carregar o produto",
         variant: "destructive"
       });
-      navigate('/products');
+      navigate('/admin/products');
     } finally {
       setLoading(false);
     }
@@ -126,7 +126,7 @@ const ProductForm = () => {
         });
       }
       
-      navigate('/products');
+      navigate('/admin/products');
     } catch (error) {
       console.error('Erro ao salvar produto:', error);
       toast({
@@ -216,7 +216,7 @@ const ProductForm = () => {
   return (
     <div className="container mx-auto p-6 max-w-4xl">
       <div className="flex items-center gap-4 mb-6">
-        <Button variant="ghost" onClick={() => navigate('/products')}>
+        <Button variant="ghost" onClick={() => navigate('/admin/products')}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           Voltar
         </Button>
@@ -686,7 +686,7 @@ const ProductForm = () => {
 
         {/* Botões de Ação */}
         <div className="flex justify-end gap-4 pt-6">
-          <Button type="button" variant="outline" onClick={() => navigate('/products')}>
+          <Button type="button" variant="outline" onClick={() => navigate('/admin/products')}>
             Cancelar
           </Button>
           <Button type="submit" disabled={loading}>

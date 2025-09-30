@@ -99,6 +99,24 @@ const App = () => (
                 <AppLayout><Tasks /></AppLayout>
               </AuthGuard>
             } />
+            {/* Admin Products Routes */}
+            <Route path="/admin/products" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Products /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/admin/products/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><ProductForm /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/admin/products/:id/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><ProductForm /></AppLayout>
+              </AuthGuard>
+            } />
+            
+            {/* Legacy routes - redirect to admin */}
             <Route path="/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Products /></AppLayout>
