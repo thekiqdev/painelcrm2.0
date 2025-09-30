@@ -193,6 +193,62 @@ export type Database = {
           },
         ]
       }
+      contracts: {
+        Row: {
+          client_id: string | null
+          content: string | null
+          contract_number: string
+          created_at: string
+          end_date: string | null
+          id: string
+          responsible_id: string | null
+          start_date: string | null
+          status: Database["public"]["Enums"]["contract_status"]
+          tags: Json | null
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          content?: string | null
+          contract_number: string
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          responsible_id?: string | null
+          start_date?: string | null
+          status?: Database["public"]["Enums"]["contract_status"]
+          tags?: Json | null
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string | null
+          content?: string | null
+          contract_number?: string
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          responsible_id?: string | null
+          start_date?: string | null
+          status?: Database["public"]["Enums"]["contract_status"]
+          tags?: Json | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contracts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_attendances: {
         Row: {
           attendant_id: string | null
@@ -1100,6 +1156,14 @@ export type Database = {
       }
     }
     Enums: {
+      contract_status:
+        | "DRAFT"
+        | "PENDING_SIGNATURE"
+        | "PARTIALLY_SIGNED"
+        | "ACTIVE"
+        | "INACTIVE"
+        | "EXPIRED"
+        | "CANCELLED"
       permission_type:
         | "all_access"
         | "manage_clients"
@@ -1238,6 +1302,15 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      contract_status: [
+        "DRAFT",
+        "PENDING_SIGNATURE",
+        "PARTIALLY_SIGNED",
+        "ACTIVE",
+        "INACTIVE",
+        "EXPIRED",
+        "CANCELLED",
+      ],
       permission_type: [
         "all_access",
         "manage_clients",
