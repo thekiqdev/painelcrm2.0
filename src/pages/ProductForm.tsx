@@ -24,9 +24,14 @@ const ProductForm = () => {
   const [formData, setFormData] = useState<ProductFormData>({
     type: 'product',
     name: '',
+    short_description: '',
     description: '',
     price: undefined,
     discount_price: undefined,
+    cost: undefined,
+    sku: '',
+    stock_quantity: 0,
+    min_stock_quantity: 0,
     currency: 'BRL',
     category: '',
     features: [],
@@ -34,6 +39,7 @@ const ProductForm = () => {
     secondary_images: [],
     variations: [],
     duration_hours: undefined,
+    responsible_id: undefined,
     contract_template: '',
     has_contract: false,
     is_public: true
@@ -57,9 +63,14 @@ const ProductForm = () => {
         setFormData({
           type: productData.type,
           name: productData.name,
+          short_description: productData.short_description || '',
           description: productData.description || '',
           price: productData.price,
           discount_price: productData.discount_price,
+          cost: productData.cost,
+          sku: productData.sku || '',
+          stock_quantity: productData.stock_quantity || 0,
+          min_stock_quantity: productData.min_stock_quantity || 0,
           currency: productData.currency,
           category: productData.category || '',
           features: productData.features,
@@ -67,6 +78,7 @@ const ProductForm = () => {
           secondary_images: productData.secondary_images || [],
           variations: productData.variations || [],
           duration_hours: productData.duration_hours,
+          responsible_id: productData.responsible_id,
           contract_template: productData.contract_template || '',
           has_contract: productData.has_contract || false,
           is_public: productData.is_public
@@ -296,7 +308,17 @@ const ProductForm = () => {
             </div>
 
             <div>
-              <Label htmlFor="description">Descrição</Label>
+              <Label htmlFor="short_description">Descrição Curta</Label>
+              <Input
+                id="short_description"
+                value={formData.short_description}
+                onChange={(e) => setFormData(prev => ({ ...prev, short_description: e.target.value }))}
+                placeholder="Resumo breve do produto/serviço"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="description">Descrição Completa</Label>
               <Textarea
                 id="description"
                 value={formData.description}
@@ -308,15 +330,15 @@ const ProductForm = () => {
           </CardContent>
         </Card>
 
-        {/* Preços */}
+        {/* Preços e Estoque */}
         <Card>
           <CardHeader>
-            <CardTitle>Preços</CardTitle>
+            <CardTitle>Preços {isProduct && '& Estoque'}</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="price">Preço (R$) *</Label>
+                <Label htmlFor="price">Preço de Venda (R$) *</Label>
                 <Input
                   id="price"
                   type="number"
@@ -334,25 +356,57 @@ const ProductForm = () => {
               
               {isProduct && (
                 <div>
-                  <Label htmlFor="discount_price">Preço com Desconto (R$)</Label>
+                  <Label htmlFor="cost">Custo (R$)</Label>
                   <Input
-                    id="discount_price"
+                    id="cost"
                     type="number"
                     step="0.01"
                     min="0"
-                    value={formData.discount_price || ''}
+                    value={formData.cost || ''}
                     onChange={(e) => setFormData(prev => ({ 
                       ...prev, 
-                      discount_price: e.target.value ? parseFloat(e.target.value) : undefined 
+                      cost: e.target.value ? parseFloat(e.target.value) : undefined 
                     }))}
-                    placeholder="Preço promocional"
+                    placeholder="Custo do produto"
                   />
                 </div>
               )}
+            </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              {isProduct && (
+                <>
+                  <div>
+                    <Label htmlFor="discount_price">Preço Promocional (R$)</Label>
+                    <Input
+                      id="discount_price"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={formData.discount_price || ''}
+                      onChange={(e) => setFormData(prev => ({ 
+                        ...prev, 
+                        discount_price: e.target.value ? parseFloat(e.target.value) : undefined 
+                      }))}
+                      placeholder="Preço com desconto"
+                    />
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="sku">SKU</Label>
+                    <Input
+                      id="sku"
+                      value={formData.sku}
+                      onChange={(e) => setFormData(prev => ({ ...prev, sku: e.target.value }))}
+                      placeholder="Código único do produto"
+                    />
+                  </div>
+                </>
+              )}
+              
               {isService && (
                 <div>
-                  <Label htmlFor="duration">Duração (horas)</Label>
+                  <Label htmlFor="duration">Duração Estimada (horas)</Label>
                   <Input
                     id="duration"
                     type="number"
@@ -367,6 +421,44 @@ const ProductForm = () => {
                 </div>
               )}
             </div>
+
+            {isProduct && (
+              <Separator />
+            )}
+
+            {isProduct && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="stock_quantity">Quantidade em Estoque</Label>
+                  <Input
+                    id="stock_quantity"
+                    type="number"
+                    min="0"
+                    value={formData.stock_quantity || ''}
+                    onChange={(e) => setFormData(prev => ({ 
+                      ...prev, 
+                      stock_quantity: e.target.value ? parseInt(e.target.value) : 0 
+                    }))}
+                    placeholder="0"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="min_stock_quantity">Estoque Mínimo</Label>
+                  <Input
+                    id="min_stock_quantity"
+                    type="number"
+                    min="0"
+                    value={formData.min_stock_quantity || ''}
+                    onChange={(e) => setFormData(prev => ({ 
+                      ...prev, 
+                      min_stock_quantity: e.target.value ? parseInt(e.target.value) : 0 
+                    }))}
+                    placeholder="Alertar quando atingir"
+                  />
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

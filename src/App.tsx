@@ -30,6 +30,8 @@ import FunnelDetails from "./pages/FunnelDetails";
 import ProposalDetails from "./pages/ProposalDetails";
 import { PublicStore } from "./pages/PublicStore";
 import { PublicProduct } from "./pages/PublicProduct";
+import ProductForm from "./pages/ProductForm";
+import Orders from "./pages/Orders";
 
 const queryClient = new QueryClient();
 
@@ -100,6 +102,21 @@ const App = () => (
             <Route path="/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Products /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/products/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><ProductForm /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/products/edit/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><ProductForm /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/orders" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Orders /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/proposals" element={

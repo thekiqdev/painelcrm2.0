@@ -9,7 +9,13 @@ export class ProductsService {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    return (data || []) as Product[];
+    return (data || []).map(item => ({
+      ...item,
+      features: (item.features as any) || [],
+      images: (item.images as any) || [],
+      secondary_images: (item.secondary_images as any) || [],
+      variations: (item.variations as any) || []
+    })) as Product[];
   }
 
   async getProductById(id: string): Promise<Product | null> {
@@ -20,7 +26,15 @@ export class ProductsService {
       .single();
 
     if (error) throw error;
-    return data as Product;
+    if (!data) return null;
+    
+    return {
+      ...data,
+      features: (data.features as any) || [],
+      images: (data.images as any) || [],
+      secondary_images: (data.secondary_images as any) || [],
+      variations: (data.variations as any) || []
+    } as Product;
   }
 
   async createProduct(productData: ProductFormData): Promise<Product> {
@@ -28,25 +42,47 @@ export class ProductsService {
       .from('products')
       .insert({
         ...productData,
+        features: productData.features as any,
+        images: productData.images as any,
+        secondary_images: productData.secondary_images as any,
+        variations: productData.variations as any,
         status: 'active'
       } as any)
       .select()
       .single();
 
     if (error) throw error;
-    return data as Product;
+    return {
+      ...data,
+      features: (data.features as any) || [],
+      images: (data.images as any) || [],
+      secondary_images: (data.secondary_images as any) || [],
+      variations: (data.variations as any) || []
+    } as Product;
   }
 
   async updateProduct(id: string, productData: Partial<ProductFormData>): Promise<Product> {
+    const updateData: any = { ...productData };
+    if (productData.features) updateData.features = productData.features as any;
+    if (productData.images) updateData.images = productData.images as any;
+    if (productData.secondary_images) updateData.secondary_images = productData.secondary_images as any;
+    if (productData.variations) updateData.variations = productData.variations as any;
+
     const { data, error } = await supabase
       .from('products')
-      .update(productData)
+      .update(updateData)
       .eq('id', id)
       .select()
       .single();
 
     if (error) throw error;
-    return data as Product;
+    return {
+      ...data,
+      features: (data.features as any) || [],
+      images: (data.images as any) || [],
+      secondary_images: (data.secondary_images as any) || [],
+      variations: (data.variations as any) || []
+    } as Product;
   }
 
   async deleteProduct(id: string): Promise<void> {
@@ -101,7 +137,13 @@ export class ProductsService {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    return (data || []) as Product[];
+    return (data || []).map(item => ({
+      ...item,
+      features: (item.features as any) || [],
+      images: (item.images as any) || [],
+      secondary_images: (item.secondary_images as any) || [],
+      variations: (item.variations as any) || []
+    })) as Product[];
   }
 
   async getPublicStoreProfile(userId: string): Promise<StoreProfile | null> {
