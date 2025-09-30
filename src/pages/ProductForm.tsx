@@ -14,11 +14,26 @@ import { Product, ProductFormData, ProductVariation } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 
-// Variações predefinidas
+// Variações predefinidas com cores reais
+const COLOR_MAP: Record<string, string> = {
+  'Branco': '#FFFFFF',
+  'Preto': '#000000',
+  'Azul': '#0066CC',
+  'Vermelho': '#FF0000',
+  'Verde': '#00CC66',
+  'Amarelo': '#FFCC00',
+  'Rosa': '#FF69B4',
+  'Cinza': '#808080',
+  'Marrom': '#8B4513',
+  'Roxo': '#9933CC',
+  'Laranja': '#FF8800',
+  'Bege': '#F5F5DC'
+};
+
 const PREDEFINED_VARIATIONS = {
   cor: {
     name: 'Cor',
-    suggestions: ['Branco', 'Preto', 'Azul', 'Vermelho', 'Verde', 'Amarelo', 'Rosa', 'Cinza', 'Marrom', 'Roxo']
+    suggestions: Object.keys(COLOR_MAP)
   },
   tamanho: {
     name: 'Tamanho',
@@ -65,6 +80,8 @@ const ProductForm = () => {
   const [newFeature, setNewFeature] = useState('');
   const [variationType, setVariationType] = useState<'cor' | 'tamanho' | 'peso' | 'custom'>('cor');
   const [newVariation, setNewVariation] = useState({ name: '', values: [''] });
+  const [customColorName, setCustomColorName] = useState('');
+  const [customColorValue, setCustomColorValue] = useState('#000000');
 
   useEffect(() => {
     if (isEditing && id) {
@@ -245,6 +262,36 @@ const ProductForm = () => {
         values: [...prev.values.filter(v => v.trim()), value, '']
       }));
     }
+  };
+
+  const addCustomColor = () => {
+    if (customColorName.trim()) {
+      const colorWithHex = `${customColorName.trim()}|${customColorValue}`;
+      if (!newVariation.values.some(v => v.startsWith(customColorName.trim()))) {
+        setNewVariation(prev => ({
+          ...prev,
+          values: [...prev.values.filter(v => v.trim()), colorWithHex, '']
+        }));
+        setCustomColorName('');
+        setCustomColorValue('#000000');
+      }
+    }
+  };
+
+  const getColorFromValue = (value: string): string | null => {
+    // Se o valor contém |, é uma cor personalizada
+    if (value.includes('|')) {
+      return value.split('|')[1];
+    }
+    // Se não, procura no mapa de cores
+    return COLOR_MAP[value] || null;
+  };
+
+  const getColorName = (value: string): string => {
+    if (value.includes('|')) {
+      return value.split('|')[0];
+    }
+    return value;
   };
 
   const handleVariationTypeChange = (type: 'cor' | 'tamanho' | 'peso' | 'custom') => {
@@ -607,11 +654,47 @@ const ProductForm = () => {
                             className="cursor-pointer hover:bg-primary hover:text-primary-foreground"
                             onClick={() => addSuggestedValue(suggestion)}
                           >
+                            {variationType === 'cor' && COLOR_MAP[suggestion] && (
+                              <span
+                                className="inline-block w-4 h-4 rounded mr-1.5 border border-border"
+                                style={{ backgroundColor: COLOR_MAP[suggestion] }}
+                              />
+                            )}
                             <Plus className="h-3 w-3 mr-1" />
                             {suggestion}
                           </Badge>
                         ))}
                       </div>
+                      
+                      {variationType === 'cor' && (
+                        <div className="mt-3 p-3 border rounded-lg bg-muted/50">
+                          <p className="text-xs font-medium mb-2">Cor Personalizada:</p>
+                          <div className="flex gap-2">
+                            <Input
+                              value={customColorName}
+                              onChange={(e) => setCustomColorName(e.target.value)}
+                              placeholder="Nome da cor"
+                              className="flex-1"
+                            />
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                value={customColorValue}
+                                onChange={(e) => setCustomColorValue(e.target.value)}
+                                className="w-10 h-10 rounded border border-input cursor-pointer"
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={addCustomColor}
+                                disabled={!customColorName.trim()}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -658,12 +741,18 @@ const ProductForm = () => {
                   <Label>Variações Cadastradas</Label>
                   {formData.variations.map((variation, index) => (
                     <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div>
+                      <div className="flex-1">
                         <span className="font-medium">{variation.name}:</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {variation.values.map((value, vIndex) => (
-                            <Badge key={vIndex} variant="secondary">
-                              {value}
+                            <Badge key={vIndex} variant="secondary" className="flex items-center gap-1.5">
+                              {variation.name === 'Cor' && getColorFromValue(value) && (
+                                <span
+                                  className="inline-block w-3 h-3 rounded border border-border"
+                                  style={{ backgroundColor: getColorFromValue(value)! }}
+                                />
+                              )}
+                              {getColorName(value)}
                             </Badge>
                           ))}
                         </div>
