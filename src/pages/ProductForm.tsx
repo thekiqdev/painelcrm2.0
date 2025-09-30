@@ -669,7 +669,7 @@ const ProductForm = () => {
                       {variationType === 'cor' && (
                         <div className="mt-3 p-3 border rounded-lg bg-muted/50">
                           <p className="text-xs font-medium mb-2">Cor Personalizada:</p>
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 mb-2">
                             <Input
                               value={customColorName}
                               onChange={(e) => setCustomColorName(e.target.value)}
@@ -693,6 +693,34 @@ const ProductForm = () => {
                               </Button>
                             </div>
                           </div>
+                          
+                          <div className="mt-2">
+                            <Label className="text-xs">Ou adicione uma textura (foto):</Label>
+                            <div className="mt-1 border-2 border-dashed border-border rounded-lg p-3 text-center hover:bg-muted/50 transition-colors cursor-pointer">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                id="texture-upload"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    // TODO: Implementar upload real
+                                    toast({
+                                      title: "Em breve",
+                                      description: "Upload de texturas será implementado em breve"
+                                    });
+                                  }
+                                }}
+                              />
+                              <label htmlFor="texture-upload" className="cursor-pointer">
+                                <Upload className="mx-auto h-6 w-6 text-muted-foreground mb-1" />
+                                <p className="text-xs text-muted-foreground">
+                                  Clique para adicionar textura
+                                </p>
+                              </label>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -701,11 +729,20 @@ const ProductForm = () => {
                   <div className="space-y-2">
                     {newVariation.values.map((value, index) => (
                       <div key={index} className="flex gap-2">
-                        <Input
-                          value={value}
-                          onChange={(e) => updateVariationValue(index, e.target.value)}
-                          placeholder={variationType === 'custom' ? "Digite um valor..." : `Ex: ${PREDEFINED_VARIATIONS[variationType]?.suggestions[0] || 'Valor'}`}
-                        />
+                        <div className="relative flex-1">
+                          {variationType === 'cor' && getColorFromValue(value) && (
+                            <span
+                              className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded border border-border"
+                              style={{ backgroundColor: getColorFromValue(value)! }}
+                            />
+                          )}
+                          <Input
+                            value={getColorName(value)}
+                            onChange={(e) => updateVariationValue(index, e.target.value)}
+                            placeholder={variationType === 'custom' ? "Digite um valor..." : `Ex: ${PREDEFINED_VARIATIONS[variationType]?.suggestions[0] || 'Valor'}`}
+                            className={variationType === 'cor' && getColorFromValue(value) ? 'pl-11' : ''}
+                          />
+                        </div>
                         {newVariation.values.length > 1 && (
                           <Button
                             type="button"
