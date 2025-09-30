@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon } from "lucide-react";
-import { Product, ProductFormData, ProductVariation } from "@/types/products";
+import { Product, ProductFormData, ProductVariation, VariationPrice } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 
@@ -70,6 +70,8 @@ const ProductForm = () => {
     images: [],
     secondary_images: [],
     variations: [],
+    pricing_mode: 'fixed',
+    variation_prices: [],
     duration_hours: undefined,
     responsible_id: undefined,
     contract_template: '',
@@ -112,6 +114,8 @@ const ProductForm = () => {
           images: productData.images,
           secondary_images: productData.secondary_images || [],
           variations: productData.variations || [],
+          pricing_mode: productData.pricing_mode || 'fixed',
+          variation_prices: productData.variation_prices || [],
           duration_hours: productData.duration_hours,
           responsible_id: productData.responsible_id,
           contract_template: productData.contract_template || '',
@@ -301,6 +305,57 @@ const ProductForm = () => {
     } else {
       setNewVariation({ name: '', values: [''] });
     }
+  };
+
+  // Função para gerar todas as combinações de variações
+  const generateVariationCombinations = (): string[] => {
+    if (!formData.variations || formData.variations.length === 0) {
+      return [];
+    }
+
+    let combinations: string[] = [''];
+    
+    for (const variation of formData.variations) {
+      const newCombinations: string[] = [];
+      for (const combination of combinations) {
+        for (const value of variation.values) {
+          const displayValue = getColorName(value);
+          newCombinations.push(
+            combination ? `${combination}-${displayValue}` : displayValue
+          );
+        }
+      }
+      combinations = newCombinations;
+    }
+    
+    return combinations;
+  };
+
+  // Atualizar preço de uma combinação
+  const updateVariationPrice = (combination: string, price: number | undefined) => {
+    setFormData(prev => {
+      const existingPrices = prev.variation_prices || [];
+      const existingIndex = existingPrices.findIndex(vp => vp.combination === combination);
+      
+      let newPrices;
+      if (existingIndex >= 0) {
+        newPrices = [...existingPrices];
+        newPrices[existingIndex] = { combination, price };
+      } else {
+        newPrices = [...existingPrices, { combination, price }];
+      }
+      
+      return {
+        ...prev,
+        variation_prices: newPrices
+      };
+    });
+  };
+
+  // Obter preço de uma combinação
+  const getVariationPrice = (combination: string): number | undefined => {
+    const priceObj = formData.variation_prices?.find(vp => vp.combination === combination);
+    return priceObj?.price;
   };
 
   if (loading && isEditing) {
@@ -774,37 +829,122 @@ const ProductForm = () => {
               </div>
 
               {formData.variations && formData.variations.length > 0 && (
-                <div className="space-y-2">
-                  <Label>Variações Cadastradas</Label>
-                  {formData.variations.map((variation, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex-1">
-                        <span className="font-medium">{variation.name}:</span>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {variation.values.map((value, vIndex) => (
-                            <Badge key={vIndex} variant="secondary" className="flex items-center gap-1.5">
-                              {variation.name === 'Cor' && getColorFromValue(value) && (
-                                <span
-                                  className="inline-block w-3 h-3 rounded border border-border"
-                                  style={{ backgroundColor: getColorFromValue(value)! }}
+                <>
+                  <div className="space-y-2">
+                    <Label>Variações Cadastradas</Label>
+                    {formData.variations.map((variation, index) => (
+                      <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex-1">
+                          <span className="font-medium">{variation.name}:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {variation.values.map((value, vIndex) => (
+                              <Badge key={vIndex} variant="secondary" className="flex items-center gap-1.5">
+                                {variation.name === 'Cor' && getColorFromValue(value) && (
+                                  <span
+                                    className="inline-block w-3 h-3 rounded border border-border"
+                                    style={{ backgroundColor: getColorFromValue(value)! }}
+                                  />
+                                )}
+                                {getColorName(value)}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => removeVariation(index)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Separator className="my-4" />
+
+                  {/* Precificação por Variação */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Modo de Precificação</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Defina um preço fixo ou personalize por variação
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          {formData.pricing_mode === 'fixed' ? 'Preço Fixo' : 'Preço por Variação'}
+                        </span>
+                        <Switch
+                          checked={formData.pricing_mode === 'per_variation'}
+                          onCheckedChange={(checked) => {
+                            setFormData(prev => ({
+                              ...prev,
+                              pricing_mode: checked ? 'per_variation' : 'fixed'
+                            }));
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {formData.pricing_mode === 'per_variation' && (
+                      <div className="space-y-3 mt-4">
+                        <Label>Preços por Variação</Label>
+                        <div className="grid gap-2">
+                          {generateVariationCombinations().map((combination, index) => (
+                            <div key={index} className="flex items-center gap-3 p-3 border rounded-lg bg-muted/50">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  {formData.variations?.map((variation, vIdx) => {
+                                    const parts = combination.split('-');
+                                    const value = parts[vIdx];
+                                    if (!value) return null;
+                                    
+                                    // Encontrar o valor original (com hex) para cores
+                                    const originalValue = variation.values.find(v => 
+                                      getColorName(v) === value
+                                    );
+                                    
+                                    return (
+                                      <React.Fragment key={vIdx}>
+                                        {vIdx > 0 && <span className="text-muted-foreground">×</span>}
+                                        <Badge variant="outline" className="flex items-center gap-1.5">
+                                          {variation.name === 'Cor' && originalValue && getColorFromValue(originalValue) && (
+                                            <span
+                                              className="inline-block w-3 h-3 rounded border border-border"
+                                              style={{ backgroundColor: getColorFromValue(originalValue)! }}
+                                            />
+                                          )}
+                                          {value}
+                                        </Badge>
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Label className="text-sm text-muted-foreground whitespace-nowrap">R$</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={getVariationPrice(combination) || ''}
+                                  onChange={(e) => updateVariationPrice(
+                                    combination, 
+                                    e.target.value ? parseFloat(e.target.value) : undefined
+                                  )}
+                                  placeholder="0,00"
+                                  className="w-32"
                                 />
-                              )}
-                              {getColorName(value)}
-                            </Badge>
+                              </div>
+                            </div>
                           ))}
                         </div>
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => removeVariation(index)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
+                    )}
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>

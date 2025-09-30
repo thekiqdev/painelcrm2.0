@@ -4,6 +4,11 @@ export interface ProductVariation {
   values: string[]; // ex: ["Azul", "Vermelho"], ["P", "M", "G"]
 }
 
+export interface VariationPrice {
+  combination: string; // ex: "Branco-P", "Preto-M"
+  price?: number;
+}
+
 export interface Product {
   id: string;
   user_id: string;
@@ -22,6 +27,8 @@ export interface Product {
   secondary_images?: string[]; // imagens secundárias
   features: string[];
   variations?: ProductVariation[]; // para produtos
+  pricing_mode?: 'fixed' | 'per_variation';
+  variation_prices?: VariationPrice[];
   category?: string;
   status: 'active' | 'inactive' | 'draft';
   is_public: boolean;
@@ -67,6 +74,8 @@ export interface ProductFormData {
   images: string[];
   secondary_images?: string[];
   variations?: ProductVariation[];
+  pricing_mode?: 'fixed' | 'per_variation';
+  variation_prices?: VariationPrice[];
   duration_hours?: number;
   responsible_id?: string;
   contract_template?: string;
