@@ -8,10 +8,27 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon } from "lucide-react";
 import { Product, ProductFormData, ProductVariation } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
+
+// Variações predefinidas
+const PREDEFINED_VARIATIONS = {
+  cor: {
+    name: 'Cor',
+    suggestions: ['Branco', 'Preto', 'Azul', 'Vermelho', 'Verde', 'Amarelo', 'Rosa', 'Cinza', 'Marrom', 'Roxo']
+  },
+  tamanho: {
+    name: 'Tamanho',
+    suggestions: ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XXG']
+  },
+  peso: {
+    name: 'Peso',
+    suggestions: ['100g', '250g', '500g', '1kg', '2kg', '5kg', '10kg']
+  }
+};
 
 const ProductForm = () => {
   const navigate = useNavigate();
@@ -46,6 +63,7 @@ const ProductForm = () => {
   });
 
   const [newFeature, setNewFeature] = useState('');
+  const [variationType, setVariationType] = useState<'cor' | 'tamanho' | 'peso' | 'custom'>('cor');
   const [newVariation, setNewVariation] = useState({ name: '', values: [''] });
 
   useEffect(() => {
@@ -157,10 +175,18 @@ const ProductForm = () => {
   };
 
   const addVariation = () => {
-    if (newVariation.name.trim() && newVariation.values.some(v => v.trim())) {
+    const variationName = variationType === 'custom' 
+      ? newVariation.name.trim() 
+      : PREDEFINED_VARIATIONS[variationType].name;
+    
+    const variationValues = variationType === 'custom'
+      ? newVariation.values.filter(v => v.trim()).map(v => v.trim())
+      : newVariation.values.filter(v => v.trim()).map(v => v.trim());
+
+    if (variationName && variationValues.length > 0) {
       const variation: ProductVariation = {
-        name: newVariation.name.trim(),
-        values: newVariation.values.filter(v => v.trim()).map(v => v.trim())
+        name: variationName,
+        values: variationValues
       };
       
       setFormData(prev => ({
@@ -168,7 +194,17 @@ const ProductForm = () => {
         variations: [...(prev.variations || []), variation]
       }));
       
+      // Reset form
       setNewVariation({ name: '', values: [''] });
+      setVariationType('cor');
+    } else {
+      toast({
+        title: "Erro",
+        description: variationType === 'custom' 
+          ? "Preencha o nome e pelo menos um valor para a variação" 
+          : "Adicione pelo menos um valor para a variação",
+        variant: "destructive"
+      });
     }
   };
 
@@ -194,10 +230,30 @@ const ProductForm = () => {
   };
 
   const removeVariationValue = (index: number) => {
-    setNewVariation(prev => ({
-      ...prev,
-      values: prev.values.filter((_, i) => i !== index)
-    }));
+    if (newVariation.values.length > 1) {
+      setNewVariation(prev => ({
+        ...prev,
+        values: prev.values.filter((_, i) => i !== index)
+      }));
+    }
+  };
+
+  const addSuggestedValue = (value: string) => {
+    if (!newVariation.values.some(v => v === value)) {
+      setNewVariation(prev => ({
+        ...prev,
+        values: [...prev.values.filter(v => v.trim()), value, '']
+      }));
+    }
+  };
+
+  const handleVariationTypeChange = (type: 'cor' | 'tamanho' | 'peso' | 'custom') => {
+    setVariationType(type);
+    if (type !== 'custom') {
+      setNewVariation({ name: PREDEFINED_VARIATIONS[type].name, values: [''] });
+    } else {
+      setNewVariation({ name: '', values: [''] });
+    }
   };
 
   if (loading && isEditing) {
@@ -506,31 +562,66 @@ const ProductForm = () => {
             <CardHeader>
               <CardTitle>Variações do Produto</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Configure cores, tamanhos ou outras variações do seu produto
+                Configure cores, tamanhos, peso ou outras variações do seu produto
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="border rounded-lg p-4 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Tipo de Variação</Label>
+                  <Select value={variationType} onValueChange={(value: any) => handleVariationTypeChange(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione o tipo de variação" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cor">Cor</SelectItem>
+                      <SelectItem value="tamanho">Tamanho</SelectItem>
+                      <SelectItem value="peso">Peso</SelectItem>
+                      <SelectItem value="custom">Personalizada</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {variationType === 'custom' && (
                   <div>
                     <Label>Nome da Variação</Label>
                     <Input
                       value={newVariation.name}
                       onChange={(e) => setNewVariation(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="Ex: Cor, Tamanho, Material..."
+                      placeholder="Ex: Material, Estilo, Acabamento..."
                     />
                   </div>
-                </div>
+                )}
                 
                 <div>
                   <Label>Valores</Label>
+                  
+                  {variationType !== 'custom' && (
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-2">Sugestões rápidas:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {PREDEFINED_VARIATIONS[variationType].suggestions.map((suggestion) => (
+                          <Badge
+                            key={suggestion}
+                            variant="outline"
+                            className="cursor-pointer hover:bg-primary hover:text-primary-foreground"
+                            onClick={() => addSuggestedValue(suggestion)}
+                          >
+                            <Plus className="h-3 w-3 mr-1" />
+                            {suggestion}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-2">
                     {newVariation.values.map((value, index) => (
                       <div key={index} className="flex gap-2">
                         <Input
                           value={value}
                           onChange={(e) => updateVariationValue(index, e.target.value)}
-                          placeholder="Ex: Azul, P, Algodão..."
+                          placeholder={variationType === 'custom' ? "Digite um valor..." : `Ex: ${PREDEFINED_VARIATIONS[variationType]?.suggestions[0] || 'Valor'}`}
                         />
                         {newVariation.values.length > 1 && (
                           <Button
@@ -557,7 +648,7 @@ const ProductForm = () => {
                   </Button>
                 </div>
                 
-                <Button type="button" onClick={addVariation}>
+                <Button type="button" onClick={addVariation} className="w-full">
                   Adicionar Variação
                 </Button>
               </div>
@@ -569,9 +660,13 @@ const ProductForm = () => {
                     <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
                       <div>
                         <span className="font-medium">{variation.name}:</span>
-                        <span className="ml-2 text-muted-foreground">
-                          {variation.values.join(', ')}
-                        </span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {variation.values.map((value, vIndex) => (
+                            <Badge key={vIndex} variant="secondary">
+                              {value}
+                            </Badge>
+                          ))}
+                        </div>
                       </div>
                       <Button
                         type="button"
