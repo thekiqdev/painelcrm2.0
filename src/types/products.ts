@@ -36,6 +36,8 @@ export interface Product {
   responsible_id?: string; // responsável pelo serviço
   contract_template?: string; // para serviços - template de contrato
   has_contract?: boolean; // se o serviço tem contrato vinculado
+  is_recurring?: boolean; // se o serviço é recorrente
+  recurrence_interval?: 'daily' | 'weekly' | 'monthly' | 'yearly'; // intervalo de recorrência
   created_at?: string;
   updated_at?: string;
 }
@@ -80,6 +82,8 @@ export interface ProductFormData {
   responsible_id?: string;
   contract_template?: string;
   has_contract?: boolean;
+  is_recurring?: boolean;
+  recurrence_interval?: 'daily' | 'weekly' | 'monthly' | 'yearly';
   is_public: boolean;
 }
 

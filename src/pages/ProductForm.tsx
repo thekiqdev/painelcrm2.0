@@ -76,6 +76,8 @@ const ProductForm = () => {
     responsible_id: undefined,
     contract_template: '',
     has_contract: false,
+    is_recurring: false,
+    recurrence_interval: undefined,
     is_public: true
   });
 
@@ -120,6 +122,8 @@ const ProductForm = () => {
           responsible_id: productData.responsible_id,
           contract_template: productData.contract_template || '',
           has_contract: productData.has_contract || false,
+          is_recurring: productData.is_recurring || false,
+          recurrence_interval: productData.recurrence_interval,
           is_public: productData.is_public
         });
       }
@@ -563,20 +567,79 @@ const ProductForm = () => {
               )}
               
               {isService && (
-                <div>
-                  <Label htmlFor="duration">Duração Estimada (horas)</Label>
-                  <Input
-                    id="duration"
-                    type="number"
-                    min="0"
-                    value={formData.duration_hours || ''}
-                    onChange={(e) => setFormData(prev => ({ 
-                      ...prev, 
-                      duration_hours: e.target.value ? parseInt(e.target.value) : undefined 
-                    }))}
-                    placeholder="Horas necessárias"
-                  />
-                </div>
+                <>
+                  <div>
+                    <Label htmlFor="duration">Duração Estimada (horas)</Label>
+                    <Input
+                      id="duration"
+                      type="number"
+                      min="0"
+                      value={formData.duration_hours || ''}
+                      onChange={(e) => setFormData(prev => ({ 
+                        ...prev, 
+                        duration_hours: e.target.value ? parseInt(e.target.value) : undefined 
+                      }))}
+                      placeholder="Horas necessárias"
+                    />
+                  </div>
+
+                  <Separator />
+
+                  {/* Recorrência */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Tipo de Serviço</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Defina se o serviço é avulso ou recorrente
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          {formData.is_recurring ? 'Recorrente' : 'Avulso'}
+                        </span>
+                        <Switch
+                          checked={formData.is_recurring}
+                          onCheckedChange={(checked) => {
+                            setFormData(prev => ({
+                              ...prev,
+                              is_recurring: checked,
+                              recurrence_interval: checked ? 'monthly' : undefined
+                            }));
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {formData.is_recurring && (
+                      <div>
+                        <Label htmlFor="recurrence_interval">Intervalo de Recorrência</Label>
+                        <Select
+                          value={formData.recurrence_interval}
+                          onValueChange={(value: 'daily' | 'weekly' | 'monthly' | 'yearly') => 
+                            setFormData(prev => ({ ...prev, recurrence_interval: value }))
+                          }
+                        >
+                          <SelectTrigger id="recurrence_interval">
+                            <SelectValue placeholder="Selecione o intervalo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="daily">Diário</SelectItem>
+                            <SelectItem value="weekly">Semanal</SelectItem>
+                            <SelectItem value="monthly">Mensal</SelectItem>
+                            <SelectItem value="yearly">Anual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {formData.recurrence_interval === 'daily' && 'O serviço será cobrado diariamente'}
+                          {formData.recurrence_interval === 'weekly' && 'O serviço será cobrado semanalmente'}
+                          {formData.recurrence_interval === 'monthly' && 'O serviço será cobrado mensalmente'}
+                          {formData.recurrence_interval === 'yearly' && 'O serviço será cobrado anualmente'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
 
