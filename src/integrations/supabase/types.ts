@@ -193,51 +193,199 @@ export type Database = {
           },
         ]
       }
+      contract_events: {
+        Row: {
+          contract_id: string
+          created_at: string
+          created_by: string | null
+          description: string
+          event_type: string
+          id: string
+          metadata: Json | null
+        }
+        Insert: {
+          contract_id: string
+          created_at?: string
+          created_by?: string | null
+          description: string
+          event_type: string
+          id?: string
+          metadata?: Json | null
+        }
+        Update: {
+          contract_id?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contract_events_contract_id_fkey"
+            columns: ["contract_id"]
+            isOneToOne: false
+            referencedRelation: "contracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contract_signers: {
+        Row: {
+          contract_id: string
+          created_at: string
+          email: string
+          id: string
+          name: string
+          role: string
+          signature_data: Json | null
+          signed_at: string | null
+          signing_order: number | null
+        }
+        Insert: {
+          contract_id: string
+          created_at?: string
+          email: string
+          id?: string
+          name: string
+          role: string
+          signature_data?: Json | null
+          signed_at?: string | null
+          signing_order?: number | null
+        }
+        Update: {
+          contract_id?: string
+          created_at?: string
+          email?: string
+          id?: string
+          name?: string
+          role?: string
+          signature_data?: Json | null
+          signed_at?: string | null
+          signing_order?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contract_signers_contract_id_fkey"
+            columns: ["contract_id"]
+            isOneToOne: false
+            referencedRelation: "contracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contract_templates: {
+        Row: {
+          content_html: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+          user_id: string
+          variables_schema: Json | null
+        }
+        Insert: {
+          content_html: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+          user_id: string
+          variables_schema?: Json | null
+        }
+        Update: {
+          content_html?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+          user_id?: string
+          variables_schema?: Json | null
+        }
+        Relationships: []
+      }
       contracts: {
         Row: {
+          auto_renew: boolean | null
           client_id: string | null
           content: string | null
+          content_html: string | null
           contract_number: string
           created_at: string
+          currency: string | null
           end_date: string | null
           id: string
+          linked_invoice_id: string | null
+          linked_proposal_id: string | null
+          renewal_period: number | null
           responsible_id: string | null
+          signature_settings: Json | null
           start_date: string | null
           status: Database["public"]["Enums"]["contract_status"]
           tags: Json | null
+          template_id: string | null
           title: string
+          total_value: number | null
           updated_at: string
           user_id: string
+          variables: Json | null
         }
         Insert: {
+          auto_renew?: boolean | null
           client_id?: string | null
           content?: string | null
+          content_html?: string | null
           contract_number: string
           created_at?: string
+          currency?: string | null
           end_date?: string | null
           id?: string
+          linked_invoice_id?: string | null
+          linked_proposal_id?: string | null
+          renewal_period?: number | null
           responsible_id?: string | null
+          signature_settings?: Json | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["contract_status"]
           tags?: Json | null
+          template_id?: string | null
           title: string
+          total_value?: number | null
           updated_at?: string
           user_id: string
+          variables?: Json | null
         }
         Update: {
+          auto_renew?: boolean | null
           client_id?: string | null
           content?: string | null
+          content_html?: string | null
           contract_number?: string
           created_at?: string
+          currency?: string | null
           end_date?: string | null
           id?: string
+          linked_invoice_id?: string | null
+          linked_proposal_id?: string | null
+          renewal_period?: number | null
           responsible_id?: string | null
+          signature_settings?: Json | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["contract_status"]
           tags?: Json | null
+          template_id?: string | null
           title?: string
+          total_value?: number | null
           updated_at?: string
           user_id?: string
+          variables?: Json | null
         }
         Relationships: [
           {
@@ -245,6 +393,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contracts_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "contract_templates"
             referencedColumns: ["id"]
           },
         ]

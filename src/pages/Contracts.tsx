@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +53,7 @@ import {
 import type { Contract, ContractStatus, ContractFilters } from "@/types/contracts";
 
 const Contracts = () => {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
@@ -127,6 +129,8 @@ const Contracts = () => {
       const mappedContracts: Contract[] = filtered.map(c => ({
         ...c,
         tags: (Array.isArray(c.tags) ? c.tags : []) as string[],
+        variables: (typeof c.variables === 'object' && c.variables !== null ? c.variables : {}) as Record<string, any>,
+        signature_settings: (typeof c.signature_settings === 'object' && c.signature_settings !== null ? c.signature_settings : {}) as Record<string, any>,
       }));
 
       setContracts(mappedContracts);
@@ -244,7 +248,7 @@ const Contracts = () => {
             <FileText className="mr-2 h-4 w-4" />
             Modelos
           </Button>
-          <Button>
+          <Button onClick={() => navigate('/contracts/new')}>
             <Plus className="mr-2 h-4 w-4" />
             Novo Contrato
           </Button>
@@ -471,7 +475,7 @@ const Contracts = () => {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate(`/contracts/${contract.id}`)}>
                           <FileText className="mr-2 h-4 w-4" />
                           Ver/Editar
                         </DropdownMenuItem>

@@ -15,6 +15,8 @@ import Projects from "./pages/Projects";
 import Products from "./pages/Products";
 import Proposals from "./pages/Proposals";
 import Contracts from "./pages/Contracts";
+import NewContract from "./pages/NewContract";
+import ContractDetails from "./pages/ContractDetails";
 import Billing from "./pages/Billing";
 import Finance from "./pages/Finance";
 import Settings from "./pages/Settings";
@@ -145,6 +147,16 @@ const App = () => (
             <Route path="/contracts" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Contracts /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><NewContract /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><ContractDetails /></AppLayout>
               </AuthGuard>
             } />
             <Route path="/billing" element={
