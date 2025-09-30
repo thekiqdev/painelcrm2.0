@@ -12,6 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from "@/components/ui/command";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Calendar } from "@/components/ui/calendar";
@@ -39,6 +46,8 @@ import {
   GripVertical,
   Trash2,
   Eye,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
 import type { ContractTemplate, ContractSigner, SignerRole } from "@/types/contracts";
 
@@ -72,6 +81,8 @@ const NewContract = () => {
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
   const [signers, setSigners] = useState<Omit<ContractSigner, 'id' | 'contract_id' | 'created_at' | 'signed_at' | 'signature_data'>[]>([]);
   const [loading, setLoading] = useState(false);
+  const [clients, setClients] = useState<any[]>([]);
+  const [clientSearchOpen, setClientSearchOpen] = useState(false);
   const [formData, setFormData] = useState<ContractFormData>({
     title: '',
     client_id: '',
@@ -96,6 +107,7 @@ const NewContract = () => {
 
   useEffect(() => {
     loadTemplates();
+    loadClients();
   }, []);
 
   const loadTemplates = async () => {
@@ -117,6 +129,21 @@ const NewContract = () => {
     } catch (error) {
       console.error('Error loading templates:', error);
       toast.error('Erro ao carregar modelos');
+    }
+  };
+
+  const loadClients = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, name, email, company')
+        .eq('user_id', user?.id)
+        .order('name');
+
+      if (error) throw error;
+      setClients(data || []);
+    } catch (error) {
+      console.error('Error loading clients:', error);
     }
   };
 
@@ -483,6 +510,58 @@ const NewContract = () => {
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   placeholder="Ex: Contrato de Prestação de Serviços"
                 />
+              </div>
+
+              <div>
+                <Label>Cliente</Label>
+                <Popover open={clientSearchOpen} onOpenChange={setClientSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={clientSearchOpen}
+                      className="w-full justify-between"
+                    >
+                      {formData.client_id
+                        ? clients.find((client) => client.id === formData.client_id)?.name
+                        : "Selecionar cliente..."}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-full p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Buscar cliente..." />
+                      <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+                      <CommandGroup>
+                        {clients.map((client) => (
+                          <CommandItem
+                            key={client.id}
+                            value={`${client.name} ${client.email || ''} ${client.company || ''}`}
+                            onSelect={() => {
+                              setFormData({ ...formData, client_id: client.id });
+                              setClientSearchOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                formData.client_id === client.id ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            <div className="flex flex-col">
+                              <span>{client.name}</span>
+                              {(client.email || client.company) && (
+                                <span className="text-xs text-muted-foreground">
+                                  {[client.company, client.email].filter(Boolean).join(' • ')}
+                                </span>
+                              )}
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
             </CardContent>
           </Card>
