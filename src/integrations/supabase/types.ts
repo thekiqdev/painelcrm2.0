@@ -588,9 +588,11 @@ export type Database = {
           id: string
           images: Json | null
           is_public: boolean
+          is_recurring: boolean | null
           min_stock_quantity: number | null
           name: string
           price: number | null
+          recurrence_interval: string | null
           responsible_id: string | null
           secondary_images: Json | null
           short_description: string | null
@@ -616,9 +618,11 @@ export type Database = {
           id?: string
           images?: Json | null
           is_public?: boolean
+          is_recurring?: boolean | null
           min_stock_quantity?: number | null
           name: string
           price?: number | null
+          recurrence_interval?: string | null
           responsible_id?: string | null
           secondary_images?: Json | null
           short_description?: string | null
@@ -644,9 +648,11 @@ export type Database = {
           id?: string
           images?: Json | null
           is_public?: boolean
+          is_recurring?: boolean | null
           min_stock_quantity?: number | null
           name?: string
           price?: number | null
+          recurrence_interval?: string | null
           responsible_id?: string | null
           secondary_images?: Json | null
           short_description?: string | null
