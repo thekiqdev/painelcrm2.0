@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter } from "lucide-react";
+import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Switch } from "@/components/ui/switch";
@@ -25,6 +25,9 @@ import { mockMembers, initialProjects } from "@/components/projects/mockData";
 
 // Add import for ProjectFinance
 import { ProjectFinance } from "@/components/projects/ProjectFinance";
+import { ProjectSettingsDialog } from "@/components/projects/ProjectSettingsDialog";
+import { SaveAsTemplateDialog } from "@/components/projects/SaveAsTemplateDialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const Projects = () => {
@@ -61,6 +64,8 @@ const Projects = () => {
   const [newTagText, setNewTagText] = useState("");
   const [tagsInput, setTagsInput] = useState<string[]>([]);
   const [editingTask, setEditingTask] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+  const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
 
   // Funções para gestão de projetos
   const handleCreateProject = (event: React.FormEvent, data: ProjectFormData) => {
@@ -643,9 +648,22 @@ const Projects = () => {
               <div className="mt-2" dangerouslySetInnerHTML={{ __html: selectedProject.description }} />
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline">
-                <Users className="h-4 w-4 mr-1" />
-                Gerenciar Equipe
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setSaveAsTemplateOpen(true)}>
+                    <File className="h-4 w-4 mr-2" />
+                    Salvar como Modelo
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button size="sm" variant="secondary" onClick={() => setProjectSettingsOpen(true)}>
+                <Settings className="h-4 w-4 mr-1" />
+                Configurações do Projeto
               </Button>
             </div>
           </div>
@@ -886,6 +904,31 @@ const Projects = () => {
         setEditMode={setEditingTask}
         onUpdateTask={updateTask}
       />
+      
+      {selectedProject && (
+        <>
+          <ProjectSettingsDialog
+            open={projectSettingsOpen}
+            onOpenChange={setProjectSettingsOpen}
+            project={selectedProject}
+            members={mockMembers}
+            onSave={(updatedProject) => {
+              setProjects(projects.map(p => 
+                p.id === selectedProject.id 
+                  ? { ...p, ...updatedProject }
+                  : p
+              ));
+              setSelectedProject({ ...selectedProject, ...updatedProject } as Project);
+            }}
+          />
+          
+          <SaveAsTemplateDialog
+            open={saveAsTemplateOpen}
+            onOpenChange={setSaveAsTemplateOpen}
+            project={selectedProject}
+          />
+        </>
+      )}
     </div>
   );
 };

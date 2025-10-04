@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
-import { Plus, FileText, Trash2, Copy } from "lucide-react";
+import { FileText, Trash2, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { NewTemplateDialog } from "@/components/projects/templates/NewTemplateDialog";
 import { EditTemplateDialog } from "@/components/projects/templates/EditTemplateDialog";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -21,7 +20,6 @@ interface ProjectTemplate {
 export default function ProjectTemplates() {
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<ProjectTemplate | null>(null);
-  const [newDialogOpen, setNewDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -165,13 +163,17 @@ export default function ProjectTemplates() {
         <div>
           <h1 className="text-3xl font-bold">Templates de Projeto</h1>
           <p className="text-muted-foreground">
-            Crie modelos reutilizáveis para seus projetos
+            Gerencie e use modelos reutilizáveis criados a partir de seus projetos
           </p>
         </div>
-        <Button onClick={() => setNewDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Novo Template
-        </Button>
+        <div className="text-right">
+          <p className="text-sm text-muted-foreground mb-1">
+            Para criar um novo template:
+          </p>
+          <p className="text-sm font-medium">
+            Abra um projeto → Configurações → Salvar como Modelo
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -239,20 +241,15 @@ export default function ProjectTemplates() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <FileText className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground text-center">
-              Nenhum template criado ainda.
+            <h3 className="text-lg font-semibold mb-2">Nenhum template criado ainda</h3>
+            <p className="text-muted-foreground text-center max-w-md">
+              Para criar um template, abra um projeto existente e use a opção
               <br />
-              Clique em "Novo Template" para começar.
+              <strong>"Configurações do Projeto → Ações → Salvar como Modelo"</strong>
             </p>
           </CardContent>
         </Card>
       )}
-
-      <NewTemplateDialog
-        open={newDialogOpen}
-        onOpenChange={setNewDialogOpen}
-        onSuccess={loadTemplates}
-      />
 
       {selectedTemplate && (
         <EditTemplateDialog
