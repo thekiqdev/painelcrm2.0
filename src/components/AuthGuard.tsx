@@ -25,13 +25,15 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     // Não faça nada enquanto estamos carregando o estado de autenticação
     if (loading) return;
 
-    console.log('AuthGuard check:', { 
-      user: !!user, 
-      path: location.pathname,
-      registrationComplete,
-      requireAuth,
-      requireComplete
-    });
+    if (process.env.NODE_ENV === 'development') {
+      console.log('AuthGuard check:', {
+        user: !!user,
+        path: location.pathname,
+        registrationComplete,
+        requireAuth,
+        requireComplete
+      });
+    }
 
     // Identifica as páginas especiais
     const isRegisterStepsPage = location.pathname === '/register/steps';

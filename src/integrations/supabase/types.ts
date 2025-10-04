@@ -1490,6 +1490,41 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          profile_id: string | null
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          profile_id?: string | null
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          profile_id?: string | null
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_roles_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "user_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_connections: {
         Row: {
           config_data: Json | null
@@ -1609,10 +1644,16 @@ export type Database = {
           | { permission: string; user_id: number }
         Returns: boolean
       }
+      has_role: {
+        Args: {
+          _profile_id?: string
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
       is_profile_member: {
-        Args:
-          | { profile_id: number; user_id: number }
-          | { profile_id: string; user_id?: string }
+        Args: { _profile_id: string; _user_id?: string }
         Returns: boolean
       }
       upsert_conversation_status: {
@@ -1639,6 +1680,7 @@ export type Database = {
       }
     }
     Enums: {
+      app_role: "admin" | "manager" | "member" | "viewer"
       contract_status:
         | "DRAFT"
         | "PENDING_SIGNATURE"
@@ -1785,6 +1827,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      app_role: ["admin", "manager", "member", "viewer"],
       contract_status: [
         "DRAFT",
         "PENDING_SIGNATURE",

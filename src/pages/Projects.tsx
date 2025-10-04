@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { sanitizeHtml } from "@/lib/sanitize";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
@@ -645,7 +646,7 @@ const Projects = () => {
                   </span>
                 ))}
               </div>
-              <div className="mt-2" dangerouslySetInnerHTML={{ __html: selectedProject.description }} />
+              <div className="mt-2" dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedProject.description) }} />
             </div>
             <div className="flex items-center gap-2">
               <DropdownMenu>

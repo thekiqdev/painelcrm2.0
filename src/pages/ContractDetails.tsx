@@ -23,6 +23,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { sanitizeHtml } from "@/lib/sanitize";
 import {
   ArrowLeft,
   MoreVertical,
@@ -412,7 +413,7 @@ const ContractDetails = () => {
             <CardContent>
               <div
                 className="prose max-w-none"
-                dangerouslySetInnerHTML={{ __html: contract.content_html || 'Sem conteúdo' }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(contract.content_html || 'Sem conteúdo') }}
               />
             </CardContent>
           </Card>

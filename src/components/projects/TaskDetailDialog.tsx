@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { format } from "date-fns";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 interface TaskDetailDialogProps {
   open: boolean;
@@ -293,7 +294,7 @@ export function TaskDetailDialog({
                 <h4 className="text-sm font-semibold mb-1">Descrição</h4>
                 <div 
                   className="text-sm text-muted-foreground"
-                  dangerouslySetInnerHTML={{ __html: task.description }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(task.description) }}
                 />
               </div>
             )

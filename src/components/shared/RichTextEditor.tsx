@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
+import DOMPurify from 'dompurify';
 import { cn } from '@/lib/utils';
 import { Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter, AlignRight, AlignJustify, Link, Image } from 'lucide-react';
 
@@ -14,10 +15,14 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
   const [editorContent, setEditorContent] = useState(value);
   const editorRef = useRef<HTMLDivElement>(null);
 
-  // Apply initial content
+  // Apply initial content with sanitization
   useEffect(() => {
     if (editorRef.current && value !== editorRef.current.innerHTML) {
-      editorRef.current.innerHTML = value;
+      const sanitized = DOMPurify.sanitize(value, {
+        ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span'],
+        ALLOWED_ATTR: ['href', 'target', 'style']
+      });
+      editorRef.current.innerHTML = sanitized;
     }
   }, [value]);
 
