@@ -29,6 +29,8 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
 import { supabase } from '@/integrations/supabase/client';
 
 interface AppLayoutProps {
@@ -220,9 +222,11 @@ const Nav = () => {
 const Header = () => {
   const { user, profile, signOut } = useAuth();
   const navigate = useNavigate();
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [commandDialogOpen, setCommandDialogOpen] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [commandSearchQuery, setCommandSearchQuery] = useState('');
 
   const initials = profile ? 
     (profile.first_name?.charAt(0) || '') + (profile.last_name?.charAt(0) || '') : 
@@ -236,18 +240,22 @@ const Header = () => {
     const down = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        setSearchOpen((open) => !open);
+        setCommandDialogOpen(true);
       }
     };
     document.addEventListener('keydown', down);
     return () => document.removeEventListener('keydown', down);
   }, []);
 
+  // Search for live input
   useEffect(() => {
     if (searchQuery.length < 2) {
       setSearchResults([]);
+      setPopoverOpen(false);
       return;
     }
+
+    setPopoverOpen(true);
 
     const searchGlobal = async () => {
       try {
@@ -297,32 +305,123 @@ const Header = () => {
     return () => clearTimeout(debounceTimer);
   }, [searchQuery, user?.id]);
 
+  // Search for command dialog
+  useEffect(() => {
+    if (commandSearchQuery.length < 2) {
+      return;
+    }
+
+    const searchGlobal = async () => {
+      try {
+        const searchTerm = `%${commandSearchQuery}%`;
+        
+        const [clients, leads, contracts, products] = await Promise.all([
+          supabase
+            .from('clients')
+            .select('id, name, email, company')
+            .eq('user_id', user?.id)
+            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
+            .limit(5),
+          supabase
+            .from('leads')
+            .select('id, name, email, company')
+            .eq('user_id', user?.id)
+            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
+            .limit(5),
+          supabase
+            .from('contracts')
+            .select('id, title, contract_number')
+            .eq('user_id', user?.id)
+            .or(`title.ilike.${searchTerm},contract_number.ilike.${searchTerm}`)
+            .limit(5),
+          supabase
+            .from('products')
+            .select('id, name, description')
+            .eq('user_id', user?.id)
+            .or(`name.ilike.${searchTerm},description.ilike.${searchTerm}`)
+            .limit(5),
+        ]);
+
+        const results = [
+          ...(clients.data || []).map(item => ({ ...item, type: 'Cliente', route: `/clients` })),
+          ...(leads.data || []).map(item => ({ ...item, type: 'Lead', route: `/leads` })),
+          ...(contracts.data || []).map(item => ({ ...item, type: 'Contrato', route: `/contracts/${item.id}` })),
+          ...(products.data || []).map(item => ({ ...item, type: 'Produto', route: `/products` })),
+        ];
+
+        setSearchResults(results);
+      } catch (error) {
+        console.error('Search error:', error);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchGlobal, 300);
+    return () => clearTimeout(debounceTimer);
+  }, [commandSearchQuery, user?.id]);
+
   const handleSelect = (route: string) => {
-    setSearchOpen(false);
+    setPopoverOpen(false);
+    setCommandDialogOpen(false);
+    setSearchQuery('');
+    setCommandSearchQuery('');
     navigate(route);
   };
 
   return (
     <header className="h-16 border-b flex items-center justify-between px-4">
       <div className="flex items-center flex-1 max-w-xl">
-        <Button
-          variant="outline"
-          className="relative w-full justify-start text-sm text-muted-foreground"
-          onClick={() => setSearchOpen(true)}
-        >
-          <Search className="mr-2 h-4 w-4" />
-          <span>Buscar clientes, contratos, produtos...</span>
-          <kbd className="pointer-events-none absolute right-2 hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
-            <span className="text-xs">⌘</span>K
-          </kbd>
-        </Button>
+        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <PopoverTrigger asChild>
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar clientes, contratos, produtos..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-16"
+              />
+              <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
+                <span className="text-xs">⌘</span>K
+              </kbd>
+            </div>
+          </PopoverTrigger>
+          <PopoverContent className="w-[400px] p-0" align="start">
+            <Command>
+              <CommandList>
+                <CommandEmpty>Nenhum resultado encontrado.</CommandEmpty>
+                {searchResults.length > 0 && (
+                  <CommandGroup heading="Resultados">
+                    {searchResults.map((result, index) => (
+                      <CommandItem
+                        key={`${result.type}-${result.id}-${index}`}
+                        onSelect={() => handleSelect(result.route)}
+                      >
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{result.name || result.title}</span>
+                            <span className="text-xs text-muted-foreground">({result.type})</span>
+                          </div>
+                          {(result.email || result.company || result.contract_number) && (
+                            <span className="text-xs text-muted-foreground">
+                              {result.email || result.company || result.contract_number}
+                            </span>
+                          )}
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </div>
 
-      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen}>
+      <CommandDialog open={commandDialogOpen} onOpenChange={setCommandDialogOpen}>
         <CommandInput 
           placeholder="Digite para buscar..." 
-          value={searchQuery}
-          onValueChange={setSearchQuery}
+          value={commandSearchQuery}
+          onValueChange={setCommandSearchQuery}
         />
         <CommandList>
           <CommandEmpty>Nenhum resultado encontrado.</CommandEmpty>
