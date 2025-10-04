@@ -1,7 +1,7 @@
 
-import React from 'react';
-import { useLocation, NavLink } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useLocation, NavLink, useNavigate } from 'react-router-dom';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +20,16 @@ import { Avatar } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { supabase } from '@/integrations/supabase/client';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -209,6 +219,11 @@ const Nav = () => {
 
 const Header = () => {
   const { user, profile, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+
   const initials = profile ? 
     (profile.first_name?.charAt(0) || '') + (profile.last_name?.charAt(0) || '') : 
     'U';
@@ -217,12 +232,124 @@ const Header = () => {
     `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : 
     'Usuário';
 
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setSearchOpen((open) => !open);
+      }
+    };
+    document.addEventListener('keydown', down);
+    return () => document.removeEventListener('keydown', down);
+  }, []);
+
+  useEffect(() => {
+    if (searchQuery.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    const searchGlobal = async () => {
+      try {
+        const searchTerm = `%${searchQuery}%`;
+        
+        const [clients, leads, contracts, products] = await Promise.all([
+          supabase
+            .from('clients')
+            .select('id, name, email, company')
+            .eq('user_id', user?.id)
+            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
+            .limit(5),
+          supabase
+            .from('leads')
+            .select('id, name, email, company')
+            .eq('user_id', user?.id)
+            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
+            .limit(5),
+          supabase
+            .from('contracts')
+            .select('id, title, contract_number')
+            .eq('user_id', user?.id)
+            .or(`title.ilike.${searchTerm},contract_number.ilike.${searchTerm}`)
+            .limit(5),
+          supabase
+            .from('products')
+            .select('id, name, description')
+            .eq('user_id', user?.id)
+            .or(`name.ilike.${searchTerm},description.ilike.${searchTerm}`)
+            .limit(5),
+        ]);
+
+        const results = [
+          ...(clients.data || []).map(item => ({ ...item, type: 'Cliente', route: `/clients` })),
+          ...(leads.data || []).map(item => ({ ...item, type: 'Lead', route: `/leads` })),
+          ...(contracts.data || []).map(item => ({ ...item, type: 'Contrato', route: `/contracts/${item.id}` })),
+          ...(products.data || []).map(item => ({ ...item, type: 'Produto', route: `/products` })),
+        ];
+
+        setSearchResults(results);
+      } catch (error) {
+        console.error('Search error:', error);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchGlobal, 300);
+    return () => clearTimeout(debounceTimer);
+  }, [searchQuery, user?.id]);
+
+  const handleSelect = (route: string) => {
+    setSearchOpen(false);
+    navigate(route);
+  };
+
   return (
     <header className="h-16 border-b flex items-center justify-between px-4">
-      <div className="flex items-center">
-        <SidebarTrigger className="mr-4" />
-        <h1 className="text-xl font-bold hidden md:block">MultiCRM</h1>
+      <div className="flex items-center flex-1 max-w-xl">
+        <Button
+          variant="outline"
+          className="relative w-full justify-start text-sm text-muted-foreground"
+          onClick={() => setSearchOpen(true)}
+        >
+          <Search className="mr-2 h-4 w-4" />
+          <span>Buscar clientes, contratos, produtos...</span>
+          <kbd className="pointer-events-none absolute right-2 hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
+            <span className="text-xs">⌘</span>K
+          </kbd>
+        </Button>
       </div>
+
+      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen}>
+        <CommandInput 
+          placeholder="Digite para buscar..." 
+          value={searchQuery}
+          onValueChange={setSearchQuery}
+        />
+        <CommandList>
+          <CommandEmpty>Nenhum resultado encontrado.</CommandEmpty>
+          {searchResults.length > 0 && (
+            <CommandGroup heading="Resultados">
+              {searchResults.map((result, index) => (
+                <CommandItem
+                  key={`${result.type}-${result.id}-${index}`}
+                  onSelect={() => handleSelect(result.route)}
+                >
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{result.name || result.title}</span>
+                      <span className="text-xs text-muted-foreground">({result.type})</span>
+                    </div>
+                    {(result.email || result.company || result.contract_number) && (
+                      <span className="text-xs text-muted-foreground">
+                        {result.email || result.company || result.contract_number}
+                      </span>
+                    )}
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+        </CommandList>
+      </CommandDialog>
       
       <div className="flex items-center space-x-2">
         <DropdownMenu>
