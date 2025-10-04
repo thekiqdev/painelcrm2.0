@@ -948,6 +948,183 @@ export type Database = {
         }
         Relationships: []
       }
+      project_lists: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string
+          order_position: number
+          project_id: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          name: string
+          order_position?: number
+          project_id: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          order_position?: number
+          project_id?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_lists_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_tasks: {
+        Row: {
+          assignee_id: string | null
+          attachments: Json | null
+          billable: boolean | null
+          budget_cap: number | null
+          checklist: Json | null
+          created_at: string | null
+          custom_fields: Json | null
+          dependencies: Json | null
+          description: string | null
+          due_date: string | null
+          end_time: string | null
+          estimated_effort_hours: number | null
+          estimated_story_points: number | null
+          hourly_rate: number | null
+          id: string
+          list_id: string
+          meeting_link: string | null
+          meeting_location: string | null
+          milestone_id: string | null
+          parent_task_id: string | null
+          priority: string | null
+          project_id: string
+          recurrence_rule: Json | null
+          reminders: Json | null
+          severity: string | null
+          sprint_id: string | null
+          start_date: string | null
+          start_time: string | null
+          status: string | null
+          tags: Json | null
+          task_type: string | null
+          title: string
+          updated_at: string | null
+          user_id: string
+          visibility: string | null
+          watchers: Json | null
+        }
+        Insert: {
+          assignee_id?: string | null
+          attachments?: Json | null
+          billable?: boolean | null
+          budget_cap?: number | null
+          checklist?: Json | null
+          created_at?: string | null
+          custom_fields?: Json | null
+          dependencies?: Json | null
+          description?: string | null
+          due_date?: string | null
+          end_time?: string | null
+          estimated_effort_hours?: number | null
+          estimated_story_points?: number | null
+          hourly_rate?: number | null
+          id?: string
+          list_id: string
+          meeting_link?: string | null
+          meeting_location?: string | null
+          milestone_id?: string | null
+          parent_task_id?: string | null
+          priority?: string | null
+          project_id: string
+          recurrence_rule?: Json | null
+          reminders?: Json | null
+          severity?: string | null
+          sprint_id?: string | null
+          start_date?: string | null
+          start_time?: string | null
+          status?: string | null
+          tags?: Json | null
+          task_type?: string | null
+          title: string
+          updated_at?: string | null
+          user_id: string
+          visibility?: string | null
+          watchers?: Json | null
+        }
+        Update: {
+          assignee_id?: string | null
+          attachments?: Json | null
+          billable?: boolean | null
+          budget_cap?: number | null
+          checklist?: Json | null
+          created_at?: string | null
+          custom_fields?: Json | null
+          dependencies?: Json | null
+          description?: string | null
+          due_date?: string | null
+          end_time?: string | null
+          estimated_effort_hours?: number | null
+          estimated_story_points?: number | null
+          hourly_rate?: number | null
+          id?: string
+          list_id?: string
+          meeting_link?: string | null
+          meeting_location?: string | null
+          milestone_id?: string | null
+          parent_task_id?: string | null
+          priority?: string | null
+          project_id?: string
+          recurrence_rule?: Json | null
+          reminders?: Json | null
+          severity?: string | null
+          sprint_id?: string | null
+          start_date?: string | null
+          start_time?: string | null
+          status?: string | null
+          tags?: Json | null
+          task_type?: string | null
+          title?: string
+          updated_at?: string | null
+          user_id?: string
+          visibility?: string | null
+          watchers?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_tasks_list_id_fkey"
+            columns: ["list_id"]
+            isOneToOne: false
+            referencedRelation: "project_lists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_tasks_parent_task_id_fkey"
+            columns: ["parent_task_id"]
+            isOneToOne: false
+            referencedRelation: "project_tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_tasks_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       project_template_stages: {
         Row: {
           created_at: string
@@ -1056,6 +1233,45 @@ export type Database = {
           name?: string
           tags?: Json | null
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      projects: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          due_date: string | null
+          id: string
+          kanban_stage: string | null
+          name: string
+          status: string | null
+          tags: Json | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          kanban_stage?: string | null
+          name: string
+          status?: string | null
+          tags?: Json | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          kanban_stage?: string | null
+          name?: string
+          status?: string | null
+          tags?: Json | null
+          updated_at?: string | null
           user_id?: string
         }
         Relationships: []
