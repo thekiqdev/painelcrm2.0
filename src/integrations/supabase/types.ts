@@ -948,6 +948,118 @@ export type Database = {
         }
         Relationships: []
       }
+      project_template_stages: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          offset_days: number
+          order_position: number
+          template_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          offset_days?: number
+          order_position: number
+          template_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          offset_days?: number
+          order_position?: number
+          template_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_template_stages_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "project_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_template_tasks: {
+        Row: {
+          created_at: string
+          description: string | null
+          duration_days: number | null
+          id: string
+          offset_days: number
+          priority: string | null
+          role: string | null
+          stage_id: string
+          tags: Json | null
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          duration_days?: number | null
+          id?: string
+          offset_days?: number
+          priority?: string | null
+          role?: string | null
+          stage_id: string
+          tags?: Json | null
+          title: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          duration_days?: number | null
+          id?: string
+          offset_days?: number
+          priority?: string | null
+          role?: string | null
+          stage_id?: string
+          tags?: Json | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_template_tasks_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "project_template_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_templates: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          tags: Json | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          tags?: Json | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          tags?: Json | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       registration_steps: {
         Row: {
           completed: boolean | null

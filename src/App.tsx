@@ -12,6 +12,7 @@ import Leads from "./pages/Leads";
 import Funnel from "./pages/Funnel";
 import Tasks from "./pages/Tasks";
 import Projects from "./pages/Projects";
+import ProjectTemplates from "./pages/ProjectTemplates";
 import Products from "./pages/Products";
 import Proposals from "./pages/Proposals";
 import Contracts from "./pages/Contracts";
@@ -99,6 +100,11 @@ const App = () => (
             <Route path="/tasks" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Tasks /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/project-templates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><ProjectTemplates /></AppLayout>
               </AuthGuard>
             } />
             {/* Admin Products Routes */}
