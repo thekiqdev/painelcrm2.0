@@ -35,6 +35,8 @@ import { PublicStore } from "./pages/PublicStore";
 import { PublicProduct } from "./pages/PublicProduct";
 import ProductForm from "./pages/ProductForm";
 import Orders from "./pages/Orders";
+import Tickets from "./pages/Tickets";
+import NewTicket from "./pages/NewTicket";
 
 const queryClient = new QueryClient();
 
@@ -183,6 +185,16 @@ const App = () => (
             <Route path="/settings" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                 <AppLayout><Settings /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><Tickets /></AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                <AppLayout><NewTicket /></AppLayout>
               </AuthGuard>
             } />
             
