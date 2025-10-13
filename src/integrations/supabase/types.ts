@@ -1422,6 +1422,459 @@ export type Database = {
         }
         Relationships: []
       }
+      ticket_activities: {
+        Row: {
+          activity_type: string
+          changes: Json | null
+          created_at: string
+          id: string
+          metadata: Json | null
+          ticket_id: string
+          user_id: string | null
+        }
+        Insert: {
+          activity_type: string
+          changes?: Json | null
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          ticket_id: string
+          user_id?: string | null
+        }
+        Update: {
+          activity_type?: string
+          changes?: Json | null
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          ticket_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_activities_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ticket_automations: {
+        Row: {
+          actions: Json
+          conditions: Json
+          created_at: string
+          description: string | null
+          execution_count: number | null
+          id: string
+          is_active: boolean
+          last_executed_at: string | null
+          name: string
+          profile_id: string | null
+          trigger_type: Database["public"]["Enums"]["automation_trigger"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          actions?: Json
+          conditions?: Json
+          created_at?: string
+          description?: string | null
+          execution_count?: number | null
+          id?: string
+          is_active?: boolean
+          last_executed_at?: string | null
+          name: string
+          profile_id?: string | null
+          trigger_type: Database["public"]["Enums"]["automation_trigger"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          actions?: Json
+          conditions?: Json
+          created_at?: string
+          description?: string | null
+          execution_count?: number | null
+          id?: string
+          is_active?: boolean
+          last_executed_at?: string | null
+          name?: string
+          profile_id?: string | null
+          trigger_type?: Database["public"]["Enums"]["automation_trigger"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ticket_categories: {
+        Row: {
+          color: string
+          created_at: string
+          custom_form: Json | null
+          default_team_id: string | null
+          description: string | null
+          id: string
+          name: string
+          profile_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          custom_form?: Json | null
+          default_team_id?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          profile_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          custom_form?: Json | null
+          default_team_id?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          profile_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_categories_default_team_id_fkey"
+            columns: ["default_team_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ticket_messages: {
+        Row: {
+          attachments: Json | null
+          content: string
+          created_at: string
+          id: string
+          mentions: Json | null
+          ticket_id: string
+          updated_at: string
+          user_id: string
+          visibility: Database["public"]["Enums"]["message_visibility"]
+        }
+        Insert: {
+          attachments?: Json | null
+          content: string
+          created_at?: string
+          id?: string
+          mentions?: Json | null
+          ticket_id: string
+          updated_at?: string
+          user_id: string
+          visibility?: Database["public"]["Enums"]["message_visibility"]
+        }
+        Update: {
+          attachments?: Json | null
+          content?: string
+          created_at?: string
+          id?: string
+          mentions?: Json | null
+          ticket_id?: string
+          updated_at?: string
+          user_id?: string
+          visibility?: Database["public"]["Enums"]["message_visibility"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_messages_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ticket_sla_policies: {
+        Row: {
+          business_hours: Json | null
+          created_at: string
+          first_response_minutes: number
+          id: string
+          is_active: boolean
+          name: string
+          priority: Database["public"]["Enums"]["ticket_priority"]
+          profile_id: string | null
+          resolution_minutes: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          business_hours?: Json | null
+          created_at?: string
+          first_response_minutes: number
+          id?: string
+          is_active?: boolean
+          name: string
+          priority: Database["public"]["Enums"]["ticket_priority"]
+          profile_id?: string | null
+          resolution_minutes: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          business_hours?: Json | null
+          created_at?: string
+          first_response_minutes?: number
+          id?: string
+          is_active?: boolean
+          name?: string
+          priority?: Database["public"]["Enums"]["ticket_priority"]
+          profile_id?: string | null
+          resolution_minutes?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ticket_teams: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          members: Json | null
+          name: string
+          profile_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          members?: Json | null
+          name: string
+          profile_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          members?: Json | null
+          name?: string
+          profile_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ticket_templates: {
+        Row: {
+          category_id: string | null
+          content: string
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          profile_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category_id?: string | null
+          content: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          profile_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category_id?: string | null
+          content?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          profile_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_templates_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ticket_watchers: {
+        Row: {
+          created_at: string
+          id: string
+          ticket_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ticket_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ticket_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_watchers_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tickets: {
+        Row: {
+          assignee_id: string | null
+          billable: boolean | null
+          billable_hours: number | null
+          category_id: string | null
+          channel: Database["public"]["Enums"]["ticket_channel"]
+          client_id: string | null
+          closed_at: string | null
+          contact_email: string
+          contact_name: string
+          contact_phone: string | null
+          created_at: string
+          custom_fields: Json | null
+          description: string
+          first_response_at: string | null
+          first_response_due_at: string | null
+          id: string
+          priority: Database["public"]["Enums"]["ticket_priority"]
+          profile_id: string | null
+          resolution_due_at: string | null
+          resolved_at: string | null
+          sla_paused_at: string | null
+          sla_paused_duration: number | null
+          sla_policy_id: string | null
+          status: Database["public"]["Enums"]["ticket_status"]
+          subject: string
+          tags: Json | null
+          team_id: string | null
+          ticket_number: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assignee_id?: string | null
+          billable?: boolean | null
+          billable_hours?: number | null
+          category_id?: string | null
+          channel?: Database["public"]["Enums"]["ticket_channel"]
+          client_id?: string | null
+          closed_at?: string | null
+          contact_email: string
+          contact_name: string
+          contact_phone?: string | null
+          created_at?: string
+          custom_fields?: Json | null
+          description: string
+          first_response_at?: string | null
+          first_response_due_at?: string | null
+          id?: string
+          priority?: Database["public"]["Enums"]["ticket_priority"]
+          profile_id?: string | null
+          resolution_due_at?: string | null
+          resolved_at?: string | null
+          sla_paused_at?: string | null
+          sla_paused_duration?: number | null
+          sla_policy_id?: string | null
+          status?: Database["public"]["Enums"]["ticket_status"]
+          subject: string
+          tags?: Json | null
+          team_id?: string | null
+          ticket_number: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assignee_id?: string | null
+          billable?: boolean | null
+          billable_hours?: number | null
+          category_id?: string | null
+          channel?: Database["public"]["Enums"]["ticket_channel"]
+          client_id?: string | null
+          closed_at?: string | null
+          contact_email?: string
+          contact_name?: string
+          contact_phone?: string | null
+          created_at?: string
+          custom_fields?: Json | null
+          description?: string
+          first_response_at?: string | null
+          first_response_due_at?: string | null
+          id?: string
+          priority?: Database["public"]["Enums"]["ticket_priority"]
+          profile_id?: string | null
+          resolution_due_at?: string | null
+          resolved_at?: string | null
+          sla_paused_at?: string | null
+          sla_paused_duration?: number | null
+          sla_policy_id?: string | null
+          status?: Database["public"]["Enums"]["ticket_status"]
+          subject?: string
+          tags?: Json | null
+          team_id?: string | null
+          ticket_number?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tickets_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tickets_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tickets_sla_policy_id_fkey"
+            columns: ["sla_policy_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_sla_policies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tickets_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_permissions: {
         Row: {
           created_at: string
@@ -1602,6 +2055,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      generate_ticket_number: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       get_all_conversation_statuses: {
         Args: { p_connection_id: string; p_user_id: string }
         Returns: {
@@ -1681,6 +2138,13 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "manager" | "member" | "viewer"
+      automation_trigger:
+        | "on_create"
+        | "on_update"
+        | "status_change"
+        | "sla_overdue"
+        | "first_response_overdue"
+        | "resolution_overdue"
       contract_status:
         | "DRAFT"
         | "PENDING_SIGNATURE"
@@ -1689,6 +2153,7 @@ export type Database = {
         | "INACTIVE"
         | "EXPIRED"
         | "CANCELLED"
+      message_visibility: "public" | "internal"
       permission_type:
         | "all_access"
         | "manage_clients"
@@ -1700,6 +2165,17 @@ export type Database = {
         | "manage_settings"
         | "view_reports"
         | "manage_users"
+      ticket_channel: "portal" | "email" | "whatsapp" | "internal"
+      ticket_priority: "low" | "normal" | "high" | "urgent"
+      ticket_status:
+        | "new"
+        | "open"
+        | "pending"
+        | "waiting_customer"
+        | "in_progress"
+        | "resolved"
+        | "closed"
+        | "cancelled"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1828,6 +2304,14 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "manager", "member", "viewer"],
+      automation_trigger: [
+        "on_create",
+        "on_update",
+        "status_change",
+        "sla_overdue",
+        "first_response_overdue",
+        "resolution_overdue",
+      ],
       contract_status: [
         "DRAFT",
         "PENDING_SIGNATURE",
@@ -1837,6 +2321,7 @@ export const Constants = {
         "EXPIRED",
         "CANCELLED",
       ],
+      message_visibility: ["public", "internal"],
       permission_type: [
         "all_access",
         "manage_clients",
@@ -1848,6 +2333,18 @@ export const Constants = {
         "manage_settings",
         "view_reports",
         "manage_users",
+      ],
+      ticket_channel: ["portal", "email", "whatsapp", "internal"],
+      ticket_priority: ["low", "normal", "high", "urgent"],
+      ticket_status: [
+        "new",
+        "open",
+        "pending",
+        "waiting_customer",
+        "in_progress",
+        "resolved",
+        "closed",
+        "cancelled",
       ],
     },
   },
