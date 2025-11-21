@@ -5,11 +5,13 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copiar package.json do backend
-COPY packages/backend/package*.json ./
+# Copiar package.json e package-lock.json do backend
+COPY packages/backend/package.json ./
+COPY packages/backend/package-lock.json* ./
 
 # Instalar dependências (incluindo devDependencies para build)
-RUN npm ci
+# Se package-lock.json existir, usa npm ci, senão usa npm install
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copiar código fonte do backend
 COPY packages/backend/ ./
@@ -22,11 +24,13 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copiar package.json
-COPY packages/backend/package*.json ./
+# Copiar package.json e package-lock.json explicitamente
+COPY packages/backend/package.json ./
+COPY packages/backend/package-lock.json* ./
 
 # Instalar apenas dependências de produção
-RUN npm ci --only=production
+# Se package-lock.json existir, usa npm ci, senão usa npm install
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 # Copiar arquivos compilados do builder
 COPY --from=builder /app/dist ./dist
@@ -40,4 +44,3 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
 
 # Iniciar servidor
 CMD ["npm", "start"]
-
