@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,148 +17,123 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-
-type Task = {
-  id: string;
-  title: string;
-  description?: string;
-  date: string;
-  time?: string;
-  status: "pending" | "completed";
-  priority: "low" | "medium" | "high";
-  client?: string;
-  deal?: string;
-  assignee?: string;
-  assigneeAvatar?: string;
-  checklist?: ChecklistItem[];
-};
-
-type ChecklistItem = {
-  id: string;
-  text: string;
-  completed: boolean;
-};
-
-// Exemplo de tarefas
-const initialTasks: Task[] = [
-  {
-    id: "T001",
-    title: "Reunião com cliente ABC Tech",
-    description: "Apresentação da proposta comercial e discussão de requisitos",
-    date: "2025-05-21",
-    time: "14:30",
-    status: "pending",
-    priority: "high",
-    client: "ABC Tech",
-    deal: "Implementação de Sistema ERP",
-    assignee: "Carlos Silva",
-    assigneeAvatar: "CS",
-    checklist: [
-      { id: "cl1", text: "Preparar slides de apresentação", completed: false },
-      { id: "cl2", text: "Revisar orçamento", completed: true },
-      { id: "cl3", text: "Agendar sala de reuniões", completed: false }
-    ]
-  },
-  {
-    id: "T002",
-    title: "Follow-up cliente XYZ",
-    description: "Verificar se o cliente recebeu a proposta",
-    date: "2025-05-20",
-    time: "10:00",
-    status: "completed",
-    priority: "medium",
-    client: "XYZ Corp",
-    assignee: "Ana Oliveira",
-    assigneeAvatar: "AO",
-    checklist: [
-      { id: "cl4", text: "Enviar email de acompanhamento", completed: true },
-      { id: "cl5", text: "Registrar feedback no CRM", completed: true }
-    ]
-  },
-  {
-    id: "T003",
-    title: "Preparar proposta comercial",
-    description: "Proposta para implementação de servidor dedicado",
-    date: "2025-05-22",
-    status: "pending",
-    priority: "medium",
-    client: "Tech Solutions",
-    deal: "Expansão de Servidor",
-    assignee: "Carlos Silva",
-    assigneeAvatar: "CS",
-    checklist: [
-      { id: "cl6", text: "Levantar requisitos técnicos", completed: true },
-      { id: "cl7", text: "Calcular custos", completed: false },
-      { id: "cl8", text: "Elaborar cronograma", completed: false }
-    ]
-  },
-  {
-    id: "T004",
-    title: "Ligação para novo lead",
-    description: "Lead captado no site, interessado em consultoria financeira",
-    date: "2025-05-19",
-    time: "16:00",
-    status: "pending",
-    priority: "low",
-    assignee: "Ana Oliveira",
-    assigneeAvatar: "AO"
-  },
-  {
-    id: "T005",
-    title: "Enviar contrato para assinatura",
-    description: "Contrato de prestação de serviços de marketing digital",
-    date: "2025-05-20",
-    status: "pending",
-    priority: "high",
-    client: "Consultoria Global",
-    deal: "Projeto de Marketing Digital",
-    assignee: "Marcos Santos",
-    assigneeAvatar: "MS",
-    checklist: [
-      { id: "cl9", text: "Revisar cláusulas", completed: true },
-      { id: "cl10", text: "Verificar valores", completed: true },
-      { id: "cl11", text: "Enviar por email", completed: false }
-    ]
-  },
-];
+import { tasksService, Task, ChecklistItem } from "@/services/tasks";
+import { clientsService, Client } from "@/services/clients";
 
 const Tasks = () => {
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [date, setDate] = useState<Date>();
+  const [clients, setClients] = useState<Client[]>([]);
   
   // Estados para o modal de detalhes e gerenciamento de checklist
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [newChecklistItem, setNewChecklistItem] = useState("");
 
-  const handleToggleTaskStatus = (taskId: string) => {
-    setTasks(prev =>
-      prev.map(task => {
-        if (task.id === taskId) {
-          const newStatus = task.status === "pending" ? "completed" : "pending";
-          if (newStatus === "completed") {
-            toast.success("Tarefa concluída!");
-          }
-          return { ...task, status: newStatus };
-        }
-        return task;
-      })
-    );
-    
-    // Atualizar o selectedTask se estiver visualizando os detalhes
-    if (selectedTask && selectedTask.id === taskId) {
-      setSelectedTask({
-        ...selectedTask,
-        status: selectedTask.status === "pending" ? "completed" : "pending"
-      });
+  // Estados do formulário
+  const [formTitle, setFormTitle] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formTime, setFormTime] = useState("");
+  const [formPriority, setFormPriority] = useState<"low" | "medium" | "high">("medium");
+  const [formClient, setFormClient] = useState("");
+  const [formDeal, setFormDeal] = useState("");
+  const [formAssignee, setFormAssignee] = useState("");
+
+  // Carregar tarefas e clientes
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const [tasksData, clientsData] = await Promise.all([
+          tasksService.getTasks(),
+          clientsService.getClients(),
+        ]);
+        
+        // Converter tarefas para o formato esperado
+        const formattedTasks = (tasksData || []).map(task => ({
+          ...task,
+          date: task.date || "",
+        }));
+        
+        setTasks(formattedTasks);
+        setClients(clientsData || []);
+      } catch (error) {
+        console.error("Erro ao carregar dados:", error);
+        toast.error("Erro ao carregar tarefas");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  const handleToggleTaskStatus = async (taskId: string) => {
+    try {
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) return;
+
+      const newStatus = task.status === "pending" ? "completed" : "pending";
+      const updatedTask = await tasksService.updateTask(taskId, { status: newStatus });
+      
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...updatedTask, date: updatedTask.date || "" } : t));
+      
+      if (selectedTask && selectedTask.id === taskId) {
+        setSelectedTask({ ...updatedTask, date: updatedTask.date || "" });
+      }
+
+      if (newStatus === "completed") {
+        toast.success("Tarefa concluída!");
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar status da tarefa:", error);
+      toast.error("Erro ao atualizar tarefa");
     }
   };
 
-  const handleAddTask = (e: React.FormEvent) => {
+  const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success("Tarefa adicionada com sucesso!");
-    setIsAddTaskDialogOpen(false);
+    
+    if (!formTitle.trim()) {
+      toast.error("Título é obrigatório");
+      return;
+    }
+
+    try {
+      const selectedClient = clients.find(c => c.id === formClient);
+      const newTask = await tasksService.createTask({
+        title: formTitle,
+        description: formDescription || undefined,
+        date: date ? format(date, "yyyy-MM-dd") : undefined,
+        time: formTime || undefined,
+        status: "pending",
+        priority: formPriority,
+        client: selectedClient?.name || formClient || undefined,
+        deal: formDeal || undefined,
+        assignee: formAssignee || undefined,
+        checklist: [],
+      });
+
+      setTasks(prev => [...prev, { ...newTask, date: newTask.date || "" }]);
+      
+      // Reset form
+      setFormTitle("");
+      setFormDescription("");
+      setDate(undefined);
+      setFormTime("");
+      setFormPriority("medium");
+      setFormClient("");
+      setFormDeal("");
+      setFormAssignee("");
+      setIsAddTaskDialogOpen(false);
+      
+      toast.success("Tarefa adicionada com sucesso!");
+    } catch (error) {
+      console.error("Erro ao criar tarefa:", error);
+      toast.error("Erro ao criar tarefa");
+    }
   };
 
   // Função para abrir o modal de detalhes da tarefa
@@ -168,40 +143,39 @@ const Tasks = () => {
   };
 
   // Função para alternar status de um item no checklist
-  const toggleChecklistItem = (itemId: string) => {
+  const toggleChecklistItem = async (itemId: string) => {
     if (!selectedTask) return;
     
     const updatedChecklist = selectedTask.checklist?.map(item => 
       item.id === itemId ? { ...item, completed: !item.completed } : item
-    );
+    ) || [];
     
     // Verificar se todos os itens estão completos
-    const allCompleted = updatedChecklist && 
-                         updatedChecklist.length > 0 && 
+    const allCompleted = updatedChecklist.length > 0 && 
                          updatedChecklist.every(item => item.completed);
     
-    // Atualizar a tarefa selecionada
-    const updatedTask = {
-      ...selectedTask,
-      status: allCompleted ? "completed" : selectedTask.status,
-      checklist: updatedChecklist
-    };
-    
-    setSelectedTask(updatedTask);
-    
-    // Atualizar a lista principal de tarefas
-    setTasks(tasks.map(task => 
-      task.id === selectedTask.id ? updatedTask : task
-    ));
-    
-    // Notificar se todos os itens foram concluídos
-    if (allCompleted && selectedTask.status !== "completed") {
-      toast.success("Todos os itens concluídos! Tarefa marcada como completa.");
+    try {
+      const updatedTask = await tasksService.updateTask(selectedTask.id, {
+        checklist: updatedChecklist,
+        status: allCompleted ? "completed" : selectedTask.status,
+      });
+      
+      const formattedTask = { ...updatedTask, date: updatedTask.date || "" };
+      setSelectedTask(formattedTask);
+      setTasks(prev => prev.map(t => t.id === selectedTask.id ? formattedTask : t));
+      
+      // Notificar se todos os itens foram concluídos
+      if (allCompleted && selectedTask.status !== "completed") {
+        toast.success("Todos os itens concluídos! Tarefa marcada como completa.");
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar checklist:", error);
+      toast.error("Erro ao atualizar checklist");
     }
   };
 
   // Função para adicionar novo item ao checklist
-  const addChecklistItem = () => {
+  const addChecklistItem = async () => {
     if (!selectedTask || !newChecklistItem.trim()) return;
     
     const newItem: ChecklistItem = {
@@ -214,45 +188,53 @@ const Tasks = () => {
       ? [...selectedTask.checklist, newItem] 
       : [newItem];
     
-    const updatedTask = {
-      ...selectedTask,
-      checklist: updatedChecklist
-    };
-    
-    setSelectedTask(updatedTask);
-    
-    // Atualizar a lista principal de tarefas
-    setTasks(tasks.map(task => 
-      task.id === selectedTask.id ? updatedTask : task
-    ));
-    
-    setNewChecklistItem("");
-    toast.success("Item adicionado à lista de verificação");
+    try {
+      const updatedTask = await tasksService.updateTask(selectedTask.id, {
+        checklist: updatedChecklist,
+      });
+      
+      const formattedTask = { ...updatedTask, date: updatedTask.date || "" };
+      setSelectedTask(formattedTask);
+      setTasks(prev => prev.map(t => t.id === selectedTask.id ? formattedTask : t));
+      setNewChecklistItem("");
+      toast.success("Item adicionado à lista de verificação");
+    } catch (error) {
+      console.error("Erro ao adicionar item ao checklist:", error);
+      toast.error("Erro ao adicionar item");
+    }
   };
 
   // Função para remover item do checklist
-  const removeChecklistItem = (itemId: string) => {
+  const removeChecklistItem = async (itemId: string) => {
     if (!selectedTask || !selectedTask.checklist) return;
     
     const updatedChecklist = selectedTask.checklist.filter(item => item.id !== itemId);
     
-    const updatedTask = {
-      ...selectedTask,
-      checklist: updatedChecklist
-    };
-    
-    setSelectedTask(updatedTask);
-    
-    // Atualizar a lista principal de tarefas
-    setTasks(tasks.map(task => 
-      task.id === selectedTask.id ? updatedTask : task
-    ));
-    
-    toast.success("Item removido da lista de verificação");
+    try {
+      const updatedTask = await tasksService.updateTask(selectedTask.id, {
+        checklist: updatedChecklist,
+      });
+      
+      const formattedTask = { ...updatedTask, date: updatedTask.date || "" };
+      setSelectedTask(formattedTask);
+      setTasks(prev => prev.map(t => t.id === selectedTask.id ? formattedTask : t));
+      toast.success("Item removido da lista de verificação");
+    } catch (error) {
+      console.error("Erro ao remover item do checklist:", error);
+      toast.error("Erro ao remover item");
+    }
   };
 
-  const getTodayTasks = () => tasks.filter(task => task.date === "2025-05-19" && task.status === "pending");
-  const getUpcomingTasks = () => tasks.filter(task => task.date > "2025-05-19" && task.status === "pending");
+  const getTodayTasks = () => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    return tasks.filter(task => task.date === today && task.status === "pending");
+  };
+  
+  const getUpcomingTasks = () => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    return tasks.filter(task => task.date && task.date > today && task.status === "pending");
+  };
+  
   const getCompletedTasks = () => tasks.filter(task => task.status === "completed");
 
   const getPriorityColor = (priority: string) => {
@@ -270,6 +252,16 @@ const Tasks = () => {
     const completedItems = task.checklist.filter(item => item.completed).length;
     return Math.round((completedItems / task.checklist.length) * 100);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-10">
+        <div className="text-center">
+          <p className="text-muted-foreground">Carregando tarefas...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -296,13 +288,24 @@ const Tasks = () => {
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="title">Título</Label>
-                      <Input id="title" placeholder="Ex: Reunião com cliente" required />
+                      <Input 
+                        id="title" 
+                        placeholder="Ex: Reunião com cliente" 
+                        value={formTitle}
+                        onChange={(e) => setFormTitle(e.target.value)}
+                        required 
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="description">Descrição</Label>
-                      <Textarea id="description" placeholder="Detalhes da tarefa..." />
+                      <Textarea 
+                        id="description" 
+                        placeholder="Detalhes da tarefa..."
+                        value={formDescription}
+                        onChange={(e) => setFormDescription(e.target.value)}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -330,13 +333,18 @@ const Tasks = () => {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="time">Horário</Label>
-                      <Input id="time" type="time" />
+                      <Input 
+                        id="time" 
+                        type="time"
+                        value={formTime}
+                        onChange={(e) => setFormTime(e.target.value)}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="priority">Prioridade</Label>
-                      <Select>
+                      <Select value={formPriority} onValueChange={(value: "low" | "medium" | "high") => setFormPriority(value)}>
                         <SelectTrigger id="priority">
                           <SelectValue placeholder="Selecione" />
                         </SelectTrigger>
@@ -349,44 +357,38 @@ const Tasks = () => {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="assignee">Responsável</Label>
-                      <Select>
-                        <SelectTrigger id="assignee">
-                          <SelectValue placeholder="Selecione" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="user1">Carlos Silva</SelectItem>
-                          <SelectItem value="user2">Ana Oliveira</SelectItem>
-                          <SelectItem value="user3">Marcos Santos</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <Input 
+                        id="assignee" 
+                        placeholder="Nome do responsável"
+                        value={formAssignee}
+                        onChange={(e) => setFormAssignee(e.target.value)}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="client">Cliente (Opcional)</Label>
-                      <Select>
+                      <Select value={formClient} onValueChange={setFormClient}>
                         <SelectTrigger id="client">
                           <SelectValue placeholder="Selecione um cliente" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="client1">ABC Tecnologia</SelectItem>
-                          <SelectItem value="client2">Construtora XYZ</SelectItem>
-                          <SelectItem value="client3">Supermercados Sul</SelectItem>
+                          {clients.map(client => (
+                            <SelectItem key={client.id} value={client.id}>
+                              {client.name} {client.company ? `(${client.company})` : ""}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="deal">Negócio (Opcional)</Label>
-                      <Select>
-                        <SelectTrigger id="deal">
-                          <SelectValue placeholder="Selecione um negócio" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="deal1">Implementação de Sistema ERP</SelectItem>
-                          <SelectItem value="deal2">Projeto de Marketing Digital</SelectItem>
-                          <SelectItem value="deal3">Consultoria Estratégica</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <Input 
+                        id="deal" 
+                        placeholder="Nome do negócio"
+                        value={formDeal}
+                        onChange={(e) => setFormDeal(e.target.value)}
+                      />
                     </div>
                   </div>
                 </div>
@@ -552,10 +554,12 @@ const Tasks = () => {
                 <div>
                   <h4 className="text-sm font-semibold mb-2">Detalhes</h4>
                   <div className="space-y-2 text-sm">
-                    <div className="flex gap-2">
-                      <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                      <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
-                    </div>
+                    {selectedTask.date && (
+                      <div className="flex gap-2">
+                        <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                        <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
+                      </div>
+                    )}
                     {selectedTask.time && (
                       <div className="flex gap-2">
                         <Clock className="h-4 w-4 text-muted-foreground" />
@@ -690,16 +694,18 @@ const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick }: 
                 )}
                 
                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-                  <div className="flex items-center">
-                    <CalendarIcon className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
-                    <span>{formatDate(task.date)}</span>
-                    {task.time && (
-                      <>
-                        <Clock className="h-3.5 w-3.5 ml-2 mr-1 text-muted-foreground" />
-                        <span>{task.time}</span>
-                      </>
-                    )}
-                  </div>
+                  {task.date && (
+                    <div className="flex items-center">
+                      <CalendarIcon className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
+                      <span>{formatDate(task.date)}</span>
+                      {task.time && (
+                        <>
+                          <Clock className="h-3.5 w-3.5 ml-2 mr-1 text-muted-foreground" />
+                          <span>{task.time}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
                   
                   {task.client && (
                     <div className="flex items-center">
