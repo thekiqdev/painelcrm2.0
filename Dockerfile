@@ -22,6 +22,12 @@ RUN if [ ! -f package.json ]; then \
       exit 1; \
     fi
 
+# Verificar se tsconfig.json existe
+RUN if [ ! -f tsconfig.json ]; then \
+      echo "ERRO: tsconfig.json não encontrado!" && \
+      exit 1; \
+    fi
+
 # Instalar dependências (incluindo devDependencies para build)
 RUN if [ -f package-lock.json ]; then \
       echo "Usando package-lock.json" && npm ci; \
@@ -31,6 +37,9 @@ RUN if [ -f package-lock.json ]; then \
 
 # Build TypeScript
 RUN npm run build
+
+# Verificar se o dist foi criado
+RUN ls -la dist/ || (echo "ERRO: dist não foi criado!" && ls -la && exit 1)
 
 # Production stage
 FROM node:20-alpine
@@ -53,11 +62,14 @@ RUN if [ -f package-lock.json ]; then \
 # Copiar arquivos compilados do builder
 COPY --from=builder /app/packages/backend/dist ./dist
 
+# Verificar se o dist foi copiado
+RUN ls -la dist/ || (echo "ERRO: dist não foi copiado!" && exit 1)
+
 # Voltar para /app e organizar estrutura final
 WORKDIR /app
 
 # Mover arquivos necessários para a raiz
-RUN cp packages/backend/dist ./dist && \
+RUN cp -r packages/backend/dist ./dist && \
     cp packages/backend/package.json ./package.json && \
     rm -rf packages
 
