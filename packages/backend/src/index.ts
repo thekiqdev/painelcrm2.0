@@ -30,6 +30,10 @@ import profileMembersRoutes from './routes/profileMembersRoutes.js';
 import userPermissionsRoutes from './routes/userPermissionsRoutes.js';
 import searchRoutes from './routes/searchRoutes.js';
 import tasksRoutes from './routes/tasksRoutes.js';
+import invoicesRoutes from './routes/invoicesRoutes.js';
+import expensesRoutes from './routes/expensesRoutes.js';
+import proposalsRoutes from './routes/proposalsRoutes.js';
+import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import { pool } from './utils/db.js';
 
@@ -100,6 +104,10 @@ app.use('/api/user-profiles', profileMembersRoutes);
 app.use('/api/user-profiles', userPermissionsRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/tasks', tasksRoutes);
+app.use('/api/invoices', invoicesRoutes);
+app.use('/api/expenses', expensesRoutes);
+app.use('/api/proposals', proposalsRoutes);
+app.use('/api/members', membersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
 // 404 handler
