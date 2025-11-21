@@ -37,9 +37,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copiar package.json e package-lock.json do backend
-COPY packages/backend/package.json ./
-COPY packages/backend/package-lock.json* ./
+# Copiar TUDO do contexto primeiro (para ter acesso a packages/backend)
+COPY . .
+
+# Mover para o diretório do backend
+WORKDIR /app/packages/backend
 
 # Instalar apenas dependências de produção
 RUN if [ -f package-lock.json ]; then \
@@ -51,8 +53,13 @@ RUN if [ -f package-lock.json ]; then \
 # Copiar arquivos compilados do builder
 COPY --from=builder /app/packages/backend/dist ./dist
 
-# Copiar outros arquivos necessários (se houver)
-COPY --from=builder /app/packages/backend/package.json ./package.json
+# Voltar para /app e organizar estrutura final
+WORKDIR /app
+
+# Mover arquivos necessários para a raiz
+RUN cp packages/backend/dist ./dist && \
+    cp packages/backend/package.json ./package.json && \
+    rm -rf packages
 
 # Expor porta
 EXPOSE 3001
