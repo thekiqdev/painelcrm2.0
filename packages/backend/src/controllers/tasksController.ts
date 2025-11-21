@@ -64,7 +64,7 @@ export const getTasks = async (req: Request, res: Response) => {
       time: task.due_time || null,
       client: task.client_name || null,
       assignee: task.assignee_name || null,
-      assigneeAvatar: task.assignee_name ? task.assignee_name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : null,
+      assigneeAvatar: task.assignee_name ? task.assignee_name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase() : null,
     }));
 
     res.json(tasks);
