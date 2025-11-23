@@ -113,8 +113,16 @@ export async function login(req: Request, res: Response): Promise<void> {
     }
 
     // Verify password
+    console.log('Attempting login for:', identifier);
+    console.log('User found:', user.email);
+    console.log('Password hash exists:', !!user.password_hash);
+    console.log('Password hash length:', user.password_hash?.length);
+    
     const isValid = await comparePassword(password, user.password_hash);
+    console.log('Password comparison result:', isValid);
+    
     if (!isValid) {
+      console.error('Password validation failed for user:', user.email);
       res.status(401).json({ error: 'Credenciais inválidas' });
       return;
     }
