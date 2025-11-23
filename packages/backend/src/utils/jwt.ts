@@ -61,46 +61,66 @@ export function generateToken(payload: JWTPayload): string {
     throw new Error('JWT_SECRET não está configurado corretamente');
   }
   
-  const expiresIn = getExpiresIn();
-  
-  // Garantir que expiresIn é uma string válida
-  const expiresInString = typeof expiresIn === 'string' ? expiresIn : String(expiresIn);
-  
-  // Log para debug - ANTES de chamar jwt.sign
-  console.log(`[JWT] ========== GERANDO TOKEN ==========`);
-  console.log(`[JWT] expiresIn recebido:`, JSON.stringify(expiresIn));
-  console.log(`[JWT] expiresIn tipo:`, typeof expiresIn);
-  console.log(`[JWT] expiresInString:`, JSON.stringify(expiresInString));
-  console.log(`[JWT] expiresInString length:`, expiresInString.length);
-  console.log(`[JWT] expiresInString válido?`, /^\d+[smhd]$/i.test(expiresInString));
-  
-  // Validação final - garantir que é uma string válida
-  if (!expiresInString || expiresInString.trim() === '' || !/^\d+[smhd]$/i.test(expiresInString)) {
-    console.error(`[JWT] ERRO: expiresIn inválido! Usando "7d" como fallback`);
-    const fallbackExpiresIn = '7d';
-    console.log(`[JWT] Usando fallback:`, JSON.stringify(fallbackExpiresIn));
-    
-    // @ts-expect-error - TypeScript é muito estrito com StringValue
-    return jwt.sign(payload, JWT_SECRET, {
-      expiresIn: fallbackExpiresIn,
-    });
+  // Obter expiresIn com validação
+  let expiresIn: string = '7d'; // Valor padrão garantido
+  try {
+    expiresIn = getExpiresIn();
+    console.log(`[JWT] Gerando token com expiresIn: "${expiresIn}" (tipo: ${typeof expiresIn})`);
+  } catch (error) {
+    console.error(`[JWT] Erro ao obter expiresIn:`, error);
+    expiresIn = '7d'; // Fallback seguro
+    console.log(`[JWT] Usando fallback expiresIn: "${expiresIn}"`);
   }
   
+  // Garantir que expiresIn é uma string válida
+  if (!expiresIn || typeof expiresIn !== 'string' || expiresIn.trim() === '') {
+    console.warn(`[JWT] expiresIn inválido, forçando "7d"`);
+    expiresIn = '7d';
+  }
+  
+  // Validar formato final antes de usar
+  const cleanedExpiresIn = expiresIn.trim();
+  if (!/^\d+[smhd]$/i.test(cleanedExpiresIn)) {
+    console.warn(`[JWT] expiresIn "${cleanedExpiresIn}" não está no formato correto, forçando "7d"`);
+    expiresIn = '7d';
+  } else {
+    expiresIn = cleanedExpiresIn;
+  }
+  
+  console.log(`[JWT] Usando expiresIn final: "${expiresIn}"`);
+  
   try {
-    // Passar o objeto diretamente sem tipagem explícita
-    // jwt.sign aceita string ou number para expiresIn em runtime
-    console.log(`[JWT] Chamando jwt.sign com expiresIn:`, JSON.stringify(expiresInString));
-    // @ts-expect-error - TypeScript é muito estrito com StringValue, mas jwt.sign aceita string em runtime
+    // Passar o objeto diretamente - jwt.sign aceita string no formato "7d"
     const token = jwt.sign(payload, JWT_SECRET, {
-      expiresIn: expiresInString,
-    });
-    console.log(`[JWT] ✅ Token gerado com sucesso`);
+      expiresIn: expiresIn,
+    } as jwt.SignOptions);
+    console.log(`[JWT] Token gerado com sucesso`);
     return token;
-  } catch (error) {
-    console.error(`[JWT] ❌ Erro ao gerar token:`, error);
-    console.error(`[JWT] expiresIn usado:`, JSON.stringify(expiresInString));
-    console.error(`[JWT] expiresIn tipo:`, typeof expiresInString);
+  } catch (error: any) {
+    console.error(`[JWT] Erro ao gerar token:`, error);
+    console.error(`[JWT] expiresIn usado: "${expiresIn}"`);
+    console.error(`[JWT] Tipo do expiresIn: ${typeof expiresIn}`);
+    console.error(`[JWT] Valor do expiresIn:`, JSON.stringify(expiresIn));
     throw error;
+  }
+}
+
+export function verifyToken(token: string): JWTPayload {
+  try {
+    return jwt.verify(token, JWT_SECRET) as JWTPayload;
+  } catch (error) {
+    throw new Error('Invalid or expired token');
+  }
+}
+
+export function decodeToken(token: string): JWTPayload | null {
+  try {
+    return jwt.decode(token) as JWTPayload;
+  } catch {
+    return null;
+  }
+}
+
   }
 }
 
