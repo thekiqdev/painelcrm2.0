@@ -11,23 +11,30 @@ export interface JWTPayload {
 function getExpiresIn(): string {
   const envValue = process.env.JWT_EXPIRES_IN;
   
+  // Log para debug
+  console.log(`[JWT] JWT_EXPIRES_IN raw value: "${envValue}"`);
+  
   // Se não estiver definido ou estiver vazio, usar padrão
   if (!envValue || envValue.trim() === '') {
+    console.log(`[JWT] JWT_EXPIRES_IN está vazio, usando padrão "7d"`);
     return '7d';
   }
   
   // Remover espaços e caracteres extras
   const cleaned = envValue.trim();
+  console.log(`[JWT] JWT_EXPIRES_IN cleaned: "${cleaned}"`);
   
   // Validar formato: deve ser número ou string como "1d", "20h", "7d", etc.
-  // Aceita: números, ou strings que começam com número seguido de letra
+  // Aceita: números, ou strings que começam com número seguido de letra (s, m, h, d)
+  // Exemplos válidos: "7d", "24h", "60m", "3600", "1d", "20h"
   const isValidFormat = /^(\d+[smhd]?|\d+)$/i.test(cleaned);
   
   if (!isValidFormat) {
-    console.warn(`JWT_EXPIRES_IN com formato inválido: "${cleaned}". Usando padrão "7d"`);
+    console.warn(`[JWT] JWT_EXPIRES_IN com formato inválido: "${cleaned}". Usando padrão "7d"`);
     return '7d';
   }
   
+  console.log(`[JWT] Usando expiresIn: "${cleaned}"`);
   return cleaned;
 }
 
@@ -39,12 +46,23 @@ export function generateToken(payload: JWTPayload): string {
   
   const expiresIn = getExpiresIn();
   
-  // Passar o objeto diretamente sem tipagem explícita
-  // jwt.sign aceita string ou number para expiresIn em runtime
-  // @ts-expect-error - TypeScript é muito estrito com StringValue, mas jwt.sign aceita string em runtime
-  return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: expiresIn,
-  });
+  // Log para debug
+  console.log(`[JWT] Gerando token com expiresIn: "${expiresIn}" (tipo: ${typeof expiresIn})`);
+  
+  try {
+    // Passar o objeto diretamente sem tipagem explícita
+    // jwt.sign aceita string ou number para expiresIn em runtime
+    // @ts-expect-error - TypeScript é muito estrito com StringValue, mas jwt.sign aceita string em runtime
+    const token = jwt.sign(payload, JWT_SECRET, {
+      expiresIn: expiresIn,
+    });
+    console.log(`[JWT] Token gerado com sucesso`);
+    return token;
+  } catch (error) {
+    console.error(`[JWT] Erro ao gerar token:`, error);
+    console.error(`[JWT] expiresIn usado: "${expiresIn}"`);
+    throw error;
+  }
 }
 
 export function verifyToken(token: string): JWTPayload {
