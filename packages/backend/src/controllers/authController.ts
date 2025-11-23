@@ -224,9 +224,11 @@ export async function logout(req: Request, res: Response): Promise<void> {
 // Endpoint temporário para atualizar senha do admin (REMOVER EM PRODUÇÃO)
 export async function updateAdminPassword(req: Request, res: Response): Promise<void> {
   try {
-    // Apenas em desenvolvimento ou com autenticação especial
-    if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_PASSWORD_UPDATE) {
-      res.status(403).json({ error: 'Not allowed in production' });
+    // Permitir se ALLOW_PASSWORD_UPDATE estiver definido ou em desenvolvimento
+    const isAllowed = process.env.ALLOW_PASSWORD_UPDATE === 'true' || process.env.NODE_ENV !== 'production';
+    
+    if (!isAllowed) {
+      res.status(403).json({ error: 'Not allowed. Set ALLOW_PASSWORD_UPDATE=true to enable.' });
       return;
     }
 
