@@ -8,7 +8,14 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup:local": "node scripts/setup-local.js",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "start": "start.bat",
+    "start:all": "start.bat",
+    "start:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/start.ps1"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

@@ -1,0 +1,22 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY packages/backend/package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy source code
+COPY packages/backend/ ./
+
+# Build TypeScript
+RUN npm run build
+
+# Expose port
+EXPOSE 3001
+
+# Start server
+CMD ["npm", "start"]
+

@@ -203,12 +203,12 @@ const Leads = () => {
       
       // Update the lead in the local list
       if (response.data) {
-        setLeads(leads.map(lead => 
+      setLeads(leads.map(lead => 
           lead.id === selectedLead.id ? response.data : lead
-        ));
-        
-        // Update selected lead if being viewed
-        if (isViewDialogOpen && selectedLead) {
+      ));
+      
+      // Update selected lead if being viewed
+      if (isViewDialogOpen && selectedLead) {
           setSelectedLead(response.data);
         }
       }
@@ -366,7 +366,7 @@ const Leads = () => {
         notes: selectedLead.notes || undefined,
         status: "Ativo"
       });
-
+      
       if (!clientResult.success || !clientResult.data) {
         throw new Error("Erro ao criar cliente");
       }

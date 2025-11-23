@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: painelcrm_postgres_prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-painelcrm}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - painelcrm-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: painelcrm_backend_prod
+    environment:
+      NODE_ENV: production
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-painelcrm}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      API_PORT: 3001
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - painelcrm-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: painelcrm_frontend_prod
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost/api}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - painelcrm-network
+
+volumes:
+  postgres_data_prod:
+    driver: local
+
+networks:
+  painelcrm-network:
+    driver: bridge
+
