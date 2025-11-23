@@ -4,16 +4,16 @@
 export const supabase = {
   auth: {
     getSession: async () => {
-      console.warn('Supabase stub: getSession called but Supabase is not available');
+      // Stub silencioso - não logar avisos
       return { data: { session: null }, error: null };
     },
     getUser: async () => {
-      console.warn('Supabase stub: getUser called but Supabase is not available');
+      // Stub silencioso - não logar avisos
       return { data: { user: null }, error: null };
     },
   },
   from: (table: string) => {
-    console.warn(`Supabase stub: from(${table}) called but Supabase is not available`);
+    // Stub silencioso - não logar avisos
     return {
       select: () => ({
         eq: () => ({

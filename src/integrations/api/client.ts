@@ -9,16 +9,33 @@ const getApiUrl = () => {
     return '';
   }
   
-  // Se está em HTTPS e VITE_API_URL é HTTP, usar URL relativa para evitar Mixed Content
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && envUrl.startsWith('http://')) {
-    return '';
+  // Se está rodando no navegador (não é SSR)
+  if (typeof window !== 'undefined') {
+    // Se está em HTTPS, sempre usar URL relativa para evitar Mixed Content
+    if (window.location.protocol === 'https:') {
+      return '';
+    }
+    
+    // Se VITE_API_URL contém hostname interno do Docker (sem domínio público)
+    // Exemplos: painelcrm:3001, localhost:3001 (mas não localhost em dev)
+    const isInternalHost = envUrl.includes('painelcrm:') || 
+                          envUrl.includes('localhost:') && !import.meta.env.DEV;
+    
+    if (isInternalHost) {
+      return '';
+    }
   }
   
-  // Caso contrário, usar a URL configurada
-  return envUrl;
+  // Em desenvolvimento local, usar a URL configurada
+  if (import.meta.env.DEV) {
+    return envUrl || 'http://localhost:3001';
+  }
+  
+  // Em produção, sempre usar URL relativa
+  return '';
 };
 
-const API_URL = getApiUrl() || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+const API_URL = getApiUrl();
 
 export interface ApiResponse<T = any> {
   data?: T;

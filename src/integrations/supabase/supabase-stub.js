@@ -2,7 +2,7 @@
 // Isso evita o erro "global is not defined" durante o build do Vite
 
 export function createClient() {
-  console.warn('Supabase createClient stub: Supabase is not available');
+  // Stub silencioso - não logar avisos
   return {
     auth: {
       getSession: async () => ({ data: { session: null }, error: null }),
