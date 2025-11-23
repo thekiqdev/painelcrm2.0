@@ -17,7 +17,8 @@ server {
     }
 
     # API proxy - Ajuste a URL conforme seu setup no Easypanel
-    # Opção 1: Se o backend estiver no mesmo namespace, use o nome do serviço
+    # IMPORTANTE: Substitua "painelcrm-backend" pelo nome EXATO do seu serviço backend no Easypanel
+    # Exemplos: sistemas-painelcrm-backend, painelcrm-backend, etc.
     location /api {
         proxy_pass http://painelcrm-backend:3001;
         proxy_http_version 1.1;
