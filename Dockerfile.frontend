@@ -3,6 +3,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Aceitar build args para variáveis de ambiente do Vite
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
+
 # Copiar package.json
 COPY package*.json ./
 
@@ -15,7 +19,7 @@ COPY . .
 # Verificar se o arquivo clients.ts existe
 RUN ls -la src/services/clients.ts || (echo "ERRO: clients.ts não encontrado!" && ls -la src/services/ && exit 1)
 
-# Build da aplicação
+# Build da aplicação (VITE_API_URL será injetado no build)
 RUN npm run build
 
 # Verificar se o dist foi criado (no stage builder)
