@@ -2,20 +2,12 @@ import { useState, useEffect } from "react";
 import { FileText, Trash2, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabase } from "@/integrations/supabase/client";
+import { projectTemplatesService, ProjectTemplate } from "@/services/projectTemplates";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { EditTemplateDialog } from "@/components/projects/templates/EditTemplateDialog";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-
-interface ProjectTemplate {
-  id: string;
-  name: string;
-  description: string;
-  tags: string[];
-  created_at: string;
-}
 
 export default function ProjectTemplates() {
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
@@ -31,130 +23,88 @@ export default function ProjectTemplates() {
   const loadTemplates = async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
-      .from("project_templates")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
-    if (error) {
+    try {
+      const data = await projectTemplatesService.getTemplates();
+      setTemplates(data.map(t => ({
+        id: t.id,
+        name: t.name,
+        description: t.description || "",
+        tags: (Array.isArray(t.tags) ? t.tags : []) as string[],
+        created_at: t.created_at
+      })));
+    } catch (error) {
       toast({
         title: "Erro",
         description: "Não foi possível carregar os templates",
         variant: "destructive",
       });
-      return;
     }
-
-    setTemplates((data || []).map(t => ({
-      id: t.id,
-      name: t.name,
-      description: t.description || "",
-      tags: (Array.isArray(t.tags) ? t.tags : []) as string[],
-      created_at: t.created_at
-    })));
   };
 
   const handleDeleteTemplate = async (templateId: string) => {
-    const { error } = await supabase
-      .from("project_templates")
-      .delete()
-      .eq("id", templateId);
-
-    if (error) {
+    try {
+      await projectTemplatesService.deleteTemplate(templateId);
+      toast({
+        title: "Sucesso",
+        description: "Template excluído com sucesso",
+      });
+      loadTemplates();
+    } catch (error) {
       toast({
         title: "Erro",
         description: "Não foi possível excluir o template",
         variant: "destructive",
       });
-      return;
     }
-
-    toast({
-      title: "Sucesso",
-      description: "Template excluído com sucesso",
-    });
-
-    loadTemplates();
   };
 
   const handleDuplicateTemplate = async (template: ProjectTemplate) => {
-    // Buscar stages e tasks
-    const { data: stages, error: stagesError } = await supabase
-      .from("project_template_stages")
-      .select("*, project_template_tasks(*)")
-      .eq("template_id", template.id)
-      .order("order_position", { ascending: true });
+    try {
+      // Buscar stages e tasks
+      const stages = await projectTemplatesService.getTemplateStages(template.id);
 
-    if (stagesError) {
+      // Criar novo template
+      const newTemplate = await projectTemplatesService.createTemplate({
+        name: `${template.name} (Cópia)`,
+        description: template.description,
+        tags: template.tags,
+      });
+
+      // Duplicar stages e tasks
+      for (const stage of stages) {
+        const newStage = await projectTemplatesService.createTemplateStage(newTemplate.id, {
+          name: stage.name,
+          order_position: stage.order_position,
+          offset_days: stage.offset_days,
+        });
+
+        // Duplicar tasks
+        for (const task of stage.tasks || []) {
+          await projectTemplatesService.createTemplateTask(newStage.id, {
+            title: task.title,
+            description: task.description,
+            offset_days: task.offset_days,
+            duration_days: task.duration_days,
+            priority: task.priority,
+            role: task.role,
+            tags: task.tags,
+          });
+        }
+      }
+
+      toast({
+        title: "Sucesso",
+        description: "Template duplicado com sucesso",
+      });
+
+      loadTemplates();
+    } catch (error) {
       toast({
         title: "Erro",
         description: "Não foi possível duplicar o template",
         variant: "destructive",
       });
-      return;
     }
-
-    // Criar novo template
-    const { data: newTemplate, error: templateError } = await supabase
-      .from("project_templates")
-      .insert({
-        user_id: user?.id,
-        name: `${template.name} (Cópia)`,
-        description: template.description,
-        tags: template.tags,
-      })
-      .select()
-      .single();
-
-    if (templateError || !newTemplate) {
-      toast({
-        title: "Erro",
-        description: "Não foi possível criar a cópia do template",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Duplicar stages e tasks
-    for (const stage of stages || []) {
-      const { data: newStage, error: stageError } = await supabase
-        .from("project_template_stages")
-        .insert({
-          template_id: newTemplate.id,
-          name: stage.name,
-          order_position: stage.order_position,
-          offset_days: stage.offset_days,
-        })
-        .select()
-        .single();
-
-      if (stageError || !newStage) continue;
-
-      // Duplicar tasks
-      const tasks = stage.project_template_tasks || [];
-      if (tasks.length > 0) {
-        const tasksToInsert = tasks.map((task: any) => ({
-          stage_id: newStage.id,
-          title: task.title,
-          description: task.description,
-          offset_days: task.offset_days,
-          duration_days: task.duration_days,
-          priority: task.priority,
-          role: task.role,
-          tags: task.tags,
-        }));
-
-        await supabase.from("project_template_tasks").insert(tasksToInsert);
-      }
-    }
-
-    toast({
-      title: "Sucesso",
-      description: "Template duplicado com sucesso",
-    });
-
-    loadTemplates();
   };
 
   return (

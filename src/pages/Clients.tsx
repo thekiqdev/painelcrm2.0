@@ -35,7 +35,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, CalendarIcon, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { clientsService } from "@/services/clients";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -77,6 +77,8 @@ const Clients = () => {
   const [clientTasks, setClientTasks] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [tabSelected, setTabSelected] = useState("details");
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [clientToDelete, setClientToDelete] = useState<any>(null);
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -110,29 +112,17 @@ const Clients = () => {
     },
   });
 
-  // Carregar clientes e grupos do Supabase
+  // Carregar clientes e grupos
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
       try {
         // Carregar grupos de clientes
-        const { data: groupsData, error: groupsError } = await supabase
-          .from("client_groups")
-          .select("*")
-          .order("name");
-
-        if (groupsError) throw groupsError;
+        const groupsData = await clientsService.getClientGroups();
         setClientGroups(groupsData || []);
 
         // Carregar clientes
-        const { data: clientsData, error: clientsError } = await supabase
-          .from("clients")
-          .select(`
-            *,
-            client_groups (id, name)
-          `);
-
-        if (clientsError) throw clientsError;
+        const clientsData = await clientsService.getClients();
         
         // Formatar os dados dos clientes
         const formattedClients = clientsData?.map(client => ({
@@ -148,9 +138,9 @@ const Clients = () => {
         }));
 
         setClients(formattedClients || []);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Erro ao carregar dados:", error);
-        toast.error("Erro ao carregar os dados. Tente novamente.");
+        toast.error(error.message || "Erro ao carregar os dados. Tente novamente.");
       } finally {
         setIsLoading(false);
       }
@@ -165,18 +155,11 @@ const Clients = () => {
       if (!selectedClient) return;
       
       try {
-        const { data, error } = await supabase
-          .from("client_tasks")
-          .select("*")
-          .eq("client_id", selectedClient.id)
-          .order("due_date", { ascending: true });
-        
-        if (error) throw error;
-        
-        setClientTasks(data || []);
-      } catch (error) {
+        const tasks = await clientsService.getClientTasks(selectedClient.id);
+        setClientTasks(tasks || []);
+      } catch (error: any) {
         console.error("Erro ao carregar tarefas:", error);
-        toast.error("Erro ao carregar tarefas do cliente.");
+        toast.error(error.message || "Erro ao carregar tarefas do cliente.");
       }
     };
     
@@ -262,20 +245,15 @@ const Clients = () => {
   const handleSaveEdit = async () => {
     if (selectedClient) {
       try {
-        const { error } = await supabase
-          .from("clients")
-          .update({
-            name: editedClient.name,
-            company: editedClient.company,
-            email: editedClient.email,
-            phone: editedClient.phone,
-            status: editedClient.status,
-            group_id: editedClient.group_id || null,
-            notes: editedClient.notes
-          })
-          .eq("id", selectedClient.id);
-          
-        if (error) throw error;
+        await clientsService.updateClient(selectedClient.id, {
+          name: editedClient.name,
+          company: editedClient.company,
+          email: editedClient.email,
+          phone: editedClient.phone,
+          status: editedClient.status,
+          group_id: editedClient.group_id || undefined,
+          notes: editedClient.notes
+        });
         
         // Atualizar o cliente na lista local
         const updatedClients = clients.map(client => {
@@ -358,19 +336,24 @@ const Clients = () => {
     try {
       const result = await addClient({
         name: newClient.name,
-        company: newClient.company,
-        email: newClient.email,
-        phone: newClient.phone,
-        status: newClient.status,
-        group_id: newClient.group_id || null,
-        notes: newClient.notes
+        company: newClient.company || undefined,
+        email: newClient.email || undefined,
+        phone: newClient.phone || undefined,
+        status: newClient.status || undefined,
+        group_id: newClient.group_id || undefined,
+        notes: newClient.notes || undefined
       });
       
       if (!result.success) {
         throw new Error(result.error?.message || "Erro ao adicionar cliente");
       }
       
-      const addedClient = result.data?.[0];
+      // Backend returns a single object, not an array
+      const addedClient = result.data;
+      
+      if (!addedClient || !addedClient.id) {
+        throw new Error("Resposta inválida do servidor");
+      }
       
       // Format the client data for the list
       const formattedClient = {
@@ -412,11 +395,8 @@ const Clients = () => {
     
     if (selectedClient && newClientGroup) {
       try {
-        // Atualizar o grupo do cliente no Supabase
-        const { error } = await supabase
-          .from("clients")
-          .update({ group_id: newClientGroup })
-          .eq("id", selectedClient.id);
+        // Atualizar o grupo do cliente
+        await clientsService.updateClient(selectedClient.id, { group_id: newClientGroup || undefined });
         
         if (error) throw error;
         
@@ -455,12 +435,7 @@ const Clients = () => {
     if (!selectedClient) return;
     
     try {
-      const { error } = await supabase
-        .from("clients")
-        .update({ notes: noteContent })
-        .eq("id", selectedClient.id);
-      
-      if (error) throw error;
+      await clientsService.updateClient(selectedClient.id, { notes: noteContent });
       
       // Atualizar o cliente na lista local
       const updatedClients = clients.map(client => {
@@ -519,12 +494,7 @@ const Clients = () => {
 
   const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
     try {
-      const { error } = await supabase
-        .from("client_tasks")
-        .update({ status: newStatus })
-        .eq("id", taskId);
-      
-      if (error) throw error;
+      await clientsService.updateClientTask(taskId, { status: newStatus });
       
       // Update the task in the local list
       setClientTasks(clientTasks.map(task => 
@@ -540,12 +510,7 @@ const Clients = () => {
   
   const handleDeleteTask = async (taskId: string) => {
     try {
-      const { error } = await supabase
-        .from("client_tasks")
-        .delete()
-        .eq("id", taskId);
-      
-      if (error) throw error;
+      await clientsService.deleteClientTask(taskId);
       
       // Remove the task from the local list
       setClientTasks(clientTasks.filter(task => task.id !== taskId));
@@ -555,6 +520,35 @@ const Clients = () => {
       console.error("Erro ao remover tarefa:", error.message);
       toast.error("Não foi possível remover a tarefa");
     }
+  };
+
+  const handleDeleteClient = async () => {
+    if (!clientToDelete) return;
+    
+    try {
+      await clientsService.deleteClient(clientToDelete.id);
+      
+      // Remove the client from the local list
+      setClients(clients.filter(client => client.id !== clientToDelete.id));
+      
+      // If the deleted client was selected, clear selection
+      if (selectedClient && selectedClient.id === clientToDelete.id) {
+        setSelectedClient(null);
+        setIsViewDialogOpen(false);
+      }
+      
+      setIsDeleteDialogOpen(false);
+      setClientToDelete(null);
+      toast.success("Cliente excluído com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao excluir cliente:", error.message);
+      toast.error(error.message || "Não foi possível excluir o cliente");
+    }
+  };
+
+  const confirmDeleteClient = (client: any) => {
+    setClientToDelete(client);
+    setIsDeleteDialogOpen(true);
   };
 
   const SortIcon = ({ field }: { field: string }) => {
@@ -1333,6 +1327,17 @@ const Clients = () => {
                               <FileText className="h-4 w-4 mr-2" />
                               Gerar Proposta
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                confirmDeleteClient(client);
+                              }}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Excluir Cliente
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -1352,6 +1357,38 @@ const Clients = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar Exclusão</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir o cliente <strong>{clientToDelete?.name}</strong>?
+              <br />
+              <span className="text-destructive">Esta ação não pode ser desfeita.</span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setClientToDelete(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteClient}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

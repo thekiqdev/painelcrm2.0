@@ -6,15 +6,40 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 const Login = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [email, setEmail] = useState("");
+  const { user, signIn } = useAuth();
+  const [loginType, setLoginType] = useState<"email" | "phone">("email");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Detectar automaticamente se é email ou telefone
+  const detectLoginType = (value: string): "email" | "phone" => {
+    if (value.includes("@")) {
+      return "email";
+    }
+    // Se contém apenas números e caracteres de telefone, é telefone
+    if (/^[\d\s\-\+\(\)]+$/.test(value) && value.replace(/\D/g, "").length >= 10) {
+      return "phone";
+    }
+    return loginType; // Manter o tipo atual se não conseguir detectar
+  };
+
+  const handleIdentifierChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setIdentifier(value);
+    
+    // Detectar automaticamente o tipo se o usuário não escolheu manualmente
+    if (value.length > 0) {
+      const detectedType = detectLoginType(value);
+      if (detectedType !== loginType) {
+        setLoginType(detectedType);
+      }
+    }
+  };
 
   // Se o usuário já estiver autenticado, redireciona
   useEffect(() => {
@@ -27,7 +52,7 @@ const Login = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!email || !password) {
+    if (!identifier || !password) {
       toast.error("Por favor, preencha todos os campos");
       return;
     }
@@ -35,26 +60,12 @@ const Login = () => {
     setIsLoading(true);
     
     try {
-      console.log('Tentando login com email:', email);
-      
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
-      
-      if (error) {
-        console.error("Erro ao fazer login:", error);
-        toast.error(error.message || "Falha no login. Verifique suas credenciais.");
-        setIsLoading(false);
-        return;
-      }
-      
-      console.log('Login bem-sucedido:', data);
-      toast.success("Login realizado com sucesso!");
-      // O redirecionamento será feito pelo AuthGuard após a detecção da mudança de estado
+      await signIn(identifier, password);
+      navigate('/dashboard');
     } catch (error: any) {
       console.error("Erro ao fazer login:", error);
       toast.error(error.message || "Ocorreu um erro desconhecido");
+    } finally {
       setIsLoading(false);
     }
   };
@@ -64,21 +75,41 @@ const Login = () => {
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl">Login</CardTitle>
         <CardDescription>
-          Entre com seu e-mail e senha para acessar sua conta
+          Entre com seu e-mail ou telefone e senha para acessar sua conta
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="email">E-mail</Label>
-            <Input 
-              id="email" 
-              type="email" 
-              placeholder="seu@email.com" 
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required 
-            />
+            <Label htmlFor="identifier">
+              {loginType === "email" ? "E-mail" : "Telefone"}
+            </Label>
+            <div className="flex gap-2">
+              <Input 
+                id="identifier" 
+                type={loginType === "email" ? "email" : "tel"}
+                placeholder={loginType === "email" ? "seu@email.com" : "5511999999999"} 
+                value={identifier}
+                onChange={handleIdentifierChange}
+                className="flex-1"
+                required 
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="default"
+                className="whitespace-nowrap"
+                onClick={() => {
+                  setLoginType(loginType === "email" ? "phone" : "email");
+                  setIdentifier("");
+                }}
+              >
+                {loginType === "email" ? "📱 Telefone" : "✉️ E-mail"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ou use {loginType === "email" ? "telefone" : "e-mail"} para fazer login
+            </p>
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">

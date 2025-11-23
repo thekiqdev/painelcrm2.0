@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
-import { supabase } from '@/integrations/supabase/client';
+import { searchService } from '@/services/search';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -275,42 +275,7 @@ const Header = () => {
 
     const searchGlobal = async () => {
       try {
-        const searchTerm = `%${searchQuery}%`;
-        
-        const [clients, leads, contracts, products] = await Promise.all([
-          supabase
-            .from('clients')
-            .select('id, name, email, company')
-            .eq('user_id', user?.id)
-            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
-            .limit(5),
-          supabase
-            .from('leads')
-            .select('id, name, email, company')
-            .eq('user_id', user?.id)
-            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
-            .limit(5),
-          supabase
-            .from('contracts')
-            .select('id, title, contract_number')
-            .eq('user_id', user?.id)
-            .or(`title.ilike.${searchTerm},contract_number.ilike.${searchTerm}`)
-            .limit(5),
-          supabase
-            .from('products')
-            .select('id, name, description')
-            .eq('user_id', user?.id)
-            .or(`name.ilike.${searchTerm},description.ilike.${searchTerm}`)
-            .limit(5),
-        ]);
-
-        const results = [
-          ...(clients.data || []).map(item => ({ ...item, type: 'Cliente', route: `/clients` })),
-          ...(leads.data || []).map(item => ({ ...item, type: 'Lead', route: `/leads` })),
-          ...(contracts.data || []).map(item => ({ ...item, type: 'Contrato', route: `/contracts/${item.id}` })),
-          ...(products.data || []).map(item => ({ ...item, type: 'Produto', route: `/products` })),
-        ];
-
+        const results = await searchService.search(searchQuery);
         setSearchResults(results);
       } catch (error) {
         console.error('Search error:', error);
@@ -324,47 +289,13 @@ const Header = () => {
   // Search for command dialog
   useEffect(() => {
     if (commandSearchQuery.length < 2) {
+      setSearchResults([]);
       return;
     }
 
     const searchGlobal = async () => {
       try {
-        const searchTerm = `%${commandSearchQuery}%`;
-        
-        const [clients, leads, contracts, products] = await Promise.all([
-          supabase
-            .from('clients')
-            .select('id, name, email, company')
-            .eq('user_id', user?.id)
-            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
-            .limit(5),
-          supabase
-            .from('leads')
-            .select('id, name, email, company')
-            .eq('user_id', user?.id)
-            .or(`name.ilike.${searchTerm},email.ilike.${searchTerm},company.ilike.${searchTerm}`)
-            .limit(5),
-          supabase
-            .from('contracts')
-            .select('id, title, contract_number')
-            .eq('user_id', user?.id)
-            .or(`title.ilike.${searchTerm},contract_number.ilike.${searchTerm}`)
-            .limit(5),
-          supabase
-            .from('products')
-            .select('id, name, description')
-            .eq('user_id', user?.id)
-            .or(`name.ilike.${searchTerm},description.ilike.${searchTerm}`)
-            .limit(5),
-        ]);
-
-        const results = [
-          ...(clients.data || []).map(item => ({ ...item, type: 'Cliente', route: `/clients` })),
-          ...(leads.data || []).map(item => ({ ...item, type: 'Lead', route: `/leads` })),
-          ...(contracts.data || []).map(item => ({ ...item, type: 'Contrato', route: `/contracts/${item.id}` })),
-          ...(products.data || []).map(item => ({ ...item, type: 'Produto', route: `/products` })),
-        ];
-
+        const results = await searchService.search(commandSearchQuery);
         setSearchResults(results);
       } catch (error) {
         console.error('Search error:', error);

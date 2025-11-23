@@ -31,7 +31,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { supabase } from "@/integrations/supabase/client";
+import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -80,60 +80,19 @@ const Contracts = () => {
   const loadContracts = async () => {
     try {
       setLoading(true);
-      let query = supabase
-        .from('contracts')
-        .select('*')
-        .eq('user_id', user?.id);
-
-      // Apply filters
-      if (filters.status !== 'all') {
-        query = query.eq('status', filters.status);
-      }
       
-      if (filters.clientId) {
-        query = query.eq('client_id', filters.clientId);
-      }
-      
-      if (filters.responsibleId) {
-        query = query.eq('responsible_id', filters.responsibleId);
-      }
+      const data = await contractsService.getContracts({
+        status: filters.status !== 'all' ? filters.status : undefined,
+        clientId: filters.clientId || undefined,
+        responsibleId: filters.responsibleId || undefined,
+        startDate: filters.startDate || undefined,
+        endDate: filters.endDate || undefined,
+        search: filters.search || undefined,
+        sortField: sortField,
+        sortDirection: sortDirection,
+      });
 
-      if (filters.startDate) {
-        const dateField = filters.dateType === 'created' ? 'created_at' : 'start_date';
-        query = query.gte(dateField, filters.startDate);
-      }
-
-      if (filters.endDate) {
-        const dateField = filters.dateType === 'created' ? 'created_at' : 'end_date';
-        query = query.lte(dateField, filters.endDate);
-      }
-
-      // Apply sorting
-      query = query.order(sortField, { ascending: sortDirection === 'asc' });
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      // Apply search filter client-side
-      let filtered = data || [];
-      if (filters.search) {
-        const searchLower = filters.search.toLowerCase();
-        filtered = filtered.filter(c => 
-          c.title.toLowerCase().includes(searchLower) ||
-          c.contract_number.toLowerCase().includes(searchLower)
-        );
-      }
-
-      // Map data to Contract type
-      const mappedContracts: Contract[] = filtered.map(c => ({
-        ...c,
-        tags: (Array.isArray(c.tags) ? c.tags : []) as string[],
-        variables: (typeof c.variables === 'object' && c.variables !== null ? c.variables : {}) as Record<string, any>,
-        signature_settings: (typeof c.signature_settings === 'object' && c.signature_settings !== null ? c.signature_settings : {}) as Record<string, any>,
-      }));
-
-      setContracts(mappedContracts);
+      setContracts(data);
     } catch (error) {
       console.error('Error loading contracts:', error);
       toast.error('Erro ao carregar contratos');
@@ -153,26 +112,13 @@ const Contracts = () => {
         for (const id of selectedIds) {
           const original = contracts.find(c => c.id === id);
           if (original) {
-            const { data: maxNumber } = await supabase
-              .from('contracts')
-              .select('contract_number')
-              .eq('user_id', user?.id)
-              .order('contract_number', { ascending: false })
-              .limit(1)
-              .single();
-
-            const newNumber = maxNumber 
-              ? `${parseInt(maxNumber.contract_number) + 1}`.padStart(6, '0')
-              : '000001';
-
-            await supabase.from('contracts').insert({
-              user_id: user?.id,
-              contract_number: newNumber,
+            await contractsService.createContract({
               title: `${original.title} (Cópia)`,
-              client_id: original.client_id,
-              responsible_id: original.responsible_id,
+              client_id: original.client_id || undefined,
+              responsible_id: original.responsible_id || undefined,
               status: 'DRAFT',
-              content: original.content,
+              content: original.content || undefined,
+              content_html: original.content_html || undefined,
               tags: original.tags,
             });
           }
@@ -185,12 +131,11 @@ const Contracts = () => {
           cancel: 'CANCELLED',
         };
 
-        const { error } = await supabase
-          .from('contracts')
-          .update({ status: statusMap[action] as ContractStatus })
-          .in('id', selectedIds);
-
-        if (error) throw error;
+        for (const id of selectedIds) {
+          await contractsService.updateContract(id, {
+            status: statusMap[action] as ContractStatus,
+          });
+        }
         toast.success('Contratos atualizados com sucesso');
       }
 

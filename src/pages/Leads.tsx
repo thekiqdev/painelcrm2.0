@@ -2,13 +2,15 @@
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { supabase } from "@/integrations/supabase/client";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
+import { apiClient } from "@/integrations/api/client";
 import { toast } from "sonner";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useAuth } from "@/contexts/AuthContext";
-import { withUserId } from "@/utils/auth-helpers";
 
 // Import our refactored components
 import LeadHeader from "@/components/leads/LeadHeader";
@@ -60,6 +62,8 @@ const Leads = () => {
   const [activeTab, setActiveTab] = useState("details");
   const [activeStatusFilter, setActiveStatusFilter] = useState("all");
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [leadToDelete, setLeadToDelete] = useState<any>(null);
   const { user } = useAuth();
 
   // Forms
@@ -70,18 +74,15 @@ const Leads = () => {
     },
   });
 
-  // Fetch lead statuses from Supabase
+  // Fetch lead statuses
   const fetchLeadStatuses = async () => {
     if (!user) return;
     
     try {
-      const { data, error } = await supabase
-        .from("lead_statuses")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (error) throw error;
+      const response = await apiClient.get("/api/lead-statuses");
+      if (response.error) throw new Error(response.error);
+      
+      const data = response.data || [];
       
       if (data && data.length > 0) {
         setLeadStatuses(data);
@@ -99,19 +100,27 @@ const Leads = () => {
     }
   };
 
-  // Fetch leads from Supabase
+  // Fetch leads
   const fetchLeads = async () => {
     if (!user) return;
     
     try {
-      const { data, error } = await supabase
-        .from("leads")
-        .select("*")
-        .eq("user_id", user.id)
-        .order(sortField, { ascending: sortDirection === "asc" });
-
-      if (error) throw error;
-      setLeads(data || []);
+      const response = await apiClient.get("/api/leads");
+      if (response.error) throw new Error(response.error);
+      
+      // Sort client-side for now
+      let data = response.data || [];
+      data.sort((a: any, b: any) => {
+        const aVal = a[sortField] || '';
+        const bVal = b[sortField] || '';
+        if (sortDirection === "asc") {
+          return aVal > bVal ? 1 : -1;
+        } else {
+          return aVal < bVal ? 1 : -1;
+        }
+      });
+      
+      setLeads(data);
     } catch (error: any) {
       console.error("Erro ao buscar leads:", error.message);
       toast.error("Não foi possível carregar os leads");
@@ -123,15 +132,9 @@ const Leads = () => {
     if (!user) return;
     
     try {
-      const { data, error } = await supabase
-        .from("lead_tasks")
-        .select("*")
-        .eq("lead_id", leadId)
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setLeadTasks(data || []);
+      const response = await apiClient.get(`/api/leads/${leadId}/tasks`);
+      if (response.error) throw new Error(response.error);
+      setLeadTasks(response.data || []);
     } catch (error: any) {
       console.error("Erro ao buscar tarefas:", error.message);
       toast.error("Não foi possível carregar as tarefas");
@@ -192,27 +195,25 @@ const Leads = () => {
         notes: values.notes || null,
       };
 
-      const { data, error } = await supabase
-        .from("leads")
-        .update(leadData)
-        .eq("id", selectedLead.id)
-        .eq("user_id", user.id)
-        .select();
-
-      if (error) throw error;
+      const response = await apiClient.patch(`/api/leads/${selectedLead.id}`, leadData);
+      if (response.error) throw new Error(response.error);
 
       toast.success("Lead atualizado com sucesso!");
       setIsEditDialogOpen(false);
       
       // Update the lead in the local list
-      setLeads(leads.map(lead => 
-        lead.id === selectedLead.id ? { ...lead, ...leadData } : lead
-      ));
-      
-      // Update selected lead if being viewed
-      if (isViewDialogOpen && selectedLead) {
-        setSelectedLead({ ...selectedLead, ...leadData });
+      if (response.data) {
+        setLeads(leads.map(lead => 
+          lead.id === selectedLead.id ? response.data : lead
+        ));
+        
+        // Update selected lead if being viewed
+        if (isViewDialogOpen && selectedLead) {
+          setSelectedLead(response.data);
+        }
       }
+      
+      fetchLeads();
     } catch (error: any) {
       console.error("Erro ao atualizar lead:", error.message);
       toast.error("Não foi possível atualizar o lead");
@@ -222,34 +223,82 @@ const Leads = () => {
   // Add new lead
   const handleAddLead = async (values: LeadFormValues) => {
     try {
-      // Valores já contém user_id adicionado pela função withUserId
-      const leadData = await withUserId({
+      // Clean up the data - remove empty strings and convert to null/undefined
+      const leadData: any = {
         name: values.name,
-        company: values.company || null,
-        email: values.email || null,
-        phone: values.phone || null,
-        status: values.status,
-        source: values.source,
-        notes: values.notes || null
-      });
+      };
       
-      if (!leadData) {
-        throw new Error("Usuário não autenticado");
+      // Only include fields that have values
+      if (values.company && values.company.trim()) {
+        leadData.company = values.company.trim();
+      }
+      
+      if (values.email && values.email.trim()) {
+        leadData.email = values.email.trim();
+      }
+      
+      if (values.phone && values.phone.trim()) {
+        leadData.phone = values.phone.trim();
+      }
+      
+      if (values.status && values.status.trim()) {
+        leadData.status = values.status.trim();
+      }
+      
+      // Source is required, use default if empty
+      if (values.source && values.source.trim()) {
+        leadData.source = values.source.trim();
+      } else {
+        leadData.source = "Outros"; // Default source
+      }
+      
+      if (values.notes && values.notes.trim()) {
+        leadData.notes = values.notes.trim();
       }
 
-      const { data, error } = await supabase
-        .from("leads")
-        .insert(leadData)
-        .select();
-
-      if (error) throw error;
+      const response = await apiClient.post("/api/leads", leadData);
+      if (response.error) throw new Error(response.error);
 
       toast.success("Lead adicionado com sucesso!");
       setIsAddDialogOpen(false);
       fetchLeads();
     } catch (error: any) {
-      console.error("Erro ao adicionar lead:", error.message);
-      toast.error("Não foi possível adicionar o lead");
+      console.error("Erro ao adicionar lead:", error);
+      const errorMessage = error.response?.data?.details 
+        ? JSON.stringify(error.response.data.details)
+        : error.message || "Não foi possível adicionar o lead";
+      toast.error(`Erro ao adicionar lead: ${errorMessage}`);
+    }
+  };
+
+  // Delete lead
+  const confirmDeleteLead = (lead: any) => {
+    setLeadToDelete(lead);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleDeleteLead = async () => {
+    if (!leadToDelete) return;
+    
+    try {
+      const response = await apiClient.delete(`/api/leads/${leadToDelete.id}`);
+      if (response.error) throw new Error(response.error);
+
+      // Remove the lead from the local list
+      setLeads(leads.filter(lead => lead.id !== leadToDelete.id));
+      
+      // If the deleted lead was selected, clear selection
+      if (selectedLead && selectedLead.id === leadToDelete.id) {
+        setSelectedLead(null);
+        setIsViewDialogOpen(false);
+      }
+      
+      setIsDeleteDialogOpen(false);
+      setLeadToDelete(null);
+      toast.success("Lead excluído com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao excluir lead:", error);
+      toast.error(error.message || "Não foi possível excluir o lead");
     }
   };
 
@@ -261,24 +310,16 @@ const Leads = () => {
       // Converting Date to ISO string
       const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
       
-      const taskData = await withUserId({
+      const taskData = {
         lead_id: selectedLead.id,
         title: values.title,
         description: values.description || "",
         due_date: formattedDueDate,
         status: values.status
-      });
+      };
       
-      if (!taskData) {
-        throw new Error("Usuário não autenticado");
-      }
-      
-      const { data, error } = await supabase
-        .from("lead_tasks")
-        .insert(taskData)
-        .select();
-
-      if (error) throw error;
+      const response = await apiClient.post("/api/lead-tasks", taskData);
+      if (response.error) throw new Error(response.error);
 
       toast.success("Tarefa adicionada com sucesso!");
       fetchLeadTasks(selectedLead.id);
@@ -294,14 +335,8 @@ const Leads = () => {
     if (!selectedLead || !user) return;
 
     try {
-      const { data, error } = await supabase
-        .from("leads")
-        .update({ notes: values.content })
-        .eq("id", selectedLead.id)
-        .eq("user_id", user.id)
-        .select();
-
-      if (error) throw error;
+      const response = await apiClient.patch(`/api/leads/${selectedLead.id}`, { notes: values.content });
+      if (response.error) throw new Error(response.error);
 
       toast.success("Nota salva com sucesso!");
       setSelectedLead({ ...selectedLead, notes: values.content });
@@ -321,55 +356,38 @@ const Leads = () => {
     if (!selectedLead || !user) return;
 
     try {
-      // Create client from lead data
-      const clientData = await withUserId({
+      // Create client from lead data using clients-helpers
+      const { addClient, addClientTask } = await import("@/utils/clients-helpers");
+      const clientResult = await addClient({
         name: selectedLead.name,
-        company: selectedLead.company,
-        email: selectedLead.email,
-        phone: selectedLead.phone,
-        notes: selectedLead.notes,
+        company: selectedLead.company || undefined,
+        email: selectedLead.email || undefined,
+        phone: selectedLead.phone || undefined,
+        notes: selectedLead.notes || undefined,
         status: "Ativo"
       });
-      
-      if (!clientData) {
-        throw new Error("Usuário não autenticado");
-      }
-      
-      const { data: newClient, error: clientError } = await supabase
-        .from("clients")
-        .insert(clientData)
-        .select();
 
-      if (clientError) throw clientError;
+      if (!clientResult.success || !clientResult.data) {
+        throw new Error("Erro ao criar cliente");
+      }
+
+      const newClient = clientResult.data;
 
       // Transfer lead tasks to client
-      if (leadTasks.length > 0 && newClient && newClient[0]) {
-        const clientId = newClient[0].id;
-        
-        // Convert tasks
+      if (leadTasks.length > 0 && newClient.id) {
         for (const task of leadTasks) {
-          const taskData = await withUserId({
-            client_id: clientId,
+          await addClientTask({
+            client_id: newClient.id,
             title: task.title,
-            description: task.description,
-            due_date: task.due_date,
-            status: task.status
+            description: task.description || undefined,
+            due_date: task.due_date || undefined,
+            status: task.status || "pending"
           });
-          
-          if (!taskData) continue;
-          
-          await supabase
-            .from("client_tasks")
-            .insert(taskData);
         }
       }
 
       // Mark lead as converted
-      await supabase
-        .from("leads")
-        .update({ status: "Convertido" })
-        .eq("id", selectedLead.id)
-        .eq("user_id", user.id);
+      await apiClient.patch(`/api/leads/${selectedLead.id}`, { status: "Convertido" });
 
       toast.success("Lead convertido para cliente com sucesso!");
       setIsConvertDialogOpen(false);
@@ -386,14 +404,8 @@ const Leads = () => {
     if (!user) return;
     
     try {
-      const { data, error } = await supabase
-        .from("lead_tasks")
-        .update({ status: newStatus })
-        .eq("id", taskId)
-        .eq("user_id", user.id)
-        .select();
-
-      if (error) throw error;
+      const response = await apiClient.patch(`/api/lead-tasks/${taskId}`, { status: newStatus });
+      if (response.error) throw new Error(response.error);
 
       toast.success("Status atualizado com sucesso!");
       if (selectedLead) {
@@ -469,6 +481,7 @@ const Leads = () => {
               fetchLeadTasks(lead.id);
               setIsConvertDialogOpen(true);
             }}
+            onDeleteLead={confirmDeleteLead}
           />
 
           {/* Pagination */}
@@ -534,6 +547,38 @@ const Leads = () => {
         lead={selectedLead}
         taskCount={leadTasks.length}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar Exclusão</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir o lead <strong>{leadToDelete?.name}</strong>?
+              <br />
+              <span className="text-destructive">Esta ação não pode ser desfeita.</span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setLeadToDelete(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteLead}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

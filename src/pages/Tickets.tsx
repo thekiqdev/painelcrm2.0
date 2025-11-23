@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { supabase } from '@/integrations/supabase/client';
-import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { ticketsService } from '@/services/tickets';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/hooks/use-toast';
 import {
   Ticket,
@@ -21,7 +21,7 @@ import { ptBR } from 'date-fns/locale';
 
 export default function Tickets() {
   const navigate = useNavigate();
-  const { user } = useCurrentUser();
+  const { user } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -32,18 +32,16 @@ export default function Tickets() {
     if (user) {
       loadTickets();
     }
-  }, [user]);
+  }, [user, statusFilter]);
 
   const loadTickets = async () => {
     try {
-      const { data, error } = await supabase
-        .from('tickets')
-        .select('*')
-        .eq('user_id', user?.id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setTickets(data || []);
+      setLoading(true);
+      const data = await ticketsService.getTickets({
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        search: searchQuery || undefined,
+      });
+      setTickets(data);
     } catch (error: any) {
       toast({
         title: 'Erro ao carregar tickets',

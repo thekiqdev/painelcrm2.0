@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { supabase } from "@/integrations/supabase/client";
+import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -59,60 +59,22 @@ const ContractDetails = () => {
   }, [id, user]);
 
   const loadContractData = async () => {
+    if (!id) return;
+    
     try {
       setLoading(true);
 
       // Load contract
-      const { data: contractData, error: contractError } = await supabase
-        .from('contracts')
-        .select('*')
-        .eq('id', id)
-        .eq('user_id', user?.id)
-        .single();
-
-      if (contractError) throw contractError;
-
-      const mappedContract: Contract = {
-        ...contractData,
-        tags: (Array.isArray(contractData.tags) ? contractData.tags : []) as string[],
-        variables: (typeof contractData.variables === 'object' && contractData.variables !== null ? contractData.variables : {}) as Record<string, any>,
-        signature_settings: (typeof contractData.signature_settings === 'object' && contractData.signature_settings !== null ? contractData.signature_settings : {}) as Record<string, any>,
-      };
-
-      setContract(mappedContract);
+      const contractData = await contractsService.getContractById(id);
+      setContract(contractData);
 
       // Load signers
-      const { data: signersData, error: signersError } = await supabase
-        .from('contract_signers')
-        .select('*')
-        .eq('contract_id', id)
-        .order('signing_order', { ascending: true });
-
-      if (signersError) throw signersError;
-      
-      const mappedSigners: ContractSigner[] = (signersData || []).map(s => ({
-        ...s,
-        role: s.role as 'CLIENT' | 'INTERNAL',
-        signature_data: (typeof s.signature_data === 'object' && s.signature_data !== null ? s.signature_data : null) as Record<string, any> | null,
-      }));
-      
-      setSigners(mappedSigners);
+      const signersData = await contractsService.getContractSigners(id);
+      setSigners(signersData);
 
       // Load events
-      const { data: eventsData, error: eventsError } = await supabase
-        .from('contract_events')
-        .select('*')
-        .eq('contract_id', id)
-        .order('created_at', { ascending: false });
-
-      if (eventsError) throw eventsError;
-      
-      const mappedEvents: ContractEvent[] = (eventsData || []).map(e => ({
-        ...e,
-        metadata: (typeof e.metadata === 'object' && e.metadata !== null ? e.metadata : {}) as Record<string, any>,
-      }));
-      
-      setEvents(mappedEvents);
+      const eventsData = await contractsService.getContractEvents(id);
+      setEvents(eventsData);
     } catch (error) {
       console.error('Error loading contract:', error);
       toast.error('Erro ao carregar contrato');
@@ -123,21 +85,16 @@ const ContractDetails = () => {
   };
 
   const handleStatusChange = async (status: ContractStatus) => {
+    if (!id) return;
+    
     try {
-      const { error } = await supabase
-        .from('contracts')
-        .update({ status })
-        .eq('id', id);
-
-      if (error) throw error;
+      await contractsService.updateContract(id, { status });
 
       // Create event
-      await supabase.from('contract_events').insert({
-        contract_id: id,
+      await contractsService.createContractEvent(id, {
         event_type: 'STATUS_CHANGED',
         description: `Status alterado para ${status}`,
         metadata: { old_status: contract?.status, new_status: status },
-        created_by: user?.id,
       });
 
       toast.success('Status atualizado com sucesso');
@@ -152,51 +109,35 @@ const ContractDetails = () => {
     if (!contract) return;
 
     try {
-      const { data: maxNumber } = await supabase
-        .from('contracts')
-        .select('contract_number')
-        .eq('user_id', user?.id)
-        .order('contract_number', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const newNumber = maxNumber
-        ? `${parseInt(maxNumber.contract_number) + 1}`.padStart(6, '0')
-        : '000001';
-
-      const { data: newContract, error: contractError } = await supabase
-        .from('contracts')
-        .insert({
-          user_id: user?.id,
-          contract_number: newNumber,
-          title: `${contract.title} (Cópia)`,
-          client_id: contract.client_id,
-          responsible_id: contract.responsible_id,
-          template_id: contract.template_id,
-          content_html: contract.content_html,
-          start_date: contract.start_date,
-          end_date: contract.end_date,
-          auto_renew: contract.auto_renew,
-          renewal_period: contract.renewal_period,
-          total_value: contract.total_value,
-          currency: contract.currency,
-          variables: contract.variables,
-          signature_settings: contract.signature_settings,
-          status: 'DRAFT',
-        })
-        .select()
-        .single();
-
-      if (contractError) throw contractError;
+      const newContract = await contractsService.createContract({
+        title: `${contract.title} (Cópia)`,
+        client_id: contract.client_id || undefined,
+        responsible_id: contract.responsible_id || undefined,
+        template_id: contract.template_id || undefined,
+        content_html: contract.content_html || undefined,
+        content: contract.content || undefined,
+        start_date: contract.start_date || undefined,
+        end_date: contract.end_date || undefined,
+        auto_renew: contract.auto_renew,
+        renewal_period: contract.renewal_period || undefined,
+        total_value: contract.total_value || undefined,
+        currency: contract.currency,
+        variables: contract.variables,
+        signature_settings: contract.signature_settings,
+        tags: contract.tags,
+        status: 'DRAFT',
+      });
 
       // Duplicate signers
       if (signers.length > 0) {
-        await supabase.from('contract_signers').insert(
-          signers.map(({ id, contract_id, created_at, signed_at, signature_data, ...rest }) => ({
-            contract_id: newContract.id,
-            ...rest,
-          }))
-        );
+        for (const signer of signers) {
+          await contractsService.createContractSigner(newContract.id, {
+            name: signer.name,
+            email: signer.email,
+            role: signer.role,
+            signing_order: signer.signing_order || undefined,
+          });
+        }
       }
 
       toast.success('Contrato duplicado com sucesso');

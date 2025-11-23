@@ -11,8 +11,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { FileEdit, Plus, Trash2, UserPlus, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import { getCurrentUserId, getUserProfiles } from "@/utils/auth-helpers";
+import { settingsService } from "@/services/settings";
+import { useAuth } from "@/contexts/AuthContext";
 import { SettingsSectionProps } from "./types";
 
 interface User {
@@ -50,6 +50,8 @@ type PermissionType =
   | "manage_users";
 
 export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
+  const { user } = useAuth();
+  
   // State
   const [users, setUsers] = useState<User[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -96,17 +98,21 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const userId = await getCurrentUserId();
-      if (!userId) {
+      if (!user) {
         toast.error("Usuário não autenticado");
         return;
       }
       
       // Carregar perfis do usuário
-      const userProfiles = await getUserProfiles();
+      const userProfiles = await settingsService.getUserProfiles();
       if (userProfiles && userProfiles.length > 0) {
-        setProfiles(userProfiles);
-        setSelectedProfile(userProfiles[0].id);
+        const convertedProfiles: Profile[] = userProfiles.map(p => ({
+          id: p.id,
+          name: p.name,
+          description: p.description || undefined
+        }));
+        setProfiles(convertedProfiles);
+        setSelectedProfile(convertedProfiles[0].id);
       }
       
       // Carregar usuários disponíveis através dos perfis existentes
@@ -122,24 +128,9 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   // Função para carregar usuários disponíveis
   const loadAvailableUsers = async () => {
     try {
-      // Buscar usuários únicos através da tabela profiles
-      const { data: profilesData, error } = await supabase
-        .from('profiles')
-        .select('id, created_at')
-        .order('created_at', { ascending: false });
-        
-      if (error) {
-        console.error("Erro ao carregar usuários:", error);
-        return;
-      }
-      
-      // Simular dados de usuário baseados nos profiles
-      const usersData: User[] = profilesData?.map(profile => ({
-        id: profile.id,
-        email: `user-${profile.id.slice(0, 8)}@example.com`, // Email simulado
-        created_at: profile.created_at
-      })) || [];
-      
+      // Por enquanto, vamos usar uma lista vazia ou buscar de outra forma
+      // Isso pode ser melhorado no futuro com um endpoint específico de usuários
+      const usersData: User[] = [];
       setUsers(usersData);
     } catch (error) {
       console.error("Erro ao carregar usuários:", error);
@@ -149,39 +140,15 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   // Função para carregar membros de um perfil
   const loadProfileMembers = async (profileId: string) => {
     try {
-      // Buscar membros do perfil
-      const { data: members, error: membersError } = await supabase
-        .from('profile_members')
-        .select('id, user_id, profile_id')
-        .eq('profile_id', profileId);
-        
-      if (membersError) {
-        console.error("Erro ao carregar membros:", membersError);
-        return;
-      }
+      const members = await settingsService.getProfileMembers(profileId);
       
-      // Buscar permissões dos membros
-      const { data: permissions, error: permissionsError } = await supabase
-        .from('user_permissions')
-        .select('*')
-        .eq('profile_id', profileId);
-        
-      if (permissionsError) {
-        console.error("Erro ao carregar permissões:", permissionsError);
-        return;
-      }
-      
-      // Mapear as permissões para os membros
-      const membersWithPermissions: ProfileMember[] = members?.map(member => {
-        const userPermissions = permissions?.filter(p => p.user_id === member.user_id) || [];
-        return {
-          id: member.id,
-          user_id: member.user_id,
-          profile_id: member.profile_id,
-          email: `user-${member.user_id.slice(0, 8)}@example.com`, // Email simulado
-          permissions: userPermissions.map(p => p.permission)
-        };
-      }) || [];
+      const membersWithPermissions: ProfileMember[] = members.map(member => ({
+        id: member.id,
+        user_id: member.user_id,
+        profile_id: member.profile_id,
+        email: member.email || `user-${member.user_id.slice(0, 8)}@example.com`,
+        permissions: member.permissions || []
+      }));
       
       setProfileMembers(membersWithPermissions);
     } catch (error) {
@@ -191,33 +158,11 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   };
   
   // Função para criar um novo usuário
+  // Nota: Criação de usuários deve ser feita através do sistema de autenticação
+  // Esta funcionalidade será implementada separadamente
   const handleCreateUser = async () => {
-    if (!newUserEmail || !newUserPassword) {
-      toast.error("Preencha todos os campos");
-      return;
-    }
-    
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: newUserEmail,
-        password: newUserPassword
-      });
-      
-      if (error) {
-        throw error;
-      }
-      
-      toast.success("Usuário criado com sucesso!");
-      setUserDialogOpen(false);
-      loadData();
-      
-      // Limpar formulário
-      setNewUserEmail("");
-      setNewUserPassword("");
-    } catch (error: any) {
-      console.error("Erro ao criar usuário:", error);
-      toast.error(`Erro ao criar usuário: ${error.message}`);
-    }
+    toast.error("Criação de usuários será implementada em breve");
+    // TODO: Implementar criação de usuários através da API de autenticação
   };
   
   // Função para criar um novo perfil
@@ -228,24 +173,16 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
     }
     
     try {
-      const userId = await getCurrentUserId();
-      if (!userId) {
+      if (!user) {
         toast.error("Usuário não autenticado");
         return;
       }
       
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .insert({
-          name: newProfileName,
-          description: newProfileDescription || null,
-          owner_id: userId
-        })
-        .select();
-      
-      if (error) {
-        throw error;
-      }
+      const newProfile = await settingsService.createUserProfile({
+        name: newProfileName,
+        description: newProfileDescription || null,
+        is_admin: false
+      });
       
       toast.success("Perfil criado com sucesso!");
       setProfileDialogOpen(false);
@@ -268,42 +205,25 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
     }
     
     try {
-      const userId = await getCurrentUserId();
-      if (!userId) {
+      if (!user) {
         toast.error("Usuário não autenticado");
         return;
       }
       
       // Adicionar o membro ao perfil
-      const { data: memberData, error: memberError } = await supabase
-        .from('profile_members')
-        .insert({
-          profile_id: selectedProfile,
-          user_id: selectedUser,
-          created_by: userId
-        })
-        .select();
-      
-      if (memberError) {
-        throw memberError;
-      }
+      const memberData = await settingsService.createProfileMember(selectedProfile, {
+        user_id: selectedUser
+      });
       
       // Adicionar permissões ao membro
       if (selectedPermissions.length > 0) {
-        const permissionsToAdd = selectedPermissions.map(permission => ({
-          profile_id: selectedProfile,
-          user_id: selectedUser,
-          permission: permission as PermissionType,
-          created_by: userId
-        }));
-        
-        const { error: permissionError } = await supabase
-          .from('user_permissions')
-          .insert(permissionsToAdd);
-        
-        if (permissionError) {
-          throw permissionError;
-        }
+        await Promise.all(
+          selectedPermissions.map(permission =>
+            settingsService.createMemberPermission(memberData.id, {
+              permission: permission
+            })
+          )
+        );
       }
       
       toast.success("Membro adicionado com sucesso!");
@@ -324,26 +244,18 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
     if (!selectedProfile) return;
     
     try {
-      // Remover membro
-      const { error: memberError } = await supabase
-        .from('profile_members')
-        .delete()
-        .eq('id', memberId);
+      // Buscar permissões do membro para deletar
+      const permissions = await settingsService.getMemberPermissions(memberId);
       
-      if (memberError) {
-        throw memberError;
-      }
+      // Remover permissões primeiro
+      await Promise.all(
+        permissions.map(perm =>
+          settingsService.deleteMemberPermission(memberId, perm.id)
+        )
+      );
       
-      // Remover permissões do membro
-      const { error: permissionError } = await supabase
-        .from('user_permissions')
-        .delete()
-        .eq('profile_id', selectedProfile)
-        .eq('user_id', userId);
-      
-      if (permissionError) {
-        throw permissionError;
-      }
+      // Remover membro (isso também remove as permissões automaticamente via CASCADE)
+      await settingsService.deleteProfileMember(memberId);
       
       toast.success("Membro removido com sucesso!");
       loadProfileMembers(selectedProfile);

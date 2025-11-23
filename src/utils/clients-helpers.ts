@@ -1,5 +1,5 @@
 
-import { supabase } from "@/integrations/supabase/client";
+import { apiClient } from "@/integrations/api/client";
 import { getCurrentUserId, withUserId, getUserProfiles } from "./auth-helpers";
 
 // Interface para os dados do cliente
@@ -26,20 +26,26 @@ export interface ClientTaskData {
 // Adicionar um novo cliente com user_id e profile_id
 export const addClient = async (clientData: ClientData) => {
   try {
-    const dataWithUserId = await withUserId(clientData);
-    if (!dataWithUserId) {
-      throw new Error("Usuário não autenticado");
+    // Clean up the data - remove empty strings and convert to undefined
+    const cleanData: any = {
+      name: clientData.name,
+    };
+    
+    if (clientData.email && clientData.email.trim()) cleanData.email = clientData.email.trim();
+    if (clientData.phone && clientData.phone.trim()) cleanData.phone = clientData.phone.trim();
+    if (clientData.company && clientData.company.trim()) cleanData.company = clientData.company.trim();
+    if (clientData.status && clientData.status.trim()) cleanData.status = clientData.status.trim();
+    if (clientData.notes && clientData.notes.trim()) cleanData.notes = clientData.notes.trim();
+    if (clientData.group_id && clientData.group_id.trim()) cleanData.group_id = clientData.group_id;
+    if (clientData.profile_id && clientData.profile_id.trim()) cleanData.profile_id = clientData.profile_id;
+    
+    const response = await apiClient.post("/api/clients", cleanData);
+    
+    if (response.error) {
+      throw new Error(response.error);
     }
     
-    console.log("Adicionando cliente com user_id:", dataWithUserId.user_id);
-    
-    const { data, error } = await supabase
-      .from("clients")
-      .insert(dataWithUserId)
-      .select();
-
-    if (error) throw error;
-    return { success: true, data };
+    return { success: true, data: response.data };
   } catch (error: any) {
     console.error("Erro ao adicionar cliente:", error.message);
     return { success: false, error };
@@ -49,18 +55,13 @@ export const addClient = async (clientData: ClientData) => {
 // Adicionar tarefa para cliente com user_id
 export const addClientTask = async (taskData: ClientTaskData) => {
   try {
-    const dataWithUserId = await withUserId(taskData);
-    if (!dataWithUserId) {
-      throw new Error("Usuário não autenticado");
+    const response = await apiClient.post("/api/clients/tasks", taskData);
+    
+    if (response.error) {
+      throw new Error(response.error);
     }
     
-    const { data, error } = await supabase
-      .from("client_tasks")
-      .insert(dataWithUserId)
-      .select();
-
-    if (error) throw error;
-    return { success: true, data };
+    return { success: true, data: response.data };
   } catch (error: any) {
     console.error("Erro ao adicionar tarefa:", error.message);
     return { success: false, error };
@@ -77,34 +78,18 @@ export const fetchUserClients = async (profileId?: string) => {
     
     console.log("Buscando clientes do usuário:", userId);
     
-    let query = supabase.from("clients").select("*");
+    const url = profileId 
+      ? `/api/clients?profileId=${profileId}`
+      : '/api/clients';
     
-    if (profileId) {
-      // Se tiver um profileId, busca os clientes desse perfil
-      console.log("Filtrando por perfil:", profileId);
-      query = query.eq("profile_id", profileId);
-    } else {
-      // Caso contrário, busca os clientes pessoais do usuário ou de qualquer perfil que ele tenha acesso
-      const userProfiles = await getUserProfiles();
-      if (userProfiles && userProfiles.length > 0) {
-        const profileIds = userProfiles.map(profile => profile.id);
-        console.log("Filtrando pelos perfis:", profileIds);
-        
-        // Busca os clientes pessoais ou de qualquer perfil do usuário
-        query = query.or(`user_id.eq.${userId},profile_id.in.(${profileIds.join(',')})`);
-      } else {
-        // Se não encontrar perfis, busca apenas os clientes pessoais
-        query = query.eq("user_id", userId);
-      }
+    const response = await apiClient.get(url);
+    
+    if (response.error) {
+      throw new Error(response.error);
     }
     
-    // Ordenar por nome
-    const { data, error } = await query.order("name");
-
-    if (error) throw error;
-    
-    console.log(`Encontrados ${data?.length || 0} clientes`);
-    return { success: true, data: data || [] };
+    console.log(`Encontrados ${response.data?.length || 0} clientes`);
+    return { success: true, data: response.data || [] };
   } catch (error: any) {
     console.error("Erro ao buscar clientes:", error.message);
     return { success: false, error, data: [] };
@@ -119,15 +104,13 @@ export const fetchClientTasks = async (clientId: string) => {
       throw new Error("Usuário não autenticado");
     }
     
-    const { data, error } = await supabase
-      .from("client_tasks")
-      .select("*")
-      .eq("client_id", clientId)
-      .eq("user_id", userId) // Filtrar por user_id também
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-    return { success: true, data: data || [] };
+    const response = await apiClient.get(`/api/clients/${clientId}/tasks`);
+    
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    
+    return { success: true, data: response.data || [] };
   } catch (error: any) {
     console.error("Erro ao buscar tarefas do cliente:", error.message);
     return { success: false, error, data: [] };
@@ -142,15 +125,13 @@ export const updateClientTaskStatus = async (taskId: string, newStatus: string) 
       throw new Error("Usuário não autenticado");
     }
     
-    const { data, error } = await supabase
-      .from("client_tasks")
-      .update({ status: newStatus })
-      .eq("id", taskId)
-      .eq("user_id", userId) // Garantir que a tarefa pertence ao usuário
-      .select();
-
-    if (error) throw error;
-    return { success: true, data };
+    const response = await apiClient.patch(`/api/clients/tasks/${taskId}`, { status: newStatus });
+    
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    
+    return { success: true, data: response.data };
   } catch (error: any) {
     console.error("Erro ao atualizar status da tarefa:", error.message);
     return { success: false, error };
@@ -165,13 +146,12 @@ export const deleteClientTask = async (taskId: string) => {
       throw new Error("Usuário não autenticado");
     }
     
-    const { error } = await supabase
-      .from("client_tasks")
-      .delete()
-      .eq("id", taskId)
-      .eq("user_id", userId); // Garantir que a tarefa pertence ao usuário
-
-    if (error) throw error;
+    const response = await apiClient.delete(`/api/clients/tasks/${taskId}`);
+    
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    
     return { success: true };
   } catch (error: any) {
     console.error("Erro ao excluir tarefa:", error.message);

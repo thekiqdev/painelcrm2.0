@@ -6,16 +6,15 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 const Register = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, signUp, updateProfile } = useAuth();
   const [name, setName] = React.useState("");
   const [lastName, setLastName] = React.useState("");
   const [company, setCompany] = React.useState("");
-  const [email, setEmail] = React.useState("");
+  const [whatsapp, setWhatsapp] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [agreeTerms, setAgreeTerms] = React.useState(false);
@@ -32,7 +31,7 @@ const Register = () => {
     e.preventDefault();
     
     // Validação básica
-    if (!name || !lastName || !company || !email || !password) {
+    if (!name || !lastName || !company || !whatsapp || !password) {
       toast.error("Por favor, preencha todos os campos obrigatórios");
       return;
     }
@@ -50,40 +49,18 @@ const Register = () => {
     setIsSubmitting(true);
     
     try {
-      console.log('Registering new user with email:', email);
+      console.log('Registering new user with WhatsApp:', whatsapp);
       
-      // Registrar o usuário no Supabase
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            name,
-            lastName,
-            company
-          }
-        }
+      // Registrar o usuário
+      await signUp(whatsapp, password);
+      
+      // Atualizar perfil com informações adicionais
+      await updateProfile({
+        first_name: name,
+        last_name: lastName,
+        company_name: company,
+        whatsapp_number: whatsapp,
       });
-      
-      if (error) {
-        console.error("Erro ao registrar:", error);
-        
-        // Verificar se o erro é de usuário já existente
-        if (error.message.includes("already registered") || error.message.includes("already exists")) {
-          toast.error("Este e-mail já está cadastrado. Por favor, tente fazer login.");
-          setTimeout(() => navigate("/login"), 2000);
-          return;
-        }
-        
-        toast.error(error.message || "Ocorreu um erro ao criar sua conta");
-        return;
-      }
-      
-      // Verificar se o usuário foi criado corretamente
-      if (!data.user || !data.user.id) {
-        toast.error("Ocorreu um erro ao criar sua conta");
-        return;
-      }
       
       toast.success("Conta criada com sucesso!");
       
@@ -91,7 +68,7 @@ const Register = () => {
       navigate("/register/steps");
     } catch (error: any) {
       console.error("Erro ao registrar:", error);
-      toast.error("Ocorreu um erro ao criar sua conta");
+      toast.error(error.message || "Ocorreu um erro ao criar sua conta");
     } finally {
       setIsSubmitting(false);
     }
@@ -140,14 +117,14 @@ const Register = () => {
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="email">E-mail</Label>
+            <Label htmlFor="whatsapp">WhatsApp</Label>
             <Input 
-              id="email" 
-              type="email" 
-              placeholder="seu@email.com" 
+              id="whatsapp" 
+              type="text" 
+              placeholder="5511999999999" 
               required 
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={whatsapp}
+              onChange={(e) => setWhatsapp(e.target.value)}
             />
           </div>
           <div className="grid gap-4 grid-cols-2">

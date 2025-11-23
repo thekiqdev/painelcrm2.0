@@ -18,6 +18,7 @@ import {
   CommandGroup,
   CommandInput,
   CommandItem,
+  CommandList,
 } from "@/components/ui/command";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,7 +29,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { RichTextEditor } from "@/components/shared/RichTextEditor";
-import { supabase } from "@/integrations/supabase/client";
+import { contractsService } from "@/services/contracts";
+import { clientsService } from "@/services/clients";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -112,20 +114,8 @@ const NewContract = () => {
 
   const loadTemplates = async () => {
     try {
-      const { data, error } = await supabase
-        .from('contract_templates')
-        .select('*')
-        .eq('user_id', user?.id)
-        .eq('is_active', true);
-
-      if (error) throw error;
-      
-      const mappedTemplates: ContractTemplate[] = (data || []).map(t => ({
-        ...t,
-        variables_schema: (Array.isArray(t.variables_schema) ? t.variables_schema : []) as any,
-      }));
-      
-      setTemplates(mappedTemplates);
+      const data = await contractsService.getContractTemplates(true);
+      setTemplates(data);
     } catch (error) {
       console.error('Error loading templates:', error);
       toast.error('Erro ao carregar modelos');
@@ -134,16 +124,11 @@ const NewContract = () => {
 
   const loadClients = async () => {
     try {
-      const { data, error } = await supabase
-        .from('clients')
-        .select('id, name, email, company')
-        .eq('user_id', user?.id)
-        .order('name');
-
-      if (error) throw error;
+      const data = await clientsService.getClients();
       setClients(data || []);
     } catch (error) {
       console.error('Error loading clients:', error);
+      setClients([]); // Garantir que sempre seja um array
     }
   };
 
@@ -197,67 +182,42 @@ const NewContract = () => {
     try {
       setLoading(true);
 
-      // Generate contract number
-      const { data: maxNumber } = await supabase
-        .from('contracts')
-        .select('contract_number')
-        .eq('user_id', user?.id)
-        .order('contract_number', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const newNumber = maxNumber
-        ? `${parseInt(maxNumber.contract_number) + 1}`.padStart(6, '0')
-        : '000001';
-
       // Create contract
-      const { data: contract, error: contractError } = await supabase
-        .from('contracts')
-        .insert({
-          user_id: user?.id,
-          contract_number: newNumber,
-          title: formData.title,
-          client_id: formData.client_id || null,
-          responsible_id: formData.responsible_id || null,
-          template_id: formData.template_id || null,
-          content_html: formData.content_html,
-          start_date: formData.start_date?.toISOString(),
-          end_date: formData.end_date?.toISOString(),
-          auto_renew: formData.auto_renew,
-          renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : null,
-          total_value: formData.total_value ? parseFloat(formData.total_value) : null,
-          currency: formData.currency,
-          linked_proposal_id: formData.linked_proposal_id || null,
-          linked_invoice_id: formData.linked_invoice_id || null,
-          variables: formData.variables,
-          signature_settings: formData.signature_settings,
-          status: 'DRAFT',
-        })
-        .select()
-        .single();
-
-      if (contractError) throw contractError;
+      const contract = await contractsService.createContract({
+        title: formData.title,
+        client_id: formData.client_id || undefined,
+        responsible_id: formData.responsible_id || undefined,
+        template_id: formData.template_id || undefined,
+        content_html: formData.content_html,
+        start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
+        end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
+        auto_renew: formData.auto_renew,
+        renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
+        total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
+        currency: formData.currency,
+        linked_proposal_id: formData.linked_proposal_id || undefined,
+        linked_invoice_id: formData.linked_invoice_id || undefined,
+        variables: formData.variables,
+        signature_settings: formData.signature_settings,
+        status: 'DRAFT',
+      });
 
       // Create signers
       if (signers.length > 0) {
-        const { error: signersError } = await supabase
-          .from('contract_signers')
-          .insert(
-            signers.map(signer => ({
-              contract_id: contract.id,
-              ...signer,
-            }))
-          );
-
-        if (signersError) throw signersError;
+        for (const signer of signers) {
+          await contractsService.createContractSigner(contract.id, {
+            name: signer.name,
+            email: signer.email,
+            role: signer.role,
+            signing_order: signer.signing_order || undefined,
+          });
+        }
       }
 
       // Create event
-      await supabase.from('contract_events').insert({
-        contract_id: contract.id,
+      await contractsService.createContractEvent(contract.id, {
         event_type: 'CREATED',
         description: 'Contrato criado como rascunho',
-        created_by: user?.id,
       });
 
       toast.success('Rascunho salvo com sucesso');
@@ -287,66 +247,41 @@ const NewContract = () => {
     try {
       setLoading(true);
 
-      // Generate contract number
-      const { data: maxNumber } = await supabase
-        .from('contracts')
-        .select('contract_number')
-        .eq('user_id', user?.id)
-        .order('contract_number', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const newNumber = maxNumber
-        ? `${parseInt(maxNumber.contract_number) + 1}`.padStart(6, '0')
-        : '000001';
-
       // Create contract
-      const { data: contract, error: contractError } = await supabase
-        .from('contracts')
-        .insert({
-          user_id: user?.id,
-          contract_number: newNumber,
-          title: formData.title,
-          client_id: formData.client_id || null,
-          responsible_id: formData.responsible_id || null,
-          template_id: formData.template_id || null,
-          content_html: formData.content_html,
-          start_date: formData.start_date?.toISOString(),
-          end_date: formData.end_date?.toISOString(),
-          auto_renew: formData.auto_renew,
-          renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : null,
-          total_value: formData.total_value ? parseFloat(formData.total_value) : null,
-          currency: formData.currency,
-          linked_proposal_id: formData.linked_proposal_id || null,
-          linked_invoice_id: formData.linked_invoice_id || null,
-          variables: formData.variables,
-          signature_settings: formData.signature_settings,
-          status: 'PENDING_SIGNATURE',
-        })
-        .select()
-        .single();
-
-      if (contractError) throw contractError;
+      const contract = await contractsService.createContract({
+        title: formData.title,
+        client_id: formData.client_id || undefined,
+        responsible_id: formData.responsible_id || undefined,
+        template_id: formData.template_id || undefined,
+        content_html: formData.content_html,
+        start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
+        end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
+        auto_renew: formData.auto_renew,
+        renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
+        total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
+        currency: formData.currency,
+        linked_proposal_id: formData.linked_proposal_id || undefined,
+        linked_invoice_id: formData.linked_invoice_id || undefined,
+        variables: formData.variables,
+        signature_settings: formData.signature_settings,
+        status: 'PENDING_SIGNATURE',
+      });
 
       // Create signers
-      const { error: signersError } = await supabase
-        .from('contract_signers')
-        .insert(
-          signers.map(signer => ({
-            contract_id: contract.id,
-            ...signer,
-          }))
-        );
-
-      if (signersError) throw signersError;
+      for (const signer of signers) {
+        await contractsService.createContractSigner(contract.id, {
+          name: signer.name,
+          email: signer.email,
+          role: signer.role,
+          signing_order: signer.signing_order || undefined,
+        });
+      }
 
       // Create event
-      await supabase.from('contract_events').insert({
-        contract_id: contract.id,
+      await contractsService.createContractEvent(contract.id, {
         event_type: 'SENT_FOR_SIGNATURE',
         description: 'Contrato enviado para assinatura',
         metadata: { signers: signers.map(s => ({ name: s.name, email: s.email })) },
-        created_by: user?.id,
       });
 
       toast.success('Contrato enviado para assinatura');
@@ -531,34 +466,36 @@ const NewContract = () => {
                   <PopoverContent className="w-full p-0" align="start">
                     <Command>
                       <CommandInput placeholder="Buscar cliente..." />
-                      <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
-                      <CommandGroup>
-                        {clients.map((client) => (
-                          <CommandItem
-                            key={client.id}
-                            value={`${client.name} ${client.email || ''} ${client.company || ''}`}
-                            onSelect={() => {
-                              setFormData({ ...formData, client_id: client.id });
-                              setClientSearchOpen(false);
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                formData.client_id === client.id ? "opacity-100" : "opacity-0"
-                              )}
-                            />
-                            <div className="flex flex-col">
-                              <span>{client.name}</span>
-                              {(client.email || client.company) && (
-                                <span className="text-xs text-muted-foreground">
-                                  {[client.company, client.email].filter(Boolean).join(' • ')}
-                                </span>
-                              )}
-                            </div>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
+                      <CommandList>
+                        <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+                        <CommandGroup>
+                          {(clients || []).map((client) => (
+                            <CommandItem
+                              key={client.id}
+                              value={`${client.name} ${client.email || ''} ${client.company || ''}`}
+                              onSelect={() => {
+                                setFormData({ ...formData, client_id: client.id });
+                                setClientSearchOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  formData.client_id === client.id ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              <div className="flex flex-col">
+                                <span>{client.name}</span>
+                                {(client.email || client.company) && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {[client.company, client.email].filter(Boolean).join(' • ')}
+                                  </span>
+                                )}
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
                     </Command>
                   </PopoverContent>
                 </Popover>

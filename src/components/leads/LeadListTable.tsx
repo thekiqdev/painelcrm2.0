@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MoreVertical, Edit, Plus, UserPlus } from "lucide-react";
+import { MoreVertical, Edit, Plus, UserPlus, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,6 +71,7 @@ interface LeadListTableProps {
   getStatusVariant: (status: string) => { color: string };
   onSelectLeadForTasks: (lead: any) => void;
   onSelectLeadForConversion: (lead: any) => void;
+  onDeleteLead?: (lead: any) => void;
 }
 
 const LeadListTable: React.FC<LeadListTableProps> = ({
@@ -83,6 +84,7 @@ const LeadListTable: React.FC<LeadListTableProps> = ({
   getStatusVariant,
   onSelectLeadForTasks,
   onSelectLeadForConversion,
+  onDeleteLead,
 }) => {
   return (
     <Table>
@@ -167,6 +169,21 @@ const LeadListTable: React.FC<LeadListTableProps> = ({
                       <UserPlus className="h-4 w-4 mr-2" />
                       Converter para Cliente
                     </DropdownMenuItem>
+                    {onDeleteLead && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteLead(lead);
+                          }}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Excluir Lead
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </TableCell>

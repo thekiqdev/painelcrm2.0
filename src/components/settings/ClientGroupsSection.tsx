@@ -31,7 +31,7 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { SettingsSectionProps } from "./types";
-import { supabase } from "@/integrations/supabase/client";
+import { clientsService } from "@/services/clients";
 import { useAuth } from "@/contexts/AuthContext";
 
 export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave }) => {
@@ -43,43 +43,16 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
   const [isLoading, setIsLoading] = useState(true);
   const { user } = useAuth();
 
-  // Carregar grupos do Supabase
+  // Carregar grupos
   useEffect(() => {
     const fetchGroups = async () => {
       setIsLoading(true);
       try {
-        // Buscar grupos de clientes
-        const { data: groupsData, error: groupsError } = await supabase
-          .from("client_groups")
-          .select("*")
-          .order("name");
-          
-        if (groupsError) throw groupsError;
-        
-        // Buscar a contagem de clientes para cada grupo
-        if (groupsData) {
-          // Criar um array para armazenar as promessas
-          const promises = groupsData.map(async (group) => {
-            const { count, error } = await supabase
-              .from("clients")
-              .select("*", { count: 'exact', head: true })
-              .eq("group_id", group.id);
-              
-            if (error) throw error;
-            
-            return {
-              ...group,
-              clientCount: count || 0
-            };
-          });
-          
-          // Esperar todas as promessas serem resolvidas
-          const groupsWithCounts = await Promise.all(promises);
-          setGroups(groupsWithCounts);
-        }
-      } catch (error) {
+        const groupsData = await clientsService.getClientGroups();
+        setGroups(groupsData || []);
+      } catch (error: any) {
         console.error("Erro ao carregar grupos:", error);
-        toast.error("Erro ao carregar os grupos. Tente novamente.");
+        toast.error(error.message || "Erro ao carregar os grupos. Tente novamente.");
       } finally {
         setIsLoading(false);
       }
@@ -97,23 +70,10 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
           throw new Error("Usuário não autenticado");
         }
         
-        // Inserir novo grupo no Supabase
-        const { data, error } = await supabase
-          .from("client_groups")
-          .insert({ 
-            name: newGroupName.trim(),
-            user_id: user.id // Adicionando o user_id
-          })
-          .select()
-          .single();
-          
-        if (error) throw error;
-        
-        // Adicionar o novo grupo à lista com contagem de clientes zerada
-        const newGroup = {
-          ...data,
-          clientCount: 0
-        };
+        // Inserir novo grupo
+        const newGroup = await clientsService.createClientGroup({ 
+          name: newGroupName.trim()
+        });
         
         setGroups([...groups, newGroup]);
         setNewGroupName("");
@@ -131,18 +91,15 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
     
     if (editingGroup && editingGroup.name.trim()) {
       try {
-        // Atualizar o grupo no Supabase
-        const { error } = await supabase
-          .from("client_groups")
-          .update({ name: editingGroup.name.trim() })
-          .eq("id", editingGroup.id);
-          
-        if (error) throw error;
+        // Atualizar o grupo
+        const updatedGroup = await clientsService.updateClientGroup(editingGroup.id, { 
+          name: editingGroup.name.trim() 
+        });
         
         // Atualizar o grupo na lista local
         setGroups(groups.map(group => 
           group.id === editingGroup.id 
-            ? { ...group, name: editingGroup.name.trim() } 
+            ? updatedGroup
             : group
         ));
         
@@ -165,13 +122,8 @@ export const ClientGroupsSection: React.FC<SettingsSectionProps> = ({ handleSave
     }
 
     try {
-      // Excluir o grupo do Supabase
-      const { error } = await supabase
-        .from("client_groups")
-        .delete()
-        .eq("id", id);
-        
-      if (error) throw error;
+      // Excluir o grupo
+      await clientsService.deleteClientGroup(id);
       
       // Remover o grupo da lista local
       setGroups(groups.filter(group => group.id !== id));

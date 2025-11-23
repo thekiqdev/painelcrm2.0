@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical } from "lucide-react";
@@ -22,7 +22,8 @@ import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProj
 // Importações de tipos e dados
 import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
 import { Member } from "@/components/shared/types";
-import { mockMembers, initialProjects } from "@/components/projects/mockData";
+import { projectsService, Project as ApiProject, ProjectList as ApiProjectList, ProjectTask as ApiProjectTask } from "@/services/projects";
+import { membersService } from "@/services/members";
 
 // Add import for ProjectFinance
 import { ProjectFinance } from "@/components/projects/ProjectFinance";
@@ -34,13 +35,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 const Projects = () => {
   // Estados principais
   const [viewMode, setViewMode] = useState<"list" | "detail">("list");
-  const [projects, setProjects] = useState<Project[]>(() => {
-    // Initialize projects with kanbanStage
-    return initialProjects.map(project => ({
-      ...project,
-      kanbanStage: project.kanbanStage || "backlog" // Default all projects to backlog stage initially
-    }));
-  });
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState("board");
   const [projectsViewType, setProjectsViewType] = useState<"grid" | "kanban">("grid");
@@ -67,48 +63,192 @@ const Projects = () => {
   const [editingTask, setEditingTask] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
+  const [members, setMembers] = useState<Member[]>([]);
 
-  // Funções para gestão de projetos
-  const handleCreateProject = (event: React.FormEvent, data: ProjectFormData) => {
-    event.preventDefault();
-    
-    // Criar o novo projeto com os dados do formulário
-    const newProject: Project = {
-      id: `p${projects.length + 1}`,
-      name: data.name,
-      description: data.description,
-      status: "active",
-      dueDate: data.dueDate ? format(data.dueDate, 'yyyy-MM-dd') : undefined,
-      members: data.members,
-      tags: data.tags,
-      lists: [
-        { id: `l-${Date.now()}-1`, name: "A Fazer", tasks: [], order: 0 },
-        { id: `l-${Date.now()}-2`, name: "Em Andamento", tasks: [], order: 1 },
-        { id: `l-${Date.now()}-3`, name: "Revisão", tasks: [], order: 2 },
-        { id: `l-${Date.now()}-4`, name: "Concluídos", tasks: [], order: 3 },
-      ],
-      files: data.files.map((file, index) => ({
-        id: `f-${Date.now()}-${index}`,
-        name: file.name,
-        type: file.type,
-        size: `${(file.size / 1024).toFixed(1)} KB`,
-        uploadedBy: mockMembers[0], // Usuário atual
-        uploadedAt: new Date().toISOString(),
-        url: URL.createObjectURL(file) // Url temporária
-      })),
-      financeItems: [], // Initialize with empty array
-      kanbanStage: 'backlog' // Default to backlog stage
+  // Carregar membros do backend
+  useEffect(() => {
+    const loadMembers = async () => {
+      try {
+        const membersData = await membersService.getMembers();
+        setMembers(membersData);
+      } catch (error) {
+        console.error('Erro ao carregar membros:', error);
+        // Continuar mesmo se falhar, usando array vazio
+        setMembers([]);
+      }
     };
 
-    setProjects([...projects, newProject]);
-    setSelectedProject(newProject);
-    setViewMode("detail");
-    setNewProjectDialogOpen(false);
-    toast.success("Projeto criado com sucesso!");
+    loadMembers();
+  }, []);
+
+  // Carregar projetos do backend
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        setLoading(true);
+        const apiProjects = await projectsService.getProjects();
+        
+        // Converter projetos da API para o formato do frontend
+        const convertedProjects: Project[] = apiProjects.map(apiProject => ({
+          id: apiProject.id,
+          name: apiProject.name,
+          description: apiProject.description || "",
+          status: apiProject.status,
+          dueDate: apiProject.due_date || undefined,
+          members: [], // Será carregado separadamente se necessário
+          tags: apiProject.tags || [],
+          lists: [], // Será carregado quando o projeto for selecionado
+          files: [],
+          financeItems: [],
+          kanbanStage: apiProject.kanban_stage || "backlog"
+        }));
+        
+        setProjects(convertedProjects);
+      } catch (error) {
+        console.error('Erro ao carregar projetos:', error);
+        toast.error('Erro ao carregar projetos');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProjects();
+  }, []);
+
+  // Carregar listas e tarefas quando um projeto é selecionado
+  useEffect(() => {
+    const loadProjectDetails = async () => {
+      if (!selectedProject) return;
+      
+      // Verificar se já tem listas carregadas (evitar recarregar desnecessariamente)
+      const projectFromState = projects.find(p => p.id === selectedProject.id);
+      if (projectFromState && projectFromState.lists.length > 0) {
+        // Se o projeto já tem listas no estado, usar essas
+        if (selectedProject.lists.length === 0) {
+          setSelectedProject(projectFromState);
+        }
+        return;
+      }
+
+      try {
+        // Carregar listas do projeto
+        const apiLists = await projectsService.getProjectLists(selectedProject.id);
+        
+        // Carregar tarefas para cada lista
+        const listsWithTasks = await Promise.all(
+          apiLists.map(async (apiList) => {
+            const apiTasks = await projectsService.getProjectTasks(apiList.id);
+            
+            // Converter tarefas da API para o formato do frontend
+            const tasks: Task[] = apiTasks.map(apiTask => ({
+              id: apiTask.id,
+              title: apiTask.title,
+              description: apiTask.description || "",
+              status: apiTask.status as TaskStatus,
+              priority: apiTask.priority as any,
+              dueDate: apiTask.due_date || undefined,
+              assignee: apiTask.assignee_id ? members.find(m => m.id === apiTask.assignee_id) : undefined,
+              tags: apiTask.tags || [],
+              checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
+                id: item.id || `checklist-${index}`,
+                text: item.text || item.title || "",
+                completed: item.completed || false
+              }))
+            }));
+
+            return {
+              id: apiList.id,
+              name: apiList.name,
+              tasks,
+              order: apiList.order_position
+            };
+          })
+        );
+
+        // Atualizar projeto selecionado com listas e tarefas
+        setSelectedProject({
+          ...selectedProject,
+          lists: listsWithTasks
+        });
+      } catch (error) {
+        console.error('Erro ao carregar detalhes do projeto:', error);
+        toast.error('Erro ao carregar detalhes do projeto');
+      }
+    };
+
+    loadProjectDetails();
+  }, [selectedProject?.id]);
+
+  // Funções para gestão de projetos
+  const handleCreateProject = async (event: React.FormEvent, data: ProjectFormData) => {
+    event.preventDefault();
+    
+    try {
+      // Criar projeto no backend
+      const apiProject = await projectsService.createProject({
+        name: data.name,
+        description: data.description || null,
+        status: "active",
+        due_date: data.dueDate ? format(data.dueDate, 'yyyy-MM-dd') : null,
+        tags: data.tags || [],
+        kanban_stage: 'backlog'
+      });
+
+      // Criar listas padrão
+      const defaultLists = [
+        { name: "A Fazer", order_position: 0 },
+        { name: "Em Andamento", order_position: 1 },
+        { name: "Revisão", order_position: 2 },
+        { name: "Concluídos", order_position: 3 },
+      ];
+
+      const createdLists = await Promise.all(
+        defaultLists.map(list => 
+          projectsService.createProjectList(apiProject.id, list)
+        )
+      );
+
+      // Converter para formato do frontend
+      const newProject: Project = {
+        id: apiProject.id,
+        name: apiProject.name,
+        description: apiProject.description || "",
+        status: apiProject.status,
+        dueDate: apiProject.due_date || undefined,
+        members: data.members,
+        tags: apiProject.tags || [],
+        lists: createdLists.map(list => ({
+          id: list.id,
+          name: list.name,
+          tasks: [],
+          order: list.order_position
+        })),
+        files: data.files.map((file, index) => ({
+          id: `f-${Date.now()}-${index}`,
+          name: file.name,
+          type: file.type,
+          size: `${(file.size / 1024).toFixed(1)} KB`,
+          uploadedBy: members[0] || undefined,
+          uploadedAt: new Date().toISOString(),
+          url: URL.createObjectURL(file)
+        })),
+        financeItems: [],
+        kanbanStage: apiProject.kanban_stage || 'backlog'
+      };
+
+      setProjects([...projects, newProject]);
+      setSelectedProject(newProject);
+      setViewMode("detail");
+      setNewProjectDialogOpen(false);
+      toast.success("Projeto criado com sucesso!");
+    } catch (error) {
+      console.error('Erro ao criar projeto:', error);
+      toast.error('Erro ao criar projeto');
+    }
   };
 
   // Funções para gestão de listas e etapas do kanban
-  const handleCreateList = (event: React.FormEvent) => {
+  const handleCreateList = async (event: React.FormEvent) => {
     event.preventDefault();
     
     const form = event.target as HTMLFormElement;
@@ -116,22 +256,34 @@ const Projects = () => {
     const listName = formData.get('listName') as string;
 
     if (viewMode === "detail" && selectedProject) {
-      const highestOrder = Math.max(...selectedProject.lists.map(list => list.order));
-      
-      const newList: ProjectList = {
-        id: `l-${Date.now()}`,
-        name: listName,
-        tasks: [],
-        order: highestOrder + 1
-      };
+      try {
+        const highestOrder = Math.max(...selectedProject.lists.map(list => list.order), -1);
+        
+        const apiList = await projectsService.createProjectList(selectedProject.id, {
+          name: listName,
+          order_position: highestOrder + 1
+        });
 
-      const updatedProject = {
-        ...selectedProject,
-        lists: [...selectedProject.lists, newList]
-      };
+        const newList: ProjectList = {
+          id: apiList.id,
+          name: apiList.name,
+          tasks: [],
+          order: apiList.order_position
+        };
 
-      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-      setSelectedProject(updatedProject);
+        const updatedProject = {
+          ...selectedProject,
+          lists: [...selectedProject.lists, newList]
+        };
+
+        setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+        setSelectedProject(updatedProject);
+        setNewListDialogOpen(false);
+        toast.success("Etapa criada com sucesso!");
+      } catch (error) {
+        console.error('Erro ao criar lista:', error);
+        toast.error('Erro ao criar lista');
+      }
     } else {
       // Add stage to kanban board when in list view
       const highestOrder = Math.max(...kanbanStages.map(list => list.order));
@@ -144,13 +296,12 @@ const Projects = () => {
       };
 
       setKanbanStages([...kanbanStages, newStage]);
+      setNewListDialogOpen(false);
+      toast.success("Etapa criada com sucesso!");
     }
-    
-    setNewListDialogOpen(false);
-    toast.success("Etapa criada com sucesso!");
   };
 
-  const handleEditList = (event: React.FormEvent) => {
+  const handleEditList = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!editingList) return;
 
@@ -159,17 +310,29 @@ const Projects = () => {
     const listName = formData.get('listName') as string;
 
     if (viewMode === "detail" && selectedProject) {
-      const updatedProject = {
-        ...selectedProject,
-        lists: selectedProject.lists.map(list => 
-          list.id === editingList.id 
-            ? { ...list, name: listName }
-            : list
-        )
-      };
+      try {
+        await projectsService.updateProjectList(editingList.id, {
+          name: listName
+        });
 
-      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-      setSelectedProject(updatedProject);
+        const updatedProject = {
+          ...selectedProject,
+          lists: selectedProject.lists.map(list => 
+            list.id === editingList.id 
+              ? { ...list, name: listName }
+              : list
+          )
+        };
+
+        setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+        setSelectedProject(updatedProject);
+        setEditListDialogOpen(false);
+        setEditingList(null);
+        toast.success("Etapa atualizada com sucesso!");
+      } catch (error) {
+        console.error('Erro ao atualizar lista:', error);
+        toast.error('Erro ao atualizar lista');
+      }
     } else {
       // Update stage in kanban board
       setKanbanStages(kanbanStages.map(stage => 
@@ -177,14 +340,13 @@ const Projects = () => {
           ? { ...stage, name: listName }
           : stage
       ));
+      setEditListDialogOpen(false);
+      setEditingList(null);
+      toast.success("Etapa atualizada com sucesso!");
     }
-
-    setEditListDialogOpen(false);
-    setEditingList(null);
-    toast.success("Etapa atualizada com sucesso!");
   };
 
-  const deleteList = (listId: string) => {
+  const deleteList = async (listId: string) => {
     if (viewMode === "detail" && selectedProject) {
       // Não excluir se a lista contém tarefas
       const listToDelete = selectedProject.lists.find(list => list.id === listId);
@@ -193,13 +355,21 @@ const Projects = () => {
         return;
       }
 
-      const updatedProject = {
-        ...selectedProject,
-        lists: selectedProject.lists.filter(list => list.id !== listId)
-      };
+      try {
+        await projectsService.deleteProjectList(listId);
 
-      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-      setSelectedProject(updatedProject);
+        const updatedProject = {
+          ...selectedProject,
+          lists: selectedProject.lists.filter(list => list.id !== listId)
+        };
+
+        setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+        setSelectedProject(updatedProject);
+        toast.success("Etapa removida com sucesso!");
+      } catch (error) {
+        console.error('Erro ao deletar lista:', error);
+        toast.error('Erro ao deletar lista');
+      }
     } else {
       // Delete stage from kanban board when in list view
       // Only if it doesn't have projects
@@ -209,111 +379,148 @@ const Projects = () => {
       }
       
       setKanbanStages(kanbanStages.filter(stage => stage.id !== listId));
+      toast.success("Etapa removida com sucesso!");
     }
-
-    toast.success("Etapa removida com sucesso!");
   };
 
   // Mover projeto entre etapas no kanban
-  const moveProject = (projectId: string, newStageId: string) => {
+  const moveProject = async (projectId: string, newStageId: string) => {
     const projectToMove = projects.find(p => p.id === projectId);
     if (!projectToMove) return;
 
-    // Update the project with the new stage id
-    const updatedProjects = projects.map(p => 
-      p.id === projectId ? { ...p, kanbanStage: newStageId } : p
-    );
-    
-    setProjects(updatedProjects);
-    toast.success(`Projeto movido para ${kanbanStages.find(s => s.id === newStageId)?.name}`);
+    try {
+      // Atualizar no backend
+      await projectsService.updateProject(projectId, {
+        kanban_stage: newStageId
+      });
+
+      // Update the project with the new stage id
+      const updatedProjects = projects.map(p => 
+        p.id === projectId ? { ...p, kanbanStage: newStageId } : p
+      );
+      
+      setProjects(updatedProjects);
+      toast.success(`Projeto movido para ${kanbanStages.find(s => s.id === newStageId)?.name}`);
+    } catch (error) {
+      console.error('Erro ao mover projeto:', error);
+      toast.error('Erro ao mover projeto');
+    }
   };
 
   // Funções para gestão de tarefas
-  const handleCreateTask = (formData: FormData) => {
+  const handleCreateTask = async (formData: FormData) => {
     if (!selectedProject || !selectedListId) return;
     
-    // Obter dados do formulário
-    const title = formData.get('title') as string;
-    const description = formData.get('description') as string;
-    const priority = (formData.get('priority') as string) || "medium";
-    const dueDate = formData.get('dueDate') as string;
-    const assigneeId = formData.get('assignee') as string;
-    const tagsJson = formData.get('tags') as string;
-    const tags = tagsJson ? JSON.parse(tagsJson) : [];
-    
-    // Encontrar o membro selecionado
-    let assignee;
-    if (assigneeId) {
-      assignee = mockMembers.find(m => m.id === assigneeId);
+    try {
+      // Obter dados do formulário
+      const title = formData.get('title') as string;
+      const description = formData.get('description') as string;
+      const priority = (formData.get('priority') as string) || "medium";
+      const dueDate = formData.get('dueDate') as string;
+      const assigneeId = formData.get('assignee') as string;
+      const tagsJson = formData.get('tags') as string;
+      const tags = tagsJson ? JSON.parse(tagsJson) : [];
+      
+      // Criar tarefa no backend
+      const apiTask = await projectsService.createProjectTask(selectedListId, {
+        title,
+        description: description || null,
+        status: "todo",
+        priority,
+        due_date: dueDate || null,
+        assignee_id: assigneeId || null,
+        tags: tags || [],
+        checklist: []
+      });
+      
+      // Encontrar o membro selecionado
+      let assignee;
+      if (assigneeId) {
+        assignee = members.find(m => m.id === assigneeId);
+      }
+      
+      // Converter para formato do frontend
+      const newTask: Task = {
+        id: apiTask.id,
+        title: apiTask.title,
+        description: apiTask.description || "",
+        status: apiTask.status as TaskStatus,
+        priority: apiTask.priority as any,
+        dueDate: apiTask.due_date || undefined,
+        assignee,
+        tags: apiTask.tags || [],
+        checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
+          id: item.id || `checklist-${index}`,
+          text: item.text || item.title || "",
+          completed: item.completed || false
+        }))
+      };
+      
+      // Atualizar o projeto
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => {
+          if (list.id !== selectedListId) return list;
+          
+          return {
+            ...list,
+            tasks: [...list.tasks, newTask]
+          };
+        })
+      };
+      
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      setNewTaskDialogOpen(false);
+      toast.success("Tarefa criada com sucesso!");
+    } catch (error) {
+      console.error('Erro ao criar tarefa:', error);
+      toast.error('Erro ao criar tarefa');
     }
-    
-    // Criar nova tarefa - Garantir que status seja um valor válido de TaskStatus
-    const newTask: Task = {
-      id: `t-${Date.now()}`,
-      title,
-      description,
-      status: "todo" as TaskStatus, // Corrigido: usando um valor literal do tipo TaskStatus
-      priority: priority as any,
-      dueDate,
-      assignee,
-      tags,
-      checklist: []
-    };
-    
-    // Atualizar o projeto
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => {
-        if (list.id !== selectedListId) return list;
-        
-        return {
-          ...list,
-          tasks: [...list.tasks, newTask]
-        };
-      })
-    };
-    
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    setNewTaskDialogOpen(false);
-    toast.success("Tarefa criada com sucesso!");
   };
 
   // Move task between lists
-  const moveTask = (taskId: string, sourceListId: string, targetListId: string) => {
+  const moveTask = async (taskId: string, sourceListId: string, targetListId: string) => {
     if (!selectedProject) return;
     
-    // Get task from source list
-    const sourceList = selectedProject.lists.find(list => list.id === sourceListId);
-    if (!sourceList) return;
-    
-    const taskToMove = sourceList.tasks.find(task => task.id === taskId);
-    if (!taskToMove) return;
-    
-    // Update the task status based on target list
-    const targetList = selectedProject.lists.find(list => list.id === targetListId);
-    if (!targetList) return;
-    
-    // Map list IDs to task statuses
-    let newStatus: TaskStatus = taskToMove.status;
-    
-    // Find the target list's name or position to determine appropriate status
-    // This is a simple heuristic and might need adjustment
-    const targetListName = targetList.name.toLowerCase();
-    if (targetListName.includes("concluído") || targetListName.includes("done") || targetListName.includes("completed")) {
-      newStatus = "completed";
-    } else if (targetListName.includes("revisão") || targetListName.includes("review")) {
-      newStatus = "review";
-    } else if (targetListName.includes("andamento") || targetListName.includes("progress")) {
-      newStatus = "in-progress";
-    } else if (targetListName.includes("fazer") || targetListName.includes("todo")) {
-      newStatus = "todo";
-    }
-    
-    const updatedTask = { ...taskToMove, status: newStatus };
-    
-    // Create updated project
-    const updatedProject = {
+    try {
+      // Get task from source list
+      const sourceList = selectedProject.lists.find(list => list.id === sourceListId);
+      if (!sourceList) return;
+      
+      const taskToMove = sourceList.tasks.find(task => task.id === taskId);
+      if (!taskToMove) return;
+      
+      // Update the task status based on target list
+      const targetList = selectedProject.lists.find(list => list.id === targetListId);
+      if (!targetList) return;
+      
+      // Map list IDs to task statuses
+      let newStatus: TaskStatus = taskToMove.status;
+      
+      // Find the target list's name or position to determine appropriate status
+      const targetListName = targetList.name.toLowerCase();
+      if (targetListName.includes("concluído") || targetListName.includes("done") || targetListName.includes("completed")) {
+        newStatus = "completed";
+      } else if (targetListName.includes("revisão") || targetListName.includes("review")) {
+        newStatus = "review";
+      } else if (targetListName.includes("andamento") || targetListName.includes("progress")) {
+        newStatus = "in-progress";
+      } else if (targetListName.includes("fazer") || targetListName.includes("todo")) {
+        newStatus = "todo";
+      }
+      
+      // Atualizar tarefa no backend
+      await projectsService.updateProjectTask(taskId, {
+        status: newStatus,
+        // Atualizar list_id seria ideal, mas a API atual não suporta isso diretamente
+        // Por enquanto, apenas atualizamos o status
+      });
+      
+      const updatedTask = { ...taskToMove, status: newStatus };
+      
+      // Create updated project
+      const updatedProject = {
       ...selectedProject,
       lists: selectedProject.lists.map(list => {
         if (list.id === sourceListId) {
@@ -331,254 +538,354 @@ const Projects = () => {
       })
     };
     
-    // Update state
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    
-    toast.success(`Tarefa movida para ${targetList.name}`);
+      // Update state
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      
+      toast.success(`Tarefa movida para ${targetList.name}`);
+    } catch (error) {
+      console.error('Erro ao mover tarefa:', error);
+      toast.error('Erro ao mover tarefa');
+    }
   };
 
-  const toggleTaskStatus = (listId: string, taskId: string) => {
+  const toggleTaskStatus = async (listId: string, taskId: string) => {
     if (!selectedProject) return;
     
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => {
-        if (list.id !== listId) return list;
-        
-        return {
-          ...list,
-          tasks: list.tasks.map(task => {
-            if (task.id !== taskId) return task;
-            
-            // Corrigido: Usando valores corretos de TaskStatus
-            const newStatus: TaskStatus = task.status === "completed" ? "todo" : "completed";
-            if (newStatus === "completed") {
-              toast.success("Tarefa concluída!");
-            }
-            
-            return {
-              ...task,
-              status: newStatus,
-            };
-          })
-        };
-      })
-    };
-    
-    // Atualizar states
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    
-    // Atualizar a tarefa selecionada, se estiver aberta no modal
-    if (selectedTask && selectedTask.task.id === taskId) {
-      const updatedList = updatedProject.lists.find(list => list.id === listId);
-      if (updatedList) {
-        const updatedTask = updatedList.tasks.find(task => task.id === taskId);
-        if (updatedTask) {
-          setSelectedTask({task: updatedTask, listId});
+    try {
+      const task = selectedProject.lists
+        .find(list => list.id === listId)
+        ?.tasks.find(t => t.id === taskId);
+      
+      if (!task) return;
+      
+      const newStatus: TaskStatus = task.status === "completed" ? "todo" : "completed";
+      
+      // Atualizar no backend
+      await projectsService.updateProjectTask(taskId, {
+        status: newStatus
+      });
+      
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => {
+          if (list.id !== listId) return list;
+          
+          return {
+            ...list,
+            tasks: list.tasks.map(t => {
+              if (t.id !== taskId) return t;
+              
+              if (newStatus === "completed") {
+                toast.success("Tarefa concluída!");
+              }
+              
+              return {
+                ...t,
+                status: newStatus,
+              };
+            })
+          };
+        })
+      };
+      
+      // Atualizar states
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      
+      // Atualizar a tarefa selecionada, se estiver aberta no modal
+      if (selectedTask && selectedTask.task.id === taskId) {
+        const updatedList = updatedProject.lists.find(list => list.id === listId);
+        if (updatedList) {
+          const updatedTask = updatedList.tasks.find(t => t.id === taskId);
+          if (updatedTask) {
+            setSelectedTask({task: updatedTask, listId});
+          }
         }
       }
+    } catch (error) {
+      console.error('Erro ao atualizar status da tarefa:', error);
+      toast.error('Erro ao atualizar status da tarefa');
     }
   };
 
-  const deleteTask = (listId: string, taskId: string) => {
+  const deleteTask = async (listId: string, taskId: string) => {
     if (!selectedProject) return;
     
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => {
-        if (list.id !== listId) return list;
-        
-        return {
-          ...list,
-          tasks: list.tasks.filter(task => task.id !== taskId)
-        };
-      })
-    };
-    
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    
-    if (selectedTask?.task.id === taskId) {
-      setTaskDetailOpen(false);
-      setSelectedTask(null);
+    try {
+      await projectsService.deleteProjectTask(taskId);
+      
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => {
+          if (list.id !== listId) return list;
+          
+          return {
+            ...list,
+            tasks: list.tasks.filter(task => task.id !== taskId)
+          };
+        })
+      };
+      
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      
+      if (selectedTask?.task.id === taskId) {
+        setTaskDetailOpen(false);
+        setSelectedTask(null);
+      }
+      
+      toast.success("Tarefa excluída com sucesso!");
+    } catch (error) {
+      console.error('Erro ao deletar tarefa:', error);
+      toast.error('Erro ao deletar tarefa');
     }
-    
-    toast.success("Tarefa excluída com sucesso!");
   };
 
   // Função para atualizar uma tarefa existente
-  const updateTask = (listId: string, taskId: string, updatedTaskData: Partial<Task>) => {
+  const updateTask = async (listId: string, taskId: string, updatedTaskData: Partial<Task>) => {
     if (!selectedProject) return;
     
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => {
-        if (list.id !== listId) return list;
-        
-        return {
-          ...list,
-          tasks: list.tasks.map(task => {
-            if (task.id !== taskId) return task;
-            
-            return {
-              ...task,
-              ...updatedTaskData
-            };
-          })
-        };
-      })
-    };
-    
-    // Atualizar states
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    
-    // Atualizar a tarefa selecionada, se estiver aberta no modal
-    if (selectedTask && selectedTask.task.id === taskId) {
-      const updatedList = updatedProject.lists.find(list => list.id === listId);
-      if (updatedList) {
-        const updatedTask = updatedList.tasks.find(task => task.id === taskId);
-        if (updatedTask) {
-          setSelectedTask({task: updatedTask, listId});
+    try {
+      // Preparar dados para atualização no backend
+      const updateData: any = {};
+      if (updatedTaskData.title !== undefined) updateData.title = updatedTaskData.title;
+      if (updatedTaskData.description !== undefined) updateData.description = updatedTaskData.description;
+      if (updatedTaskData.status !== undefined) updateData.status = updatedTaskData.status;
+      if (updatedTaskData.priority !== undefined) updateData.priority = updatedTaskData.priority;
+      if (updatedTaskData.dueDate !== undefined) updateData.due_date = updatedTaskData.dueDate || null;
+      if (updatedTaskData.assignee !== undefined) updateData.assignee_id = updatedTaskData.assignee?.id || null;
+      if (updatedTaskData.tags !== undefined) updateData.tags = updatedTaskData.tags;
+      if (updatedTaskData.checklist !== undefined) {
+        updateData.checklist = updatedTaskData.checklist.map(item => ({
+          id: item.id,
+          text: item.text,
+          completed: item.completed
+        }));
+      }
+      
+      // Atualizar no backend
+      await projectsService.updateProjectTask(taskId, updateData);
+      
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => {
+          if (list.id !== listId) return list;
+          
+          return {
+            ...list,
+            tasks: list.tasks.map(task => {
+              if (task.id !== taskId) return task;
+              
+              return {
+                ...task,
+                ...updatedTaskData
+              };
+            })
+          };
+        })
+      };
+      
+      // Atualizar states
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      
+      // Atualizar a tarefa selecionada, se estiver aberta no modal
+      if (selectedTask && selectedTask.task.id === taskId) {
+        const updatedList = updatedProject.lists.find(list => list.id === listId);
+        if (updatedList) {
+          const updatedTask = updatedList.tasks.find(task => task.id === taskId);
+          if (updatedTask) {
+            setSelectedTask({task: updatedTask, listId});
+          }
         }
       }
+      
+      toast.success("Tarefa atualizada com sucesso!");
+    } catch (error) {
+      console.error('Erro ao atualizar tarefa:', error);
+      toast.error('Erro ao atualizar tarefa');
     }
-    
-    toast.success("Tarefa atualizada com sucesso!");
   };
 
   // Funções para gestão do checklist
-  const toggleChecklistItem = (itemId: string) => {
+  const toggleChecklistItem = async (itemId: string) => {
     if (!selectedTask || !selectedProject) return;
     
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => {
-        if (list.id !== selectedTask.listId) return list;
-        
-        return {
-          ...list,
-          tasks: list.tasks.map(task => {
-            if (task.id !== selectedTask.task.id) return task;
-            
-            const updatedChecklist = (task.checklist || []).map(item => 
-              item.id === itemId ? { ...item, completed: !item.completed } : item
-            );
-            
-            // Verificar se todos os itens estão completos
-            const allCompleted = updatedChecklist.length > 0 && updatedChecklist.every(item => item.completed);
-            
-            // Corrigido: Usando valores corretos de TaskStatus
-            const newStatus: TaskStatus = allCompleted ? "completed" : task.status;
-            
-            if (allCompleted && task.status !== "completed") {
-              toast.success("Todas as tarefas concluídas!");
-            }
-            
-            return {
-              ...task,
-              status: newStatus,
-              checklist: updatedChecklist
-            };
-          })
-        };
-      })
-    };
+    try {
+      const task = selectedTask.task;
+      const updatedChecklist = (task.checklist || []).map(item => 
+        item.id === itemId ? { ...item, completed: !item.completed } : item
+      );
+      
+      // Verificar se todos os itens estão completos
+      const allCompleted = updatedChecklist.length > 0 && updatedChecklist.every(item => item.completed);
+      const newStatus: TaskStatus = allCompleted ? "completed" : task.status;
+      
+      // Atualizar no backend
+      await projectsService.updateProjectTask(task.id, {
+        checklist: updatedChecklist.map(item => ({
+          id: item.id,
+          text: item.text,
+          completed: item.completed
+        })),
+        status: newStatus
+      });
+      
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => {
+          if (list.id !== selectedTask.listId) return list;
+          
+          return {
+            ...list,
+            tasks: list.tasks.map(t => {
+              if (t.id !== task.id) return t;
+              
+              if (allCompleted && t.status !== "completed") {
+                toast.success("Todas as tarefas concluídas!");
+              }
+              
+              return {
+                ...t,
+                status: newStatus,
+                checklist: updatedChecklist
+              };
+            })
+          };
+        })
+      };
 
-    // Atualizar states
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    
-    // Atualizar a tarefa selecionada
-    const updatedList = updatedProject.lists.find(list => list.id === selectedTask.listId);
-    if (updatedList) {
-      const updatedTask = updatedList.tasks.find(task => task.id === selectedTask.task.id);
-      if (updatedTask) {
-        setSelectedTask({task: updatedTask, listId: selectedTask.listId});
+      // Atualizar states
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      
+      // Atualizar a tarefa selecionada
+      const updatedList = updatedProject.lists.find(list => list.id === selectedTask.listId);
+      if (updatedList) {
+        const updatedTask = updatedList.tasks.find(t => t.id === task.id);
+        if (updatedTask) {
+          setSelectedTask({task: updatedTask, listId: selectedTask.listId});
+        }
       }
+    } catch (error) {
+      console.error('Erro ao atualizar checklist:', error);
+      toast.error('Erro ao atualizar checklist');
     }
   };
 
-  const addChecklistItem = (text: string) => {
+  const addChecklistItem = async (text: string) => {
     if (!selectedTask || !selectedProject || !text.trim()) return;
     
-    const newItem: ChecklistItem = {
-      id: `cl-${Date.now()}`,
-      text: text.trim(),
-      completed: false
-    };
-    
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => {
-        if (list.id !== selectedTask.listId) return list;
-        
-        return {
-          ...list,
-          tasks: list.tasks.map(task => {
-            if (task.id !== selectedTask.task.id) return task;
-            
-            return {
-              ...task,
-              checklist: [...(task.checklist || []), newItem]
-            };
-          })
-        };
-      })
-    };
+    try {
+      const task = selectedTask.task;
+      const newItem: ChecklistItem = {
+        id: `cl-${Date.now()}`,
+        text: text.trim(),
+        completed: false
+      };
+      
+      const updatedChecklist = [...(task.checklist || []), newItem];
+      
+      // Atualizar no backend
+      await projectsService.updateProjectTask(task.id, {
+        checklist: updatedChecklist.map(item => ({
+          id: item.id,
+          text: item.text,
+          completed: item.completed
+        }))
+      });
+      
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => {
+          if (list.id !== selectedTask.listId) return list;
+          
+          return {
+            ...list,
+            tasks: list.tasks.map(t => {
+              if (t.id !== task.id) return t;
+              
+              return {
+                ...t,
+                checklist: updatedChecklist
+              };
+            })
+          };
+        })
+      };
 
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    
-    // Atualizar a tarefa selecionada
-    const updatedList = updatedProject.lists.find(list => list.id === selectedTask.listId);
-    if (updatedList) {
-      const updatedTask = updatedList.tasks.find(task => task.id === selectedTask.task.id);
-      if (updatedTask) {
-        setSelectedTask({task: updatedTask, listId: selectedTask.listId});
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      
+      // Atualizar a tarefa selecionada
+      const updatedList = updatedProject.lists.find(list => list.id === selectedTask.listId);
+      if (updatedList) {
+        const updatedTask = updatedList.tasks.find(t => t.id === task.id);
+        if (updatedTask) {
+          setSelectedTask({task: updatedTask, listId: selectedTask.listId});
+        }
       }
+      
+      toast.success("Item adicionado à lista de verificação");
+    } catch (error) {
+      console.error('Erro ao adicionar item ao checklist:', error);
+      toast.error('Erro ao adicionar item ao checklist');
     }
-    
-    toast.success("Item adicionado à lista de verificação");
   };
 
-  const deleteChecklistItem = (itemId: string) => {
+  const deleteChecklistItem = async (itemId: string) => {
     if (!selectedTask || !selectedProject) return;
     
-    const updatedProject = {
-      ...selectedProject,
-      lists: selectedProject.lists.map(list => {
-        if (list.id !== selectedTask.listId) return list;
-        
-        return {
-          ...list,
-          tasks: list.tasks.map(task => {
-            if (task.id !== selectedTask.task.id) return task;
-            
-            return {
-              ...task,
-              checklist: (task.checklist || []).filter(item => item.id !== itemId)
-            };
-          })
-        };
-      })
-    };
+    try {
+      const task = selectedTask.task;
+      const updatedChecklist = (task.checklist || []).filter(item => item.id !== itemId);
+      
+      // Atualizar no backend
+      await projectsService.updateProjectTask(task.id, {
+        checklist: updatedChecklist.map(item => ({
+          id: item.id,
+          text: item.text,
+          completed: item.completed
+        }))
+      });
+      
+      const updatedProject = {
+        ...selectedProject,
+        lists: selectedProject.lists.map(list => {
+          if (list.id !== selectedTask.listId) return list;
+          
+          return {
+            ...list,
+            tasks: list.tasks.map(t => {
+              if (t.id !== task.id) return t;
+              
+              return {
+                ...t,
+                checklist: updatedChecklist
+              };
+            })
+          };
+        })
+      };
 
-    setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-    setSelectedProject(updatedProject);
-    
-    // Atualizar a tarefa selecionada
-    const updatedList = updatedProject.lists.find(list => list.id === selectedTask.listId);
-    if (updatedList) {
-      const updatedTask = updatedList.tasks.find(task => task.id === selectedTask.task.id);
-      if (updatedTask) {
-        setSelectedTask({task: updatedTask, listId: selectedTask.listId});
+      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
+      setSelectedProject(updatedProject);
+      
+      // Atualizar a tarefa selecionada
+      const updatedList = updatedProject.lists.find(list => list.id === selectedTask.listId);
+      if (updatedList) {
+        const updatedTask = updatedList.tasks.find(t => t.id === task.id);
+        if (updatedTask) {
+          setSelectedTask({task: updatedTask, listId: selectedTask.listId});
+        }
       }
+      
+      toast.success("Item removido da lista de verificação");
+    } catch (error) {
+      console.error('Erro ao remover item do checklist:', error);
+      toast.error('Erro ao remover item do checklist');
     }
-    
-    toast.success("Item removido da lista de verificação");
   };
 
   // Funções utilitárias
@@ -821,7 +1128,11 @@ const Projects = () => {
       </div>
 
       {/* Conteúdo principal */}
-      {viewMode === "list" ? (
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <p className="text-muted-foreground">Carregando projetos...</p>
+        </div>
+      ) : viewMode === "list" ? (
         projectsViewType === "grid" ? (
           <ProjectsListView 
             projects={projects}
@@ -862,7 +1173,7 @@ const Projects = () => {
         open={newProjectDialogOpen}
         onOpenChange={setNewProjectDialogOpen}
         onSave={handleCreateProject}
-        availableMembers={mockMembers}
+        availableMembers={members}
       />
       
       <NewListDialog
@@ -881,7 +1192,7 @@ const Projects = () => {
       <NewTaskDialog
         open={newTaskDialogOpen}
         onOpenChange={setNewTaskDialogOpen}
-        members={selectedProject?.members || []}
+        members={members}
         onAddTask={handleCreateTask}
         tagsInput={tagsInput}
         setTagsInput={setTagsInput}
@@ -912,7 +1223,7 @@ const Projects = () => {
             open={projectSettingsOpen}
             onOpenChange={setProjectSettingsOpen}
             project={selectedProject}
-            members={mockMembers}
+            members={members}
             onSave={(updatedProject) => {
               setProjects(projects.map(p => 
                 p.id === selectedProject.id 

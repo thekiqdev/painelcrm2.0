@@ -181,7 +181,7 @@ const Products = () => {
                   {product.price && (
                     <div>
                       <p className="text-2xl font-bold">
-                        R$ {product.price.toFixed(2)}
+                        R$ {typeof product.price === 'number' ? product.price.toFixed(2) : parseFloat(product.price || '0').toFixed(2)}
                       </p>
                       {product.type === 'service' && product.duration_hours && (
                         <p className="text-sm text-muted-foreground">

@@ -13,14 +13,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { supabase } from '@/integrations/supabase/client';
-import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { ticketsService } from '@/services/tickets';
+import { clientsService } from '@/services/clients';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/hooks/use-toast';
 import { TicketCategory, TicketPriority, ticketPriorityLabels } from '@/types/tickets';
 
 export default function NewTicket() {
   const navigate = useNavigate();
-  const { user } = useCurrentUser();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState<TicketCategory[]>([]);
   const [clients, setClients] = useState<any[]>([]);
@@ -46,13 +47,8 @@ export default function NewTicket() {
 
   const loadCategories = async () => {
     try {
-      const { data, error } = await supabase
-        .from('ticket_categories')
-        .select('*')
-        .eq('user_id', user?.id);
-
-      if (error) throw error;
-      setCategories(data || []);
+      const data = await ticketsService.getTicketCategories();
+      setCategories(data);
     } catch (error: any) {
       console.error('Error loading categories:', error);
     }
@@ -60,13 +56,8 @@ export default function NewTicket() {
 
   const loadClients = async () => {
     try {
-      const { data, error } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('user_id', user?.id);
-
-      if (error) throw error;
-      setClients(data || []);
+      const data = await clientsService.getClients();
+      setClients(data);
     } catch (error: any) {
       console.error('Error loading clients:', error);
     }
@@ -90,27 +81,19 @@ export default function NewTicket() {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase
-        .from('tickets')
-        .insert({
-          user_id: user?.id!,
-          ticket_number: '', // Will be auto-generated
-          contact_name: formData.contact_name,
-          contact_email: formData.contact_email,
-          contact_phone: formData.contact_phone || null,
-          subject: formData.subject,
-          description: formData.description,
-          category_id: formData.category_id || null,
-          priority: formData.priority,
-          client_id: formData.client_id || null,
-          tags: formData.tags,
-          channel: 'internal',
-          status: 'new',
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
+      const data = await ticketsService.createTicket({
+        contact_name: formData.contact_name,
+        contact_email: formData.contact_email,
+        contact_phone: formData.contact_phone || undefined,
+        subject: formData.subject,
+        description: formData.description,
+        category_id: formData.category_id || undefined,
+        priority: formData.priority,
+        client_id: formData.client_id || undefined,
+        tags: formData.tags,
+        channel: 'internal',
+        status: 'new',
+      });
 
       toast({
         title: 'Ticket criado com sucesso!',

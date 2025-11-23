@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import RuleForm from "@/components/funnel/RuleForm";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
 import { SalesFunnel, Deal, Client, Rule, FunnelStage } from "@/components/funnel/types";
@@ -22,9 +21,10 @@ import {
   handleRemoveTagFromClient, 
   handleSaveRule, 
   handleRemoveRule,
-  updateClientStage,
-  mapSupabaseToSalesFunnel
+  updateClientStage
 } from "@/components/funnel/utils";
+import { fetchFunnelById, createStage, updateStage, deleteStage, updateFunnel } from "@/services/funnels";
+import { clientsService } from "@/services/clients";
 import {
   Table,
   TableBody,
@@ -34,8 +34,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-// Interface for Supabase client object
-interface SupabaseClient {
+// Interface for API client object
+interface ApiClient {
   id: string;
   name: string;
   company: string | null;
@@ -87,7 +87,7 @@ const FunnelDetails: React.FC = () => {
     { name: "Pink", value: "bg-pink-500" }
   ];
   
-  // Load funnel data from Supabase
+  // Load funnel data from API
   useEffect(() => {
     const fetchFunnelData = async () => {
       if (!funnelId) {
@@ -101,44 +101,27 @@ const FunnelDetails: React.FC = () => {
       try {
         console.log("Carregando funil:", funnelId);
         
-        // Fetch funnel with stages
-        const { data: funnelData, error: funnelError } = await supabase
-          .from('sales_funnels')
-          .select('*, stages:funnel_stages(*)')
-          .eq('id', funnelId)
-          .single();
+        // Fetch funnel with stages using the new service
+        const funnelResponse = await fetchFunnelById(funnelId);
           
-        if (funnelError) {
-          console.error('Erro ao carregar funil:', funnelError);
+        if (!funnelResponse.success || !funnelResponse.data) {
+          console.error('Erro ao carregar funil:', funnelResponse.error);
           toast.error("Erro ao carregar o funil");
           navigate('/funnel');
           return;
         }
         
-        if (!funnelData) {
-          console.error('Funil não encontrado');
-          toast.error("Funil não encontrado");
-          navigate('/funnel');
-          return;
-        }
-        
-        // Map to SalesFunnel interface
-        const mappedFunnel = mapSupabaseToSalesFunnel([funnelData])[0];
+        const mappedFunnel = funnelResponse.data;
         console.log("Funil carregado:", mappedFunnel);
         setFunnel(mappedFunnel);
         
         // Fetch clients for this funnel (if it's a client funnel)
         if (mappedFunnel.type === "clients") {
-          const { data: clientsData, error: clientsError } = await supabase
-            .from('clients')
-            .select('*');
+          try {
+            const clientsData = await clientsService.getClients();
             
-          if (clientsError) {
-            console.error('Erro ao carregar clientes:', clientsError);
-            toast.error("Erro ao carregar os clientes");
-          } else if (clientsData) {
-            // Map Supabase clients to the Client type expected by the funnel
-            const mappedClients: Client[] = clientsData.map((client: SupabaseClient) => ({
+            // Map API clients to the Client type expected by the funnel
+            const mappedClients: Client[] = clientsData.map((client: any) => ({
               id: client.id,
               name: client.name,
               company: client.company || undefined,
@@ -153,6 +136,9 @@ const FunnelDetails: React.FC = () => {
             
             console.log("Clientes carregados:", mappedClients.length);
             setClients(mappedClients);
+          } catch (clientsError: any) {
+            console.error('Erro ao carregar clientes:', clientsError);
+            toast.error("Erro ao carregar os clientes");
           }
         }
         
@@ -226,62 +212,96 @@ const FunnelDetails: React.FC = () => {
   };
 
   // Save funnel general settings
-  const handleSaveFunnelGeneralSettings = () => {
-    if (funnel) {
-      setFunnel({
-        ...funnel,
+  const handleSaveFunnelGeneralSettings = async () => {
+    if (!funnel) return;
+    
+    try {
+      const result = await updateFunnel(funnel.id, {
         name: editingFunnelName,
         description: editingFunnelDescription
       });
+      
+      if (!result.success) {
+        throw new Error(result.error?.message || "Erro ao atualizar funil");
+      }
+      
+      // Reload funnel to get updated data
+      const funnelResponse = await fetchFunnelById(funnel.id);
+      if (funnelResponse.success && funnelResponse.data) {
+        setFunnel(funnelResponse.data);
+      }
+      
       toast.success("Configurações gerais salvas com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao salvar configurações:", error);
+      toast.error(`Erro ao salvar configurações: ${error.message}`);
     }
   };
 
   // Add a new stage to the funnel
-  const handleAddStage = () => {
+  const handleAddStage = async () => {
     if (!funnel || !newStageName.trim()) return;
     
-    const newStageId = `stage-${Date.now()}`;
-    
-    const newStage: FunnelStage = {
-      id: newStageId,
-      name: newStageName,
-      color: newStageColor,
-      order: funnel.stages.length,
-      funnelId: funnel.id
-    };
-    
-    setFunnel({
-      ...funnel,
-      stages: [...funnel.stages, newStage]
-    });
-    
-    setNewStageName("");
-    setNewStageColor("bg-blue-500");
-    setShowAddStageDialog(false);
-    
-    toast.success("Estágio adicionado com sucesso!");
+    try {
+      const result = await createStage(funnel.id, {
+        name: newStageName,
+        color: newStageColor
+      });
+      
+      if (!result.success) {
+        throw new Error(result.error?.message || "Erro ao criar estágio");
+      }
+      
+      // Reload funnel to get updated stages
+      const funnelResponse = await fetchFunnelById(funnel.id);
+      if (funnelResponse.success && funnelResponse.data) {
+        setFunnel(funnelResponse.data);
+      }
+      
+      setNewStageName("");
+      setNewStageColor("bg-blue-500");
+      setShowAddStageDialog(false);
+      
+      toast.success("Estágio adicionado com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao adicionar estágio:", error);
+      toast.error(`Erro ao adicionar estágio: ${error.message}`);
+    }
   };
 
   // Save edited stage
-  const handleSaveStage = () => {
+  const handleSaveStage = async () => {
     if (!funnel || !editingStage) return;
     
-    setFunnel({
-      ...funnel,
-      stages: funnel.stages.map(stage => 
-        stage.id === editingStage.id ? editingStage : stage
-      )
-    });
-    
-    setEditingStage(null);
-    setShowEditStageDialog(false);
-    
-    toast.success("Estágio atualizado com sucesso!");
+    try {
+      const result = await updateStage(editingStage.id, {
+        name: editingStage.name,
+        color: editingStage.color,
+        order_position: editingStage.order
+      });
+      
+      if (!result.success) {
+        throw new Error(result.error?.message || "Erro ao atualizar estágio");
+      }
+      
+      // Reload funnel to get updated stages
+      const funnelResponse = await fetchFunnelById(funnel.id);
+      if (funnelResponse.success && funnelResponse.data) {
+        setFunnel(funnelResponse.data);
+      }
+      
+      setEditingStage(null);
+      setShowEditStageDialog(false);
+      
+      toast.success("Estágio atualizado com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao atualizar estágio:", error);
+      toast.error(`Erro ao atualizar estágio: ${error.message}`);
+    }
   };
 
   // Delete a stage
-  const handleDeleteStage = (stageId: string) => {
+  const handleDeleteStage = async (stageId: string) => {
     if (!funnel) return;
     
     const hasItems = funnel.type === "clients" 
@@ -293,22 +313,28 @@ const FunnelDetails: React.FC = () => {
       return;
     }
     
-    const filteredStages = funnel.stages.filter(stage => stage.id !== stageId);
-    const reorderedStages = filteredStages.map((stage, index) => ({
-      ...stage,
-      order: index
-    }));
-    
-    setFunnel({
-      ...funnel,
-      stages: reorderedStages
-    });
-    
-    toast.success("Estágio excluído com sucesso!");
+    try {
+      const result = await deleteStage(stageId);
+      
+      if (!result.success) {
+        throw new Error(result.error?.message || "Erro ao excluir estágio");
+      }
+      
+      // Reload funnel to get updated stages
+      const funnelResponse = await fetchFunnelById(funnel.id);
+      if (funnelResponse.success && funnelResponse.data) {
+        setFunnel(funnelResponse.data);
+      }
+      
+      toast.success("Estágio excluído com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao excluir estágio:", error);
+      toast.error(`Erro ao excluir estágio: ${error.message}`);
+    }
   };
 
   // Move a stage up or down in the order
-  const handleMoveStage = (stageId: string, direction: 'up' | 'down') => {
+  const handleMoveStage = async (stageId: string, direction: 'up' | 'down') => {
     if (!funnel) return;
     
     const stageIndex = funnel.stages.findIndex(stage => stage.id === stageId);
@@ -322,21 +348,30 @@ const FunnelDetails: React.FC = () => {
     }
     
     const newStages = [...funnel.stages];
-    
     const targetIndex = direction === 'up' ? stageIndex - 1 : stageIndex + 1;
     [newStages[stageIndex], newStages[targetIndex]] = [newStages[targetIndex], newStages[stageIndex]];
     
-    const reorderedStages = newStages.map((stage, index) => ({
-      ...stage,
-      order: index
-    }));
-    
-    setFunnel({
-      ...funnel,
-      stages: reorderedStages
-    });
-    
-    toast.success("Ordem dos estágios atualizada!");
+    try {
+      // Update both stages' order_position
+      const stage1 = newStages[stageIndex];
+      const stage2 = newStages[targetIndex];
+      
+      await Promise.all([
+        updateStage(stage1.id, { order_position: stageIndex }),
+        updateStage(stage2.id, { order_position: targetIndex })
+      ]);
+      
+      // Reload funnel to get updated stages
+      const funnelResponse = await fetchFunnelById(funnel.id);
+      if (funnelResponse.success && funnelResponse.data) {
+        setFunnel(funnelResponse.data);
+      }
+      
+      toast.success("Ordem dos estágios atualizada!");
+    } catch (error: any) {
+      console.error("Erro ao atualizar ordem dos estágios:", error);
+      toast.error(`Erro ao atualizar ordem: ${error.message}`);
+    }
   };
   
   // Process the drop event to move a client between stages

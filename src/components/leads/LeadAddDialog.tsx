@@ -55,10 +55,9 @@ const LeadAddDialog: React.FC<LeadAddDialogProps> = ({
   });
 
   const handleSubmit = async (values: LeadFormValues) => {
-    const dataWithUserId = await withUserId(values);
-    if (dataWithUserId) {
-      onSave(dataWithUserId);
-    }
+    // Remove user_id if it was added by withUserId (we don't need it in the form data)
+    const { user_id, ...cleanValues } = values as any;
+    onSave(cleanValues);
   };
 
   return (

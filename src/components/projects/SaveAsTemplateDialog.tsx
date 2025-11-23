@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Project } from "./types";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
+import { projectTemplatesService } from "@/services/projectTemplates";
 import { useToast } from "@/hooks/use-toast";
 import { FileText, Loader2 } from "lucide-react";
 import { differenceInDays } from "date-fns";
@@ -61,36 +61,22 @@ export function SaveAsTemplateDialog({
       const projectStartDate = new Date(); // Idealmente pegar do projeto real
       
       // Criar o template
-      const { data: newTemplate, error: templateError } = await supabase
-        .from("project_templates")
-        .insert({
-          user_id: user.id,
-          name: templateName,
-          description: templateDescription,
-          tags: project.tags || [],
-        })
-        .select()
-        .single();
-
-      if (templateError || !newTemplate) throw templateError;
+      const newTemplate = await projectTemplatesService.createTemplate({
+        name: templateName,
+        description: templateDescription,
+        tags: project.tags || [],
+      });
 
       // Criar stages (listas) do template
       for (const [index, list] of project.lists.entries()) {
-        const { data: newStage, error: stageError } = await supabase
-          .from("project_template_stages")
-          .insert({
-            template_id: newTemplate.id,
-            name: list.name,
-            order_position: index,
-            offset_days: 0, // Stage não tem offset próprio
-          })
-          .select()
-          .single();
-
-        if (stageError || !newStage) continue;
+        const newStage = await projectTemplatesService.createTemplateStage(newTemplate.id, {
+          name: list.name,
+          order_position: index,
+          offset_days: 0, // Stage não tem offset próprio
+        });
 
         // Criar tasks da stage
-        const tasksToInsert = list.tasks.map((task) => {
+        for (const task of list.tasks) {
           let offsetDays = 0;
           let durationDays = 1;
 
@@ -116,8 +102,7 @@ export function SaveAsTemplateDialog({
             }
           }
 
-          return {
-            stage_id: newStage.id,
+          await projectTemplatesService.createTemplateTask(newStage.id, {
             title: task.title,
             description: task.description,
             offset_days: offsetDays,
@@ -125,11 +110,7 @@ export function SaveAsTemplateDialog({
             priority: task.priority,
             role: role,
             tags: task.tags || [],
-          };
-        });
-
-        if (tasksToInsert.length > 0) {
-          await supabase.from("project_template_tasks").insert(tasksToInsert);
+          });
         }
       }
 

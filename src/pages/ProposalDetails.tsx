@@ -8,43 +8,126 @@ import { Badge } from "@/components/ui/badge";
 import { useNavigate, useParams } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
+import { proposalsService, Proposal } from "@/services/proposals";
+import { clientsService } from "@/services/clients";
+import { format } from "date-fns";
 
 const ProposalDetails = () => {
   const { funnelId, stageId, proposalId } = useParams<{ funnelId: string, stageId: string, proposalId: string }>();
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [clientName, setClientName] = useState<string>("");
   const [isAcceptDialogOpen, setIsAcceptDialogOpen] = useState(false);
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
 
-  // Mock proposal data - in a real app, this would come from your API/database
-  const proposal = {
-    id: proposalId || "D001",
-    title: "Proposta de Marketing Digital",
-    client: "Construtora XYZ",
-    amount: "R$ 25.000,00",
-    sentDate: "28/06/2023",
-    validUntil: "28/07/2023",
-    status: "Enviada",
-    description: "Esta proposta inclui serviços completos de marketing digital, incluindo SEO, gerenciamento de redes sociais e campanhas Google Ads.",
-    items: [
-      { id: 1, description: "Gestão de Redes Sociais", quantity: 1, unitPrice: "R$ 5.000,00", total: "R$ 5.000,00" },
-      { id: 2, description: "Campanha Google Ads", quantity: 1, unitPrice: "R$ 8.000,00", total: "R$ 8.000,00" },
-      { id: 3, description: "Otimização SEO", quantity: 1, unitPrice: "R$ 7.000,00", total: "R$ 7.000,00" },
-      { id: 4, description: "Criação de Conteúdo", quantity: 1, unitPrice: "R$ 5.000,00", total: "R$ 5.000,00" }
-    ]
+  useEffect(() => {
+    const loadProposal = async () => {
+      if (!proposalId) {
+        toast.error("ID da proposta não fornecido");
+        navigate("/funnel");
+        return;
+      }
+
+      try {
+        setLoading(true);
+        const proposalData = await proposalsService.getProposalById(proposalId);
+        setProposal(proposalData);
+
+        // Carregar nome do cliente
+        if (proposalData.client_id) {
+          const clients = await clientsService.getClients();
+          const client = clients.find(c => c.id === proposalData.client_id);
+          setClientName(client?.name || "Cliente não encontrado");
+        }
+      } catch (error) {
+        console.error("Erro ao carregar proposta:", error);
+        toast.error("Erro ao carregar proposta");
+        navigate("/funnel");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProposal();
+  }, [proposalId, navigate]);
+
+  const handleAccept = async () => {
+    if (!proposal) return;
+
+    try {
+      await proposalsService.updateProposal(proposal.id, {
+        status: 'accepted'
+      });
+      toast.success("Proposta aceita com sucesso!");
+      setIsAcceptDialogOpen(false);
+      setTimeout(() => navigate(`/funnel`), 1000);
+    } catch (error) {
+      console.error("Erro ao aceitar proposta:", error);
+      toast.error("Erro ao aceitar proposta");
+    }
   };
 
-  const handleAccept = () => {
-    toast.success("Proposta aceita com sucesso!");
-    setIsAcceptDialogOpen(false);
-    // In a real app, you would update the database and move to the next stage
-    setTimeout(() => navigate(`/funnel`), 1000);
+  const handleReject = async () => {
+    if (!proposal) return;
+
+    try {
+      await proposalsService.updateProposal(proposal.id, {
+        status: 'rejected'
+      });
+      toast.success("Proposta recusada e movida para estágio apropriado");
+      setIsRejectDialogOpen(false);
+      setTimeout(() => navigate(`/funnel`), 1000);
+    } catch (error) {
+      console.error("Erro ao recusar proposta:", error);
+      toast.error("Erro ao recusar proposta");
+    }
   };
 
-  const handleReject = () => {
-    toast.success("Proposta recusada e movida para estágio apropriado");
-    setIsRejectDialogOpen(false);
-    // In a real app, you would update the database and move to the rejection stage
-    setTimeout(() => navigate(`/funnel`), 1000);
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-10">
+        <div className="text-center">
+          <p className="text-muted-foreground">Carregando proposta...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!proposal) {
+    return (
+      <div className="flex items-center justify-center p-10">
+        <div className="text-center">
+          <p className="text-muted-foreground">Proposta não encontrada</p>
+          <Button onClick={() => navigate("/funnel")} className="mt-4">
+            Voltar
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(value);
+  };
+
+  const statusLabels: { [key: string]: string } = {
+    'draft': 'Rascunho',
+    'sent': 'Enviada',
+    'accepted': 'Aceita',
+    'rejected': 'Recusada',
+    'expired': 'Expirada'
+  };
+
+  const statusColors: { [key: string]: string } = {
+    'draft': 'bg-gray-100 text-gray-800',
+    'sent': 'bg-amber-100 text-amber-800',
+    'accepted': 'bg-green-100 text-green-800',
+    'rejected': 'bg-red-100 text-red-800',
+    'expired': 'bg-red-100 text-red-800'
   };
 
   return (
@@ -78,16 +161,10 @@ const ProposalDetails = () => {
           <div className="flex justify-between items-start">
             <div>
               <CardTitle className="text-xl">{proposal.title}</CardTitle>
-              <p className="text-muted-foreground">{proposal.client}</p>
+              <p className="text-muted-foreground">{clientName}</p>
             </div>
-            <Badge 
-              className={
-                proposal.status === "Enviada" ? "bg-amber-100 text-amber-800" :
-                proposal.status === "Aceita" ? "bg-green-100 text-green-800" :
-                "bg-red-100 text-red-800"
-              }
-            >
-              {proposal.status}
+            <Badge className={statusColors[proposal.status] || 'bg-gray-100 text-gray-800'}>
+              {statusLabels[proposal.status] || proposal.status}
             </Badge>
           </div>
         </CardHeader>
@@ -95,24 +172,30 @@ const ProposalDetails = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">Valor Total</p>
-              <p className="font-semibold">{proposal.amount}</p>
+              <p className="font-semibold">{formatCurrency(proposal.amount)}</p>
             </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Data de Envio</p>
-              <p>{proposal.sentDate}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Válido até</p>
-              <p>{proposal.validUntil}</p>
-            </div>
+            {proposal.sent_date && (
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Data de Envio</p>
+                <p>{format(new Date(proposal.sent_date), "dd/MM/yyyy")}</p>
+              </div>
+            )}
+            {proposal.valid_until && (
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Válido até</p>
+                <p>{format(new Date(proposal.valid_until), "dd/MM/yyyy")}</p>
+              </div>
+            )}
           </div>
 
           <Separator />
           
-          <div>
-            <h3 className="font-medium mb-2">Descrição</h3>
-            <p className="text-sm text-muted-foreground">{proposal.description}</p>
-          </div>
+          {proposal.description && (
+            <div>
+              <h3 className="font-medium mb-2">Descrição</h3>
+              <p className="text-sm text-muted-foreground">{proposal.description}</p>
+            </div>
+          )}
 
           <Separator />
           
@@ -125,17 +208,17 @@ const ProposalDetails = () => {
                 <div className="col-span-2 text-right">Valor Unit.</div>
                 <div className="col-span-2 text-right">Total</div>
               </div>
-              {proposal.items.map((item) => (
-                <div key={item.id} className="grid grid-cols-12 px-4 py-3 text-sm border-t">
+              {proposal.items.map((item, index) => (
+                <div key={item.id || index} className="grid grid-cols-12 px-4 py-3 text-sm border-t">
                   <div className="col-span-6">{item.description}</div>
                   <div className="col-span-2 text-center">{item.quantity}</div>
-                  <div className="col-span-2 text-right">{item.unitPrice}</div>
-                  <div className="col-span-2 text-right font-medium">{item.total}</div>
+                  <div className="col-span-2 text-right">{formatCurrency(item.unitPrice)}</div>
+                  <div className="col-span-2 text-right font-medium">{formatCurrency(item.total)}</div>
                 </div>
               ))}
               <div className="grid grid-cols-12 px-4 py-3 text-sm font-medium border-t bg-muted/50">
                 <div className="col-span-10 text-right">Total:</div>
-                <div className="col-span-2 text-right">{proposal.amount}</div>
+                <div className="col-span-2 text-right">{formatCurrency(proposal.amount)}</div>
               </div>
             </div>
           </div>
@@ -153,8 +236,8 @@ const ProposalDetails = () => {
           </DialogHeader>
           <div className="py-4">
             <p className="font-medium">Proposta: {proposal.title}</p>
-            <p className="text-muted-foreground">Cliente: {proposal.client}</p>
-            <p className="text-muted-foreground">Valor: {proposal.amount}</p>
+            <p className="text-muted-foreground">Cliente: {clientName}</p>
+            <p className="text-muted-foreground">Valor: {formatCurrency(proposal.amount)}</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAcceptDialogOpen(false)}>Cancelar</Button>
@@ -174,8 +257,8 @@ const ProposalDetails = () => {
           </DialogHeader>
           <div className="py-4">
             <p className="font-medium">Proposta: {proposal.title}</p>
-            <p className="text-muted-foreground">Cliente: {proposal.client}</p>
-            <p className="text-muted-foreground">Valor: {proposal.amount}</p>
+            <p className="text-muted-foreground">Cliente: {clientName}</p>
+            <p className="text-muted-foreground">Valor: {formatCurrency(proposal.amount)}</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsRejectDialogOpen(false)}>Cancelar</Button>

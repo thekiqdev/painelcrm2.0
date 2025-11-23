@@ -7,15 +7,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { FormEvent } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 const AuthWhatsApp = () => {
-  const [whatsapp, setWhatsapp] = useState('');
+  const [loginType, setLoginType] = useState<"email" | "phone">("email");
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
-  const { user } = useAuth();
+  const { user, signIn, signUp } = useAuth();
   const navigate = useNavigate();
 
   // Check if user is already authenticated
@@ -26,13 +26,35 @@ const AuthWhatsApp = () => {
     }
   }, [user, navigate]);
 
-  // Simple WhatsApp number validation (Brazil format)
-  const isValidWhatsApp = (number: string) => {
-    return /^(\+55|55)?(\d{2})?(\d{8,9})$/.test(number.replace(/\D/g, ''));
+  // Detectar automaticamente se é email ou telefone
+  const detectLoginType = (value: string): "email" | "phone" => {
+    if (value.includes("@")) {
+      return "email";
+    }
+    // Se contém apenas números e caracteres de telefone, é telefone
+    if (/^[\d\s\-\+\(\)]+$/.test(value) && value.replace(/\D/g, "").length >= 10) {
+      return "phone";
+    }
+    return loginType; // Manter o tipo atual se não conseguir detectar
   };
 
-  // Format WhatsApp number as user types
+  const handleIdentifierChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setIdentifier(value);
+    
+    // Detectar automaticamente o tipo se o usuário não escolheu manualmente
+    if (value.length > 0) {
+      const detectedType = detectLoginType(value);
+      if (detectedType !== loginType) {
+        setLoginType(detectedType);
+      }
+    }
+  };
+
+  // Format WhatsApp number as user types (only if it's phone type)
   const formatWhatsApp = (input: string) => {
+    if (loginType === "email") return input;
+    
     // Remove non-numeric characters
     const numeric = input.replace(/\D/g, '');
     
@@ -46,78 +68,18 @@ const AuthWhatsApp = () => {
     }
   };
 
-  const handleWhatsAppChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setWhatsapp(formatWhatsApp(e.target.value));
-  };
-
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    const cleanWhatsApp = whatsapp.replace(/\D/g, '');
-    
-    if (!isValidWhatsApp(cleanWhatsApp)) {
-      toast.error('Por favor, insira um número de WhatsApp válido');
-      setIsLoading(false);
-      return;
-    }
-
     try {
       if (isLogin) {
-        // For login, use email format based on WhatsApp number
-        const email = `${cleanWhatsApp}@multicrm.app`;
-        console.log('Attempting login with email:', email);
-        
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        
-        if (error) {
-          console.error('Login error:', error);
-          toast.error(error.message || 'Falha no login. Verifique suas credenciais.');
-          setIsLoading(false);
-          return;
-        }
-        
-        toast.success('Login realizado com sucesso!');
-        // Authenticated users are redirected by AuthGuard
+        // Login
+        await signIn(identifier.trim(), password);
+        navigate('/dashboard');
       } else {
-        // For registration, create email based on WhatsApp number
-        const email = `${cleanWhatsApp}@multicrm.app`;
-        console.log('Attempting registration with email:', email);
-        
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              whatsapp_number: cleanWhatsApp,
-            }
-          }
-        });
-        
-        if (error) {
-          console.error('Registration error:', error);
-          
-          if (error.message.includes('already registered')) {
-            toast.error('Este WhatsApp já está cadastrado. Tente fazer login.');
-            setIsLogin(true);
-          } else {
-            toast.error(error.message || 'Falha no cadastro.');
-          }
-          
-          setIsLoading(false);
-          return;
-        }
-        
-        if (!data.user) {
-          toast.error('Ocorreu um erro ao criar sua conta.');
-          setIsLoading(false);
-          return;
-        }
-        
-        toast.success('Cadastro realizado com sucesso!');
+        // Registration
+        await signUp(identifier.trim(), password);
         navigate('/register/steps');
       }
     } catch (error: any) {
@@ -134,28 +96,48 @@ const AuthWhatsApp = () => {
         <CardTitle className="text-2xl">{isLogin ? 'Login' : 'Cadastro'}</CardTitle>
         <CardDescription>
           {isLogin 
-            ? 'Entre com seu WhatsApp e senha para acessar sua conta' 
-            : 'Cadastre-se usando seu número de WhatsApp'}
+            ? 'Entre com seu e-mail ou telefone e senha para acessar sua conta' 
+            : 'Cadastre-se usando seu e-mail ou número de WhatsApp'}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="whatsapp">WhatsApp</Label>
-            <Input
-              id="whatsapp"
-              type="tel"
-              placeholder="(11) 98765-4321"
-              value={whatsapp}
-              onChange={handleWhatsAppChange}
-              required
-            />
+            <Label htmlFor="identifier">
+              {loginType === "email" ? "E-mail" : "Telefone"}
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="identifier"
+                type={loginType === "email" ? "email" : "tel"}
+                placeholder={loginType === "email" ? "seu@email.com" : "5511999999999"}
+                value={identifier}
+                onChange={handleIdentifierChange}
+                className="flex-1"
+                required
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="default"
+                className="whitespace-nowrap"
+                onClick={() => {
+                  setLoginType(loginType === "email" ? "phone" : "email");
+                  setIdentifier("");
+                }}
+              >
+                {loginType === "email" ? "📱 Telefone" : "✉️ E-mail"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ou use {loginType === "email" ? "telefone" : "e-mail"} para {isLogin ? "fazer login" : "cadastrar"}
+            </p>
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="password">Senha</Label>
               {isLogin && (
-                <Button variant="link" className="p-0 h-auto text-sm">
+                <Button variant="link" className="p-0 h-auto text-sm" type="button">
                   Esqueceu sua senha?
                 </Button>
               )}
@@ -184,7 +166,11 @@ const AuthWhatsApp = () => {
             <Button
               variant="link"
               className="p-0 h-auto"
-              onClick={() => setIsLogin(!isLogin)}
+              onClick={() => {
+                setIsLogin(!isLogin);
+                setIdentifier("");
+                setPassword("");
+              }}
             >
               {isLogin ? 'Cadastre-se' : 'Faça login'}
             </Button>

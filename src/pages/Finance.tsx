@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CalendarIcon, ChartBarIcon, FileTextIcon, PlusIcon, Receipt } from "lucide-react";
@@ -11,64 +11,177 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { initialProjects } from "@/components/projects/mockData";
+import { financeService, Invoice as ApiInvoice, Expense as ApiExpense } from "@/services/finance";
+import { projectsService } from "@/services/projects";
+import { clientsService } from "@/services/clients";
 
 const Finance = () => {
+  const [loading, setLoading] = useState(true);
   const [invoiceFormOpen, setInvoiceFormOpen] = useState(false);
   const [expenseFormOpen, setExpenseFormOpen] = useState(false);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  
-  const handleCreateInvoice = (formData: FormData) => {
-    const clientName = formData.get('clientName') as string;
-    const invoiceNumber = formData.get('invoiceNumber') as string;
-    const issueDate = formData.get('issueDate') as string;
-    const dueDate = formData.get('dueDate') as string;
-    const status = formData.get('status') as "draft" | "pending" | "paid" | "overdue";
-    const items = JSON.parse(formData.get('items') as string);
-    const total = parseFloat(formData.get('total') as string);
-    const projectId = formData.get('projectId') as string;
-    
-    const newInvoice: Invoice = {
-      id: `inv-${Date.now()}`,
-      clientName,
-      invoiceNumber,
-      issueDate,
-      dueDate,
-      status,
-      items,
-      total,
-      projectId: projectId || undefined
+  const [availableProjects, setAvailableProjects] = useState<{ id: string; name: string }[]>([]);
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const [invoicesData, expensesData, projectsData, clientsData] = await Promise.all([
+          financeService.getInvoices(),
+          financeService.getExpenses(),
+          projectsService.getProjects(),
+          clientsService.getClients(),
+        ]);
+
+        // Converter invoices da API para o formato do componente
+        const convertedInvoices = invoicesData.map((inv: ApiInvoice) => {
+          const client = inv.client_id ? clientsData.find(c => c.id === inv.client_id) : null;
+          return {
+            id: inv.id,
+            clientName: client?.name || 'Cliente não encontrado',
+            invoiceNumber: inv.invoice_number,
+            issueDate: inv.issue_date,
+            dueDate: inv.due_date,
+            status: inv.status,
+            items: inv.items.map((item: any) => ({
+              id: item.id?.toString() || Math.random().toString(),
+              description: item.description,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              total: item.total,
+            })),
+            total: inv.total,
+            projectId: inv.project_id || undefined,
+          };
+        });
+
+        // Converter expenses da API para o formato do componente
+        const convertedExpenses = expensesData.map((exp: ApiExpense) => ({
+          id: exp.id,
+          description: exp.description,
+          amount: exp.amount,
+          date: exp.date,
+          category: exp.category || '',
+          isPaid: exp.is_paid,
+          notes: exp.notes || undefined,
+          projectId: exp.project_id || undefined,
+        }));
+
+        setInvoices(convertedInvoices);
+        setExpenses(convertedExpenses);
+        setAvailableProjects(projectsData.map(p => ({ id: p.id, name: p.name })));
+        setClients(clientsData.map(c => ({ id: c.id, name: c.name })));
+      } catch (error) {
+        console.error("Erro ao carregar dados financeiros:", error);
+        toast.error("Erro ao carregar dados financeiros");
+      } finally {
+        setLoading(false);
+      }
     };
-    
-    setInvoices([...invoices, newInvoice]);
-    setInvoiceFormOpen(false);
-    toast.success("Fatura criada com sucesso");
+
+    loadData();
+  }, []);
+  
+  const handleCreateInvoice = async (formData: FormData) => {
+    try {
+      const clientName = formData.get('clientName') as string;
+      const invoiceNumber = formData.get('invoiceNumber') as string;
+      const issueDate = formData.get('issueDate') as string;
+      const dueDate = formData.get('dueDate') as string;
+      const status = formData.get('status') as "draft" | "pending" | "paid" | "overdue";
+      const items = JSON.parse(formData.get('items') as string);
+      const total = parseFloat(formData.get('total') as string);
+      const projectId = formData.get('projectId') as string;
+
+      // Encontrar client_id pelo nome
+      const client = clients.find(c => c.name === clientName);
+      
+      const newInvoice = await financeService.createInvoice({
+        client_id: client?.id || null,
+        project_id: projectId || null,
+        invoice_number: invoiceNumber,
+        issue_date: issueDate.split('T')[0],
+        due_date: dueDate.split('T')[0],
+        status,
+        items: items.map((item: any) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          total: item.total,
+        })),
+        total,
+        notes: null,
+      });
+
+      // Converter para o formato do componente
+      const convertedInvoice: Invoice = {
+        id: newInvoice.id,
+        clientName: client?.name || clientName,
+        invoiceNumber: newInvoice.invoice_number,
+        issueDate: newInvoice.issue_date,
+        dueDate: newInvoice.due_date,
+        status: newInvoice.status,
+        items: newInvoice.items.map((item: any) => ({
+          id: item.id?.toString() || Math.random().toString(),
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          total: item.total,
+        })),
+        total: newInvoice.total,
+        projectId: newInvoice.project_id || undefined,
+      };
+      
+      setInvoices([...invoices, convertedInvoice]);
+      setInvoiceFormOpen(false);
+      toast.success("Fatura criada com sucesso");
+    } catch (error) {
+      console.error("Erro ao criar fatura:", error);
+      toast.error("Erro ao criar fatura");
+    }
   };
   
-  const handleCreateExpense = (formData: FormData) => {
-    const description = formData.get('description') as string;
-    const amount = parseFloat(formData.get('amount') as string);
-    const date = formData.get('date') as string;
-    const category = formData.get('category') as string;
-    const isPaid = formData.get('isPaid') === 'true';
-    const notes = formData.get('notes') as string;
-    const projectId = formData.get('projectId') as string;
-    
-    const newExpense: Expense = {
-      id: `exp-${Date.now()}`,
-      description,
-      amount,
-      date,
-      category,
-      isPaid,
-      notes,
-      projectId: projectId || undefined
-    };
-    
-    setExpenses([...expenses, newExpense]);
-    setExpenseFormOpen(false);
-    toast.success("Despesa registrada com sucesso");
+  const handleCreateExpense = async (formData: FormData) => {
+    try {
+      const description = formData.get('description') as string;
+      const amount = parseFloat(formData.get('amount') as string);
+      const date = formData.get('date') as string;
+      const category = formData.get('category') as string;
+      const isPaid = formData.get('isPaid') === 'true';
+      const notes = formData.get('notes') as string;
+      const projectId = formData.get('projectId') as string;
+      
+      const newExpense = await financeService.createExpense({
+        project_id: projectId || null,
+        description,
+        amount,
+        date: date.split('T')[0],
+        category: category || null,
+        is_paid: isPaid,
+        notes: notes || null,
+      });
+
+      // Converter para o formato do componente
+      const convertedExpense: Expense = {
+        id: newExpense.id,
+        description: newExpense.description,
+        amount: newExpense.amount,
+        date: newExpense.date,
+        category: newExpense.category || '',
+        isPaid: newExpense.is_paid,
+        notes: newExpense.notes || undefined,
+        projectId: newExpense.project_id || undefined,
+      };
+      
+      setExpenses([...expenses, convertedExpense]);
+      setExpenseFormOpen(false);
+      toast.success("Despesa registrada com sucesso");
+    } catch (error) {
+      console.error("Erro ao criar despesa:", error);
+      toast.error("Erro ao criar despesa");
+    }
   };
   
   const getStatusBadge = (status: Invoice["status"]) => {
@@ -111,11 +224,15 @@ const Finance = () => {
     }))
   };
 
-  // Get available projects for linking
-  const availableProjects = initialProjects.map(project => ({
-    id: project.id!,
-    name: project.name!
-  }));
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-10">
+        <div className="text-center">
+          <p className="text-muted-foreground">Carregando dados financeiros...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -250,7 +367,27 @@ const Finance = () => {
                     </div>
                   </CardContent>
                   <CardFooter>
-                    <Button variant="outline" size="sm" className="w-full">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="w-full"
+                      onClick={async () => {
+                        try {
+                          const updated = await financeService.updateExpense(expense.id, {
+                            is_paid: !expense.isPaid
+                          });
+                          setExpenses(expenses.map(e => 
+                            e.id === expense.id 
+                              ? { ...e, isPaid: updated.is_paid }
+                              : e
+                          ));
+                          toast.success(updated.is_paid ? "Despesa marcada como paga" : "Despesa marcada como não paga");
+                        } catch (error) {
+                          console.error("Erro ao atualizar despesa:", error);
+                          toast.error("Erro ao atualizar despesa");
+                        }
+                      }}
+                    >
                       {expense.isPaid ? "Marcar como não paga" : "Marcar como paga"}
                     </Button>
                   </CardFooter>

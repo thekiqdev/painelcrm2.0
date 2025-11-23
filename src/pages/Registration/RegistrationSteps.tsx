@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
 
 const REGISTRATION_STEPS = ['personal_info', 'company_info'];
 
@@ -24,28 +23,14 @@ const RegistrationSteps = () => {
   const [companyName, setCompanyName] = useState('');
 
   useEffect(() => {
-    const checkAuthentication = async () => {
-      // Verificar se o usuário está autenticado
-      const { data } = await supabase.auth.getSession();
-      
-      if (!data.session) {
-        console.log('User not authenticated, redirecting to login');
-        toast.error('Você precisa estar autenticado para completar o cadastro');
-        navigate('/login');
-        return;
-      }
-      
-      // Verificar se o cadastro já está completo
-      if (profile && profile.registration_complete) {
-        console.log('Registration already complete, redirecting to dashboard');
-        toast.success('Seu cadastro já está completo!');
-        navigate('/dashboard');
-        return;
-      }
-    };
-    
-    checkAuthentication();
-  }, [navigate, profile]);
+    // Verificar se o cadastro já está completo
+    if (user && profile && profile.registration_complete) {
+      console.log('Registration already complete, redirecting to dashboard');
+      toast.success('Seu cadastro já está completo!');
+      navigate('/dashboard');
+      return;
+    }
+  }, [user, profile, navigate]);
   
   useEffect(() => {
     // Se o usuário não estiver autenticado, redireciona para a página inicial

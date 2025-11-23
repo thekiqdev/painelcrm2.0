@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { supabase } from "@/integrations/supabase/client";
+import { projectTemplatesService } from "@/services/projectTemplates";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { X } from "lucide-react";
@@ -40,32 +40,30 @@ export function NewTemplateDialog({ open, onOpenChange, onSuccess }: NewTemplate
 
     if (!user) return;
 
-    const { error } = await supabase.from("project_templates").insert({
-      user_id: user.id,
-      name,
-      description,
-      tags,
-    });
+    try {
+      await projectTemplatesService.createTemplate({
+        name,
+        description,
+        tags,
+      });
 
-    if (error) {
+      toast({
+        title: "Sucesso",
+        description: "Template criado com sucesso",
+      });
+
+      setName("");
+      setDescription("");
+      setTags([]);
+      onSuccess();
+      onOpenChange(false);
+    } catch (error) {
       toast({
         title: "Erro",
         description: "Não foi possível criar o template",
         variant: "destructive",
       });
-      return;
     }
-
-    toast({
-      title: "Sucesso",
-      description: "Template criado com sucesso",
-    });
-
-    setName("");
-    setDescription("");
-    setTags([]);
-    onSuccess();
-    onOpenChange(false);
   };
 
   return (
