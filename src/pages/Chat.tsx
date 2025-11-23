@@ -8,7 +8,6 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { UserCheck, Clock, Send, Phone, Filter, Users, RefreshCw } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useEvolutionChatCache } from "@/hooks/useEvolutionChatCache";
@@ -27,9 +26,6 @@ interface ChatConversation {
   attendant?: string;
 }
 
-type ProfileWithConnection = {
-  whatsapp_connected: boolean | null;
-};
 
 const Chat = () => {
   const { user } = useAuth();
@@ -61,21 +57,8 @@ const Chat = () => {
         
         console.log("Verificando status de conexão do usuário:", user.id);
         
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('whatsapp_connected')
-          .eq('id', user.id)
-          .single();
-        
-        if (error) {
-          console.error("Error checking WhatsApp connection:", error);
-          setConnectionStatus("disconnected");
-          return;
-        }
-        
-        const profile = data as unknown as ProfileWithConnection;
-        
-        if (profile && profile.whatsapp_connected === true) {
+        // Usar whatsapp_connected do user do contexto (vem de /api/auth/me)
+        if (user.whatsapp_connected === true) {
           setConnectionStatus("connected");
           
           try {
