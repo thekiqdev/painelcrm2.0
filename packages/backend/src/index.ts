@@ -123,9 +123,18 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
+// Test database connection on startup
+pool.query('SELECT NOW()')
+  .then(() => {
+    console.log('✅ Connected to PostgreSQL database');
+  })
+  .catch((err) => {
+    console.error('❌ Failed to connect to PostgreSQL:', err.message);
+  });
+
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
