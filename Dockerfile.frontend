@@ -18,16 +18,17 @@ RUN ls -la src/services/clients.ts || (echo "ERRO: clients.ts não encontrado!" 
 # Build da aplicação
 RUN npm run build
 
+# Verificar se o dist foi criado (no stage builder)
+RUN ls -la dist/ || (echo "ERRO: dist não foi criado!" && ls -la && exit 1)
+RUN ls -la dist/index.html || (echo "ERRO: index.html não encontrado no dist!" && exit 1)
+
 # Production stage
 FROM nginx:alpine
-
-# Verificar se o dist foi criado
-RUN ls -la /app/dist/ || (echo "ERRO: dist não foi criado!" && exit 1)
 
 # Copiar arquivos buildados
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Verificar se os arquivos foram copiados
+# Verificar se os arquivos foram copiados (no stage de produção)
 RUN ls -la /usr/share/nginx/html/ || (echo "ERRO: arquivos não foram copiados!" && exit 1)
 RUN ls -la /usr/share/nginx/html/index.html || (echo "ERRO: index.html não encontrado!" && exit 1)
 
