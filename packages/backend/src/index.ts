@@ -40,13 +40,13 @@ import { pool } from './utils/db.js';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.API_PORT || 3001;
+const PORT = parseInt(process.env.API_PORT || '3001', 10);
 
 // Middleware
 app.use(helmet());
 // CORS - aceitar FRONTEND_URL e também URLs do Easypanel
 const frontendUrl = process.env.FRONTEND_URL;
-const corsOrigins = [
+const corsOrigins: string[] = [
   frontendUrl,
   frontendUrl?.replace(/\/$/, ''), // Remove trailing slash
   'http://localhost:5173',
@@ -55,7 +55,7 @@ const corsOrigins = [
   'http://127.0.0.1:5173',
   'http://127.0.0.1:8080',
   'http://127.0.0.1:8081',
-].filter(Boolean); // Remove undefined/null
+].filter((url): url is string => typeof url === 'string' && url.length > 0); // Remove undefined/null e garante que são strings
 
 app.use(cors({
   origin: corsOrigins.length > 0 ? corsOrigins : true, // Se não houver URLs, aceitar todas (apenas para debug)
