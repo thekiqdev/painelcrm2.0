@@ -39,10 +39,13 @@ export function generateToken(payload: JWTPayload): string {
   
   const expiresIn = getExpiresIn();
   
-  // Passar expiresIn diretamente - jwt.sign aceita string ou number
-  return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: expiresIn,
-  });
+  // Usar type assertion explícita para satisfazer o TypeScript
+  // jwt.sign aceita string ou number para expiresIn, mas TypeScript é estrito
+  const options: jwt.SignOptions = {
+    expiresIn: expiresIn as string | number,
+  };
+  
+  return jwt.sign(payload, JWT_SECRET, options);
 }
 
 export function verifyToken(token: string): JWTPayload {
