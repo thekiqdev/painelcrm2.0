@@ -75,7 +75,7 @@ const Tasks = () => {
       const task = tasks.find(t => t.id === taskId);
       if (!task) return;
 
-      const newStatus = task.status === "pending" ? "completed" : "pending";
+          const newStatus = task.status === "pending" ? "completed" : "pending";
       const updatedTask = await tasksService.updateTask(taskId, { status: newStatus });
       
       setTasks(prev => prev.map(t => t.id === taskId ? { ...updatedTask, date: updatedTask.date || "" } : t));
@@ -84,9 +84,9 @@ const Tasks = () => {
         setSelectedTask({ ...updatedTask, date: updatedTask.date || "" });
       }
 
-      if (newStatus === "completed") {
-        toast.success("Tarefa concluída!");
-      }
+          if (newStatus === "completed") {
+            toast.success("Tarefa concluída!");
+          }
     } catch (error) {
       console.error("Erro ao atualizar status da tarefa:", error);
       toast.error("Erro ao atualizar tarefa");
@@ -129,7 +129,7 @@ const Tasks = () => {
       setFormAssignee("");
       setIsAddTaskDialogOpen(false);
       
-      toast.success("Tarefa adicionada com sucesso!");
+    toast.success("Tarefa adicionada com sucesso!");
     } catch (error) {
       console.error("Erro ao criar tarefa:", error);
       toast.error("Erro ao criar tarefa");
@@ -157,16 +157,16 @@ const Tasks = () => {
     try {
       const updatedTask = await tasksService.updateTask(selectedTask.id, {
         checklist: updatedChecklist,
-        status: allCompleted ? "completed" : selectedTask.status,
+      status: allCompleted ? "completed" : selectedTask.status,
       });
       
       const formattedTask = { ...updatedTask, date: updatedTask.date || "" };
       setSelectedTask(formattedTask);
       setTasks(prev => prev.map(t => t.id === selectedTask.id ? formattedTask : t));
-      
-      // Notificar se todos os itens foram concluídos
-      if (allCompleted && selectedTask.status !== "completed") {
-        toast.success("Todos os itens concluídos! Tarefa marcada como completa.");
+    
+    // Notificar se todos os itens foram concluídos
+    if (allCompleted && selectedTask.status !== "completed") {
+      toast.success("Todos os itens concluídos! Tarefa marcada como completa.");
       }
     } catch (error) {
       console.error("Erro ao atualizar checklist:", error);
@@ -196,8 +196,8 @@ const Tasks = () => {
       const formattedTask = { ...updatedTask, date: updatedTask.date || "" };
       setSelectedTask(formattedTask);
       setTasks(prev => prev.map(t => t.id === selectedTask.id ? formattedTask : t));
-      setNewChecklistItem("");
-      toast.success("Item adicionado à lista de verificação");
+    setNewChecklistItem("");
+    toast.success("Item adicionado à lista de verificação");
     } catch (error) {
       console.error("Erro ao adicionar item ao checklist:", error);
       toast.error("Erro ao adicionar item");
@@ -218,7 +218,7 @@ const Tasks = () => {
       const formattedTask = { ...updatedTask, date: updatedTask.date || "" };
       setSelectedTask(formattedTask);
       setTasks(prev => prev.map(t => t.id === selectedTask.id ? formattedTask : t));
-      toast.success("Item removido da lista de verificação");
+    toast.success("Item removido da lista de verificação");
     } catch (error) {
       console.error("Erro ao remover item do checklist:", error);
       toast.error("Erro ao remover item");
@@ -555,10 +555,10 @@ const Tasks = () => {
                   <h4 className="text-sm font-semibold mb-2">Detalhes</h4>
                   <div className="space-y-2 text-sm">
                     {selectedTask.date && (
-                      <div className="flex gap-2">
-                        <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                        <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
-                      </div>
+                    <div className="flex gap-2">
+                      <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                      <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
+                    </div>
                     )}
                     {selectedTask.time && (
                       <div className="flex gap-2">
@@ -695,16 +695,16 @@ const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick }: 
                 
                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
                   {task.date && (
-                    <div className="flex items-center">
-                      <CalendarIcon className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
-                      <span>{formatDate(task.date)}</span>
-                      {task.time && (
-                        <>
-                          <Clock className="h-3.5 w-3.5 ml-2 mr-1 text-muted-foreground" />
-                          <span>{task.time}</span>
-                        </>
-                      )}
-                    </div>
+                  <div className="flex items-center">
+                    <CalendarIcon className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
+                    <span>{formatDate(task.date)}</span>
+                    {task.time && (
+                      <>
+                        <Clock className="h-3.5 w-3.5 ml-2 mr-1 text-muted-foreground" />
+                        <span>{task.time}</span>
+                      </>
+                    )}
+                  </div>
                   )}
                   
                   {task.client && (
