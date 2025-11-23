@@ -90,19 +90,43 @@ class ApiClient {
         headers,
       });
 
-      const data = await response.json();
+      // Tentar parsear JSON, mas se falhar, retornar texto
+      let data;
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          const text = await response.text();
+          console.error('Failed to parse JSON response:', text);
+          return {
+            error: `Invalid JSON response: ${text.substring(0, 100)}`,
+            details: { status: response.status, statusText: response.statusText },
+          };
+        }
+      } else {
+        const text = await response.text();
+        data = { message: text };
+      }
 
       if (!response.ok) {
         return {
-          error: data.error || 'Request failed',
-          details: data.details,
+          error: data.error || data.message || 'Request failed',
+          details: { 
+            ...data.details, 
+            status: response.status, 
+            statusText: response.statusText,
+            url 
+          },
         };
       }
 
       return { data };
     } catch (error) {
+      console.error('API request error:', error, 'URL:', url);
       return {
         error: error instanceof Error ? error.message : 'Network error',
+        details: { url },
       };
     }
   }

@@ -99,6 +99,12 @@ app.get('/', (req, res) => {
   });
 });
 
+// Log all requests for debugging
+app.use('/api', (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productsRoutes);
