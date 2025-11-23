@@ -71,14 +71,32 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Health check
+// Health check - endpoint simples e rápido
 app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
-    res.json({ status: 'ok', database: 'connected' });
-  } catch (error) {
-    res.status(500).json({ status: 'error', database: 'disconnected' });
+    res.status(200).json({ 
+      status: 'ok', 
+      database: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({ 
+      status: 'error', 
+      database: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
   }
+});
+
+// Root endpoint para verificar se o servidor está rodando
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'PainelCRM API is running',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Routes
