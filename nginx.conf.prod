@@ -34,10 +34,11 @@ server {
     }
 
     # API proxy - Use o nome do serviço backend no Easypanel
+    # IMPORTANTE: O nome deve corresponder EXATAMENTE ao nome do serviço no Easypanel
+    # Se o serviço se chama "sistemas_painelcrm", use "sistemas_painelcrm:3001"
     # Se o serviço se chama "painelcrm", use "painelcrm:3001"
-    # Se o serviço se chama "painelcrm-backend", use "painelcrm-backend:3001"
     location /api {
-        set $backend "painelcrm:3001";
+        set $backend "sistemas_painelcrm:3001";
         proxy_pass http://$backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
