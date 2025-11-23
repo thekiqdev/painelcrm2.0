@@ -105,6 +105,13 @@ export async function login(req: Request, res: Response): Promise<void> {
 
     const user = userResult.rows[0];
 
+    // Check if user has a password hash
+    if (!user.password_hash) {
+      console.error('User found but has no password_hash:', user.id);
+      res.status(401).json({ error: 'Credenciais inválidas' });
+      return;
+    }
+
     // Verify password
     const isValid = await comparePassword(password, user.password_hash);
     if (!isValid) {
@@ -144,7 +151,15 @@ export async function login(req: Request, res: Response): Promise<void> {
       return;
     }
     console.error('Login error:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    console.error('Login error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    res.status(500).json({ 
+      error: 'Erro interno do servidor',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      // Em desenvolvimento, incluir mais detalhes
+      ...(process.env.NODE_ENV !== 'production' && { 
+        stack: error instanceof Error ? error.stack : undefined 
+      })
+    });
   }
 }
 
