@@ -71,7 +71,20 @@ WORKDIR /app
 # Mover arquivos necessários para a raiz
 RUN cp -r packages/backend/dist ./dist && \
     cp packages/backend/package.json ./package.json && \
-    rm -rf packages
+    cp packages/backend/package-lock.json ./package-lock.json 2>/dev/null || true
+
+# Instalar dependências de produção na raiz
+RUN if [ -f package-lock.json ]; then \
+      npm ci --omit=dev; \
+    else \
+      npm install --omit=dev; \
+    fi
+
+# Verificar se node_modules foi criado
+RUN ls -la node_modules/ || (echo "ERRO: node_modules não foi criado!" && exit 1)
+
+# Limpar arquivos temporários
+RUN rm -rf packages
 
 # Expor porta
 EXPOSE 3001
