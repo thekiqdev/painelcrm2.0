@@ -1,5 +1,14 @@
 # 🔑 Atualizar Senha do Admin - Terminal do Backend
 
+## ⚠️ IMPORTANTE: Habilitar Endpoint
+
+Antes de usar, você precisa adicionar a variável de ambiente no Easypanel:
+
+1. Vá para o serviço `painelcrm` (backend) no Easypanel
+2. Vá em "Environment Variables"
+3. Adicione: `ALLOW_PASSWORD_UPDATE=true`
+4. Reinicie o serviço backend
+
 ## ✅ Solução: Usar Node.js Diretamente
 
 Como `curl` não está disponível no container, use Node.js diretamente:
