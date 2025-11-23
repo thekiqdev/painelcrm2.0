@@ -16,10 +16,10 @@ export function generateToken(payload: JWTPayload): string {
   
   const expiresIn = JWT_EXPIRES_IN || '7d';
   
-  // Passar expiresIn diretamente sem tipagem explícita para evitar problemas de tipo
+  // Usar type assertion para evitar problemas de tipo com StringValue
   return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: expiresIn,
-  });
+    expiresIn: expiresIn as string,
+  } as jwt.SignOptions);
 }
 
 export function verifyToken(token: string): JWTPayload {
