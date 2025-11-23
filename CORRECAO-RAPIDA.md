@@ -4,14 +4,16 @@
 
 **Causa**: Health check do Easypanel está falhando
 
-**Solução**:
+**Solução** (se disponível no Easypanel):
 1. Easypanel → Serviço Backend (`painelcrm` ou `sistemas_painelcrm`)
-2. Configurações → Health Check
-3. Configure:
+2. Settings/Configurações → Procure por "Health Check" ou "Health"
+3. Se encontrar, configure:
    - **Path**: `/health`
    - **Port**: `3001` ⚠️ **IMPORTANTE: Porta 3001, não 80!**
    - **Start Period**: `40s`
 4. Salve
+
+**Nota**: O Dockerfile já tem health check configurado. Se não encontrar essa opção, o Easypanel pode estar usando o health check do Dockerfile automaticamente. O problema pode ser a porta exposta ou o backend não estar respondendo corretamente.
 
 ---
 
