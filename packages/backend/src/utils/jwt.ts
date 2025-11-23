@@ -9,11 +9,11 @@ export interface JWTPayload {
 }
 
 export function generateToken(payload: JWTPayload): string {
-  const options: jwt.SignOptions = {
-    expiresIn: JWT_EXPIRES_IN as string | number,
-  };
-  
-  return jwt.sign(payload, JWT_SECRET, options);
+  // Pass expiresIn directly without strict typing to avoid TypeScript issues
+  // JWT_EXPIRES_IN is a string like "7d" which is valid for jwt.sign
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: JWT_EXPIRES_IN,
+  } as jwt.SignOptions);
 }
 
 export function verifyToken(token: string): JWTPayload {
