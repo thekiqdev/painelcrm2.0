@@ -12,6 +12,9 @@ RUN npm ci
 # Copiar código fonte
 COPY . .
 
+# Verificar se o arquivo clients.ts existe
+RUN ls -la src/services/clients.ts || (echo "ERRO: clients.ts não encontrado!" && ls -la src/services/ && exit 1)
+
 # Build da aplicação
 RUN npm run build
 
