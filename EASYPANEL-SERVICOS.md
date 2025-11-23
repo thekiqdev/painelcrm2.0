@@ -37,7 +37,7 @@ API_PORT=3001
 NODE_ENV=production
 JWT_SECRET=V9cX70RguVATn6cB6dWJhQemdADTf/+6DGe2mtnG3QPIZklpXHSS3pnnGrSBsn0QP3LtKyVw4D7EwmSV5bJTHw==
 JWT_EXPIRES_IN=7d
-FRONTEND_URL=https://sistemas-painelcrm.g8o2qm.easypanel.host
+FRONTEND_URL=https://sistemas-painelcrm-frontend.g8o2qm.easypanel.host
 ```
 
 **Health Check**: `/health`
@@ -57,11 +57,13 @@ FRONTEND_URL=https://sistemas-painelcrm.g8o2qm.easypanel.host
 
 **Variáveis de Ambiente**:
 ```
-VITE_API_URL=http://painelcrm:3001
+VITE_API_URL=
 ```
 
 **Nota**: 
-- Se o serviço backend se chama `painelcrm`, use `http://painelcrm:3001`
+- Deixe `VITE_API_URL` vazio em produção para usar URLs relativas (`/api`)
+- O Nginx faz proxy de `/api` para o backend automaticamente
+- Isso evita erros de Mixed Content (HTTPS bloqueando HTTP)
 - Se o serviço backend se chama outro nome, ajuste no `nginx.conf.prod` também
 
 **Health Check**: `/health` ou `/`
@@ -94,10 +96,13 @@ VITE_API_URL=http://painelcrm:3001
 
    **Environment Variables**:
    ```
-   VITE_API_URL=http://painelcrm:3001
+   VITE_API_URL=
    ```
    
-   **Nota**: Substitua `painelcrm` pelo nome exato do seu serviço backend!
+   **Nota**: 
+   - Deixe `VITE_API_URL` vazio em produção para usar URLs relativas (`/api`)
+   - O Nginx faz proxy de `/api` para o backend automaticamente
+   - Isso evita erros de Mixed Content (HTTPS bloqueando HTTP)
 
    **Dependencies**:
    - Adicione `painelcrm` como dependência

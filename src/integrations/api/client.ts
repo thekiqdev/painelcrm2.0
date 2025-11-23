@@ -1,4 +1,24 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// Em produção (HTTPS), usar URLs relativas para evitar Mixed Content
+// O Nginx faz proxy de /api para o backend
+// Em desenvolvimento, usar VITE_API_URL ou localhost
+const getApiUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  
+  // Se VITE_API_URL não está definido ou está vazio, usar URL relativa (produção)
+  if (!envUrl || envUrl.trim() === '') {
+    return '';
+  }
+  
+  // Se está em HTTPS e VITE_API_URL é HTTP, usar URL relativa para evitar Mixed Content
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && envUrl.startsWith('http://')) {
+    return '';
+  }
+  
+  // Caso contrário, usar a URL configurada
+  return envUrl;
+};
+
+const API_URL = getApiUrl() || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 export interface ApiResponse<T = any> {
   data?: T;
