@@ -16,9 +16,13 @@ export const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
-// Test connection
+// Test connection - log apenas na primeira conexão
+let firstConnection = true;
 pool.on('connect', () => {
-  console.log('Connected to PostgreSQL database');
+  if (firstConnection) {
+    console.log('Connected to PostgreSQL database');
+    firstConnection = false;
+  }
 });
 
 pool.on('error', (err) => {

@@ -44,16 +44,21 @@ const PORT = process.env.API_PORT || 3001;
 
 // Middleware
 app.use(helmet());
+// CORS - aceitar FRONTEND_URL e também URLs do Easypanel
+const frontendUrl = process.env.FRONTEND_URL;
+const corsOrigins = [
+  frontendUrl,
+  frontendUrl?.replace(/\/$/, ''), // Remove trailing slash
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'http://localhost:8081',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:8080',
+  'http://127.0.0.1:8081',
+].filter(Boolean); // Remove undefined/null
+
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:5173',
-    'http://localhost:5173',
-    'http://localhost:8080',
-    'http://localhost:8081',
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:8080',
-    'http://127.0.0.1:8081',
-  ],
+  origin: corsOrigins.length > 0 ? corsOrigins : true, // Se não houver URLs, aceitar todas (apenas para debug)
   credentials: true,
 }));
 app.use(express.json());
@@ -132,10 +137,11 @@ pool.query('SELECT NOW()')
     console.error('❌ Failed to connect to PostgreSQL:', err.message);
   });
 
-// Start server
-app.listen(PORT, () => {
+// Start server - escutar em 0.0.0.0 para ser acessível em containers
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Listening on 0.0.0.0:${PORT}`);
 });
 
 

@@ -89,9 +89,10 @@ RUN rm -rf packages
 # Expor porta
 EXPOSE 3001
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost:3001/health || exit 1
+# Health check - usar wget ou curl (curl está disponível no Alpine)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health 2>/dev/null || \
+      (curl -f http://localhost:3001/health || exit 1)
 
 # Iniciar servidor
 CMD ["npm", "start"]
