@@ -221,4 +221,44 @@ export async function logout(req: Request, res: Response): Promise<void> {
   res.json({ message: 'Logged out successfully' });
 }
 
+// Endpoint temporário para atualizar senha do admin (REMOVER EM PRODUÇÃO)
+export async function updateAdminPassword(req: Request, res: Response): Promise<void> {
+  try {
+    // Apenas em desenvolvimento ou com autenticação especial
+    if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_PASSWORD_UPDATE) {
+      res.status(403).json({ error: 'Not allowed in production' });
+      return;
+    }
+
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required' });
+      return;
+    }
+
+    // Gerar novo hash
+    const passwordHash = await hashPassword(password);
+
+    // Atualizar no banco
+    const result = await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE email = $2 RETURNING id, email',
+      [passwordHash, email]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json({ 
+      message: 'Password updated successfully',
+      user: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Update admin password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 
