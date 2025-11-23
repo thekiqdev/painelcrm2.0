@@ -1,25 +1,48 @@
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET: string = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '7d';
 
 export interface JWTPayload {
   userId: string;
   email: string;
 }
 
+// Função para obter e validar expiresIn
+function getExpiresIn(): string {
+  const envValue = process.env.JWT_EXPIRES_IN;
+  
+  // Se não estiver definido ou estiver vazio, usar padrão
+  if (!envValue || envValue.trim() === '') {
+    return '7d';
+  }
+  
+  // Remover espaços e caracteres extras
+  const cleaned = envValue.trim();
+  
+  // Validar formato: deve ser número ou string como "1d", "20h", "7d", etc.
+  // Aceita: números, ou strings que começam com número seguido de letra
+  const isValidFormat = /^(\d+[smhd]?|\d+)$/i.test(cleaned);
+  
+  if (!isValidFormat) {
+    console.warn(`JWT_EXPIRES_IN com formato inválido: "${cleaned}". Usando padrão "7d"`);
+    return '7d';
+  }
+  
+  return cleaned;
+}
+
 export function generateToken(payload: JWTPayload): string {
-  // Garantir que JWT_SECRET e JWT_EXPIRES_IN estão definidos
+  // Garantir que JWT_SECRET está configurado
   if (!JWT_SECRET || JWT_SECRET === 'your-super-secret-jwt-key-change-this-in-production') {
     throw new Error('JWT_SECRET não está configurado corretamente');
   }
   
-  const expiresIn = JWT_EXPIRES_IN || '7d';
+  const expiresIn = getExpiresIn();
   
-  // Usar type assertion para evitar problemas de tipo com StringValue
+  // Passar expiresIn diretamente - jwt.sign aceita string ou number
   return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: expiresIn as string,
-  } as jwt.SignOptions);
+    expiresIn: expiresIn,
+  });
 }
 
 export function verifyToken(token: string): JWTPayload {
