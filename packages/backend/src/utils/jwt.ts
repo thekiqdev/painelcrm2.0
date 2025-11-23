@@ -14,15 +14,12 @@ export function generateToken(payload: JWTPayload): string {
     throw new Error('JWT_SECRET não está configurado corretamente');
   }
   
-  if (!JWT_EXPIRES_IN) {
-    throw new Error('JWT_EXPIRES_IN não está configurado');
-  }
-
-  const options: jwt.SignOptions = {
-    expiresIn: JWT_EXPIRES_IN as string | number,
-  };
-
-  return jwt.sign(payload, JWT_SECRET, options);
+  const expiresIn = JWT_EXPIRES_IN || '7d';
+  
+  // Passar expiresIn diretamente sem tipagem explícita para evitar problemas de tipo
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: expiresIn,
+  });
 }
 
 export function verifyToken(token: string): JWTPayload {
