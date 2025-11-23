@@ -9,9 +9,20 @@ export interface JWTPayload {
 }
 
 export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET as string, {
-    expiresIn: JWT_EXPIRES_IN as string,
-  } as jwt.SignOptions);
+  // Garantir que JWT_SECRET e JWT_EXPIRES_IN estão definidos
+  if (!JWT_SECRET || JWT_SECRET === 'your-super-secret-jwt-key-change-this-in-production') {
+    throw new Error('JWT_SECRET não está configurado corretamente');
+  }
+  
+  if (!JWT_EXPIRES_IN) {
+    throw new Error('JWT_EXPIRES_IN não está configurado');
+  }
+
+  const options: jwt.SignOptions = {
+    expiresIn: JWT_EXPIRES_IN,
+  };
+
+  return jwt.sign(payload, JWT_SECRET, options);
 }
 
 export function verifyToken(token: string): JWTPayload {
