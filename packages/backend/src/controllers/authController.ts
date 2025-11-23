@@ -128,18 +128,30 @@ export async function login(req: Request, res: Response): Promise<void> {
     }
 
     // Get profile to check registration_complete
-    const profileResult = await pool.query(
-      'SELECT registration_complete, first_name, last_name, company_name FROM profiles WHERE id = $1',
-      [user.id]
-    );
-
-    const profile = profileResult.rows[0] || {};
+    let profile = {};
+    try {
+      const profileResult = await pool.query(
+        'SELECT registration_complete, first_name, last_name, company_name FROM profiles WHERE id = $1',
+        [user.id]
+      );
+      profile = profileResult.rows[0] || {};
+    } catch (profileError) {
+      console.error('Error fetching profile:', profileError);
+      // Continue without profile if it doesn't exist
+    }
 
     // Generate token
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-    });
+    let token;
+    try {
+      token = generateToken({
+        userId: user.id,
+        email: user.email,
+      });
+      console.log('Token generated successfully');
+    } catch (tokenError) {
+      console.error('Error generating token:', tokenError);
+      throw tokenError;
+    }
 
     res.json({
       user: {
