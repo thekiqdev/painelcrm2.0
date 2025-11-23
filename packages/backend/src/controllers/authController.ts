@@ -128,9 +128,16 @@ export async function login(req: Request, res: Response): Promise<void> {
     }
 
     // Get profile to check registration_complete
-    let profile = {};
+    interface Profile {
+      registration_complete?: boolean;
+      first_name?: string;
+      last_name?: string;
+      company_name?: string;
+    }
+    
+    let profile: Profile = {};
     try {
-      const profileResult = await pool.query(
+      const profileResult = await pool.query<Profile>(
         'SELECT registration_complete, first_name, last_name, company_name FROM profiles WHERE id = $1',
         [user.id]
       );
