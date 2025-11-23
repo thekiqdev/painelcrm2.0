@@ -8,33 +8,41 @@ export interface JWTPayload {
 }
 
 // Função para obter e validar expiresIn
-function getExpiresIn(): string {
+function getExpiresIn(): string | number {
   const envValue = process.env.JWT_EXPIRES_IN;
   
   // Log para debug
-  console.log(`[JWT] JWT_EXPIRES_IN raw value: "${envValue}"`);
+  console.log(`[JWT] JWT_EXPIRES_IN raw value:`, JSON.stringify(envValue));
+  console.log(`[JWT] JWT_EXPIRES_IN type:`, typeof envValue);
   
   // Se não estiver definido ou estiver vazio, usar padrão
-  if (!envValue || envValue.trim() === '') {
-    console.log(`[JWT] JWT_EXPIRES_IN está vazio, usando padrão "7d"`);
+  if (!envValue || (typeof envValue === 'string' && envValue.trim() === '')) {
+    console.log(`[JWT] JWT_EXPIRES_IN está vazio ou undefined, usando padrão "7d"`);
     return '7d';
   }
   
-  // Remover espaços e caracteres extras
-  const cleaned = envValue.trim();
-  console.log(`[JWT] JWT_EXPIRES_IN cleaned: "${cleaned}"`);
+  // Remover espaços e caracteres extras se for string
+  const cleaned = typeof envValue === 'string' ? envValue.trim() : String(envValue).trim();
+  console.log(`[JWT] JWT_EXPIRES_IN cleaned:`, JSON.stringify(cleaned));
   
-  // Validar formato: deve ser número ou string como "1d", "20h", "7d", etc.
-  // Aceita: números, ou strings que começam com número seguido de letra (s, m, h, d)
-  // Exemplos válidos: "7d", "24h", "60m", "3600", "1d", "20h"
-  const isValidFormat = /^(\d+[smhd]?|\d+)$/i.test(cleaned);
+  // Se for um número puro, retornar como número (em segundos)
+  const numValue = Number(cleaned);
+  if (!isNaN(numValue) && isFinite(numValue) && /^\d+$/.test(cleaned)) {
+    console.log(`[JWT] JWT_EXPIRES_IN é número, usando:`, numValue);
+    return numValue;
+  }
+  
+  // Validar formato de string: deve ser como "1d", "20h", "7d", etc.
+  // Aceita: strings que começam com número seguido de letra (s, m, h, d)
+  // Exemplos válidos: "7d", "24h", "60m", "1d", "20h"
+  const isValidFormat = /^\d+[smhd]$/i.test(cleaned);
   
   if (!isValidFormat) {
     console.warn(`[JWT] JWT_EXPIRES_IN com formato inválido: "${cleaned}". Usando padrão "7d"`);
     return '7d';
   }
   
-  console.log(`[JWT] Usando expiresIn: "${cleaned}"`);
+  console.log(`[JWT] Usando expiresIn:`, JSON.stringify(cleaned));
   return cleaned;
 }
 
