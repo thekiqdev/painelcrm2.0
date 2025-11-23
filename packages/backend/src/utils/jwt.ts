@@ -63,21 +63,43 @@ export function generateToken(payload: JWTPayload): string {
   
   const expiresIn = getExpiresIn();
   
-  // Log para debug
-  console.log(`[JWT] Gerando token com expiresIn: "${expiresIn}" (tipo: ${typeof expiresIn})`);
+  // Garantir que expiresIn é uma string válida
+  const expiresInString = typeof expiresIn === 'string' ? expiresIn : String(expiresIn);
+  
+  // Log para debug - ANTES de chamar jwt.sign
+  console.log(`[JWT] ========== GERANDO TOKEN ==========`);
+  console.log(`[JWT] expiresIn recebido:`, JSON.stringify(expiresIn));
+  console.log(`[JWT] expiresIn tipo:`, typeof expiresIn);
+  console.log(`[JWT] expiresInString:`, JSON.stringify(expiresInString));
+  console.log(`[JWT] expiresInString length:`, expiresInString.length);
+  console.log(`[JWT] expiresInString válido?`, /^\d+[smhd]$/i.test(expiresInString));
+  
+  // Validação final - garantir que é uma string válida
+  if (!expiresInString || expiresInString.trim() === '' || !/^\d+[smhd]$/i.test(expiresInString)) {
+    console.error(`[JWT] ERRO: expiresIn inválido! Usando "7d" como fallback`);
+    const fallbackExpiresIn = '7d';
+    console.log(`[JWT] Usando fallback:`, JSON.stringify(fallbackExpiresIn));
+    
+    // @ts-expect-error - TypeScript é muito estrito com StringValue
+    return jwt.sign(payload, JWT_SECRET, {
+      expiresIn: fallbackExpiresIn,
+    });
+  }
   
   try {
     // Passar o objeto diretamente sem tipagem explícita
     // jwt.sign aceita string ou number para expiresIn em runtime
+    console.log(`[JWT] Chamando jwt.sign com expiresIn:`, JSON.stringify(expiresInString));
     // @ts-expect-error - TypeScript é muito estrito com StringValue, mas jwt.sign aceita string em runtime
     const token = jwt.sign(payload, JWT_SECRET, {
-      expiresIn: expiresIn,
+      expiresIn: expiresInString,
     });
-    console.log(`[JWT] Token gerado com sucesso`);
+    console.log(`[JWT] ✅ Token gerado com sucesso`);
     return token;
   } catch (error) {
-    console.error(`[JWT] Erro ao gerar token:`, error);
-    console.error(`[JWT] expiresIn usado: "${expiresIn}"`);
+    console.error(`[JWT] ❌ Erro ao gerar token:`, error);
+    console.error(`[JWT] expiresIn usado:`, JSON.stringify(expiresInString));
+    console.error(`[JWT] expiresIn tipo:`, typeof expiresInString);
     throw error;
   }
 }
