@@ -16,6 +16,16 @@ import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { addClientTask } from "@/utils/clients-helpers";
 import { useForm } from "react-hook-form";
 import { Input } from "@/components/ui/input";
+import { contractsService } from "@/services/contracts";
+import { Contract, ContractStatus } from "@/types/contracts";
+import { MoreVertical, FileText, RefreshCw, Edit, Trash2, Eye, Download } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
@@ -49,6 +59,8 @@ const ClientProfile = () => {
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [newClientGroup, setNewClientGroup] = useState("");
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [isLoadingContracts, setIsLoadingContracts] = useState(false);
 
   const taskForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
@@ -80,6 +92,12 @@ const ClientProfile = () => {
       loadClientData();
     }
   }, [id]);
+
+  useEffect(() => {
+    if (id && activeTab === "contracts") {
+      loadContracts();
+    }
+  }, [id, activeTab]);
 
   const loadClientData = async () => {
     if (!id) return;
@@ -252,6 +270,100 @@ const ClientProfile = () => {
       console.error("Erro ao atualizar grupo:", error);
       toast.error(`Erro ao atualizar grupo: ${error.message}`);
     }
+  };
+
+  const loadContracts = async () => {
+    if (!client?.id) return;
+    
+    try {
+      setIsLoadingContracts(true);
+      const clientContracts = await contractsService.getContracts({ clientId: client.id });
+      setContracts(clientContracts);
+    } catch (error: any) {
+      console.error("Erro ao carregar contratos:", error);
+      toast.error("Erro ao carregar contratos");
+    } finally {
+      setIsLoadingContracts(false);
+    }
+  };
+
+  const getStatusBadgeVariant = (status: ContractStatus) => {
+    switch (status) {
+      case 'ACTIVE':
+        return 'default';
+      case 'DRAFT':
+        return 'secondary';
+      case 'PENDING_SIGNATURE':
+        return 'outline';
+      case 'PARTIALLY_SIGNED':
+        return 'outline';
+      case 'EXPIRED':
+        return 'destructive';
+      case 'CANCELLED':
+        return 'destructive';
+      case 'INACTIVE':
+        return 'secondary';
+      default:
+        return 'outline';
+    }
+  };
+
+  const getStatusLabel = (status: ContractStatus) => {
+    const labels: Record<ContractStatus, string> = {
+      'DRAFT': 'Rascunho',
+      'PENDING_SIGNATURE': 'Aguardando Assinatura',
+      'PARTIALLY_SIGNED': 'Parcialmente Assinado',
+      'ACTIVE': 'Ativo',
+      'INACTIVE': 'Inativo',
+      'EXPIRED': 'Expirado',
+      'CANCELLED': 'Cancelado',
+    };
+    return labels[status] || status;
+  };
+
+  const handleRenewContract = async (contract: Contract) => {
+    if (!contract.end_date) {
+      toast.error("Contrato não possui data de término para renovação");
+      return;
+    }
+
+    try {
+      const endDate = new Date(contract.end_date);
+      const renewalPeriod = contract.renewal_period || 12; // meses
+      endDate.setMonth(endDate.getMonth() + renewalPeriod);
+
+      await contractsService.updateContract(contract.id, {
+        end_date: endDate.toISOString().split('T')[0],
+        status: 'ACTIVE',
+      });
+
+      toast.success("Contrato renovado com sucesso!");
+      loadContracts();
+    } catch (error: any) {
+      console.error("Erro ao renovar contrato:", error);
+      toast.error("Erro ao renovar contrato");
+    }
+  };
+
+  const handleDeleteContract = async (contractId: string) => {
+    if (!confirm("Tem certeza que deseja excluir este contrato?")) return;
+
+    try {
+      await contractsService.deleteContract(contractId);
+      toast.success("Contrato excluído com sucesso!");
+      loadContracts();
+    } catch (error: any) {
+      console.error("Erro ao excluir contrato:", error);
+      toast.error("Erro ao excluir contrato");
+    }
+  };
+
+  const handleViewContract = (contractId: string) => {
+    navigate(`/contracts/${contractId}`);
+  };
+
+  const handleEditContract = (contractId: string) => {
+    navigate(`/contracts/${contractId}/edit`);
   };
 
   if (isLoading) {
@@ -520,9 +632,131 @@ const ClientProfile = () => {
             </Card>
           )}
 
+          {/* Aba de Contratos */}
+          {activeTab === "contracts" && (
+            <Card>
+              <CardHeader>
+                <div className="flex justify-between items-center">
+                  <CardTitle>Contratos</CardTitle>
+                  <Button onClick={() => navigate(`/contracts/new?clientId=${client.id}`)} size="sm">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Novo Contrato
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingContracts ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-crm-primary"></div>
+                  </div>
+                ) : contracts.length > 0 ? (
+                  <div className="space-y-4">
+                    {contracts.map((contract) => (
+                      <Card key={contract.id} className="hover:bg-accent/50 transition-colors">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <FileText className="h-5 w-5 text-muted-foreground" />
+                                <h3 className="font-semibold text-base">{contract.title}</h3>
+                                <Badge variant={getStatusBadgeVariant(contract.status)}>
+                                  {getStatusLabel(contract.status)}
+                                </Badge>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm text-muted-foreground">
+                                <div>
+                                  <span className="font-medium">Número:</span>
+                                  <p className="mt-0.5">{contract.contract_number}</p>
+                                </div>
+                                {contract.start_date && (
+                                  <div>
+                                    <span className="font-medium">Início:</span>
+                                    <p className="mt-0.5">{format(new Date(contract.start_date), "dd/MM/yyyy")}</p>
+                                  </div>
+                                )}
+                                {contract.end_date && (
+                                  <div>
+                                    <span className="font-medium">Término:</span>
+                                    <p className="mt-0.5">{format(new Date(contract.end_date), "dd/MM/yyyy")}</p>
+                                  </div>
+                                )}
+                                {contract.total_value && (
+                                  <div>
+                                    <span className="font-medium">Valor:</span>
+                                    <p className="mt-0.5">
+                                      {new Intl.NumberFormat('pt-BR', {
+                                        style: 'currency',
+                                        currency: contract.currency || 'BRL',
+                                      }).format(Number(contract.total_value))}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                              {contract.auto_renew && (
+                                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                                  <RefreshCw className="h-3 w-3" />
+                                  <span>Renovação automática ativada</span>
+                                </div>
+                              )}
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleViewContract(contract.id)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  Visualizar
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleEditContract(contract.id)}>
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Editar
+                                </DropdownMenuItem>
+                                {contract.status === 'ACTIVE' && contract.end_date && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={() => handleRenewContract(contract)}>
+                                      <RefreshCw className="mr-2 h-4 w-4" />
+                                      Renovar
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  onClick={() => handleDeleteContract(contract.id)}
+                                  className="text-red-600 focus:text-red-600"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Excluir
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+                    <p className="text-muted-foreground mb-4">
+                      Nenhum contrato cadastrado para este cliente
+                    </p>
+                    <Button onClick={() => navigate(`/contracts/new?clientId=${client.id}`)} variant="outline">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Criar Primeiro Contrato
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Outras abas - placeholder */}
           {(activeTab === "opportunities" || activeTab === "messages" || activeTab === "calendar" || 
-            activeTab === "finance" || activeTab === "contracts" || activeTab === "settings") && (
+            activeTab === "finance" || activeTab === "settings") && (
             <Card>
               <CardHeader>
                 <CardTitle>
@@ -530,7 +764,6 @@ const ClientProfile = () => {
                   {activeTab === "messages" && "Mensagens"}
                   {activeTab === "calendar" && "Agenda"}
                   {activeTab === "finance" && "Financeiro"}
-                  {activeTab === "contracts" && "Contratos"}
                   {activeTab === "settings" && "Configurações"}
                 </CardTitle>
               </CardHeader>
