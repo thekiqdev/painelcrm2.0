@@ -189,7 +189,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
-      // Limpar estado local primeiro
+      // Call logout endpoint primeiro (enquanto ainda temos o token)
+      // Ignorar erros, pois o logout é principalmente client-side com JWT
+      try {
+        await apiClient.post('/api/auth/logout');
+      } catch (logoutError) {
+        // Ignorar erros do endpoint de logout
+      }
+      
+      // Limpar estado local
       setProfile(null);
       setRegistrationComplete(false);
       setUser(null);
@@ -199,14 +207,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await clearAuthState();
       apiClient.setToken(null);
       
-      // Call logout endpoint (optional, mainly for server-side cleanup)
-      await apiClient.post('/api/auth/logout');
-      
       toast.success('Logout realizado com sucesso!');
       navigate('/');
     } catch (error: any) {
-      console.error('Erro durante o logout:', error);
-      // Even if logout fails, clear local state
+      // Se algo der errado, garantir que o estado local seja limpo
+      setProfile(null);
+      setRegistrationComplete(false);
+      setUser(null);
+      setSession(null);
+      await clearAuthState();
       apiClient.setToken(null);
       toast.success('Logout realizado com sucesso!');
       navigate('/');
