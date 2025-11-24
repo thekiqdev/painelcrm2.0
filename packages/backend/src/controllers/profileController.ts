@@ -43,6 +43,21 @@ export async function updateProfile(req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!;
     const profileData = profileUpdateSchema.parse(req.body);
 
+    const existingResult = await pool.query(
+      'SELECT first_name, last_name, company_name, whatsapp_number, whatsapp_connected, registration_complete FROM profiles WHERE id = $1',
+      [userId]
+    );
+    const existingProfile = existingResult.rows[0] || {};
+
+    const mergedProfile = {
+      first_name: profileData.first_name ?? existingProfile.first_name ?? null,
+      last_name: profileData.last_name ?? existingProfile.last_name ?? null,
+      company_name: profileData.company_name ?? existingProfile.company_name ?? null,
+      whatsapp_number: profileData.whatsapp_number ?? existingProfile.whatsapp_number ?? '',
+      whatsapp_connected: profileData.whatsapp_connected ?? existingProfile.whatsapp_connected ?? false,
+      registration_complete: profileData.registration_complete ?? existingProfile.registration_complete ?? false,
+    };
+
     // Update or insert profile
     const result = await pool.query(
       `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, whatsapp_connected, registration_complete)
@@ -58,21 +73,21 @@ export async function updateProfile(req: AuthRequest, res: Response): Promise<vo
        RETURNING *`,
       [
         userId,
-        profileData.first_name,
-        profileData.last_name,
-        profileData.company_name,
-        profileData.whatsapp_number,
-        profileData.whatsapp_connected,
-        profileData.registration_complete,
+        mergedProfile.first_name,
+        mergedProfile.last_name,
+        mergedProfile.company_name,
+        mergedProfile.whatsapp_number,
+        mergedProfile.whatsapp_connected,
+        mergedProfile.registration_complete,
       ]
     );
 
-    if (profileData.company_name) {
+    if (mergedProfile.company_name) {
       await pool.query(
         `UPDATE user_profiles
          SET name = $1, updated_at = now()
          WHERE owner_id = $2`,
-        [profileData.company_name, userId]
+        [mergedProfile.company_name, userId]
       );
     }
 
