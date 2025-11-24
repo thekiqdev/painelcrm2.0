@@ -34,7 +34,32 @@ export default defineConfig(({ mode }) => ({
     sourcemap: false,
     rollupOptions: {
       output: {
-        manualChunks: undefined,
+        manualChunks: (id) => {
+          // Separar vendor chunks para melhor cache
+          if (id.includes('node_modules')) {
+            // React e React DOM juntos
+            if (id.includes('react') || id.includes('react-dom')) {
+              return 'vendor-react';
+            }
+            // Radix UI components
+            if (id.includes('@radix-ui')) {
+              return 'vendor-radix';
+            }
+            // Outras libs grandes
+            if (id.includes('recharts') || id.includes('date-fns')) {
+              return 'vendor-charts';
+            }
+            // Resto das dependências
+            return 'vendor';
+          }
+          // Chunks por feature/page
+          if (id.includes('/pages/')) {
+            const pageName = id.split('/pages/')[1]?.split('/')[0];
+            if (pageName) {
+              return `page-${pageName}`;
+            }
+          }
+        },
       },
     },
   },
