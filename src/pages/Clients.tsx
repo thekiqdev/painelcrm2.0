@@ -398,8 +398,6 @@ const Clients = () => {
         // Atualizar o grupo do cliente
         await clientsService.updateClient(selectedClient.id, { group_id: newClientGroup || undefined });
         
-        if (error) throw error;
-        
         // Atualizar o cliente na lista local
         const updatedClients = clients.map(client => {
           if (client.id === selectedClient.id) {
