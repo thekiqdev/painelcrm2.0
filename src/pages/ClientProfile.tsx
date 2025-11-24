@@ -277,29 +277,31 @@ const ClientProfile = () => {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-full w-full">
       {/* Sidebar do Cliente */}
-      <ClientSidebar clientId={client.id} clientName={client.name} />
+      <div className="w-64 border-r bg-background shrink-0">
+        <ClientSidebar clientId={client.id} clientName={client.name} />
+      </div>
 
       {/* Conteúdo Principal */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="container mx-auto p-6">
+      <div className="flex-1 overflow-y-auto bg-background">
+        <div className="max-w-7xl mx-auto p-6">
           {/* Header */}
-          <div className="mb-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <h1 className="text-3xl font-bold">{client.name}</h1>
-                  <Badge variant="outline">Cliente</Badge>
+          <div className="mb-8 pb-6 border-b">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <h1 className="text-3xl font-bold tracking-tight">{client.name}</h1>
+                  <Badge variant="secondary" className="text-xs">Cliente</Badge>
                 </div>
                 {client.company && (
-                  <p className="text-muted-foreground flex items-center gap-2">
+                  <p className="text-muted-foreground flex items-center gap-2 text-sm">
                     <Building className="h-4 w-4" />
                     {client.company}
                   </p>
                 )}
               </div>
-              <Button variant="outline" onClick={() => navigate("/clients")}>
+              <Button variant="outline" size="sm" onClick={() => navigate("/clients")}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Voltar
               </Button>
@@ -308,12 +310,12 @@ const ClientProfile = () => {
 
           {/* Conteúdo baseado na aba ativa */}
           {activeTab === "overview" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <Card>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+              <Card className="h-full">
                 <CardHeader>
-                  <CardTitle className="text-lg">Informações de Contato</CardTitle>
+                  <CardTitle className="text-base font-semibold">Informações de Contato</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent className="space-y-4">
                   {client.email && (
                     <div className="flex items-center gap-2">
                       <Mail className="h-4 w-4 text-muted-foreground" />
@@ -335,11 +337,11 @@ const ClientProfile = () => {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="h-full">
                 <CardHeader>
-                  <CardTitle className="text-lg">Estatísticas</CardTitle>
+                  <CardTitle className="text-base font-semibold">Estatísticas</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent className="space-y-4">
                   <div>
                     <Label className="text-xs text-muted-foreground">Tarefas</Label>
                     <p className="text-2xl font-bold mt-1">{clientTasks.length}</p>
@@ -351,11 +353,11 @@ const ClientProfile = () => {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="h-full">
                 <CardHeader>
-                  <CardTitle className="text-lg">Grupo</CardTitle>
+                  <CardTitle className="text-base font-semibold">Grupo</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-3">
                   <Select 
                     value={newClientGroup || "none"} 
                     onValueChange={(value) => setNewClientGroup(value === "none" ? "" : value)}
@@ -374,7 +376,7 @@ const ClientProfile = () => {
                   </Select>
                   <Button 
                     size="sm" 
-                    className="mt-2 w-full"
+                    className="w-full"
                     onClick={handleUpdateGroup}
                   >
                     Atualizar Grupo

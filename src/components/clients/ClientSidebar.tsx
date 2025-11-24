@@ -1,7 +1,6 @@
 import React from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { 
-  Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
@@ -120,8 +119,8 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   };
 
   return (
-    <Sidebar className="border-r">
-      <SidebarContent>
+    <div className="h-full flex flex-col">
+      <SidebarContent className="flex-1">
         {/* Header com botão voltar */}
         <SidebarGroup>
           <div className="px-2 py-4 border-b">
@@ -194,7 +193,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-    </Sidebar>
+    </div>
   );
 };
 
