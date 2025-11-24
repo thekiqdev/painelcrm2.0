@@ -45,6 +45,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
+import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -73,7 +74,7 @@ const Clients = () => {
   const [newClientGroup, setNewClientGroup] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
-  const [noteContent, setNoteContent] = useState("");
+  const [notes, setNotes] = useState<StickyNoteData[]>([]);
   const [clientTasks, setClientTasks] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [tabSelected, setTabSelected] = useState("details");
@@ -217,7 +218,28 @@ const Clients = () => {
   const handleViewClient = (client: any) => {
     setSelectedClient(client);
     setNewClientGroup(client.group_id || "");
-    setNoteContent(client.notes || "");
+    // Carregar notas do cliente (JSON ou string)
+    try {
+      if (client.notes) {
+        const parsedNotes = typeof client.notes === 'string' 
+          ? JSON.parse(client.notes) 
+          : client.notes;
+        setNotes(Array.isArray(parsedNotes) ? parsedNotes : []);
+      } else {
+        setNotes([]);
+      }
+    } catch (e) {
+      // Se não for JSON válido, criar uma nota com o texto antigo
+      if (typeof client.notes === 'string' && client.notes.trim()) {
+        setNotes([{
+          id: `note-${Date.now()}`,
+          content: client.notes,
+          color: 'bg-yellow-200',
+        }]);
+      } else {
+        setNotes([]);
+      }
+    }
     setIsEditMode(false);
     setIsViewDialogOpen(true);
     setTabSelected("details");
@@ -429,16 +451,54 @@ const Clients = () => {
     }
   };
   
-  const handleSaveNote = async () => {
+  const handleAddNote = () => {
+    const newNote: StickyNoteData = {
+      id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      content: "",
+      color: 'bg-yellow-200',
+      created_at: new Date().toISOString(),
+    };
+    setNotes([...notes, newNote]);
+    // Salvar automaticamente quando a nota for criada (mesmo vazia)
+    setTimeout(() => saveNotes([...notes, newNote]), 100);
+  };
+
+  const handleUpdateNote = async (id: string, content: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id 
+        ? { ...note, content, updated_at: new Date().toISOString() }
+        : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    const updatedNotes = notes.filter(note => note.id !== id);
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleColorChange = async (id: string, color: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id ? { ...note, color } : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const saveNotes = async (notesToSave: StickyNoteData[]) => {
     if (!selectedClient) return;
     
     try {
-      await clientsService.updateClient(selectedClient.id, { notes: noteContent });
+      // Salvar como JSON string
+      const notesJson = JSON.stringify(notesToSave);
+      await clientsService.updateClient(selectedClient.id, { notes: notesJson });
       
       // Atualizar o cliente na lista local
       const updatedClients = clients.map(client => {
         if (client.id === selectedClient.id) {
-          return { ...client, notes: noteContent };
+          return { ...client, notes: notesJson };
         }
         return client;
       });
@@ -448,13 +508,13 @@ const Clients = () => {
       // Atualizar o cliente selecionado
       setSelectedClient({
         ...selectedClient,
-        notes: noteContent
+        notes: notesJson
       });
       
-      toast.success("Anotação salva com sucesso!");
+      toast.success("Notas salvas com sucesso!");
     } catch (error: any) {
-      console.error("Erro ao salvar anotação:", error);
-      toast.error(`Erro ao salvar anotação: ${error.message}`);
+      console.error("Erro ao salvar notas:", error);
+      toast.error(`Erro ao salvar notas: ${error.message}`);
     }
   };
 
@@ -1145,13 +1205,38 @@ const Clients = () => {
                   </TabsContent>
                   <TabsContent value="notes">
                     <div className="space-y-4">
-                      <Textarea 
-                        className="mb-4 min-h-[150px]" 
-                        placeholder="Adicione uma nota sobre este cliente..." 
-                        value={noteContent}
-                        onChange={(e) => setNoteContent(e.target.value)}
-                      />
-                      <Button onClick={handleSaveNote}>Salvar Anotações</Button>
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-medium">Notas Autoadesivas</h3>
+                        <Button onClick={handleAddNote} size="sm">
+                          <Plus className="mr-2 h-4 w-4" />
+                          Nova Nota
+                        </Button>
+                      </div>
+                      <div className="relative min-h-[400px] p-4 bg-gray-50 rounded-lg">
+                        {notes.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {notes.map(note => (
+                              <StickyNote
+                                key={note.id}
+                                note={note}
+                                onUpdate={handleUpdateNote}
+                                onDelete={handleDeleteNote}
+                                onColorChange={handleColorChange}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-[300px] text-center">
+                            <p className="text-muted-foreground mb-4">
+                              Nenhuma nota cadastrada
+                            </p>
+                            <Button onClick={handleAddNote} variant="outline">
+                              <Plus className="mr-2 h-4 w-4" />
+                              Criar Primeira Nota
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </TabsContent>
                 </Tabs>
