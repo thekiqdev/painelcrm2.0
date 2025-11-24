@@ -7,7 +7,7 @@ import { z } from 'zod';
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
-  whatsapp: z.string().optional(),
+  whatsapp: z.string().nullable().optional(),
   first_name: z.string().optional(),
   last_name: z.string().optional(),
   company_name: z.string().optional(),
