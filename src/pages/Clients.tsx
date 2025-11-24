@@ -481,11 +481,18 @@ const Clients = () => {
       }
       
       // Adicionar a nova tarefa à lista
-      setClientTasks([...clientTasks, result.data?.[0]]);
+      // result.data já é o objeto da tarefa, não um array
+      if (result.data) {
+        setClientTasks([...clientTasks, result.data]);
+      }
       
       toast.success("Tarefa adicionada com sucesso!");
       setIsAddTaskDialogOpen(false);
       taskForm.reset();
+      
+      // Recarregar tarefas para garantir sincronização
+      const tasks = await clientsService.getClientTasks(selectedClient.id);
+      setClientTasks(tasks || []);
     } catch (error: any) {
       console.error("Erro ao adicionar tarefa:", error);
       toast.error(`Erro ao adicionar tarefa: ${error.message}`);
@@ -805,48 +812,55 @@ const Clients = () => {
           </Button>
         </div>
         <div className="space-y-2">
-          {clientTasks.map(task => (
-            <Card key={task.id} className="p-4">
-              <div className="flex justify-between">
-                <div>
-                  <h4 className="font-medium">{task.title}</h4>
-                  {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
-                  {task.due_date && (
-                    <div className="flex items-center text-xs text-muted-foreground mt-2">
-                      <CalendarIcon className="h-3 w-3 mr-1" />
-                      {format(new Date(task.due_date), "dd/MM/yyyy")}
+          {clientTasks && clientTasks.length > 0 ? (
+            clientTasks.map(task => {
+              if (!task || !task.id) return null;
+              return (
+                <Card key={task.id} className="p-4">
+                  <div className="flex justify-between">
+                    <div>
+                      <h4 className="font-medium">{task.title || 'Sem título'}</h4>
+                      {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
+                      {task.due_date && (
+                        <div className="flex items-center text-xs text-muted-foreground mt-2">
+                          <CalendarIcon className="h-3 w-3 mr-1" />
+                          {format(new Date(task.due_date), "dd/MM/yyyy")}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <div className="flex items-start space-x-2">
-                  <Select
-                    value={task.status}
-                    onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
-                  >
-                    <SelectTrigger className="h-8 w-[120px]">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Pendente">Pendente</SelectItem>
-                      <SelectItem value="Em andamento">Em andamento</SelectItem>
-                      <SelectItem value="Concluída">Concluída</SelectItem>
-                      <SelectItem value="Cancelada">Cancelada</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteTask(task.id);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ))}
+                    <div className="flex items-start space-x-2">
+                      <Select
+                        value={task.status || 'Pendente'}
+                        onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
+                      >
+                        <SelectTrigger className="h-8 w-[120px]">
+                          <SelectValue placeholder="Status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Pendente">Pendente</SelectItem>
+                          <SelectItem value="Em andamento">Em andamento</SelectItem>
+                          <SelectItem value="Concluída">Concluída</SelectItem>
+                          <SelectItem value="Cancelada">Cancelada</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteTask(task.id);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">Nenhuma tarefa cadastrada</p>
+          )}
         </div>
       </div>
     );
