@@ -356,12 +356,15 @@ const ClientProfile = () => {
                   <CardTitle className="text-lg">Grupo</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Select value={newClientGroup} onValueChange={setNewClientGroup}>
+                  <Select 
+                    value={newClientGroup || "none"} 
+                    onValueChange={(value) => setNewClientGroup(value === "none" ? "" : value)}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione um grupo" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Sem grupo</SelectItem>
+                      <SelectItem value="none">Sem grupo</SelectItem>
                       {clientGroups.map(group => (
                         <SelectItem key={group.id} value={group.id}>
                           {group.name}
