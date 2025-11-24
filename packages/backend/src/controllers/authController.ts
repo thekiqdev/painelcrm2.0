@@ -8,6 +8,9 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   whatsapp: z.string().optional(),
+  first_name: z.string().optional(),
+  last_name: z.string().optional(),
+  company_name: z.string().optional(),
 });
 
 const loginSchema = z.object({
@@ -15,42 +18,121 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Senha é obrigatória'),
 });
 
-export async function register(req: Request, res: Response): Promise<void> {
-  try {
-    const { email, password, whatsapp } = registerSchema.parse(req.body);
+async function findDefaultProfileId(userId: string): Promise<string | null> {
+  const profileMember = await pool.query(
+    `SELECT profile_id
+     FROM profile_members
+     WHERE user_id = $1
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [userId]
+  );
 
-    // Check if user already exists
-    const existingUser = await pool.query(
+  if (profileMember.rows.length > 0) {
+    return profileMember.rows[0].profile_id;
+  }
+
+  const ownedProfile = await pool.query(
+    `SELECT id
+     FROM user_profiles
+     WHERE owner_id = $1
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [userId]
+  );
+
+  return ownedProfile.rows[0]?.id || null;
+}
+
+export async function register(req: Request, res: Response): Promise<void> {
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    const {
+      email,
+      password,
+      whatsapp,
+      first_name,
+      last_name,
+      company_name,
+    } = registerSchema.parse(req.body);
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedWhatsapp = whatsapp ? whatsapp.replace(/\D/g, '') : null;
+    const firstName = first_name?.trim() || null;
+    const lastName = last_name?.trim() || null;
+    const inferredCompanyName =
+      company_name?.trim() ||
+      [firstName, lastName].filter(Boolean).join(' ').trim() ||
+      (normalizedWhatsapp ? `Empresa ${normalizedWhatsapp.slice(-4)}` : normalizedEmail.split('@')[0]);
+
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const existingUser = await client.query(
       'SELECT id FROM users WHERE email = $1',
-      [email]
+      [normalizedEmail]
     );
 
     if (existingUser.rows.length > 0) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
       res.status(400).json({ error: 'User already exists' });
       return;
     }
 
-    // Hash password
     const passwordHash = await hashPassword(password);
 
-    // Create user
-    const userResult = await pool.query(
+    const userResult = await client.query(
       `INSERT INTO users (email, password_hash, whatsapp_number)
        VALUES ($1, $2, $3)
        RETURNING id, email, created_at`,
-      [email, passwordHash, whatsapp || null]
+      [normalizedEmail, passwordHash, normalizedWhatsapp || null]
     );
 
     const user = userResult.rows[0];
 
-    // Create profile
-    await pool.query(
-      `INSERT INTO profiles (id, whatsapp_number, registration_complete)
-       VALUES ($1, $2, false)`,
-      [user.id, whatsapp || '']
+    await client.query(
+      `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
+       VALUES ($1, $2, $3, $4, $5, false)`,
+      [
+        user.id,
+        firstName,
+        lastName,
+        inferredCompanyName,
+        normalizedWhatsapp || '',
+      ]
     );
 
-    // Generate token
+    const companyResult = await client.query(
+      `INSERT INTO user_profiles (owner_id, name, description, is_admin)
+       VALUES ($1, $2, $3, true)
+       RETURNING id, name`,
+      [user.id, inferredCompanyName, null]
+    );
+
+    const companyProfileId = companyResult.rows[0].id;
+
+    await client.query(
+      `INSERT INTO profile_members (profile_id, user_id, created_by)
+       VALUES ($1, $2, $2)`,
+      [companyProfileId, user.id]
+    );
+
+    await client.query(
+      `INSERT INTO user_roles (user_id, role, profile_id, created_by)
+       VALUES ($1, 'admin', $2, $1)`,
+      [user.id, companyProfileId]
+    );
+
+    await client.query(
+      `INSERT INTO user_permissions (user_id, profile_id, permission, created_by)
+       VALUES ($1, $2, 'all_access', $1)`,
+      [user.id, companyProfileId]
+    );
+
+    await client.query('COMMIT');
+
     const token = generateToken({
       userId: user.id,
       email: user.email,
@@ -60,16 +142,31 @@ export async function register(req: Request, res: Response): Promise<void> {
       user: {
         id: user.id,
         email: user.email,
+        whatsapp_number: normalizedWhatsapp,
+        first_name: firstName || undefined,
+        last_name: lastName || undefined,
+        company_name: inferredCompanyName,
+        registration_complete: false,
+        default_profile_id: companyProfileId,
       },
       token,
     });
   } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Rollback error:', rollbackError);
+      }
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
     }
     console.error('Register error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 }
 
@@ -160,6 +257,8 @@ export async function login(req: Request, res: Response): Promise<void> {
       throw tokenError;
     }
 
+    const defaultProfileId = await findDefaultProfileId(user.id);
+
     res.json({
       user: {
         id: user.id,
@@ -169,6 +268,7 @@ export async function login(req: Request, res: Response): Promise<void> {
         first_name: profile.first_name,
         last_name: profile.last_name,
         company_name: profile.company_name,
+        default_profile_id: defaultProfileId,
       },
       token,
     });
@@ -217,6 +317,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     }
 
     const user = userResult.rows[0];
+    const defaultProfileId = await findDefaultProfileId(user.id);
+
     res.json({
       id: user.id,
       email: user.email,
@@ -227,6 +329,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       whatsapp_connected: user.whatsapp_connected,
       registration_complete: user.registration_complete,
       created_at: user.created_at,
+      default_profile_id: defaultProfileId,
     });
   } catch (error) {
     console.error('Get me error:', error);

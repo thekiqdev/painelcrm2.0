@@ -15,6 +15,16 @@ interface User {
   whatsapp_connected?: boolean;
   registration_complete?: boolean;
   created_at?: string;
+  default_profile_id?: string | null;
+}
+
+interface SignUpParams {
+  identifier: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  whatsapp?: string;
 }
 
 type AuthContextType = {
@@ -24,7 +34,7 @@ type AuthContextType = {
   profile: any | null;
   registrationComplete: boolean;
   signIn: (identifier: string, password: string) => Promise<void>;
-  signUp: (identifier: string, password: string) => Promise<void>;
+  signUp: (params: SignUpParams) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: any) => Promise<void>;
   updateRegistrationStep: (step: string, completed: boolean) => Promise<void>;
@@ -126,20 +136,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signUp = async (identifier: string, password: string) => {
+  const signUp = async ({
+    identifier,
+    password,
+    firstName,
+    lastName,
+    companyName,
+    whatsapp,
+  }: SignUpParams) => {
     try {
-      // Determine if identifier is email or phone
-      const isEmail = identifier.includes('@');
-      const email = isEmail ? identifier.trim().toLowerCase() : null;
-      const whatsapp = isEmail ? null : identifier.replace(/\D/g, '');
+      const trimmedIdentifier = identifier.trim();
+      const isEmail = trimmedIdentifier.includes('@');
+      const normalizedWhatsapp = whatsapp
+        ? whatsapp.replace(/\D/g, '')
+        : !isEmail
+          ? trimmedIdentifier.replace(/\D/g, '')
+          : undefined;
+      const email = isEmail ? trimmedIdentifier.toLowerCase() : null;
       
-      // If phone, create email from phone number (temporary until we update backend)
-      const registerEmail = email || `${whatsapp}@multicrm.app`;
+      const registerEmail = email || `${normalizedWhatsapp}@multicrm.app`;
       
-      const response = await apiClient.post<{ user: User; token: string }>('/api/auth/register', {
+      const payload = {
         email: registerEmail,
         password,
-        whatsapp: whatsapp || null,
+        whatsapp: normalizedWhatsapp || null,
+        first_name: firstName,
+        last_name: lastName,
+        company_name: companyName,
+      };
+      
+      const response = await apiClient.post<{ user: User; token: string }>('/api/auth/register', {
+        ...payload,
       });
 
       if (response.error) {

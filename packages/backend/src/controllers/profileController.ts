@@ -67,6 +67,15 @@ export async function updateProfile(req: AuthRequest, res: Response): Promise<vo
       ]
     );
 
+    if (profileData.company_name) {
+      await pool.query(
+        `UPDATE user_profiles
+         SET name = $1, updated_at = now()
+         WHERE owner_id = $2`,
+        [profileData.company_name, userId]
+      );
+    }
+
     res.json(result.rows[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
