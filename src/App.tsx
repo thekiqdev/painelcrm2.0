@@ -16,6 +16,7 @@ import NotFound from "./pages/NotFound";
 // Lazy load todas as rotas protegidas para otimizar carregamento inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Clients = lazy(() => import("./pages/Clients"));
+const ClientProfile = lazy(() => import("./pages/ClientProfile"));
 const Leads = lazy(() => import("./pages/Leads"));
 const Funnel = lazy(() => import("./pages/Funnel"));
 const Tasks = lazy(() => import("./pages/Tasks"));
@@ -90,6 +91,24 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Clients />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+              <Route path="/clients/:id" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ClientProfile />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+              <Route path="/clients/:id/:tab" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ClientProfile />
                     </Suspense>
                   </AppLayout>
                 </AuthGuard>

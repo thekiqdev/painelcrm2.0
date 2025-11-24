@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -216,33 +217,8 @@ const Clients = () => {
   const paginatedClients = sortedClients.slice(startIndex, startIndex + itemsPerPage);
 
   const handleViewClient = (client: any) => {
-    setSelectedClient(client);
-    setNewClientGroup(client.group_id || "");
-    // Carregar notas do cliente (JSON ou string)
-    try {
-      if (client.notes) {
-        const parsedNotes = typeof client.notes === 'string' 
-          ? JSON.parse(client.notes) 
-          : client.notes;
-        setNotes(Array.isArray(parsedNotes) ? parsedNotes : []);
-      } else {
-        setNotes([]);
-      }
-    } catch (e) {
-      // Se não for JSON válido, criar uma nota com o texto antigo
-      if (typeof client.notes === 'string' && client.notes.trim()) {
-        setNotes([{
-          id: `note-${Date.now()}`,
-          content: client.notes,
-          color: 'bg-yellow-200',
-        }]);
-      } else {
-        setNotes([]);
-      }
-    }
-    setIsEditMode(false);
-    setIsViewDialogOpen(true);
-    setTabSelected("details");
+    // Navegar para a página de perfil do cliente
+    navigate(`/clients/${client.id}`);
   };
   
   const handleEditClient = () => {
