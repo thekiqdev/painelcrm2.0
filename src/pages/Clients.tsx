@@ -60,6 +60,7 @@ const taskSchema = z.object({
 });
 
 const Clients = () => {
+  const navigate = useNavigate();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
