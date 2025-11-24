@@ -2,6 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ClientSidebar } from "@/components/clients/ClientSidebar";
 import { clientsService } from "@/services/clients";
+import { tasksService, Task, ChecklistItem } from "@/services/tasks";
+import { contractsService } from "@/services/contracts";
+import { Contract } from "@/types/contracts";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,25 +13,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User } from "lucide-react";
+import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare } from "lucide-react";
 import { format } from "date-fns";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
-import { addClientTask } from "@/utils/clients-helpers";
+import { cn } from "@/lib/utils";
 import { useForm } from "react-hook-form";
 import { Input } from "@/components/ui/input";
-import { contractsService } from "@/services/contracts";
-import { Contract, ContractStatus } from "@/types/contracts";
-import { MoreVertical, FileText, RefreshCw, Edit, Trash2, Eye, Download } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { CalendarIcon } from "lucide-react";
@@ -40,13 +34,50 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const taskSchema = z.object({
   title: z.string().min(3, "Título deve ter pelo menos 3 caracteres"),
   description: z.string().optional(),
   due_date: z.date().optional(),
-  status: z.string().default("Pendente"),
+  time: z.string().optional(),
+  priority: z.enum(["low", "medium", "high"]).default("medium"),
+  status: z.enum(["pending", "completed"]).default("pending"),
+  assignee: z.string().optional(),
+  deal: z.string().optional(),
 });
+
+const priorityLabels: Record<"low" | "medium" | "high", string> = {
+  low: "Baixa",
+  medium: "Média",
+  high: "Alta",
+};
+
+const priorityVariants: Record<"low" | "medium" | "high", "secondary" | "default" | "destructive"> = {
+  low: "secondary",
+  medium: "default",
+  high: "destructive",
+};
+
+const statusLabels: Record<"pending" | "completed", string> = {
+  pending: "Pendente",
+  completed: "Concluída",
+};
 
 const ClientProfile = () => {
   const { id } = useParams<{ id: string }>();
@@ -55,19 +86,41 @@ const ClientProfile = () => {
   const [client, setClient] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notes, setNotes] = useState<StickyNoteData[]>([]);
-  const [clientTasks, setClientTasks] = useState<any[]>([]);
+  const [clientTasks, setClientTasks] = useState<Task[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [newClientGroup, setNewClientGroup] = useState("");
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
+  const [isEditingTask, setIsEditingTask] = useState(false);
+  const [newChecklistItem, setNewChecklistItem] = useState("");
+  const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
+    resolver: zodResolver(taskSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      status: "pending",
+      priority: "medium",
+      assignee: "",
+      deal: "",
+      due_date: undefined,
+      time: "",
+    },
+  });
+
 
   const taskForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
       title: "",
       description: "",
-      status: "Pendente",
+      status: "pending",
+      priority: "medium",
+      assignee: "",
+      deal: "",
+      time: "",
     },
   });
 
@@ -94,10 +147,39 @@ const ClientProfile = () => {
   }, [id]);
 
   useEffect(() => {
-    if (id && activeTab === "contracts") {
+    if (client?.id) {
+      loadClientTasks(client.id);
+    }
+  }, [client?.id]);
+
+  useEffect(() => {
+    if (selectedTask) {
+      taskDetailForm.reset({
+        title: selectedTask.title || "",
+        description: selectedTask.description || "",
+        status: selectedTask.status,
+        priority: selectedTask.priority || "medium",
+        assignee: selectedTask.assignee || "",
+        deal: selectedTask.deal || "",
+        due_date: selectedTask.date ? new Date(selectedTask.date) : undefined,
+        time: selectedTask.time || "",
+      });
+      setNewChecklistItem("");
+      setIsEditingTask(false);
+    }
+  }, [selectedTask, taskDetailForm]);
+
+  useEffect(() => {
+    if (activeTab === "contracts" && id) {
       loadContracts();
     }
-  }, [id, activeTab]);
+  }, [activeTab, id]);
+
+  useEffect(() => {
+    if (activeTab === "contracts" && id) {
+      loadContracts();
+    }
+  }, [activeTab, id]);
 
   const loadClientData = async () => {
     if (!id) return;
@@ -134,9 +216,7 @@ const ClientProfile = () => {
         }
       }
 
-      // Carregar tarefas
-      const tasks = await clientsService.getClientTasks(id);
-      setClientTasks(tasks || []);
+      await loadClientTasks(clientData.id);
 
       // Carregar grupos
       const groups = await clientsService.getClientGroups();
@@ -200,47 +280,65 @@ const ClientProfile = () => {
     }
   };
 
+  const loadClientTasks = async (clientId: string) => {
+    try {
+      const tasks = await tasksService.getTasks({ clientId });
+      setClientTasks(tasks || []);
+    } catch (error) {
+      console.error("Erro ao carregar tarefas:", error);
+      setClientTasks([]);
+    }
+  };
+
   const handleAddTask = async (values: z.infer<typeof taskSchema>) => {
     if (!client) return;
     
     try {
-      const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
+      const formattedDueDate = values.due_date ? format(values.due_date, "yyyy-MM-dd") : undefined;
       
-      const result = await addClientTask({
-        client_id: client.id,
+      const newTask = await tasksService.createTask({
         title: values.title,
-        description: values.description || "",
-        due_date: formattedDueDate,
-        status: values.status
+        description: values.description || undefined,
+        date: formattedDueDate || null,
+        time: values.time || undefined,
+        status: values.status,
+        priority: values.priority,
+        assignee: values.assignee || undefined,
+        deal: values.deal || undefined,
+        clientId: client.id,
+        client: client.name,
+        checklist: [],
       });
 
-      if (!result.success) {
-        throw new Error(result.error?.message || "Erro ao adicionar tarefa");
-      }
-      
-      if (result.data) {
-        setClientTasks([...clientTasks, result.data]);
-      }
+      setClientTasks((prev) => [...prev, newTask]);
       
       toast.success("Tarefa adicionada com sucesso!");
       setIsAddTaskDialogOpen(false);
-      taskForm.reset();
-      
-      // Recarregar tarefas
-      const tasks = await clientsService.getClientTasks(client.id);
-      setClientTasks(tasks || []);
+      taskForm.reset({
+        title: "",
+        description: "",
+        due_date: undefined,
+        time: "",
+        priority: "medium",
+        status: "pending",
+        assignee: "",
+        deal: "",
+      });
     } catch (error: any) {
       console.error("Erro ao adicionar tarefa:", error);
       toast.error(`Erro ao adicionar tarefa: ${error.message}`);
     }
   };
 
-  const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
+  const handleUpdateTaskStatus = async (taskId: string, newStatus: "pending" | "completed") => {
     try {
-      await clientsService.updateClientTask(taskId, { status: newStatus });
+      const updatedTask = await tasksService.updateTask(taskId, { status: newStatus });
       setClientTasks(clientTasks.map(task => 
-        task.id === taskId ? { ...task, status: newStatus } : task
+        task.id === taskId ? updatedTask : task
       ));
+      if (selectedTask?.id === updatedTask.id) {
+        setSelectedTask(updatedTask);
+      }
       toast.success("Status da tarefa atualizado!");
     } catch (error: any) {
       console.error("Erro ao atualizar tarefa:", error);
@@ -250,13 +348,86 @@ const ClientProfile = () => {
 
   const handleDeleteTask = async (taskId: string) => {
     try {
-      await clientsService.deleteClientTask(taskId);
+      await tasksService.deleteTask(taskId);
       setClientTasks(clientTasks.filter(task => task.id !== taskId));
+      if (selectedTask?.id === taskId) {
+        setSelectedTask(null);
+        setIsTaskDetailOpen(false);
+      }
       toast.success("Tarefa excluída com sucesso!");
     } catch (error: any) {
       console.error("Erro ao excluir tarefa:", error);
       toast.error("Erro ao excluir tarefa");
     }
+  };
+
+  const openTaskDetail = (task: Task) => {
+    setSelectedTask(task);
+    setIsTaskDetailOpen(true);
+  };
+
+  const closeTaskDetail = () => {
+    setIsTaskDetailOpen(false);
+    setSelectedTask(null);
+    setNewChecklistItem("");
+    setIsEditingTask(false);
+  };
+
+  const updateChecklist = async (updatedChecklist: ChecklistItem[]) => {
+    if (!selectedTask) return;
+    const updatedTask = await tasksService.updateTask(selectedTask.id, { checklist: updatedChecklist });
+    setSelectedTask(updatedTask);
+    setClientTasks(prev => prev.map(task => (task.id === updatedTask.id ? updatedTask : task)));
+  };
+
+  const handleSaveTaskEdits = async (values: z.infer<typeof taskSchema>) => {
+    if (!selectedTask) return;
+    try {
+      const formattedDueDate = values.due_date ? format(values.due_date, "yyyy-MM-dd") : undefined;
+      const updatedTask = await tasksService.updateTask(selectedTask.id, {
+        title: values.title,
+        description: values.description || undefined,
+        date: formattedDueDate || null,
+        time: values.time || null,
+        priority: values.priority,
+        status: values.status,
+        assignee: values.assignee || null,
+        deal: values.deal || null,
+      });
+      setSelectedTask(updatedTask);
+      setClientTasks(prev => prev.map(task => (task.id === updatedTask.id ? updatedTask : task)));
+      setIsEditingTask(false);
+      toast.success("Tarefa atualizada com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao atualizar tarefa:", error);
+      toast.error("Erro ao salvar alterações da tarefa");
+    }
+  };
+
+  const handleToggleChecklistItem = async (itemId: string) => {
+    if (!selectedTask || !selectedTask.checklist) return;
+    const updatedChecklist = selectedTask.checklist.map(item =>
+      item.id === itemId ? { ...item, completed: !item.completed } : item
+    );
+    await updateChecklist(updatedChecklist);
+  };
+
+  const handleRemoveChecklistItem = async (itemId: string) => {
+    if (!selectedTask || !selectedTask.checklist) return;
+    const updatedChecklist = selectedTask.checklist.filter(item => item.id !== itemId);
+    await updateChecklist(updatedChecklist);
+  };
+
+  const handleAddChecklistItem = async () => {
+    if (!selectedTask || !newChecklistItem.trim()) return;
+    const newItem: ChecklistItem = {
+      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+      text: newChecklistItem.trim(),
+      completed: false,
+    };
+    const updatedChecklist = [...(selectedTask.checklist || []), newItem];
+    await updateChecklist(updatedChecklist);
+    setNewChecklistItem("");
   };
 
   const handleUpdateGroup = async () => {
@@ -273,12 +444,12 @@ const ClientProfile = () => {
   };
 
   const loadContracts = async () => {
-    if (!client?.id) return;
+    if (!id) return;
     
     try {
       setIsLoadingContracts(true);
-      const clientContracts = await contractsService.getContracts({ clientId: client.id });
-      setContracts(clientContracts);
+      const contractsData = await contractsService.getContracts({ clientId: id });
+      setContracts(contractsData || []);
     } catch (error: any) {
       console.error("Erro ao carregar contratos:", error);
       toast.error("Erro ao carregar contratos");
@@ -287,29 +458,29 @@ const ClientProfile = () => {
     }
   };
 
-  const getStatusBadgeVariant = (status: ContractStatus) => {
+  const getStatusBadgeVariant = (status: string) => {
     switch (status) {
       case 'ACTIVE':
         return 'default';
       case 'DRAFT':
-        return 'secondary';
-      case 'PENDING_SIGNATURE':
         return 'outline';
+      case 'PENDING_SIGNATURE':
+        return 'secondary';
       case 'PARTIALLY_SIGNED':
+        return 'secondary';
+      case 'INACTIVE':
         return 'outline';
       case 'EXPIRED':
         return 'destructive';
       case 'CANCELLED':
         return 'destructive';
-      case 'INACTIVE':
-        return 'secondary';
       default:
         return 'outline';
     }
   };
 
-  const getStatusLabel = (status: ContractStatus) => {
-    const labels: Record<ContractStatus, string> = {
+  const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
       'DRAFT': 'Rascunho',
       'PENDING_SIGNATURE': 'Aguardando Assinatura',
       'PARTIALLY_SIGNED': 'Parcialmente Assinado',
@@ -321,27 +492,31 @@ const ClientProfile = () => {
     return labels[status] || status;
   };
 
-  const handleRenewContract = async (contract: Contract) => {
-    if (!contract.end_date) {
-      toast.error("Contrato não possui data de término para renovação");
-      return;
-    }
-
+  const handleRenewContract = async (contractId: string) => {
     try {
-      const endDate = new Date(contract.end_date);
-      const renewalPeriod = contract.renewal_period || 12; // meses
-      endDate.setMonth(endDate.getMonth() + renewalPeriod);
+      const contract = contracts.find(c => c.id === contractId);
+      if (!contract) return;
 
-      await contractsService.updateContract(contract.id, {
-        end_date: endDate.toISOString().split('T')[0],
-        status: 'ACTIVE',
+      // Criar novo contrato baseado no atual
+      const newContract = await contractsService.createContract({
+        title: `${contract.title} (Renovação)`,
+        client_id: contract.client_id || undefined,
+        status: 'DRAFT',
+        start_date: contract.end_date ? new Date(new Date(contract.end_date).getTime() + 86400000).toISOString().split('T')[0] : undefined,
+        end_date: contract.renewal_period && contract.end_date 
+          ? new Date(new Date(contract.end_date).getTime() + contract.renewal_period * 86400000).toISOString().split('T')[0]
+          : undefined,
+        total_value: contract.total_value || undefined,
+        currency: contract.currency || 'BRL',
+        auto_renew: contract.auto_renew,
+        renewal_period: contract.renewal_period || undefined,
       });
 
       toast.success("Contrato renovado com sucesso!");
-      loadContracts();
+      await loadContracts();
     } catch (error: any) {
       console.error("Erro ao renovar contrato:", error);
-      toast.error("Erro ao renovar contrato");
+      toast.error(`Erro ao renovar contrato: ${error.message}`);
     }
   };
 
@@ -351,19 +526,19 @@ const ClientProfile = () => {
     try {
       await contractsService.deleteContract(contractId);
       toast.success("Contrato excluído com sucesso!");
-      loadContracts();
+      await loadContracts();
     } catch (error: any) {
       console.error("Erro ao excluir contrato:", error);
-      toast.error("Erro ao excluir contrato");
+      toast.error(`Erro ao excluir contrato: ${error.message}`);
     }
   };
 
-  const handleViewContract = (contractId: string) => {
-    navigate(`/contracts/${contractId}`);
-  };
-
-  const handleEditContract = (contractId: string) => {
-    navigate(`/contracts/${contractId}/edit`);
+  const formatCurrency = (value: number | null, currency: string = 'BRL') => {
+    if (!value) return "—";
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: currency,
+    }).format(value);
   };
 
   if (isLoading) {
@@ -548,41 +723,83 @@ const ClientProfile = () => {
               <CardContent>
                 <div className="space-y-2">
                   {clientTasks && clientTasks.length > 0 ? (
-                    clientTasks.map(task => {
-                      if (!task || !task.id) return null;
-                      return (
-                        <Card key={task.id} className="p-4">
-                          <div className="flex justify-between">
+                    clientTasks.map(task => (
+                      <Card
+                        key={task.id}
+                        className="p-4 cursor-pointer"
+                        onClick={(event) => {
+                          const target = event.target as HTMLElement;
+                          if (target.closest("button") || target.closest("select") || target.closest("input")) {
+                            return;
+                          }
+                          openTaskDetail(task);
+                        }}
+                      >
+                        <div className="flex flex-col gap-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
-                              <h4 className="font-medium">{task.title || 'Sem título'}</h4>
-                              {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
-                              {task.due_date && (
-                                <div className="flex items-center text-xs text-muted-foreground mt-2">
-                                  <CalendarIcon className="h-3 w-3 mr-1" />
-                                  {format(new Date(task.due_date), "dd/MM/yyyy")}
-                                </div>
+                              <h4 className="font-semibold">{task.title}</h4>
+                              {task.description && (
+                                <p className="text-sm text-muted-foreground mt-1">{task.description}</p>
                               )}
                             </div>
-                            <div className="flex items-start space-x-2">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={priorityVariants[task.priority || "medium"]}>
+                                Prioridade {priorityLabels[task.priority || "medium"]}
+                              </Badge>
                               <Select
-                                value={task.status || 'Pendente'}
-                                onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
+                                value={task.status}
+                                onValueChange={(value: "pending" | "completed") => handleUpdateTaskStatus(task.id, value)}
                               >
-                                <SelectTrigger className="h-8 w-[120px]">
+                                <SelectTrigger className="h-8 w-[140px]" onClick={(e) => e.stopPropagation()}>
                                   <SelectValue placeholder="Status" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="Pendente">Pendente</SelectItem>
-                                  <SelectItem value="Em andamento">Em andamento</SelectItem>
-                                  <SelectItem value="Concluída">Concluída</SelectItem>
-                                  <SelectItem value="Cancelada">Cancelada</SelectItem>
+                                  <SelectItem value="pending">Pendente</SelectItem>
+                                  <SelectItem value="completed">Concluída</SelectItem>
                                 </SelectContent>
                               </Select>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteTask(task.id);
+                                }}
+                              >
+                                Remover
+                              </Button>
                             </div>
                           </div>
-                        </Card>
-                      );
-                    })
+                          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                            {task.date && (
+                              <span className="flex items-center gap-1">
+                                <CalendarIcon className="h-3 w-3" />
+                                {format(new Date(task.date), "dd/MM/yyyy")}
+                              </span>
+                            )}
+                            {task.time && (
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                {task.time}
+                              </span>
+                            )}
+                            {task.assignee && (
+                              <span className="flex items-center gap-1">
+                                <User className="h-3 w-3" />
+                                {task.assignee}
+                              </span>
+                            )}
+                            {task.deal && (
+                              <span className="flex items-center gap-1">
+                                <FileText className="h-3 w-3" />
+                                Negócio: {task.deal}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    ))
                   ) : (
                     <p className="text-sm text-muted-foreground text-center py-4">Nenhuma tarefa cadastrada</p>
                   )}
@@ -590,6 +807,313 @@ const ClientProfile = () => {
               </CardContent>
             </Card>
           )}
+ 
+          {/* Dialog de detalhes da tarefa */}
+      <Dialog open={isTaskDetailOpen} onOpenChange={(open) => (open ? null : closeTaskDetail())}>
+            {selectedTask && (
+          <DialogContent className="w-[95vw] max-w-[520px] max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Checkbox
+                      checked={selectedTask.status === "completed"}
+                      onCheckedChange={() =>
+                        handleUpdateTaskStatus(
+                          selectedTask.id,
+                          selectedTask.status === "completed" ? "pending" : "completed"
+                        )
+                      }
+                    />
+                    {selectedTask.title}
+                  </DialogTitle>
+                  <DialogDescription className="flex flex-wrap gap-2 mt-2">
+                    <Badge variant="outline">Cliente: {client.name}</Badge>
+                    <Badge variant={priorityVariants[selectedTask.priority || "medium"]}>
+                      {priorityLabels[selectedTask.priority || "medium"]} Prioridade
+                    </Badge>
+                    <Badge variant={selectedTask.status === "completed" ? "outline" : "default"}>
+                      {statusLabels[selectedTask.status]}
+                    </Badge>
+                  </DialogDescription>
+                </DialogHeader>
+                {isEditingTask ? (
+                  <Form {...taskDetailForm}>
+                    <form onSubmit={taskDetailForm.handleSubmit(handleSaveTaskEdits)} className="space-y-4">
+                      <FormField
+                        control={taskDetailForm.control}
+                        name="title"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Título</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Digite o título da tarefa" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={taskDetailForm.control}
+                        name="description"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Descrição</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} placeholder="Descreva os detalhes da tarefa" value={field.value || ""} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <FormField
+                          control={taskDetailForm.control}
+                          name="due_date"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-col">
+                              <FormLabel>Data de vencimento</FormLabel>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <FormControl>
+                                    <Button variant={"outline"} className="w-full pl-3 text-left font-normal flex justify-between items-center">
+                                      {field.value ? format(field.value, "dd/MM/yyyy") : <span>Selecionar data</span>}
+                                      <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                    </Button>
+                                  </FormControl>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <CalendarComponent mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                                </PopoverContent>
+                              </Popover>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={taskDetailForm.control}
+                          name="time"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Horário</FormLabel>
+                              <FormControl>
+                                <Input type="time" {...field} value={field.value || ""} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <FormField
+                          control={taskDetailForm.control}
+                          name="priority"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Prioridade</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecione a prioridade" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="high">Alta</SelectItem>
+                                  <SelectItem value="medium">Média</SelectItem>
+                                  <SelectItem value="low">Baixa</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={taskDetailForm.control}
+                          name="status"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Status</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecione o status" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="pending">Pendente</SelectItem>
+                                  <SelectItem value="completed">Concluída</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <FormField
+                        control={taskDetailForm.control}
+                        name="assignee"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Responsável</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Nome do responsável" value={field.value || ""} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={taskDetailForm.control}
+                        name="deal"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Negócio</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Nome do negócio (opcional)" value={field.value || ""} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </form>
+                  </Form>
+                ) : (
+                  <div className="space-y-4">
+                    {selectedTask.description && (
+                      <div>
+                        <Label className="text-xs uppercase text-muted-foreground">Descrição</Label>
+                        <p className="mt-1 text-sm text-muted-foreground">{selectedTask.description}</p>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                      {selectedTask.date && (
+                        <div className="flex items-center gap-2">
+                          <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                          <span>{format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
+                        </div>
+                      )}
+                      {selectedTask.time && (
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          <span>{selectedTask.time}</span>
+                        </div>
+                      )}
+                      {selectedTask.assignee && (
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-muted-foreground" />
+                          <span>{selectedTask.assignee}</span>
+                        </div>
+                      )}
+                      {selectedTask.deal && (
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          <span>Negócio: {selectedTask.deal}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="flex items-center gap-2">
+                        <CheckSquare className="h-4 w-4 text-muted-foreground" />
+                        <h4 className="text-sm font-semibold">Lista de Verificação</h4>
+                      </div>
+                      {selectedTask.checklist && selectedTask.checklist.length > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          {
+                            selectedTask.checklist.filter(item => item.completed).length
+                          }/{selectedTask.checklist.length} itens concluídos
+                        </span>
+                      )}
+                    </div>
+                    {selectedTask.checklist && selectedTask.checklist.length > 0 ? (
+                      <div className="space-y-2 mb-3">
+                        {selectedTask.checklist.map(item => (
+                          <div key={item.id} className="flex items-center gap-3 rounded-md border p-2 bg-muted/50">
+                            <Checkbox
+                              checked={item.completed}
+                              onCheckedChange={() => handleToggleChecklistItem(item.id)}
+                            />
+                            <span className={cn("flex-1 text-sm", { "line-through text-muted-foreground": item.completed })}>
+                              {item.text}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => handleRemoveChecklistItem(item.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground mb-3">Nenhum item na lista de verificação.</p>
+                    )}
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Adicionar item à lista"
+                        value={newChecklistItem}
+                        onChange={(e) => setNewChecklistItem(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddChecklistItem();
+                          }
+                        }}
+                      />
+                      <Button onClick={handleAddChecklistItem} disabled={!newChecklistItem.trim()}>
+                        Adicionar
+                      </Button>
+                    </div>
+                  </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => setIsEditingTask(true)}
+                      >
+                        Editar tarefa
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() =>
+                          handleUpdateTaskStatus(
+                            selectedTask.id,
+                            selectedTask.status === "completed" ? "pending" : "completed"
+                          )
+                        }
+                      >
+                        {selectedTask.status === "completed" ? "Marcar como pendente" : "Marcar como concluída"}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        className="flex-1"
+                        onClick={() => handleDeleteTask(selectedTask.id)}
+                      >
+                        Excluir tarefa
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <DialogFooter>
+                  {isEditingTask ? (
+                    <>
+                      <Button variant="outline" onClick={() => setIsEditingTask(false)}>
+                        Cancelar
+                      </Button>
+                      <Button onClick={taskDetailForm.handleSubmit(handleSaveTaskEdits)}>
+                        Salvar alterações
+                      </Button>
+                    </>
+                  ) : (
+                    <Button onClick={closeTaskDetail} variant="outline">
+                      Fechar
+                    </Button>
+                  )}
+                </DialogFooter>
+              </DialogContent>
+            )}
+          </Dialog>
 
           {activeTab === "notes" && (
             <Card>
@@ -636,9 +1160,9 @@ const ClientProfile = () => {
           {activeTab === "contracts" && (
             <Card>
               <CardHeader>
-                <div className="flex justify-between items-center">
+                <div className="flex items-center justify-between">
                   <CardTitle>Contratos</CardTitle>
-                  <Button onClick={() => navigate(`/contracts/new?clientId=${client.id}`)} size="sm">
+                  <Button onClick={() => navigate(`/contracts/new?clientId=${id}`)} size="sm">
                     <Plus className="mr-2 h-4 w-4" />
                     Novo Contrato
                   </Button>
@@ -646,109 +1170,96 @@ const ClientProfile = () => {
               </CardHeader>
               <CardContent>
                 {isLoadingContracts ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-crm-primary"></div>
+                  <div className="py-10 text-center">
+                    <p className="text-muted-foreground">Carregando contratos...</p>
                   </div>
-                ) : contracts.length > 0 ? (
-                  <div className="space-y-4">
-                    {contracts.map((contract) => (
-                      <Card key={contract.id} className="hover:bg-accent/50 transition-colors">
-                        <CardContent className="p-4">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                <FileText className="h-5 w-5 text-muted-foreground" />
-                                <h3 className="font-semibold text-base">{contract.title}</h3>
-                                <Badge variant={getStatusBadgeVariant(contract.status)}>
-                                  {getStatusLabel(contract.status)}
-                                </Badge>
-                              </div>
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm text-muted-foreground">
-                                <div>
-                                  <span className="font-medium">Número:</span>
-                                  <p className="mt-0.5">{contract.contract_number}</p>
-                                </div>
-                                {contract.start_date && (
-                                  <div>
-                                    <span className="font-medium">Início:</span>
-                                    <p className="mt-0.5">{format(new Date(contract.start_date), "dd/MM/yyyy")}</p>
-                                  </div>
-                                )}
-                                {contract.end_date && (
-                                  <div>
-                                    <span className="font-medium">Término:</span>
-                                    <p className="mt-0.5">{format(new Date(contract.end_date), "dd/MM/yyyy")}</p>
-                                  </div>
-                                )}
-                                {contract.total_value && (
-                                  <div>
-                                    <span className="font-medium">Valor:</span>
-                                    <p className="mt-0.5">
-                                      {new Intl.NumberFormat('pt-BR', {
-                                        style: 'currency',
-                                        currency: contract.currency || 'BRL',
-                                      }).format(Number(contract.total_value))}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                              {contract.auto_renew && (
-                                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                                  <RefreshCw className="h-3 w-3" />
-                                  <span>Renovação automática ativada</span>
-                                </div>
-                              )}
-                            </div>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => handleViewContract(contract.id)}>
-                                  <Eye className="mr-2 h-4 w-4" />
-                                  Visualizar
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleEditContract(contract.id)}>
-                                  <Edit className="mr-2 h-4 w-4" />
-                                  Editar
-                                </DropdownMenuItem>
-                                {contract.status === 'ACTIVE' && contract.end_date && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem onClick={() => handleRenewContract(contract)}>
-                                      <RefreshCw className="mr-2 h-4 w-4" />
-                                      Renovar
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                  onClick={() => handleDeleteContract(contract.id)}
-                                  className="text-red-600 focus:text-red-600"
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Excluir
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <FileText className="h-12 w-12 text-muted-foreground mb-4" />
-                    <p className="text-muted-foreground mb-4">
-                      Nenhum contrato cadastrado para este cliente
-                    </p>
-                    <Button onClick={() => navigate(`/contracts/new?clientId=${client.id}`)} variant="outline">
+                ) : contracts.length === 0 ? (
+                  <div className="py-10 text-center">
+                    <p className="text-muted-foreground mb-4">Nenhum contrato encontrado</p>
+                    <Button onClick={() => navigate(`/contracts/new?clientId=${id}`)} variant="outline">
                       <Plus className="mr-2 h-4 w-4" />
                       Criar Primeiro Contrato
                     </Button>
                   </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Número</TableHead>
+                        <TableHead>Título</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Data Início</TableHead>
+                        <TableHead>Data Fim</TableHead>
+                        <TableHead>Valor</TableHead>
+                        <TableHead>Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {contracts.map((contract) => (
+                        <TableRow key={contract.id}>
+                          <TableCell className="font-mono text-sm">
+                            {contract.contract_number}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {contract.title}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusBadgeVariant(contract.status)}>
+                              {getStatusLabel(contract.status)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {contract.start_date 
+                              ? format(new Date(contract.start_date), "dd/MM/yyyy")
+                              : "—"}
+                          </TableCell>
+                          <TableCell>
+                            {contract.end_date 
+                              ? format(new Date(contract.end_date), "dd/MM/yyyy")
+                              : "—"}
+                          </TableCell>
+                          <TableCell>
+                            {formatCurrency(contract.total_value, contract.currency)}
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>Ações</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => navigate(`/contracts/${contract.id}`, { state: { fromClientProfile: true } })}>
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  Visualizar
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => navigate(`/contracts/${contract.id}/edit`, { state: { fromClientProfile: true } })}>
+                                  <Edit2 className="h-4 w-4 mr-2" />
+                                  Editar
+                                </DropdownMenuItem>
+                                {contract.status === 'ACTIVE' && contract.auto_renew && (
+                                  <DropdownMenuItem onClick={() => handleRenewContract(contract.id)}>
+                                    <RefreshCw className="h-4 w-4 mr-2" />
+                                    Renovar
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  onClick={() => handleDeleteContract(contract.id)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Excluir
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 )}
               </CardContent>
             </Card>
@@ -779,7 +1290,7 @@ const ClientProfile = () => {
 
       {/* Dialog para adicionar tarefa */}
       <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
             <DialogTitle>Nova Tarefa</DialogTitle>
             <DialogDescription>
@@ -839,27 +1350,91 @@ const ClientProfile = () => {
               />
               <FormField
                 control={taskForm.control}
-                name="status"
+                name="time"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Status</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione o status" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="Pendente">Pendente</SelectItem>
-                        <SelectItem value="Em andamento">Em andamento</SelectItem>
-                        <SelectItem value="Concluída">Concluída</SelectItem>
-                        <SelectItem value="Cancelada">Cancelada</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <FormLabel>Horário</FormLabel>
+                    <FormControl>
+                      <Input type="time" {...field} value={field.value || ""} />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={taskForm.control}
+                  name="priority"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Prioridade</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione a prioridade" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="high">Alta</SelectItem>
+                          <SelectItem value="medium">Média</SelectItem>
+                          <SelectItem value="low">Baixa</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={taskForm.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Status</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o status" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="pending">Pendente</SelectItem>
+                          <SelectItem value="completed">Concluída</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={taskForm.control}
+                name="assignee"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Responsável</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Nome do responsável" value={field.value || ""} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={taskForm.control}
+                name="deal"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Negócio</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Nome do negócio (opcional)" value={field.value || ""} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="text-sm text-muted-foreground">
+                Esta tarefa será vinculada ao cliente <span className="font-medium">{client.name}</span>.
+              </div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setIsAddTaskDialogOpen(false)}>
                   Cancelar
