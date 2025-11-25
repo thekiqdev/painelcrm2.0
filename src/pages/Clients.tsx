@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -45,6 +46,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
+import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -58,6 +60,7 @@ const taskSchema = z.object({
 });
 
 const Clients = () => {
+  const navigate = useNavigate();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -73,7 +76,7 @@ const Clients = () => {
   const [newClientGroup, setNewClientGroup] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
-  const [noteContent, setNoteContent] = useState("");
+  const [notes, setNotes] = useState<StickyNoteData[]>([]);
   const [clientTasks, setClientTasks] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [tabSelected, setTabSelected] = useState("details");
@@ -215,12 +218,8 @@ const Clients = () => {
   const paginatedClients = sortedClients.slice(startIndex, startIndex + itemsPerPage);
 
   const handleViewClient = (client: any) => {
-    setSelectedClient(client);
-    setNewClientGroup(client.group_id || "");
-    setNoteContent(client.notes || "");
-    setIsEditMode(false);
-    setIsViewDialogOpen(true);
-    setTabSelected("details");
+    // Navegar para a página de perfil do cliente
+    navigate(`/clients/${client.id}`);
   };
   
   const handleEditClient = () => {
@@ -398,8 +397,6 @@ const Clients = () => {
         // Atualizar o grupo do cliente
         await clientsService.updateClient(selectedClient.id, { group_id: newClientGroup || undefined });
         
-        if (error) throw error;
-        
         // Atualizar o cliente na lista local
         const updatedClients = clients.map(client => {
           if (client.id === selectedClient.id) {
@@ -431,16 +428,54 @@ const Clients = () => {
     }
   };
   
-  const handleSaveNote = async () => {
+  const handleAddNote = () => {
+    const newNote: StickyNoteData = {
+      id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      content: "",
+      color: 'bg-yellow-200',
+      created_at: new Date().toISOString(),
+    };
+    setNotes([...notes, newNote]);
+    // Salvar automaticamente quando a nota for criada (mesmo vazia)
+    setTimeout(() => saveNotes([...notes, newNote]), 100);
+  };
+
+  const handleUpdateNote = async (id: string, content: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id 
+        ? { ...note, content, updated_at: new Date().toISOString() }
+        : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    const updatedNotes = notes.filter(note => note.id !== id);
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleColorChange = async (id: string, color: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id ? { ...note, color } : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const saveNotes = async (notesToSave: StickyNoteData[]) => {
     if (!selectedClient) return;
     
     try {
-      await clientsService.updateClient(selectedClient.id, { notes: noteContent });
+      // Salvar como JSON string
+      const notesJson = JSON.stringify(notesToSave);
+      await clientsService.updateClient(selectedClient.id, { notes: notesJson });
       
       // Atualizar o cliente na lista local
       const updatedClients = clients.map(client => {
         if (client.id === selectedClient.id) {
-          return { ...client, notes: noteContent };
+          return { ...client, notes: notesJson };
         }
         return client;
       });
@@ -450,13 +485,13 @@ const Clients = () => {
       // Atualizar o cliente selecionado
       setSelectedClient({
         ...selectedClient,
-        notes: noteContent
+        notes: notesJson
       });
       
-      toast.success("Anotação salva com sucesso!");
+      toast.success("Notas salvas com sucesso!");
     } catch (error: any) {
-      console.error("Erro ao salvar anotação:", error);
-      toast.error(`Erro ao salvar anotação: ${error.message}`);
+      console.error("Erro ao salvar notas:", error);
+      toast.error(`Erro ao salvar notas: ${error.message}`);
     }
   };
 
@@ -481,11 +516,18 @@ const Clients = () => {
       }
       
       // Adicionar a nova tarefa à lista
-      setClientTasks([...clientTasks, result.data?.[0]]);
+      // result.data já é o objeto da tarefa, não um array
+      if (result.data) {
+        setClientTasks([...clientTasks, result.data]);
+      }
       
       toast.success("Tarefa adicionada com sucesso!");
       setIsAddTaskDialogOpen(false);
       taskForm.reset();
+      
+      // Recarregar tarefas para garantir sincronização
+      const tasks = await clientsService.getClientTasks(selectedClient.id);
+      setClientTasks(tasks || []);
     } catch (error: any) {
       console.error("Erro ao adicionar tarefa:", error);
       toast.error(`Erro ao adicionar tarefa: ${error.message}`);
@@ -805,48 +847,55 @@ const Clients = () => {
           </Button>
         </div>
         <div className="space-y-2">
-          {clientTasks.map(task => (
-            <Card key={task.id} className="p-4">
-              <div className="flex justify-between">
-                <div>
-                  <h4 className="font-medium">{task.title}</h4>
-                  {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
-                  {task.due_date && (
-                    <div className="flex items-center text-xs text-muted-foreground mt-2">
-                      <CalendarIcon className="h-3 w-3 mr-1" />
-                      {format(new Date(task.due_date), "dd/MM/yyyy")}
+          {clientTasks && clientTasks.length > 0 ? (
+            clientTasks.map(task => {
+              if (!task || !task.id) return null;
+              return (
+                <Card key={task.id} className="p-4">
+                  <div className="flex justify-between">
+                    <div>
+                      <h4 className="font-medium">{task.title || 'Sem título'}</h4>
+                      {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
+                      {task.due_date && (
+                        <div className="flex items-center text-xs text-muted-foreground mt-2">
+                          <CalendarIcon className="h-3 w-3 mr-1" />
+                          {format(new Date(task.due_date), "dd/MM/yyyy")}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <div className="flex items-start space-x-2">
-                  <Select
-                    value={task.status}
-                    onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
-                  >
-                    <SelectTrigger className="h-8 w-[120px]">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Pendente">Pendente</SelectItem>
-                      <SelectItem value="Em andamento">Em andamento</SelectItem>
-                      <SelectItem value="Concluída">Concluída</SelectItem>
-                      <SelectItem value="Cancelada">Cancelada</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteTask(task.id);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ))}
+                    <div className="flex items-start space-x-2">
+                      <Select
+                        value={task.status || 'Pendente'}
+                        onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
+                      >
+                        <SelectTrigger className="h-8 w-[120px]">
+                          <SelectValue placeholder="Status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Pendente">Pendente</SelectItem>
+                          <SelectItem value="Em andamento">Em andamento</SelectItem>
+                          <SelectItem value="Concluída">Concluída</SelectItem>
+                          <SelectItem value="Cancelada">Cancelada</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteTask(task.id);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">Nenhuma tarefa cadastrada</p>
+          )}
         </div>
       </div>
     );
@@ -1133,13 +1182,38 @@ const Clients = () => {
                   </TabsContent>
                   <TabsContent value="notes">
                     <div className="space-y-4">
-                      <Textarea 
-                        className="mb-4 min-h-[150px]" 
-                        placeholder="Adicione uma nota sobre este cliente..." 
-                        value={noteContent}
-                        onChange={(e) => setNoteContent(e.target.value)}
-                      />
-                      <Button onClick={handleSaveNote}>Salvar Anotações</Button>
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-medium">Notas Autoadesivas</h3>
+                        <Button onClick={handleAddNote} size="sm">
+                          <Plus className="mr-2 h-4 w-4" />
+                          Nova Nota
+                        </Button>
+                      </div>
+                      <div className="relative min-h-[400px] p-4 bg-gray-50 rounded-lg">
+                        {notes.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {notes.map(note => (
+                              <StickyNote
+                                key={note.id}
+                                note={note}
+                                onUpdate={handleUpdateNote}
+                                onDelete={handleDeleteNote}
+                                onColorChange={handleColorChange}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-[300px] text-center">
+                            <p className="text-muted-foreground mb-4">
+                              Nenhuma nota cadastrada
+                            </p>
+                            <Button onClick={handleAddNote} variant="outline">
+                              <Plus className="mr-2 h-4 w-4" />
+                              Criar Primeira Nota
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </TabsContent>
                 </Tabs>

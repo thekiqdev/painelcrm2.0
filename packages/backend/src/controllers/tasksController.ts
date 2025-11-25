@@ -29,7 +29,7 @@ export const getTasks = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Não autenticado' });
     }
 
-    const { status, date } = req.query;
+    const { status, date, clientId } = req.query;
 
     let query = `
       SELECT id, title, description, due_date, due_time, status, priority,
@@ -51,6 +51,12 @@ export const getTasks = async (req: Request, res: Response) => {
       paramCount++;
       query += ` AND due_date = $${paramCount}`;
       params.push(date);
+    }
+
+    if (clientId) {
+      paramCount++;
+      query += ` AND client_id = $${paramCount}`;
+      params.push(clientId);
     }
 
     query += ` ORDER BY due_date ASC NULLS LAST, created_at DESC`;
