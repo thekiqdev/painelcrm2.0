@@ -1290,7 +1290,7 @@ const ClientProfile = () => {
 
       {/* Dialog para adicionar tarefa */}
       <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
-        <DialogContent className="sm:max-w-[520px]">
+        <DialogContent className="w-[90vw] max-w-[460px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nova Tarefa</DialogTitle>
             <DialogDescription>
