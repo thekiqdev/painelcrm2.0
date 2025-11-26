@@ -79,7 +79,11 @@ const AuthWhatsApp = () => {
         navigate('/dashboard');
       } else {
         // Registration
-        await signUp(identifier.trim(), password);
+        await signUp({
+          identifier: identifier.trim(),
+          password,
+          whatsapp: loginType === 'phone' ? identifier.replace(/\D/g, '') : undefined,
+        });
         navigate('/register/steps');
       }
     } catch (error: any) {
