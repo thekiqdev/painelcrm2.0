@@ -60,34 +60,34 @@ const App = () => (
           <Toaster />
           <Sonner />
           <Suspense fallback={<LoadingFallback />}>
-            <Routes>
-              <Route path="/" element={<AuthWhatsApp />} />
-              
-              {/* Alterado: a página de registro não precisa de AuthGuard */}
-              <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
-              
-              <Route path="/register/steps" element={
-                <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
-                  <AuthLayout>
-                    <RegistrationSteps />
-                  </AuthLayout>
-                </AuthGuard>
-              } />
-              <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
-              
+          <Routes>
+            <Route path="/" element={<AuthWhatsApp />} />
+            
+            {/* Alterado: a página de registro não precisa de AuthGuard */}
+            <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
+            
+            <Route path="/register/steps" element={
+              <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
+                <AuthLayout>
+                  <RegistrationSteps />
+                </AuthLayout>
+              </AuthGuard>
+            } />
+            <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
+            
               {/* Protected routes - lazy loaded */}
-              <Route path="/dashboard" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+            <Route path="/dashboard" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Dashboard />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
+              </AuthGuard>
+            } />
             
-              <Route path="/clients" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+            <Route path="/clients" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Clients />
@@ -111,157 +111,157 @@ const App = () => (
                       <ClientProfile />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/leads" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/leads" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Leads />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/funnel" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/funnel" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Funnel />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/funnel/:funnelId" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/funnel/:funnelId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <FunnelDetails />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/funnel/:funnelId/stage/:stageId/proposal/:proposalId" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/funnel/:funnelId/stage/:stageId/proposal/:proposalId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ProposalDetails />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/projects" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/projects" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Projects />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/tasks" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/tasks" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Tasks />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/project-templates" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/project-templates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ProjectTemplates />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              {/* Admin Products Routes */}
-              <Route path="/admin/products" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            {/* Admin Products Routes */}
+            <Route path="/admin/products" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Products />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/admin/products/new" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/admin/products/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/admin/products/:id/edit" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/admin/products/:id/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              
-              {/* Legacy routes - redirect to admin */}
-              <Route path="/products" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            
+            {/* Legacy routes - redirect to admin */}
+            <Route path="/products" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Products />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/products/new" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/products/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/products/edit/:id" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/products/edit/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/orders" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/orders" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Orders />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/proposals" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/proposals" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Proposals />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/contracts" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/contracts" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Contracts />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/contracts/new" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/contracts/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <NewContract />
@@ -269,71 +269,80 @@ const App = () => (
                   </AppLayout>
                 </AuthGuard>
               } />
-              <Route path="/contracts/:id" element={
+              <Route path="/contracts/:id/edit" element={
                 <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <NewContract />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ContractDetails />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/billing" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/billing" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Billing />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/finance" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/finance" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Finance />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/chat" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/chat" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Chat />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/settings" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/settings" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Settings />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/support/tickets" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Tickets />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              <Route path="/support/tickets/new" element={
-                <AuthGuard requireAuth={true} redirectTo="/">
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <NewTicket />
                     </Suspense>
                   </AppLayout>
-                </AuthGuard>
-              } />
-              
-              {/* Public store routes */}
+              </AuthGuard>
+            } />
+            
+            {/* Public store routes */}
               <Route path="/:storeSlug/loja" element={
                 <Suspense fallback={<LoadingFallback />}>
                   <PublicStore />
@@ -344,9 +353,9 @@ const App = () => (
                   <PublicProduct />
                 </Suspense>
               } />
-              
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            
+            <Route path="*" element={<NotFound />} />
+          </Routes>
           </Suspense>
         </AuthProvider>
       </BrowserRouter>

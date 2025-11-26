@@ -245,13 +245,13 @@ const Clients = () => {
     if (selectedClient) {
       try {
         await clientsService.updateClient(selectedClient.id, {
-          name: editedClient.name,
-          company: editedClient.company,
-          email: editedClient.email,
-          phone: editedClient.phone,
-          status: editedClient.status,
+            name: editedClient.name,
+            company: editedClient.company,
+            email: editedClient.email,
+            phone: editedClient.phone,
+            status: editedClient.status,
           group_id: editedClient.group_id || undefined,
-          notes: editedClient.notes
+            notes: editedClient.notes
         });
         
         // Atualizar o cliente na lista local
@@ -851,46 +851,46 @@ const Clients = () => {
             clientTasks.map(task => {
               if (!task || !task.id) return null;
               return (
-                <Card key={task.id} className="p-4">
-                  <div className="flex justify-between">
-                    <div>
+            <Card key={task.id} className="p-4">
+              <div className="flex justify-between">
+                <div>
                       <h4 className="font-medium">{task.title || 'Sem título'}</h4>
-                      {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
-                      {task.due_date && (
-                        <div className="flex items-center text-xs text-muted-foreground mt-2">
-                          <CalendarIcon className="h-3 w-3 mr-1" />
-                          {format(new Date(task.due_date), "dd/MM/yyyy")}
-                        </div>
-                      )}
+                  {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
+                  {task.due_date && (
+                    <div className="flex items-center text-xs text-muted-foreground mt-2">
+                      <CalendarIcon className="h-3 w-3 mr-1" />
+                      {format(new Date(task.due_date), "dd/MM/yyyy")}
                     </div>
-                    <div className="flex items-start space-x-2">
-                      <Select
+                  )}
+                </div>
+                <div className="flex items-start space-x-2">
+                  <Select
                         value={task.status || 'Pendente'}
-                        onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
-                      >
-                        <SelectTrigger className="h-8 w-[120px]">
-                          <SelectValue placeholder="Status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Pendente">Pendente</SelectItem>
-                          <SelectItem value="Em andamento">Em andamento</SelectItem>
-                          <SelectItem value="Concluída">Concluída</SelectItem>
-                          <SelectItem value="Cancelada">Cancelada</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteTask(task.id);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
+                    onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
+                  >
+                    <SelectTrigger className="h-8 w-[120px]">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Pendente">Pendente</SelectItem>
+                      <SelectItem value="Em andamento">Em andamento</SelectItem>
+                      <SelectItem value="Concluída">Concluída</SelectItem>
+                      <SelectItem value="Cancelada">Cancelada</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteTask(task.id);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
               );
             })
           ) : (

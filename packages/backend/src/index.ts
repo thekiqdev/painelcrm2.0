@@ -35,6 +35,8 @@ import expensesRoutes from './routes/expensesRoutes.js';
 import proposalsRoutes from './routes/proposalsRoutes.js';
 import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
+import chatRoutes from './routes/chatRoutes.js';
+import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import { pool } from './utils/db.js';
 
 dotenv.config();
@@ -145,6 +147,8 @@ app.use('/api/expenses', expensesRoutes);
 app.use('/api/proposals', proposalsRoutes);
 app.use('/api/members', membersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 
 // 404 handler
 app.use((req, res) => {
