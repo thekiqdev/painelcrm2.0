@@ -36,5 +36,8 @@ export default defineConfig(({ mode }) => ({
   define: {
     global: 'globalThis',
     'process.env.NODE_ENV': JSON.stringify(mode),
+    'process.env': '{}',
+    'process.browser': 'true',
+    'process.version': '""',
   },
 }));
