@@ -59,6 +59,7 @@ import { InvoiceForm } from '@/components/finance/InvoiceForm';
 import { chatService, ChatConversation, ChatInstance, ChatMessage } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/integrations/api/client';
+import { useChatSocket } from '@/hooks/useChatSocket';
 import { financeService } from '@/services/finance';
 import { proposalsService } from '@/services/proposals';
 import { tasksService } from '@/services/tasks';
@@ -221,6 +222,91 @@ const Chat = () => {
     loadTicketCategories();
   }, [loadInstances]);
 
+  // Configurar Socket.IO para atualização em tempo real
+  const instanceIdsArray = Array.from(enabledInstanceIds);
+  const conversationIdsArray = selectedConversationId ? [selectedConversationId] : [];
+
+  useChatSocket({
+    instanceIds: instanceIdsArray,
+    conversationIds: conversationIdsArray,
+    onMessageNew: (data) => {
+      // Se a mensagem é da conversa selecionada, adicionar à lista
+      if (data.conversationId === selectedConversationId) {
+        setMessages((prev) => {
+          // Verificar se a mensagem já existe (evitar duplicatas)
+          const exists = prev.some((m) => m.id === data.message.id || m.externalMessageId === data.message.external_message_id);
+          if (exists) return prev;
+          return [...prev, data.message];
+        });
+      }
+      
+      // Atualizar lista de conversas
+      setConversations((prev) => {
+        const index = prev.findIndex((c) => c.id === data.conversationId);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = {
+            ...updated[index],
+            lastMessagePreview: data.message.body || updated[index].lastMessagePreview,
+            lastMessageAt: data.message.sentAt || updated[index].lastMessageAt,
+            unreadCount: data.message.direction === 'incoming' 
+              ? (updated[index].unreadCount || 0) + 1 
+              : updated[index].unreadCount,
+          };
+          // Mover para o topo
+          const [moved] = updated.splice(index, 1);
+          return [moved, ...updated];
+        }
+        return prev;
+      });
+    },
+    onMessageUpdate: (data) => {
+      // Atualizar mensagem na lista se for da conversa selecionada
+      if (data.conversationId === selectedConversationId) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === data.messageId || m.externalMessageId === data.messageId
+              ? { ...m, ...data.updates }
+              : m
+          )
+        );
+      }
+    },
+    onConversationUpdate: (data) => {
+      // Atualizar conversa na lista
+      setConversations((prev) => {
+        const index = prev.findIndex((c) => c.id === data.conversationId);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = { ...updated[index], ...data.conversation };
+          // Mover para o topo se houver atualização significativa
+          if (data.conversation.lastMessageAt || data.conversation.lastMessagePreview) {
+            const [moved] = updated.splice(index, 1);
+            return [moved, ...updated];
+          }
+          return updated;
+        }
+        // Se não existe, pode ser uma nova conversa - recarregar lista
+        if (instanceIdsArray.length > 0) {
+          loadConversations(instanceIdsArray).catch(console.error);
+        }
+        return prev;
+      });
+    },
+    onConnectionStatus: (data) => {
+      // Atualizar status da instância
+      setInstances((prev) =>
+        prev.map((inst) =>
+          inst.id === data.instanceId ? { ...inst, status: data.status } : inst
+        )
+      );
+    },
+    onPresenceUpdate: (data) => {
+      // Atualizar status de presença (opcional, pode ser usado para mostrar online/offline)
+      console.log('[Presence]', data.chatId, data.isOnline ? 'online' : 'offline');
+    },
+  });
+
   const loadClients = useCallback(async () => {
     try {
       const data = await clientsService.getClients();
@@ -269,8 +355,8 @@ const Chat = () => {
   useEffect(() => {
     if (enabledInstanceIds.size === 0) {
       setConversations([]);
-      return;
-    }
+          return;
+        }
     setSelectedConversationId(null);
     setMessages([]);
     // Carregar conversas de todas as instâncias habilitadas
@@ -415,7 +501,7 @@ const Chat = () => {
         checkIfLeadExists(conversation.phoneNumber),
         checkIfClientExists(conversation.phoneNumber),
       ]);
-    } else {
+        } else {
       setCurrentLead(null);
       setCurrentClient(null);
     }
@@ -444,7 +530,7 @@ const Chat = () => {
       });
 
       setCurrentClient(foundClient || null);
-    } catch (error) {
+      } catch (error) {
       console.error('Erro ao verificar cliente:', error);
       setCurrentClient(null);
     } finally {
@@ -906,7 +992,7 @@ const Chat = () => {
             <div className="flex-shrink-0">
               <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
                 <PopoverTrigger asChild>
-                  <Button
+              <Button 
                     variant="outline"
                     className="h-9 px-3 border-2 hover:border-primary/50 transition-colors justify-between gap-2 min-w-[200px]"
                   >
@@ -930,13 +1016,13 @@ const Chat = () => {
                       )}
                     </div>
                     <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                  </Button>
+              </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-80 p-0" align="start">
                   <div className="p-2">
                     <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground border-b">
                       Conexões WhatsApp
-                    </div>
+            </div>
                     <div className="max-h-[300px] overflow-y-auto">
                       {instances.map((instance) => {
                         const isEnabled = enabledInstanceIds.has(instance.id);
@@ -972,9 +1058,9 @@ const Chat = () => {
                                   {instance.status === 'connected' ? 'Conectado' 
                                     : instance.status === 'connecting' ? 'Conectando'
                                     : 'Desconectado'}
-                                </div>
-                              </div>
-                            </div>
+              </div>
+              </div>
+            </div>
                           </div>
                         );
                       })}
@@ -986,10 +1072,10 @@ const Chat = () => {
                       >
                         <div className="h-4 w-4 rounded border-2 border-dashed border-muted-foreground/50 flex items-center justify-center">
                           <Plus className="h-3 w-3 text-muted-foreground" />
-                        </div>
+            </div>
                         <span className="text-sm text-muted-foreground">Adicionar conexão</span>
-                      </div>
-                    </div>
+          </div>
+              </div>
                   </div>
                 </PopoverContent>
               </Popover>
@@ -1006,13 +1092,13 @@ const Chat = () => {
                     {unreadConversations.length > 0 && (
                       <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0 h-4">
                         {unreadConversations.length}
-                      </Badge>
-                    )}
-                  </TabsTrigger>
+                  </Badge>
+                )}
+              </TabsTrigger>
                   <TabsTrigger value="read" className="text-sm">Lidos</TabsTrigger>
                   <TabsTrigger value="leads" className="text-sm">Leads</TabsTrigger>
                   <TabsTrigger value="clients" className="text-sm">Clientes</TabsTrigger>
-                </TabsList>
+            </TabsList>
               </Tabs>
             </div>
           )}
@@ -1098,7 +1184,7 @@ const Chat = () => {
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-8 w-8">
                                   <MoreVertical className="h-4 w-4" />
-                                </Button>
+                            </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 {currentClient ? (
@@ -1232,15 +1318,15 @@ const Chat = () => {
                     </div>
                   )}
                 </Card>
-            </div>
-          </div>
-        </div>
+              </div>
+                          </div>
+                        </div>
       ) : (
         <Card className="flex-shrink-0">
           <CardContent className="py-10 text-center text-muted-foreground">
             Configure sua primeira instância para começar a usar o chat.
-          </CardContent>
-        </Card>
+                  </CardContent>
+                </Card>
       )}
 
       {/* Dialogs para ações rápidas */}
@@ -1270,16 +1356,16 @@ const Chat = () => {
               <div className="space-y-2">
                 <Label htmlFor="contractTitle">Título do Contrato</Label>
                 <Input id="contractTitle" name="title" placeholder="Ex: Contrato de Prestação de Serviços" required />
-              </div>
+                                </div>
               <div className="space-y-2">
                 <Label htmlFor="contractContent">Conteúdo</Label>
                 <Textarea id="contractContent" name="content" placeholder="Conteúdo do contrato..." className="min-h-[200px]" />
-              </div>
+                            </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="contractStartDate">Data de Início</Label>
                   <Input id="contractStartDate" type="date" name="startDate" />
-                </div>
+                          </div>
                 <div className="space-y-2">
                   <Label htmlFor="contractEndDate">Data de Término</Label>
                   <Input id="contractEndDate" type="date" name="endDate" />
@@ -1293,7 +1379,7 @@ const Chat = () => {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setContractDialogOpen(false)}>
                 Cancelar
-              </Button>
+                            </Button>
               <Button type="submit">Criar Contrato</Button>
             </DialogFooter>
           </form>
@@ -1331,7 +1417,7 @@ const Chat = () => {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setProposalDialogOpen(false)}>
                 Cancelar
-              </Button>
+                            </Button>
               <Button type="submit">Criar Proposta</Button>
             </DialogFooter>
           </form>
@@ -1356,21 +1442,21 @@ const Chat = () => {
               <div className="space-y-2">
                 <Label htmlFor="taskTitle">Título</Label>
                 <Input id="taskTitle" name="title" placeholder="Ex: Reunião com cliente" required />
-              </div>
+                          </div>
               <div className="space-y-2">
                 <Label htmlFor="taskDescription">Descrição</Label>
                 <Textarea id="taskDescription" name="description" placeholder="Detalhes da tarefa..." />
-              </div>
+                        </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="taskDate">Data</Label>
                   <Input id="taskDate" name="date" type="date" />
-                </div>
+                                  </div>
                 <div className="space-y-2">
                   <Label htmlFor="taskTime">Horário</Label>
                   <Input id="taskTime" name="time" type="time" />
-                </div>
-              </div>
+                                </div>
+                              </div>
               <div className="space-y-2">
                 <Label htmlFor="taskPriority">Prioridade</Label>
                 <Select name="priority" defaultValue="medium">
@@ -1383,15 +1469,15 @@ const Chat = () => {
                     <SelectItem value="high">Alta</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+                          </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setTaskDialogOpen(false)}>
                 Cancelar
-              </Button>
+                            </Button>
               <Button type="submit">Criar Tarefa</Button>
             </DialogFooter>
-          </form>
+                          </form>
         </DialogContent>
       </Dialog>
 
@@ -1413,11 +1499,11 @@ const Chat = () => {
               <div className="space-y-2">
                 <Label htmlFor="ticketSubject">Assunto</Label>
                 <Input id="ticketSubject" name="subject" placeholder="Ex: Problema com produto" required />
-              </div>
+                        </div>
               <div className="space-y-2">
                 <Label htmlFor="ticketDescription">Descrição</Label>
                 <Textarea id="ticketDescription" name="description" placeholder="Descreva o problema ou solicitação..." required />
-              </div>
+                        </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="ticketCategory">Categoria</Label>
@@ -1433,7 +1519,7 @@ const Chat = () => {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
+                      </div>
                 <div className="space-y-2">
                   <Label htmlFor="ticketPriority">Prioridade</Label>
                   <Select name="priority" defaultValue="normal">
@@ -1447,7 +1533,7 @@ const Chat = () => {
                       <SelectItem value="urgent">Urgente</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                    </div>
               </div>
             </div>
             <DialogFooter>

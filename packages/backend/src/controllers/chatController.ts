@@ -4,6 +4,13 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { randomUUID } from 'crypto';
+import {
+  emitMessage,
+  emitMessageUpdate,
+  emitConversationUpdate,
+  emitConnectionStatus,
+  emitPresenceUpdate,
+} from '../services/socketService.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -322,7 +329,28 @@ export async function createInstance(req: AuthRequest, res: Response) {
       ]
     );
 
-    res.status(201).json(inserted.rows[0]);
+    const newInstance = inserted.rows[0];
+
+    // Configurar webhook automaticamente
+    try {
+      const webhookUrl = process.env.UAZAPI_WEBHOOK_URL || 
+        `${process.env.FRONTEND_URL || process.env.BACKEND_URL || 'http://localhost:3001'}/webhooks/uazapi`;
+      
+      await uazapiService.configureWebhook(instanceToken, {
+        url: webhookUrl,
+        events: ['messages', 'messages_update', 'chats', 'connection', 'presence'],
+        excludeMessages: ['wasSentByApi'],
+        addUrlEvents: false,
+        addUrlTypesMessages: false,
+      });
+      
+      console.log(`[Webhook] Configurado para instância ${instanceName}: ${webhookUrl}`);
+    } catch (webhookError: any) {
+      console.error('[Webhook] Erro ao configurar webhook (não crítico):', webhookError.message);
+      // Não falhar a criação da instância se o webhook falhar
+    }
+
+    res.status(201).json(newInstance);
   } catch (error: any) {
     console.error('Error creating instance:', error);
     res.status(500).json({ error: error.message || 'Failed to create instance' });
@@ -878,10 +906,108 @@ export async function handleWebhook(req: Request, res: Response) {
           sentAt,
           metadata: message,
         });
+
+        // Buscar mensagem salva para emitir via Socket.IO
+        const messageResult = await pool.query(
+          `SELECT * FROM chat_messages 
+           WHERE conversation_id = $1 
+           AND external_message_id = $2 
+           ORDER BY created_at DESC 
+           LIMIT 1`,
+          [conversation.id, message.id || message.messageId || message.key?.id || data.external_message_id]
+        );
+
+        // Emitir evento Socket.IO para nova mensagem
+        if (messageResult.rowCount > 0) {
+          const savedMessage = messageResult.rows[0];
+          // Normalizar formato da mensagem para o frontend
+          const normalizedMessage = {
+            id: savedMessage.id,
+            conversation_id: savedMessage.conversation_id,
+            direction: savedMessage.direction,
+            external_message_id: savedMessage.external_message_id,
+            body: savedMessage.body,
+            status: savedMessage.status,
+            sentAt: savedMessage.sent_at || savedMessage.created_at,
+            metadata: savedMessage.metadata,
+            created_at: savedMessage.created_at,
+          };
+          emitMessage(instance.id, conversation.id, normalizedMessage, instance.user_id);
+        }
       }
     } else if (event === 'chats' || payload.chat) {
       const data = payload.data || payload.chat || payload;
-      await upsertConversation(instance, normalizeChatPayload(data));
+      const updatedConversation = await upsertConversation(instance, normalizeChatPayload(data));
+      
+      // Emitir evento Socket.IO para atualização de conversa
+      if (updatedConversation) {
+        emitConversationUpdate(instance.id, updatedConversation.id, updatedConversation, instance.user_id);
+      }
+    } else if (event === 'messages_update' || payload.messages_update) {
+      const data = payload.data || payload.messages_update || payload;
+      const message = data.message || data;
+      const messageId = message.id || message.messageId || message.key?.id;
+      
+      if (messageId) {
+        // Buscar conversa relacionada
+        const chatId = message.chatid || message.chatId || message.key?.remoteJid;
+        if (chatId) {
+          const conversationResult = await pool.query(
+            'SELECT id FROM chat_conversations WHERE external_chat_id = $1 OR phone_number = $1 LIMIT 1',
+            [chatId]
+          );
+          
+          if (conversationResult.rowCount > 0) {
+            const conversation = conversationResult.rows[0];
+            const updates: any = {};
+            
+            if (message.status) updates.status = message.status;
+            if (message.text || message.body) updates.body = message.text || message.body;
+            if (message.timestamp || message.messageTimestamp) {
+              const timestamp = message.timestamp || message.messageTimestamp;
+              const numeric = Number(timestamp);
+              if (!Number.isNaN(numeric)) {
+                updates.sentAt = new Date(numeric > 1e12 ? numeric : numeric * 1000);
+              }
+            }
+            
+            // Atualizar mensagem no banco
+            await pool.query(
+              `UPDATE chat_messages 
+               SET status = COALESCE($1, status),
+                   body = COALESCE($2, body),
+                   sent_at = COALESCE($3, sent_at),
+                   updated_at = now()
+               WHERE external_message_id = $4`,
+              [updates.status, updates.body, updates.sentAt, messageId]
+            );
+            
+            // Emitir evento Socket.IO
+            emitMessageUpdate(instance.id, conversation.id, messageId, updates, instance.user_id);
+          }
+        }
+      }
+    } else if (event === 'connection' || payload.connection) {
+      const data = payload.data || payload.connection || payload;
+      const status = data.state || data.status || (data.connected ? 'connected' : 'disconnected');
+      
+      // Atualizar status da instância no banco
+      await pool.query(
+        'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
+        [status, instance.id]
+      );
+      
+      // Emitir evento Socket.IO
+      emitConnectionStatus(instance.id, status as 'connected' | 'disconnected' | 'connecting', instance.user_id);
+    } else if (event === 'presence' || payload.presence) {
+      const data = payload.data || payload.presence || payload;
+      const chatId = data.chatid || data.chatId || data.id;
+      const isOnline = data.isOnline !== undefined ? data.isOnline : (data.presence === 'available' || data.presence === 'composing');
+      
+      if (chatId) {
+        // Emitir evento Socket.IO
+        emitPresenceUpdate(instance.id, chatId, isOnline, instance.user_id);
+      }
     }
 
     res.json({ received: true });

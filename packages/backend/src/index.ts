@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import http from 'http';
 import authRoutes from './routes/authRoutes.js';
 import productsRoutes from './routes/productsRoutes.js';
 import storeProfileRoutes from './routes/storeProfileRoutes.js';
@@ -38,6 +39,7 @@ import dashboardRoutes from './routes/dashboardRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import { pool } from './utils/db.js';
+import { initializeSocketIO } from './services/socketService.js';
 
 dotenv.config();
 
@@ -172,11 +174,19 @@ pool.query('SELECT NOW()')
     console.error('❌ Failed to connect to PostgreSQL:', err.message);
   });
 
+// Criar servidor HTTP para Socket.IO
+const httpServer = http.createServer(app);
+
+// Inicializar Socket.IO
+initializeSocketIO(httpServer);
+console.log('✅ Socket.IO initialized');
+
 // Start server - escutar em 0.0.0.0 para ser acessível em containers
-app.listen(PORT, '0.0.0.0', () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Listening on 0.0.0.0:${PORT}`);
+  console.log(`📡 Socket.IO available at ws://0.0.0.0:${PORT}/socket.io`);
 });
 
 
