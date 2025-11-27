@@ -918,7 +918,7 @@ export async function handleWebhook(req: Request, res: Response) {
         );
 
         // Emitir evento Socket.IO para nova mensagem
-        if (messageResult.rowCount > 0) {
+        if (messageResult.rowCount && messageResult.rowCount > 0) {
           const savedMessage = messageResult.rows[0];
           // Normalizar formato da mensagem para o frontend
           const normalizedMessage = {
@@ -957,7 +957,7 @@ export async function handleWebhook(req: Request, res: Response) {
             [chatId]
           );
           
-          if (conversationResult.rowCount > 0) {
+          if (conversationResult.rowCount && conversationResult.rowCount > 0) {
             const conversation = conversationResult.rows[0];
             const updates: any = {};
             
