@@ -72,10 +72,15 @@ export function getSocket(token: string): Socket | null {
   const socketUrl = getSocketUrl();
   const fullUrl = socketUrl.replace(/\/$/, '');
   
-  console.log('[Socket.IO] Connecting to:', `${fullUrl}/socket.io/chat`);
+  // Socket.IO usa o path base /socket.io e depois o namespace /chat
+  const socketPath = `${fullUrl}/socket.io`;
+  
+  console.log('[Socket.IO] Connecting to:', socketPath, 'namespace: /chat');
   console.log('[Socket.IO] Token present:', !!token);
 
-  socket = io(`${fullUrl}/socket.io/chat`, {
+  socket = io(socketPath, {
+    path: '/socket.io',
+    namespace: '/chat',
     auth: {
       token,
     },
