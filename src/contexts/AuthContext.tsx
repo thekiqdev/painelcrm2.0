@@ -69,8 +69,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         apiClient.setToken(null);
         setSession(null);
         setUser(null);
-        setProfile(null);
-        setRegistrationComplete(false);
+          setProfile(null);
+          setRegistrationComplete(false);
         setLoading(false);
         return;
       }
@@ -84,9 +84,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     } catch (error) {
       console.error('Error fetching user:', error);
-      setLoading(false);
-    }
-  };
+        setLoading(false);
+      }
+    };
 
   const fetchUserProfile = async (userId: string) => {
     try {
@@ -122,14 +122,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast.error(response.error || 'Falha no login');
         return;
       }
-
+      
       if (response.data) {
         apiClient.setToken(response.data.token);
         setSession({ token: response.data.token });
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(response.data.user.registration_complete || false);
-        toast.success('Login realizado com sucesso!');
+      toast.success('Login realizado com sucesso!');
       }
     } catch (error: any) {
       toast.error(error.message || 'Erro desconhecido');
@@ -173,14 +173,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast.error(response.error || 'Falha no cadastro');
         return;
       }
-
+      
       if (response.data) {
         apiClient.setToken(response.data.token);
         setSession({ token: response.data.token });
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(false);
-        toast.success('Cadastro realizado com sucesso!');
+      toast.success('Cadastro realizado com sucesso!');
       }
     } catch (error: any) {
       toast.error(error.message || 'Erro desconhecido');
@@ -258,7 +258,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const response = await apiClient.post('/api/registration-steps', {
         step_name: step,
-        completed,
+            completed, 
       });
 
       if (response.error) {
