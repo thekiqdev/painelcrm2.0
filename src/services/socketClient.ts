@@ -30,15 +30,52 @@ export interface ChatSocketEvents {
   };
 }
 
+// Usar a mesma lógica de URL do apiClient
+const getSocketUrl = () => {
+  // Em desenvolvimento, sempre usar VITE_API_URL ou localhost:3001
+  if (import.meta.env.DEV) {
+    const envUrl = import.meta.env.VITE_API_URL;
+    return envUrl || 'http://localhost:3001';
+  }
+  
+  // Em produção (navegador)
+  if (typeof window !== 'undefined') {
+    // Se está em HTTPS, usar URL relativa (o Nginx faz proxy)
+    if (window.location.protocol === 'https:') {
+      return window.location.origin;
+    }
+    
+    const envUrl = import.meta.env.VITE_API_URL;
+    
+    // Se VITE_API_URL não está definido ou está vazio, usar URL relativa
+    if (!envUrl || envUrl.trim() === '') {
+      return window.location.origin;
+    }
+    
+    // Se VITE_API_URL contém hostname interno do Docker, usar URL relativa
+    if (envUrl.includes('painelcrm:')) {
+      return window.location.origin;
+    }
+    
+    return envUrl;
+  }
+  
+  // Fallback
+  return 'http://localhost:3001';
+};
+
 export function getSocket(token: string): Socket | null {
   if (socket?.connected) {
     return socket;
   }
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-  const socketUrl = apiUrl.replace(/\/$/, '');
+  const socketUrl = getSocketUrl();
+  const fullUrl = socketUrl.replace(/\/$/, '');
+  
+  console.log('[Socket.IO] Connecting to:', `${fullUrl}/socket.io/chat`);
+  console.log('[Socket.IO] Token present:', !!token);
 
-  socket = io(`${socketUrl}/chat`, {
+  socket = io(`${fullUrl}/socket.io/chat`, {
     auth: {
       token,
     },
@@ -47,6 +84,8 @@ export function getSocket(token: string): Socket | null {
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     reconnectionAttempts: Infinity,
+    timeout: 20000, // 20 segundos
+    forceNew: false,
   });
 
   socket.on('connect', () => {

@@ -46,6 +46,9 @@ export function initializeSocketIO(httpServer: HTTPServer) {
       methods: ['GET', 'POST'],
     },
     path: '/socket.io',
+    connectTimeout: 45000, // 45 segundos
+    pingTimeout: 20000, // 20 segundos
+    pingInterval: 25000, // 25 segundos
   });
 
   // Namespace para chat
