@@ -107,8 +107,15 @@ const statusBadgeClass = (status?: string | null) => {
 };
 
 const Chat = () => {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const navigate = useNavigate();
+  
+  // Garantir que o token está atualizado no apiClient
+  useEffect(() => {
+    if (session?.token) {
+      apiClient.setToken(session.token);
+    }
+  }, [session?.token]);
 
   const [instances, setInstances] = useState<ChatInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
