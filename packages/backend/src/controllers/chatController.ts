@@ -527,16 +527,44 @@ export async function syncConversations(req: AuthRequest, res: Response) {
     const instance = await loadInstance(userId, data.data.instanceId, res);
     if (!instance) return;
 
+    // Verificar se a instância tem token válido
+    if (!instance.instance_token) {
+      res.status(400).json({ error: 'Instance token not found. Please reconnect the instance.' });
+      return;
+    }
+
     const payload = {
       limit: data.data.limit ?? 200,
-      ...(data.data.filters || {}),
-      sort: data.data.filters?.sort || '-wa_lastMsgTimestamp',
+      sort: '-wa_lastMsgTimestamp',
+      offset: 0,
     };
 
-    const remoteChats = (await uazapiService.findChats(
-      instance.instance_token,
-      payload
-    )) as AnyObject;
+    console.log(`[Sync] Sincronizando conversas da instância ${instance.id} com token: ${instance.instance_token.substring(0, 10)}...`);
+
+    let remoteChats: AnyObject;
+    try {
+      remoteChats = (await uazapiService.findChats(
+        instance.instance_token,
+        payload
+      )) as AnyObject;
+      console.log(`[Sync] Resposta da UazAPI:`, {
+        hasChats: !!remoteChats?.chats,
+        hasData: !!remoteChats?.data,
+        isArray: Array.isArray(remoteChats),
+        keys: remoteChats ? Object.keys(remoteChats) : [],
+      });
+    } catch (uazapiError: any) {
+      console.error('[Sync] Erro ao chamar UazAPI findChats:', uazapiError);
+      // Se o erro for de autenticação da UazAPI, pode ser token inválido
+      if (uazapiError.status === 401 || uazapiError.message?.includes('Unauthorized')) {
+        res.status(401).json({ 
+          error: 'UazAPI authentication failed. Instance token may be invalid. Please reconnect the instance.',
+          details: uazapiError.message 
+        });
+        return;
+      }
+      throw uazapiError;
+    }
     const chatsArray =
       (Array.isArray(remoteChats?.chats) && remoteChats?.chats) ||
       (Array.isArray(remoteChats?.data?.chats) && remoteChats?.data?.chats) ||
