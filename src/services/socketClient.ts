@@ -84,13 +84,15 @@ export function getSocket(token: string): Socket | null {
     auth: {
       token,
     },
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'], // Tentar polling primeiro
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     reconnectionAttempts: Infinity,
     timeout: 20000, // 20 segundos
     forceNew: false,
+    upgrade: true, // Permitir upgrade de polling para websocket
+    rememberUpgrade: true, // Lembrar preferência de transporte
   });
 
   socket.on('connect', () => {
