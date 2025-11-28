@@ -34,6 +34,16 @@ export default defineConfig(({ mode }) => ({
     target: 'esnext',
     minify: 'esbuild',
     sourcemap: false,
+    rollupOptions: {
+      external: [], // Não externalizar nenhum módulo
+      output: {
+        // Garantir que buffer seja incluído
+        globals: {},
+      },
+    },
+    commonjsOptions: {
+      include: [/buffer/, /node_modules/],
+    },
   },
   define: {
     global: 'globalThis',
