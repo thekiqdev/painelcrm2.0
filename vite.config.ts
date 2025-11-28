@@ -2,7 +2,6 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
-import { Buffer } from "buffer";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -21,6 +20,8 @@ export default defineConfig(({ mode }) => ({
       // Redirecionar Supabase para stub para evitar erros de build
       "@/integrations/supabase/client": path.resolve(__dirname, "./src/integrations/supabase/client-stub.ts"),
       "@supabase/supabase-js": path.resolve(__dirname, "./src/integrations/supabase/supabase-stub.js"),
+      // Polyfill para Buffer
+      buffer: 'buffer',
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
     mainFields: ['module', 'main'],
@@ -37,12 +38,5 @@ export default defineConfig(({ mode }) => ({
   define: {
     global: 'globalThis',
     'process.env.NODE_ENV': JSON.stringify(mode),
-  },
-  resolve: {
-    ...(mode === 'development' ? {} : {
-      alias: {
-        buffer: 'buffer',
-      },
-    }),
   },
 }));
