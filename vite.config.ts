@@ -20,8 +20,6 @@ export default defineConfig(({ mode }) => ({
       // Redirecionar Supabase para stub para evitar erros de build
       "@/integrations/supabase/client": path.resolve(__dirname, "./src/integrations/supabase/client-stub.ts"),
       "@supabase/supabase-js": path.resolve(__dirname, "./src/integrations/supabase/supabase-stub.js"),
-      // Forçar resolução do buffer para evitar externalização
-      buffer: path.resolve(__dirname, "node_modules/buffer/index.js"),
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
     mainFields: ['module', 'main'],
