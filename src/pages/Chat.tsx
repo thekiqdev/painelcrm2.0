@@ -166,12 +166,15 @@ const Chat = () => {
     setLoadingConversations(true);
     try {
       const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
+      console.log('[Chat] Carregando conversas para instâncias:', ids);
       const allConversations: ChatConversation[] = [];
       
       // Carregar conversas de todas as instâncias habilitadas
       for (const instanceId of ids) {
         try {
+          console.log(`[Chat] Buscando conversas da instância ${instanceId}...`);
           const data = await chatService.getConversations({ instanceId });
+          console.log(`[Chat] Encontradas ${data.length} conversas da instância ${instanceId}`);
           allConversations.push(...data);
         } catch (error) {
           console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
@@ -190,6 +193,7 @@ const Chat = () => {
         return new Date(dateB).getTime() - new Date(dateA).getTime();
       });
       
+      console.log('[Chat] Total de conversas únicas:', uniqueConversations.length);
       setConversations(uniqueConversations);
     } catch (error) {
       console.error('Erro ao carregar conversas:', error);
