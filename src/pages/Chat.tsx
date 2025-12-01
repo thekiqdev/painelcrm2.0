@@ -133,6 +133,7 @@ const Chat = () => {
   const [loadingLead, setLoadingLead] = useState(false);
   const [loadingClient, setLoadingClient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const conversationsPollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Estados para dialogs
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
@@ -215,6 +216,22 @@ const Chat = () => {
     }
   }, []);
 
+  // Polling automático para atualizar mensagens da conversa selecionada
+  useEffect(() => {
+    if (!selectedConversationId) {
+      return;
+    }
+
+    // Atualizar mensagens a cada 5 segundos se houver conversa selecionada
+    const messagesPollingInterval = setInterval(() => {
+      loadMessages(selectedConversationId);
+    }, 5000); // Atualizar a cada 5 segundos
+
+    return () => {
+      clearInterval(messagesPollingInterval);
+    };
+  }, [selectedConversationId, loadMessages]);
+
   useEffect(() => {
     loadInstances();
     loadClients();
@@ -253,9 +270,9 @@ const Chat = () => {
       setSelectedConversationId(null);
       setMessages([]);
       previousInstancesRef.current = '';
-      return;
-    }
-
+          return;
+        }
+        
     // Se as instâncias mudaram, reconfigurar apenas se necessário
     if (instancesIds !== previousInstancesRef.current) {
       previousInstancesRef.current = instancesIds;
@@ -294,12 +311,35 @@ const Chat = () => {
   useEffect(() => {
     if (enabledInstanceIds.size === 0) {
       setConversations([]);
-          return;
-        }
+      // Limpar polling se não há instâncias habilitadas
+      if (conversationsPollingRef.current) {
+        clearInterval(conversationsPollingRef.current);
+        conversationsPollingRef.current = null;
+      }
+      return;
+    }
     setSelectedConversationId(null);
     setMessages([]);
     // Carregar conversas de todas as instâncias habilitadas
     loadConversations(Array.from(enabledInstanceIds));
+
+    // Configurar polling automático para atualizar conversas a cada 10 segundos
+    if (conversationsPollingRef.current) {
+      clearInterval(conversationsPollingRef.current);
+    }
+    conversationsPollingRef.current = setInterval(() => {
+      if (enabledInstanceIds.size > 0) {
+        loadConversations(Array.from(enabledInstanceIds));
+      }
+    }, 10000); // Atualizar a cada 10 segundos
+
+    // Cleanup: limpar polling quando o componente desmontar ou instâncias mudarem
+    return () => {
+      if (conversationsPollingRef.current) {
+        clearInterval(conversationsPollingRef.current);
+        conversationsPollingRef.current = null;
+      }
+    };
   }, [enabledInstanceIds, loadConversations]);
 
   useEffect(() => {
@@ -322,7 +362,7 @@ const Chat = () => {
           const viewport = messagesEndRef.current.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
           if (viewport) {
             viewport.scrollTop = viewport.scrollHeight;
-          } else {
+            } else {
             // Fallback para scrollIntoView
             messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
           }
