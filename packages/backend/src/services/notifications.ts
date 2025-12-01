@@ -463,6 +463,6 @@ export async function deleteNotification(
     [notificationId, userId]
   );
 
-  return result.rowCount > 0;
+  return (result.rowCount || 0) > 0;
 }
 
