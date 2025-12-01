@@ -16,6 +16,16 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Endpoint de teste para verificar se o webhook está acessível
+router.get('/', (req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Webhook endpoint is accessible',
+    timestamp: new Date().toISOString(),
+    path: req.path,
+  });
+});
+
 // Endpoint principal de webhook
 router.post('/', handleWebhook);
 

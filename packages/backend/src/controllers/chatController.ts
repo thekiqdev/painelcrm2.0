@@ -1384,11 +1384,15 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
   const webhookId = randomUUID();
 
   try {
-    console.log(`[Webhook ${webhookId}] Processing event: ${event}`, {
-      instance: instance.external_instance_name,
+    console.log(`[Webhook ${webhookId}] ===== STARTING EVENT PROCESSING =====`, {
+      instanceId: instance.id,
+      instanceName: instance.name,
+      instanceExternalName: instance.external_instance_name,
       event,
       timestamp: new Date().toISOString(),
       payloadSize: JSON.stringify(payload).length,
+      payloadKeys: Object.keys(payload),
+      payloadPreview: JSON.stringify(payload).substring(0, 500),
     });
 
     if (event === 'messages' || payload.message) {
@@ -1782,6 +1786,22 @@ export async function handleWebhook(req: Request, res: Response) {
   const startTime = Date.now();
   const webhookId = randomUUID();
 
+  // Log inicial de TODAS as requisições recebidas
+  console.log(`[Webhook ${webhookId}] ===== WEBHOOK RECEIVED =====`, {
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+    contentType: req.get('content-type'),
+    headers: {
+      'x-uazapi-instance': req.headers['x-uazapi-instance'],
+      'x-uazapi-secret': req.headers['x-uazapi-secret'] ? '***' : undefined,
+    },
+    query: req.query,
+    bodyKeys: req.body ? Object.keys(req.body) : [],
+    timestamp: new Date().toISOString(),
+  });
+
   try {
     // 1. Validar secret (se configurado)
     const secret = process.env.UAZAPI_WEBHOOK_SECRET;
@@ -1789,6 +1809,8 @@ export async function handleWebhook(req: Request, res: Response) {
       console.warn(`[Webhook ${webhookId}] Invalid secret`, {
         ip: req.ip,
         userAgent: req.get('user-agent'),
+        hasSecret: !!secret,
+        receivedSecret: !!req.headers['x-uazapi-secret'],
       });
       res.status(401).json({ error: 'Invalid webhook secret' });
       return;
@@ -1799,35 +1821,69 @@ export async function handleWebhook(req: Request, res: Response) {
     if (!payload || Object.keys(payload).length === 0) {
       console.warn(`[Webhook ${webhookId}] Empty payload`, {
         ip: req.ip,
+        bodyType: typeof req.body,
       });
       res.status(400).json({ error: 'Empty payload' });
       return;
     }
 
-    // 3. Identificar instância
+    // 3. Identificar instância - tentar múltiplas formas
     const instanceName =
       payload.instance ||
       payload.instanceName ||
+      payload.data?.instance ||
+      payload.data?.instanceName ||
       req.query.instance ||
       req.headers['x-uazapi-instance'];
 
+    console.log(`[Webhook ${webhookId}] Instance identification attempt:`, {
+      fromPayloadInstance: payload.instance,
+      fromPayloadInstanceName: payload.instanceName,
+      fromPayloadDataInstance: payload.data?.instance,
+      fromPayloadDataInstanceName: payload.data?.instanceName,
+      fromQuery: req.query.instance,
+      fromHeader: req.headers['x-uazapi-instance'],
+      resolvedInstanceName: instanceName,
+    });
+
     if (!instanceName || typeof instanceName !== 'string') {
       console.warn(`[Webhook ${webhookId}] Missing instance identifier`, {
-        payload: JSON.stringify(payload).substring(0, 200),
+        payload: JSON.stringify(payload).substring(0, 500),
+        allPayloadKeys: Object.keys(payload),
       });
       res.status(400).json({ error: 'Missing instance identifier' });
       return;
     }
 
-    // 4. Buscar instância no banco
-    const instanceResult = await pool.query<ChatInstanceRow>(
+    // 4. Buscar instância no banco - tentar por external_instance_name e também por name
+    let instanceResult = await pool.query<ChatInstanceRow>(
       'SELECT * FROM chat_instances WHERE external_instance_name = $1 LIMIT 1',
       [instanceName]
     );
 
+    // Se não encontrou por external_instance_name, tentar por name
     if (instanceResult.rowCount === 0) {
+      console.log(`[Webhook ${webhookId}] Instance not found by external_instance_name, trying by name...`, {
+        instanceName,
+      });
+      instanceResult = await pool.query<ChatInstanceRow>(
+        'SELECT * FROM chat_instances WHERE name = $1 LIMIT 1',
+        [instanceName]
+      );
+    }
+
+    // Listar todas as instâncias para debug se ainda não encontrou
+    if (instanceResult.rowCount === 0) {
+      const allInstances = await pool.query<ChatInstanceRow>(
+        'SELECT id, name, external_instance_name FROM chat_instances LIMIT 10'
+      );
       console.warn(`[Webhook ${webhookId}] Instance not found`, {
         instanceName,
+        searchedBy: ['external_instance_name', 'name'],
+        availableInstances: allInstances.rows.map(i => ({
+          name: i.name,
+          external_instance_name: i.external_instance_name,
+        })),
         ip: req.ip,
       });
       res.status(404).json({ error: 'Instance not registered' });
@@ -1839,13 +1895,16 @@ export async function handleWebhook(req: Request, res: Response) {
     // 5. Identificar tipo de evento
     const event = payload.event || req.query.event || payload.type || 'unknown';
 
-    // 6. Log do recebimento
-    console.log(`[Webhook ${webhookId}] Webhook received`, {
-      instance: instanceName,
+    // 6. Log do recebimento com mais detalhes
+    console.log(`[Webhook ${webhookId}] Webhook received and instance found`, {
+      instanceName,
+      instanceId: instance.id,
+      instanceExternalName: instance.external_instance_name,
       event,
       ip: req.ip,
       userAgent: req.get('user-agent'),
       payloadSize: JSON.stringify(payload).length,
+      payloadPreview: JSON.stringify(payload).substring(0, 300),
       receiveTime: Date.now() - startTime,
     });
 
