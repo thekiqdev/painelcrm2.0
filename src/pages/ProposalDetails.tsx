@@ -59,9 +59,9 @@ const ProposalDetails = () => {
       await proposalsService.updateProposal(proposal.id, {
         status: 'accepted'
       });
-    toast.success("Proposta aceita com sucesso!");
-    setIsAcceptDialogOpen(false);
-    setTimeout(() => navigate(`/funnel`), 1000);
+      toast.success("Proposta aceita com sucesso!");
+      setIsAcceptDialogOpen(false);
+      setTimeout(() => navigate(`/funnel`), 1000);
     } catch (error) {
       console.error("Erro ao aceitar proposta:", error);
       toast.error("Erro ao aceitar proposta");
@@ -75,9 +75,9 @@ const ProposalDetails = () => {
       await proposalsService.updateProposal(proposal.id, {
         status: 'rejected'
       });
-    toast.success("Proposta recusada e movida para estágio apropriado");
-    setIsRejectDialogOpen(false);
-    setTimeout(() => navigate(`/funnel`), 1000);
+      toast.success("Proposta recusada e movida para estágio apropriado");
+      setIsRejectDialogOpen(false);
+      setTimeout(() => navigate(`/funnel`), 1000);
     } catch (error) {
       console.error("Erro ao recusar proposta:", error);
       toast.error("Erro ao recusar proposta");
@@ -175,26 +175,26 @@ const ProposalDetails = () => {
               <p className="font-semibold">{formatCurrency(proposal.amount)}</p>
             </div>
             {proposal.sent_date && (
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Data de Envio</p>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Data de Envio</p>
                 <p>{format(new Date(proposal.sent_date), "dd/MM/yyyy")}</p>
-            </div>
+              </div>
             )}
             {proposal.valid_until && (
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Válido até</p>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Válido até</p>
                 <p>{format(new Date(proposal.valid_until), "dd/MM/yyyy")}</p>
-            </div>
+              </div>
             )}
           </div>
 
           <Separator />
           
           {proposal.description && (
-          <div>
-            <h3 className="font-medium mb-2">Descrição</h3>
-            <p className="text-sm text-muted-foreground">{proposal.description}</p>
-          </div>
+            <div>
+              <h3 className="font-medium mb-2">Descrição</h3>
+              <p className="text-sm text-muted-foreground">{proposal.description}</p>
+            </div>
           )}
 
           <Separator />

@@ -4,13 +4,7 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { randomUUID } from 'crypto';
-import {
-  emitMessage,
-  emitMessageUpdate,
-  emitConversationUpdate,
-  emitConnectionStatus,
-  emitPresenceUpdate,
-} from '../services/socketService.js';
+import * as notificationService from '../services/notifications.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -32,7 +26,8 @@ const webhookConfigSchema = z.object({
   events: z.array(z.string()).optional(),
   addUrlEvents: z.boolean().optional(),
   addUrlTypesMessages: z.boolean().optional(),
-  excludeMessages: z.boolean().optional(),
+  excludeMessages: z.array(z.string()).optional(), // Array de strings, não boolean
+  enabled: z.boolean().optional(),
   secret: z.string().optional(),
 });
 
@@ -196,7 +191,7 @@ async function upsertConversation(
       chatData.lastMessagePreview,
       chatData.lastMessageAt,
     chatData.unreadCount,
-    JSON.stringify(chatData.metadata || {}),
+      JSON.stringify(chatData.metadata || {}),
     ]
   );
 
@@ -329,31 +324,88 @@ export async function createInstance(req: AuthRequest, res: Response) {
       ]
     );
 
-    const newInstance = inserted.rows[0];
-
-    // Configurar webhook automaticamente
-    try {
-      const webhookUrl = process.env.UAZAPI_WEBHOOK_URL || 
-        `${process.env.FRONTEND_URL || process.env.BACKEND_URL || 'http://localhost:3001'}/webhooks/uazapi`;
-      
-      await uazapiService.configureWebhook(instanceToken, {
-        url: webhookUrl,
-        events: ['messages', 'messages_update', 'chats', 'connection', 'presence'],
-        excludeMessages: ['wasSentByApi'],
-        addUrlEvents: false,
-        addUrlTypesMessages: false,
-      });
-      
-      console.log(`[Webhook] Configurado para instância ${instanceName}: ${webhookUrl}`);
-    } catch (webhookError: any) {
-      console.error('[Webhook] Erro ao configurar webhook (não crítico):', webhookError.message);
-      // Não falhar a criação da instância se o webhook falhar
-    }
-
-    res.status(201).json(newInstance);
+    res.status(201).json(inserted.rows[0]);
   } catch (error: any) {
     console.error('Error creating instance:', error);
     res.status(500).json({ error: error.message || 'Failed to create instance' });
+  }
+}
+
+/**
+ * Função auxiliar para configurar webhook automaticamente
+ * Não falha se houver erro, apenas loga
+ */
+async function autoConfigureWebhook(instance: ChatInstanceRow) {
+  try {
+    const resolvedUrl =
+      process.env.UAZAPI_WEBHOOK_URL ||
+      (process.env.PUBLIC_API_URL
+        ? `${process.env.PUBLIC_API_URL.replace(/\/$/, '')}/webhooks/uazapi`
+        : null);
+
+    if (!resolvedUrl) {
+      console.warn('Auto-configure webhook skipped: URL not configured');
+      return;
+    }
+
+    // Verificar se webhook já está configurado
+    const existingWebhook = instance.metadata?.webhook;
+    if (existingWebhook?.url === resolvedUrl) {
+      console.log('Webhook already configured, skipping auto-configuration');
+      return;
+    }
+
+    const defaultEvents = ['messages', 'messages_update', 'chats', 'connection', 'leads'];
+    const defaultExcludeMessages = ['wasSentByApi'];
+
+    const webhookBody: Record<string, any> = {
+      enabled: true,
+      url: resolvedUrl,
+      events: defaultEvents,
+      excludeMessages: defaultExcludeMessages,
+      addUrlEvents: true,
+      AddUrlTypesMessages: true,
+    };
+
+    const secret = process.env.UAZAPI_WEBHOOK_SECRET;
+    if (secret) {
+      webhookBody.secret = secret;
+    }
+
+    await uazapiService.configureWebhook(instance.instance_token, webhookBody);
+
+    // Salvar no banco
+    await pool.query(
+      `
+      UPDATE chat_instances
+      SET metadata = metadata || $1::jsonb,
+          updated_at = now()
+      WHERE id = $2
+    `,
+      [
+        JSON.stringify({
+          webhook: {
+            url: resolvedUrl,
+            events: defaultEvents,
+            excludeMessages: defaultExcludeMessages,
+            configuredAt: new Date().toISOString(),
+            autoConfigured: true,
+          },
+        }),
+        instance.id,
+      ]
+    );
+
+    console.log('Webhook auto-configured successfully', {
+      instance: instance.external_instance_name,
+      url: resolvedUrl,
+    });
+  } catch (error: any) {
+    // Não falhar o processo principal se webhook falhar
+    console.warn('Failed to auto-configure webhook (non-critical):', {
+      error: error.message,
+      instance: instance.external_instance_name,
+    });
   }
 }
 
@@ -385,6 +437,18 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       [response?.status || 'connecting', JSON.stringify({ lastConnect: response }), instance.id]
     );
 
+    // Se conectado com sucesso, configurar webhook automaticamente
+    if (response?.status === 'connected' || response?.status === 'open') {
+      // Buscar instância atualizada
+      const updatedInstance = await pool.query<ChatInstanceRow>(
+        'SELECT * FROM chat_instances WHERE id = $1',
+        [instance.id]
+      );
+      if (updatedInstance.rows[0]) {
+        await autoConfigureWebhook(updatedInstance.rows[0]);
+      }
+    }
+
     res.json(response);
   } catch (error: any) {
     console.error('Error connecting instance:', error);
@@ -415,15 +479,39 @@ export async function deleteInstance(req: AuthRequest, res: Response) {
   }
 }
 
+/**
+ * Configura webhook para uma instância WhatsApp na UazAPI
+ * 
+ * Eventos padrão configurados:
+ * - messages: Novas mensagens recebidas
+ * - messages_update: Atualizações de status (entregue, lida, etc)
+ * - connection: Mudanças no estado da conexão
+ * - chats: Atualizações de conversas
+ * - leads: Atualizações de leads
+ * 
+ * Filtros críticos aplicados:
+ * - excludeMessages: ["wasSentByApi"] - PREVINE LOOPS INFINITOS
+ */
 export async function configureInstanceWebhook(req: AuthRequest, res: Response) {
+  const startTime = Date.now();
+  const configId = randomUUID();
+
   try {
     const userId = req.userId!;
     const { id } = req.params;
     const payload = webhookConfigSchema.parse(req.body || {});
 
+    console.log(`[Webhook Config ${configId}] Starting webhook configuration`, {
+      instanceId: id,
+      userId,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Carregar instância
     const instance = await loadInstance(userId, id, res);
     if (!instance) return;
 
+    // Resolver URL do webhook
     const resolvedUrl =
       payload.url ||
       process.env.UAZAPI_WEBHOOK_URL ||
@@ -432,20 +520,86 @@ export async function configureInstanceWebhook(req: AuthRequest, res: Response) 
         : null);
 
     if (!resolvedUrl) {
-      res.status(400).json({ error: 'Webhook URL is not configured. Provide url or set UAZAPI_WEBHOOK_URL/PUBLIC_API_URL.' });
+      console.error(`[Webhook Config ${configId}] Webhook URL not configured`);
+      res.status(400).json({
+        error: 'Webhook URL is not configured. Provide url or set UAZAPI_WEBHOOK_URL/PUBLIC_API_URL.',
+      });
       return;
     }
 
-    const body = {
+    // Eventos padrão recomendados
+    const defaultEvents = [
+      'messages',        // Novas mensagens recebidas
+      'messages_update', // Atualizações de status
+      'chats',           // Atualizações de conversas
+      'connection',      // Mudanças no estado da conexão
+      'leads',           // Atualizações de leads
+    ];
+
+    // Filtros CRÍTICOS para prevenir loops
+    // SEMPRE excluir mensagens enviadas pela API
+    const defaultExcludeMessages = ['wasSentByApi'];
+
+    // Mesclar filtros: sempre incluir wasSentByApi, mas permitir adicionar outros
+    const excludeMessages = payload.excludeMessages
+      ? [...new Set([...defaultExcludeMessages, ...payload.excludeMessages])]
+      : defaultExcludeMessages;
+
+    // Preparar body para UazAPI
+    const webhookBody: Record<string, any> = {
+      enabled: payload.enabled !== false, // Padrão: true
       url: resolvedUrl,
-      events: payload.events || ['messages', 'messages_update', 'chats', 'connection', 'leads'],
-      AddUrlTypesMessages: payload.addUrlTypesMessages ?? true,
-      addUrlEvents: payload.addUrlEvents ?? true,
-      excludeMessages: payload.excludeMessages ?? false,
-      secret: payload.secret || process.env.UAZAPI_WEBHOOK_SECRET || undefined,
+      events: payload.events || defaultEvents,
+      excludeMessages: excludeMessages,
+      addUrlEvents: payload.addUrlEvents ?? true, // Padrão: true (URLs dinâmicas)
+      AddUrlTypesMessages: payload.addUrlTypesMessages ?? true, // Padrão: true
     };
 
-    const response = await uazapiService.configureWebhook(instance.instance_token, body);
+    // Adicionar secret se configurado
+    const secret = payload.secret || process.env.UAZAPI_WEBHOOK_SECRET;
+    if (secret) {
+      webhookBody.secret = secret;
+    }
+
+    console.log(`[Webhook Config ${configId}] Configuring webhook in UazAPI`, {
+      instance: instance.external_instance_name,
+      url: resolvedUrl,
+      events: webhookBody.events,
+      excludeMessages: webhookBody.excludeMessages,
+      hasSecret: !!secret,
+    });
+
+    // Configurar webhook na UazAPI
+    let uazapiResponse;
+    try {
+      uazapiResponse = await uazapiService.configureWebhook(instance.instance_token, webhookBody);
+      console.log(`[Webhook Config ${configId}] Webhook configured successfully in UazAPI`, {
+        response: JSON.stringify(uazapiResponse).substring(0, 200),
+      });
+    } catch (error: any) {
+      console.error(`[Webhook Config ${configId}] Error from UazAPI:`, {
+        error: error.message,
+        status: error.status,
+        payload: error.payload,
+      });
+      throw error;
+    }
+
+    // Salvar configuração no banco de dados
+    const webhookMetadata = {
+      webhook: {
+        url: resolvedUrl,
+        events: webhookBody.events,
+        excludeMessages: webhookBody.excludeMessages,
+        addUrlEvents: webhookBody.addUrlEvents,
+        addUrlTypesMessages: webhookBody.AddUrlTypesMessages,
+        enabled: webhookBody.enabled,
+        hasSecret: !!secret,
+        configuredAt: new Date().toISOString(),
+        configuredBy: userId,
+        uazapiResponse: uazapiResponse,
+      },
+    };
 
     await pool.query(
       `
@@ -454,22 +608,86 @@ export async function configureInstanceWebhook(req: AuthRequest, res: Response) 
             updated_at = now()
         WHERE id = $2
       `,
-      [
-        JSON.stringify({
-          webhook: {
-            url: resolvedUrl,
-            events: body.events,
-            configuredAt: new Date().toISOString(),
-          },
-        }),
-        instance.id,
-      ]
+      [JSON.stringify(webhookMetadata), instance.id]
     );
 
-    res.json({ configured: true, url: resolvedUrl, response });
+    console.log(`[Webhook Config ${configId}] Webhook configuration saved to database`, {
+      instanceId: instance.id,
+      processingTime: Date.now() - startTime,
+    });
+
+    res.json({
+      configured: true,
+      webhookId: configId,
+      url: resolvedUrl,
+      events: webhookBody.events,
+      excludeMessages: webhookBody.excludeMessages,
+      enabled: webhookBody.enabled,
+      uazapiResponse: uazapiResponse,
+      metadata: webhookMetadata.webhook,
+    });
   } catch (error: any) {
-    console.error('Error configuring webhook:', error);
-    res.status(500).json({ error: error.message || 'Failed to configure webhook' });
+    console.error(`[Webhook Config ${configId}] Error configuring webhook:`, {
+      error: error.message,
+      stack: error.stack,
+      instanceId: req.params.id,
+      processingTime: Date.now() - startTime,
+    });
+
+    // Se for erro de validação do Zod, retornar detalhes
+    if (error.name === 'ZodError') {
+      res.status(400).json({
+        error: 'Invalid webhook configuration',
+        details: error.errors,
+      });
+      return;
+    }
+
+    res.status(500).json({
+      error: error.message || 'Failed to configure webhook',
+      webhookId: configId,
+    });
+  }
+}
+
+/**
+ * Obtém a configuração atual do webhook de uma instância
+ * Retorna tanto a configuração salva no banco quanto a da UazAPI
+ */
+export async function getInstanceWebhook(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+
+    const instance = await loadInstance(userId, id, res);
+    if (!instance) return;
+
+    // Buscar configuração do banco de dados
+    const dbWebhook = instance.metadata?.webhook || null;
+
+    // Buscar configuração da UazAPI
+    let uazapiWebhook = null;
+    try {
+      uazapiWebhook = await uazapiService.getWebhook(instance.instance_token);
+    } catch (error: any) {
+      console.warn('Error fetching webhook from UazAPI:', {
+        error: error.message,
+        instanceId: id,
+      });
+      // Não falhar se UazAPI não retornar, apenas logar
+    }
+
+    res.json({
+      instanceId: id,
+      database: dbWebhook,
+      uazapi: uazapiWebhook,
+      synced: dbWebhook && uazapiWebhook ? 
+        dbWebhook.url === (Array.isArray(uazapiWebhook) ? (uazapiWebhook[0] as any)?.url : (uazapiWebhook as any)?.url) : 
+        false,
+    });
+  } catch (error: any) {
+    console.error('Error getting webhook configuration:', error);
+    res.status(500).json({ error: error.message || 'Failed to get webhook configuration' });
   }
 }
 
@@ -527,44 +745,16 @@ export async function syncConversations(req: AuthRequest, res: Response) {
     const instance = await loadInstance(userId, data.data.instanceId, res);
     if (!instance) return;
 
-    // Verificar se a instância tem token válido
-    if (!instance.instance_token) {
-      res.status(400).json({ error: 'Instance token not found. Please reconnect the instance.' });
-      return;
-    }
-
     const payload = {
       limit: data.data.limit ?? 200,
-      sort: '-wa_lastMsgTimestamp',
-      offset: 0,
+      ...(data.data.filters || {}),
+      sort: data.data.filters?.sort || '-wa_lastMsgTimestamp',
     };
 
-    console.log(`[Sync] Sincronizando conversas da instância ${instance.id} com token: ${instance.instance_token.substring(0, 10)}...`);
-
-    let remoteChats: AnyObject;
-    try {
-      remoteChats = (await uazapiService.findChats(
-        instance.instance_token,
-        payload
-      )) as AnyObject;
-      console.log(`[Sync] Resposta da UazAPI:`, {
-        hasChats: !!remoteChats?.chats,
-        hasData: !!remoteChats?.data,
-        isArray: Array.isArray(remoteChats),
-        keys: remoteChats ? Object.keys(remoteChats) : [],
-      });
-    } catch (uazapiError: any) {
-      console.error('[Sync] Erro ao chamar UazAPI findChats:', uazapiError);
-      // Se o erro for de autenticação da UazAPI, pode ser token inválido
-      if (uazapiError.status === 401 || uazapiError.message?.includes('Unauthorized')) {
-        res.status(401).json({ 
-          error: 'UazAPI authentication failed. Instance token may be invalid. Please reconnect the instance.',
-          details: uazapiError.message 
-        });
-        return;
-      }
-      throw uazapiError;
-    }
+    const remoteChats = (await uazapiService.findChats(
+      instance.instance_token,
+      payload
+    )) as AnyObject;
     const chatsArray =
       (Array.isArray(remoteChats?.chats) && remoteChats?.chats) ||
       (Array.isArray(remoteChats?.data?.chats) && remoteChats?.data?.chats) ||
@@ -857,15 +1047,593 @@ export async function markConversationRead(req: AuthRequest, res: Response) {
   }
 }
 
-export async function handleWebhook(req: Request, res: Response) {
+/**
+ * Extrai informações de mensagem de diferentes formatos de payload
+ */
+function extractMessageData(payload: any): {
+  message: any;
+  chatId: string | null;
+  direction: 'incoming' | 'outgoing';
+  messageType: string | null;
+  isGroup: boolean;
+} {
+  // Tentar diferentes formatos de payload
+      const data = payload.data || payload.message || payload;
+      const message = data.message || data;
+
+  // Extrair chatId de múltiplas fontes
+      const chatId =
+        data.wa_chatid ||
+        message.chatid ||
+        message.chatId ||
+        message.chat?.id ||
+        message.key?.remoteJid ||
+    message.remoteJid ||
+        message.number ||
+    data.number ||
+        null;
+
+  // Determinar direção
+  const direction: 'incoming' | 'outgoing' =
+    message.fromMe || message.wasSentByApi ? 'outgoing' : 'incoming';
+
+  // Tipo de mensagem
+  const messageType =
+    message.type ||
+    message.messageType ||
+    message.msgType ||
+    (message.text ? 'text' : null) ||
+    (message.image ? 'image' : null) ||
+    (message.video ? 'video' : null) ||
+    (message.audio ? 'audio' : null) ||
+    (message.document ? 'document' : null) ||
+    (message.sticker ? 'sticker' : null) ||
+    (message.location ? 'location' : null) ||
+    (message.contact ? 'contact' : null) ||
+    null;
+
+  // Verificar se é grupo
+  const isGroup =
+    chatId?.endsWith('@g.us') ||
+    chatId?.includes('@g.us') ||
+    message.isGroup ||
+    data.isGroup ||
+    false;
+
+  return {
+    message,
+    chatId,
+    direction,
+    messageType,
+    isGroup,
+  };
+}
+
+/**
+ * Extrai corpo da mensagem de diferentes tipos
+ */
+function extractMessageBody(message: any): string {
+  // Texto direto
+  if (message.text) return message.text;
+  if (message.body) return message.body;
+
+  // Caption de mídia
+  if (message.caption) return message.caption;
+
+  // Mensagens de sistema
+  if (message.notify) return message.notify;
+  if (message.content) return String(message.content);
+
+  // Tipos específicos
+  if (message.type === 'location') {
+    return `📍 Localização: ${message.latitude}, ${message.longitude}`;
+  }
+  if (message.type === 'contact') {
+    return `👤 Contato: ${message.displayName || message.name || 'Contato compartilhado'}`;
+  }
+  if (message.type === 'document') {
+    return `📄 ${message.fileName || 'Documento'}`;
+  }
+  if (message.type === 'image') {
+    return message.caption || '🖼️ Imagem';
+  }
+  if (message.type === 'video') {
+    return message.caption || '🎥 Vídeo';
+  }
+  if (message.type === 'audio') {
+    return '🎵 Áudio';
+  }
+  if (message.type === 'sticker') {
+    return '🎨 Sticker';
+  }
+
+  return '';
+}
+
+/**
+ * Extrai informações de mídia da mensagem
+ */
+function extractMediaInfo(message: any): any[] {
+  const media: any[] = [];
+
+  // Se já existe array de media
+  if (Array.isArray(message.media)) {
+    return message.media;
+  }
+
+  // Extrair mídia individual
+  if (message.image || message.video || message.audio || message.document || message.sticker) {
+    const mediaItem: any = {};
+
+    if (message.image) {
+      mediaItem.type = 'image';
+      mediaItem.url = message.image.url || message.image;
+      mediaItem.mimetype = message.image.mimetype || 'image/jpeg';
+    } else if (message.video) {
+      mediaItem.type = 'video';
+      mediaItem.url = message.video.url || message.video;
+      mediaItem.mimetype = message.video.mimetype || 'video/mp4';
+    } else if (message.audio) {
+      mediaItem.type = 'audio';
+      mediaItem.url = message.audio.url || message.audio;
+      mediaItem.mimetype = message.audio.mimetype || 'audio/ogg';
+      mediaItem.seconds = message.audio.seconds;
+    } else if (message.document) {
+      mediaItem.type = 'document';
+      mediaItem.url = message.document.url || message.document;
+      mediaItem.mimetype = message.document.mimetype;
+      mediaItem.fileName = message.document.fileName || message.fileName;
+    } else if (message.sticker) {
+      mediaItem.type = 'sticker';
+      mediaItem.url = message.sticker.url || message.sticker;
+      mediaItem.mimetype = message.sticker.mimetype || 'image/webp';
+    }
+
+    if (Object.keys(mediaItem).length > 0) {
+      media.push(mediaItem);
+    }
+  }
+
+  return media;
+}
+
+/**
+ * Converte timestamp para Date
+ */
+function parseTimestamp(timestamp: any): Date | null {
+  if (!timestamp) return null;
+
+  // Se já é Date
+  if (timestamp instanceof Date) return timestamp;
+
+  // Se é número
+  const numeric = Number(timestamp);
+  if (!Number.isNaN(numeric)) {
+    // Se está em segundos (menor que 1e12), converter para milissegundos
+    return new Date(numeric > 1e12 ? numeric : numeric * 1000);
+  }
+
+  // Se é string, tentar parse
+  if (typeof timestamp === 'string') {
+    const parsed = Date.parse(timestamp);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Processa eventos de webhook de forma assíncrona
+ * Esta função é chamada após responder ao webhook para não bloquear a resposta
+ */
+async function processWebhookEvent(instance: ChatInstanceRow, payload: any, event: string) {
+  const startTime = Date.now();
+  const webhookId = randomUUID();
+
   try {
+    console.log(`[Webhook ${webhookId}] Processing event: ${event}`, {
+      instance: instance.external_instance_name,
+      event,
+      timestamp: new Date().toISOString(),
+      payloadSize: JSON.stringify(payload).length,
+    });
+
+    if (event === 'messages' || payload.message) {
+      const extracted = extractMessageData(payload);
+
+      // Ignorar mensagens enviadas pela API para evitar loops
+      if (extracted.message.wasSentByApi || extracted.message.fromMe) {
+        console.log(`[Webhook ${webhookId}] Skipping API-sent message`, {
+          messageId: extracted.message.id || extracted.message.messageId,
+          direction: extracted.direction,
+        });
+        return;
+      }
+
+      if (!extracted.chatId) {
+        console.warn(`[Webhook ${webhookId}] No chatId found in message payload`, {
+          payloadKeys: Object.keys(payload),
+        });
+        return;
+      }
+
+      // Extrair informações adicionais do payload
+      const data = payload.data || payload.message || payload;
+      const message = extracted.message;
+
+      // Preparar dados para conversa
+      const chatData = normalizeChatPayload({
+          ...data,
+          ...message,
+        wa_chatid: extracted.chatId,
+          wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
+        wa_lastMsgText: extractMessageBody(message),
+        isGroup: extracted.isGroup,
+      });
+
+      if (!chatData) {
+        console.warn(`[Webhook ${webhookId}] Failed to normalize chat payload`);
+        return;
+      }
+
+      // Criar ou atualizar conversa
+      const conversation = await upsertConversation(instance, chatData);
+
+      if (!conversation) {
+        console.warn(`[Webhook ${webhookId}] Failed to upsert conversation`, {
+          chatId: extracted.chatId,
+        });
+        return;
+      }
+
+      // Extrair informações da mensagem
+      const messageBody = extractMessageBody(message);
+      const media = extractMediaInfo(message);
+      const sentAt = parseTimestamp(message.timestamp || message.messageTimestamp);
+      const messageId =
+        message.id ||
+        message.messageId ||
+        message.key?.id ||
+        data.external_message_id ||
+        null;
+
+      if (!messageId) {
+        console.warn(`[Webhook ${webhookId}] No messageId found`, {
+          messageKeys: Object.keys(message),
+        });
+        // Continuar mesmo sem messageId, mas gerar um
+      }
+
+      // Salvar mensagem
+      await saveMessage(conversation.id, extracted.direction, {
+        externalMessageId: messageId,
+        body: messageBody || null,
+        media: media.length > 0 ? media : null,
+        status: message.status || (extracted.direction === 'outgoing' ? 'sent' : null),
+        sentAt: sentAt || new Date(),
+        metadata: {
+          ...message,
+          messageType: extracted.messageType,
+          isGroup: extracted.isGroup,
+          originalPayload: payload,
+        },
+      });
+
+      // Criar notificação para mensagens recebidas (incoming)
+      if (extracted.direction === 'incoming') {
+        try {
+          await notificationService.notifyNewMessage(instance.user_id, {
+            conversationId: conversation.id,
+            conversationName: conversation.contact_name || conversation.profile_name || conversation.phone_number,
+            messagePreview: messageBody,
+            messageId: messageId || undefined,
+            isGroup: extracted.isGroup,
+          });
+        } catch (notifError: any) {
+          // Não falhar o processamento se notificação falhar
+          console.warn(`[Webhook ${webhookId}] Failed to create notification:`, {
+            error: notifError.message,
+          });
+        }
+      }
+
+      console.log(`[Webhook ${webhookId}] Message saved successfully`, {
+        conversationId: conversation.id,
+        messageId: messageId,
+        direction: extracted.direction,
+        messageType: extracted.messageType,
+        isGroup: extracted.isGroup,
+        hasMedia: media.length > 0,
+        bodyLength: messageBody?.length || 0,
+        processingTime: Date.now() - startTime,
+      });
+    } else if (event === 'messages_update') {
+      // Atualizar status de mensagens existentes
+      const data = payload.data || payload;
+      const messageUpdate = data.message || data;
+
+      const messageId =
+        messageUpdate.id ||
+        messageUpdate.messageId ||
+        messageUpdate.key?.id ||
+        data.external_message_id ||
+        null;
+
+      if (!messageId) {
+        console.warn(`[Webhook ${webhookId}] No messageId in messages_update event`);
+        return;
+      }
+
+      const status = messageUpdate.status || messageUpdate.messageStatus;
+      const readAt = messageUpdate.readTimestamp
+        ? parseTimestamp(messageUpdate.readTimestamp)
+        : null;
+      const deliveredAt = messageUpdate.deliveredTimestamp
+        ? parseTimestamp(messageUpdate.deliveredTimestamp)
+        : null;
+
+      // Atualizar mensagem
+      const updateResult = await pool.query(
+        `
+        UPDATE chat_messages
+        SET 
+          status = COALESCE($1, status),
+          metadata = metadata || $2::jsonb,
+          updated_at = now()
+        WHERE external_message_id = $3
+        RETURNING conversation_id, direction
+        `,
+        [
+          status,
+          JSON.stringify({
+            ...messageUpdate,
+            readAt: readAt?.toISOString(),
+            deliveredAt: deliveredAt?.toISOString(),
+            updatedAt: new Date().toISOString(),
+          }),
+          messageId,
+        ]
+      );
+
+      if (updateResult.rowCount === 0) {
+        console.warn(`[Webhook ${webhookId}] Message not found for update`, {
+          messageId,
+        });
+        return;
+      }
+
+      const updatedMessage = updateResult.rows[0];
+
+      // Se mensagem foi lida e é incoming, atualizar contador de não lidas
+      if (status === 'read' && updatedMessage.direction === 'incoming' && readAt) {
+        await pool.query(
+          `
+          UPDATE chat_conversations
+          SET 
+            unread_count = GREATEST(0, unread_count - 1),
+            updated_at = now()
+          WHERE id = $1 AND unread_count > 0
+          `,
+          [updatedMessage.conversation_id]
+        );
+      }
+
+      // Criar notificações para atualizações de status (apenas para mensagens enviadas)
+      if (updatedMessage.direction === 'outgoing') {
+        try {
+          // Buscar informações da conversa para a notificação
+          const conversationResult = await pool.query(
+            'SELECT id, contact_name, profile_name, phone_number, user_id FROM chat_conversations WHERE id = $1',
+            [updatedMessage.conversation_id]
+          );
+
+          if (conversationResult.rowCount && conversationResult.rowCount > 0) {
+            const conv = conversationResult.rows[0];
+
+            if (status === 'delivered') {
+              await notificationService.notifyMessageDelivered(conv.user_id, {
+                conversationId: conv.id,
+                messageId,
+                conversationName: conv.contact_name || conv.profile_name || conv.phone_number,
+              });
+            } else if (status === 'read') {
+              await notificationService.notifyMessageRead(conv.user_id, {
+                conversationId: conv.id,
+                messageId,
+                conversationName: conv.contact_name || conv.profile_name || conv.phone_number,
+              });
+            }
+          }
+        } catch (notifError: any) {
+          console.warn(`[Webhook ${webhookId}] Failed to create status notification:`, {
+            error: notifError.message,
+          });
+        }
+      }
+
+      console.log(`[Webhook ${webhookId}] Message status updated`, {
+        messageId,
+        status,
+        conversationId: updatedMessage.conversation_id,
+        readAt: readAt?.toISOString(),
+        deliveredAt: deliveredAt?.toISOString(),
+        processingTime: Date.now() - startTime,
+      });
+    } else if (event === 'chats' || payload.chat) {
+      // Atualizar informações da conversa (sem criar mensagem)
+      const data = payload.data || payload.chat || payload;
+      const chatData = normalizeChatPayload(data);
+
+      if (!chatData) {
+        console.warn(`[Webhook ${webhookId}] Failed to normalize chat data in chats event`);
+        return;
+      }
+
+      const conversation = await upsertConversation(instance, chatData);
+
+      if (conversation) {
+        // Verificar se é uma nova conversa (sem mensagens ainda)
+        const messageCount = await pool.query(
+          'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = $1',
+          [conversation.id]
+        );
+        const isNewConversation = parseInt(messageCount.rows[0].count, 10) === 0;
+
+        // Criar notificação para nova conversa
+        if (isNewConversation) {
+          try {
+            await notificationService.notifyNewConversation(instance.user_id, {
+              conversationId: conversation.id,
+              conversationName: chatData.contactName || chatData.profileName,
+              phoneNumber: chatData.phoneNumber,
+              isGroup: chatData.externalChatId?.endsWith('@g.us') || false,
+            });
+          } catch (notifError: any) {
+            console.warn(`[Webhook ${webhookId}] Failed to create new conversation notification:`, {
+              error: notifError.message,
+            });
+          }
+        }
+
+        console.log(`[Webhook ${webhookId}] Chat updated`, {
+          conversationId: conversation.id,
+          externalChatId: chatData.externalChatId,
+          contactName: chatData.contactName,
+          unreadCount: chatData.unreadCount,
+          isNewConversation,
+          processingTime: Date.now() - startTime,
+        });
+      } else {
+        console.warn(`[Webhook ${webhookId}] Failed to upsert conversation in chats event`);
+      }
+    } else if (event === 'connection') {
+      const data = payload.data || payload;
+      const state = data.state || data.status;
+
+      // Buscar estado anterior para detectar mudanças
+      const previousState = instance.metadata?.connection?.state || instance.status;
+
+      // Atualizar status da conexão na instância
+      await pool.query(
+        `
+        UPDATE chat_instances
+        SET 
+          status = CASE 
+            WHEN $1 = 'open' OR $1 = 'connected' THEN 'connected'
+            WHEN $1 = 'close' OR $1 = 'disconnected' THEN 'disconnected'
+            ELSE status
+          END,
+          metadata = metadata || $2::jsonb, 
+          updated_at = now()
+        WHERE id = $3
+        `,
+        [
+          state,
+          JSON.stringify({
+            connection: {
+              state,
+              lastUpdate: new Date().toISOString(),
+            },
+          }),
+          instance.id,
+        ]
+      );
+
+      // Criar notificações para mudanças de conexão
+      try {
+        if (previousState !== state) {
+          if (state === 'open' || state === 'connected') {
+            if (previousState === 'close' || previousState === 'disconnected') {
+              // Conexão restaurada
+              await notificationService.notifyConnectionRestored(instance.user_id, {
+                instanceId: instance.id,
+                instanceName: instance.name,
+              });
+            } else {
+              // Primeira conexão
+              await notificationService.notifyInstanceConnected(instance.user_id, {
+                instanceId: instance.id,
+                instanceName: instance.name,
+              });
+            }
+          } else if (state === 'close' || state === 'disconnected') {
+            // Conexão perdida
+            await notificationService.notifyConnectionLost(instance.user_id, {
+              instanceId: instance.id,
+              instanceName: instance.name,
+            });
+          }
+        }
+      } catch (notifError: any) {
+        console.warn(`[Webhook ${webhookId}] Failed to create connection notification:`, {
+          error: notifError.message,
+        });
+      }
+
+      console.log(`[Webhook ${webhookId}] Connection status updated`, {
+        instanceId: instance.id,
+        previousState,
+        newState: state,
+        processingTime: Date.now() - startTime,
+      });
+    } else if (event === 'leads') {
+      const data = payload.data || payload;
+      console.log(`[Webhook ${webhookId}] Lead event received`, {
+        leadData: data,
+        processingTime: Date.now() - startTime,
+      });
+      // TODO: Implementar processamento de leads quando necessário
+    } else {
+      console.log(`[Webhook ${webhookId}] Unhandled event type`, {
+        event,
+        payload: JSON.stringify(payload).substring(0, 200),
+      });
+    }
+  } catch (error: any) {
+    console.error(`[Webhook ${webhookId}] Error processing event:`, {
+      error: error.message,
+      stack: error.stack,
+      event,
+      instance: instance.external_instance_name,
+      processingTime: Date.now() - startTime,
+    });
+    // Não relançar erro para não quebrar o fluxo
+  }
+}
+
+/**
+ * Handler principal para webhooks da UazAPI
+ * Responde rapidamente e processa eventos de forma assíncrona
+ */
+export async function handleWebhook(req: Request, res: Response) {
+  const startTime = Date.now();
+  const webhookId = randomUUID();
+
+  try {
+    // 1. Validar secret (se configurado)
     const secret = process.env.UAZAPI_WEBHOOK_SECRET;
     if (secret && req.headers['x-uazapi-secret'] !== secret) {
+      console.warn(`[Webhook ${webhookId}] Invalid secret`, {
+        ip: req.ip,
+        userAgent: req.get('user-agent'),
+      });
       res.status(401).json({ error: 'Invalid webhook secret' });
       return;
     }
 
+    // 2. Validar e extrair payload
     const payload = req.body || {};
+    if (!payload || Object.keys(payload).length === 0) {
+      console.warn(`[Webhook ${webhookId}] Empty payload`, {
+        ip: req.ip,
+      });
+      res.status(400).json({ error: 'Empty payload' });
+      return;
+    }
+
+    // 3. Identificar instância
     const instanceName =
       payload.instance ||
       payload.instanceName ||
@@ -873,175 +1641,75 @@ export async function handleWebhook(req: Request, res: Response) {
       req.headers['x-uazapi-instance'];
 
     if (!instanceName || typeof instanceName !== 'string') {
+      console.warn(`[Webhook ${webhookId}] Missing instance identifier`, {
+        payload: JSON.stringify(payload).substring(0, 200),
+      });
       res.status(400).json({ error: 'Missing instance identifier' });
       return;
     }
 
+    // 4. Buscar instância no banco
     const instanceResult = await pool.query<ChatInstanceRow>(
       'SELECT * FROM chat_instances WHERE external_instance_name = $1 LIMIT 1',
       [instanceName]
     );
 
     if (instanceResult.rowCount === 0) {
+      console.warn(`[Webhook ${webhookId}] Instance not found`, {
+        instanceName,
+        ip: req.ip,
+      });
       res.status(404).json({ error: 'Instance not registered' });
       return;
     }
 
     const instance = instanceResult.rows[0];
-    const event = payload.event || req.query.event || payload.type;
 
-    if (event === 'messages' || payload.message) {
-      const data = payload.data || payload.message || payload;
-      const message = data.message || data;
+    // 5. Identificar tipo de evento
+    const event = payload.event || req.query.event || payload.type || 'unknown';
 
-      const chatId =
-        data.wa_chatid ||
-        message.chatid ||
-        message.chatId ||
-        message.chat?.id ||
-        message.key?.remoteJid ||
-        message.number ||
-        null;
+    // 6. Log do recebimento
+    console.log(`[Webhook ${webhookId}] Webhook received`, {
+      instance: instanceName,
+      event,
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+      payloadSize: JSON.stringify(payload).length,
+      receiveTime: Date.now() - startTime,
+    });
 
-      const conversation = await upsertConversation(
-        instance,
-        normalizeChatPayload({
-          ...data,
-          ...message,
-          wa_chatid: chatId,
-          wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
-          wa_lastMsgText: message.text || message.body,
-        })
-      );
+    // 7. Responder rapidamente (antes de processar)
+    res.status(200).json({
+      received: true,
+      webhookId,
+      event,
+      instance: instanceName,
+    });
 
-      if (conversation) {
-        const direction = message.fromMe || message.wasSentByApi ? 'outgoing' : 'incoming';
-        const sentAtValue = message.timestamp || message.messageTimestamp;
-        let sentAt: Date | null = null;
-        if (sentAtValue) {
-          const numeric = Number(sentAtValue);
-          if (!Number.isNaN(numeric)) {
-            sentAt = new Date(numeric > 1e12 ? numeric : numeric * 1000);
-          }
-        }
-
-        await saveMessage(conversation.id, direction, {
-          externalMessageId:
-            message.id || message.messageId || message.key?.id || data.external_message_id,
-          body: message.text || message.body || message.caption || '',
-          media: message.media || [],
-          status: message.status || null,
-          sentAt,
-          metadata: message,
-        });
-
-        // Buscar mensagem salva para emitir via Socket.IO
-        const messageResult = await pool.query(
-          `SELECT * FROM chat_messages 
-           WHERE conversation_id = $1 
-           AND external_message_id = $2 
-           ORDER BY created_at DESC 
-           LIMIT 1`,
-          [conversation.id, message.id || message.messageId || message.key?.id || data.external_message_id]
-        );
-
-        // Emitir evento Socket.IO para nova mensagem
-        if (messageResult.rowCount && messageResult.rowCount > 0) {
-          const savedMessage = messageResult.rows[0];
-          // Normalizar formato da mensagem para o frontend
-          const normalizedMessage = {
-            id: savedMessage.id,
-            conversation_id: savedMessage.conversation_id,
-            direction: savedMessage.direction,
-            external_message_id: savedMessage.external_message_id,
-            body: savedMessage.body,
-            status: savedMessage.status,
-            sentAt: savedMessage.sent_at || savedMessage.created_at,
-            metadata: savedMessage.metadata,
-            created_at: savedMessage.created_at,
-          };
-          emitMessage(instance.id, conversation.id, normalizedMessage, instance.user_id);
-        }
-      }
-    } else if (event === 'chats' || payload.chat) {
-      const data = payload.data || payload.chat || payload;
-      const updatedConversation = await upsertConversation(instance, normalizeChatPayload(data));
-      
-      // Emitir evento Socket.IO para atualização de conversa
-      if (updatedConversation) {
-        emitConversationUpdate(instance.id, updatedConversation.id, updatedConversation, instance.user_id);
-      }
-    } else if (event === 'messages_update' || payload.messages_update) {
-      const data = payload.data || payload.messages_update || payload;
-      const message = data.message || data;
-      const messageId = message.id || message.messageId || message.key?.id;
-      
-      if (messageId) {
-        // Buscar conversa relacionada
-        const chatId = message.chatid || message.chatId || message.key?.remoteJid;
-        if (chatId) {
-          const conversationResult = await pool.query(
-            'SELECT id FROM chat_conversations WHERE external_chat_id = $1 OR phone_number = $1 LIMIT 1',
-            [chatId]
-          );
-          
-          if (conversationResult.rowCount && conversationResult.rowCount > 0) {
-            const conversation = conversationResult.rows[0];
-            const updates: any = {};
-            
-            if (message.status) updates.status = message.status;
-            if (message.text || message.body) updates.body = message.text || message.body;
-            if (message.timestamp || message.messageTimestamp) {
-              const timestamp = message.timestamp || message.messageTimestamp;
-              const numeric = Number(timestamp);
-              if (!Number.isNaN(numeric)) {
-                updates.sentAt = new Date(numeric > 1e12 ? numeric : numeric * 1000);
-              }
-            }
-            
-            // Atualizar mensagem no banco
-            await pool.query(
-              `UPDATE chat_messages 
-               SET status = COALESCE($1, status),
-                   body = COALESCE($2, body),
-                   sent_at = COALESCE($3, sent_at),
-                   updated_at = now()
-               WHERE external_message_id = $4`,
-              [updates.status, updates.body, updates.sentAt, messageId]
-            );
-            
-            // Emitir evento Socket.IO
-            emitMessageUpdate(instance.id, conversation.id, messageId, updates, instance.user_id);
-          }
-        }
-      }
-    } else if (event === 'connection' || payload.connection) {
-      const data = payload.data || payload.connection || payload;
-      const status = data.state || data.status || (data.connected ? 'connected' : 'disconnected');
-      
-      // Atualizar status da instância no banco
-      await pool.query(
-        'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
-        [status, instance.id]
-      );
-      
-      // Emitir evento Socket.IO
-      emitConnectionStatus(instance.id, status as 'connected' | 'disconnected' | 'connecting', instance.user_id);
-    } else if (event === 'presence' || payload.presence) {
-      const data = payload.data || payload.presence || payload;
-      const chatId = data.chatid || data.chatId || data.id;
-      const isOnline = data.isOnline !== undefined ? data.isOnline : (data.presence === 'available' || data.presence === 'composing');
-      
-      if (chatId) {
-        // Emitir evento Socket.IO
-        emitPresenceUpdate(instance.id, chatId, isOnline, instance.user_id);
-      }
-    }
-
-    res.json({ received: true });
+    // 8. Processar evento de forma assíncrona (não bloqueia a resposta)
+    processWebhookEvent(instance, payload, event).catch((error) => {
+      console.error(`[Webhook ${webhookId}] Async processing error:`, {
+        error: error.message,
+        stack: error.stack,
+        event,
+        instance: instanceName,
+      });
+    });
   } catch (error: any) {
-    console.error('Error handling webhook:', error);
-    res.status(500).json({ error: error.message || 'Failed to process webhook' });
+    console.error(`[Webhook ${webhookId}] Error handling webhook:`, {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      processingTime: Date.now() - startTime,
+    });
+
+    // Se ainda não respondeu, responder com erro
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: error.message || 'Failed to process webhook',
+        webhookId,
+      });
+    }
   }
 }
 

@@ -25,26 +25,15 @@ export default defineConfig(({ mode }) => ({
     mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients', 'buffer'],
+    include: ['@/services/clients'],
     exclude: ['@supabase/supabase-js'],
   },
   build: {
     target: 'esnext',
     minify: 'esbuild',
     sourcemap: false,
-    rollupOptions: {
-      external: [], // Não externalizar nenhum módulo
-      output: {
-        // Garantir que buffer seja incluído
-        globals: {},
-      },
-    },
-    commonjsOptions: {
-      include: [/buffer/, /node_modules/],
-    },
   },
   define: {
     global: 'globalThis',
-    'process.env.NODE_ENV': JSON.stringify(mode),
   },
 }));

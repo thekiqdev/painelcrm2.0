@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-import http from 'http';
+import { createServer } from 'http';
 import authRoutes from './routes/authRoutes.js';
 import productsRoutes from './routes/productsRoutes.js';
 import storeProfileRoutes from './routes/storeProfileRoutes.js';
@@ -38,12 +38,14 @@ import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
+import notificationsRoutes from './routes/notificationsRoutes.js';
 import { pool } from './utils/db.js';
-import { initializeSocketIO } from './services/socketService.js';
+import { initializeWebSocket } from './services/websocketService.js';
 
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
 const PORT = parseInt(process.env.API_PORT || '3001', 10);
 
 // Middleware
@@ -75,12 +77,20 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
+// Rate limiting para APIs
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
 });
 app.use('/api/', limiter);
+
+// Rate limiting mais generoso para webhooks (podem receber muitos eventos)
+const webhookLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 200, // limit each IP to 200 requests per minute (webhooks podem ser frequentes)
+  message: 'Too many webhook requests, please try again later.',
+});
+app.use('/webhooks/', webhookLimiter);
 
 // Health check - endpoint simples e rápido
 app.get('/health', async (req, res) => {
@@ -150,6 +160,7 @@ app.use('/api/proposals', proposalsRoutes);
 app.use('/api/members', membersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/notifications', notificationsRoutes);
 app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 
 // 404 handler
@@ -174,19 +185,15 @@ pool.query('SELECT NOW()')
     console.error('❌ Failed to connect to PostgreSQL:', err.message);
   });
 
-// Criar servidor HTTP para Socket.IO
-const httpServer = http.createServer(app);
-
-// Inicializar Socket.IO
-initializeSocketIO(httpServer);
-console.log('✅ Socket.IO initialized');
+// Inicializar WebSocket
+initializeWebSocket(httpServer);
 
 // Start server - escutar em 0.0.0.0 para ser acessível em containers
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Listening on 0.0.0.0:${PORT}`);
-  console.log(`📡 Socket.IO available at ws://0.0.0.0:${PORT}/socket.io`);
+  console.log(`📡 WebSocket server initialized`);
 });
 
 

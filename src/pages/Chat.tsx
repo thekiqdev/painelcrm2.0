@@ -59,7 +59,6 @@ import { InvoiceForm } from '@/components/finance/InvoiceForm';
 import { chatService, ChatConversation, ChatInstance, ChatMessage } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/integrations/api/client';
-import { useChatSocket } from '@/hooks/useChatSocket';
 import { financeService } from '@/services/finance';
 import { proposalsService } from '@/services/proposals';
 import { tasksService } from '@/services/tasks';
@@ -107,15 +106,8 @@ const statusBadgeClass = (status?: string | null) => {
 };
 
 const Chat = () => {
-  const { user, session } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  
-  // Garantir que o token está atualizado no apiClient
-  useEffect(() => {
-    if (session?.token) {
-      apiClient.setToken(session.token);
-    }
-  }, [session?.token]);
 
   const [instances, setInstances] = useState<ChatInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
@@ -173,15 +165,12 @@ const Chat = () => {
     setLoadingConversations(true);
     try {
       const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
-      console.log('[Chat] Carregando conversas para instâncias:', ids);
       const allConversations: ChatConversation[] = [];
       
       // Carregar conversas de todas as instâncias habilitadas
       for (const instanceId of ids) {
         try {
-          console.log(`[Chat] Buscando conversas da instância ${instanceId}...`);
           const data = await chatService.getConversations({ instanceId });
-          console.log(`[Chat] Encontradas ${data.length} conversas da instância ${instanceId}`);
           allConversations.push(...data);
         } catch (error) {
           console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
@@ -200,7 +189,6 @@ const Chat = () => {
         return new Date(dateB).getTime() - new Date(dateA).getTime();
       });
       
-      console.log('[Chat] Total de conversas únicas:', uniqueConversations.length);
       setConversations(uniqueConversations);
     } catch (error) {
       console.error('Erro ao carregar conversas:', error);
@@ -233,124 +221,6 @@ const Chat = () => {
     loadTicketCategories();
   }, [loadInstances]);
 
-  // Configurar Socket.IO para atualização em tempo real
-  const instanceIdsArray = Array.from(enabledInstanceIds);
-  const conversationIdsArray = selectedConversationId ? [selectedConversationId] : [];
-
-  useChatSocket({
-    instanceIds: instanceIdsArray,
-    conversationIds: conversationIdsArray,
-    onMessageNew: (data) => {
-      // Se a mensagem é da conversa selecionada, adicionar à lista
-      if (data.conversationId === selectedConversationId) {
-        setMessages((prev) => {
-          // Verificar se a mensagem já existe (evitar duplicatas)
-          const exists = prev.some((m) => m.id === data.message.id || m.externalMessageId === data.message.external_message_id);
-          if (exists) return prev;
-          return [...prev, data.message];
-        });
-      }
-      
-      // Atualizar lista de conversas
-      setConversations((prev) => {
-        const index = prev.findIndex((c) => c.id === data.conversationId);
-        if (index >= 0) {
-          const updated = [...prev];
-          updated[index] = {
-            ...updated[index],
-            lastMessagePreview: data.message.body || updated[index].lastMessagePreview,
-            lastMessageAt: data.message.sentAt || updated[index].lastMessageAt,
-            unreadCount: data.message.direction === 'incoming' 
-              ? (updated[index].unreadCount || 0) + 1 
-              : updated[index].unreadCount,
-          };
-          // Mover para o topo
-          const [moved] = updated.splice(index, 1);
-          return [moved, ...updated];
-        }
-        return prev;
-      });
-    },
-    onMessageUpdate: (data) => {
-      // Atualizar mensagem na lista se for da conversa selecionada
-      if (data.conversationId === selectedConversationId) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === data.messageId || m.externalMessageId === data.messageId
-              ? { ...m, ...data.updates }
-              : m
-          )
-        );
-      }
-    },
-    onConversationUpdate: (data) => {
-      // Atualizar conversa na lista
-      setConversations((prev) => {
-        const index = prev.findIndex((c) => c.id === data.conversationId);
-        if (index >= 0) {
-          const updated = [...prev];
-          updated[index] = { ...updated[index], ...data.conversation };
-          // Mover para o topo se houver atualização significativa
-          if (data.conversation.lastMessageAt || data.conversation.lastMessagePreview) {
-            const [moved] = updated.splice(index, 1);
-            return [moved, ...updated];
-          }
-          return updated;
-        }
-        // Se não existe, pode ser uma nova conversa - sincronizar e recarregar lista
-        if (instanceIdsArray.length > 0) {
-          // Sincronizar automaticamente quando recebe atualização de conversa nova
-          const instance = instances.find((inst) => inst.id === data.instanceId);
-          if (instance && instance.status === 'connected') {
-            chatService.syncConversations(data.instanceId, { limit: 50 })
-              .then(() => {
-                loadConversations(instanceIdsArray).catch(console.error);
-              })
-              .catch((error) => {
-                console.error('[Chat] Erro ao sincronizar conversa nova:', error);
-                // Mesmo com erro, recarregar lista
-                loadConversations(instanceIdsArray).catch(console.error);
-              });
-          } else {
-            loadConversations(instanceIdsArray).catch(console.error);
-          }
-        }
-        return prev;
-      });
-    },
-    onConnectionStatus: (data) => {
-      // Atualizar status da instância
-      setInstances((prev) => {
-        const updated = prev.map((inst) =>
-          inst.id === data.instanceId ? { ...inst, status: data.status } : inst
-        );
-        
-        // Se a instância acabou de conectar, sincronizar automaticamente
-        if (data.status === 'connected' && enabledInstanceIds.has(data.instanceId)) {
-          const instance = updated.find((inst) => inst.id === data.instanceId);
-          if (instance) {
-            console.log(`[Chat] Instância ${instance.id} conectada, sincronizando automaticamente...`);
-            chatService.syncConversations(instance.id, { limit: 200 })
-              .then(() => {
-                if (enabledInstanceIds.size > 0) {
-                  loadConversations(Array.from(enabledInstanceIds));
-                }
-              })
-              .catch((error) => {
-                console.error(`[Chat] Erro ao sincronizar após conexão da instância ${instance.id}:`, error);
-              });
-          }
-        }
-        
-        return updated;
-      });
-    },
-    onPresenceUpdate: (data) => {
-      // Atualizar status de presença (opcional, pode ser usado para mostrar online/offline)
-      console.log('[Presence]', data.chatId, data.isOnline ? 'online' : 'offline');
-    },
-  });
-
   const loadClients = useCallback(async () => {
     try {
       const data = await clientsService.getClients();
@@ -369,93 +239,68 @@ const Chat = () => {
     }
   }, []);
 
+  // Ref para rastrear IDs das instâncias para detectar mudanças
+  const previousInstancesRef = useRef<string>('');
+
   useEffect(() => {
+    const instancesIds = instances.map(i => i.id).join(',');
+    
+    // Se não há instâncias, limpar tudo
     if (instances.length === 0) {
       setSelectedInstanceId(null);
       setEnabledInstanceIds(new Set());
       setConversations([]);
       setSelectedConversationId(null);
       setMessages([]);
+      previousInstancesRef.current = '';
       return;
     }
 
-    // Se não há conexões habilitadas, habilita a primeira conectada ou a primeira disponível
-    if (enabledInstanceIds.size === 0) {
-      const connected = instances.find((instance) => instance.status === 'connected');
-      const firstInstance = connected || instances[0];
-      if (firstInstance) {
-        setEnabledInstanceIds(new Set([firstInstance.id]));
-        setSelectedInstanceId(firstInstance.id);
-      }
-    } else {
-      // Garante que pelo menos uma conexão habilitada está selecionada
-      const enabledArray = Array.from(enabledInstanceIds);
-      if (!selectedInstanceId || !enabledInstanceIds.has(selectedInstanceId)) {
-        setSelectedInstanceId(enabledArray[0] || null);
-      }
-    }
-  }, [instances, enabledInstanceIds, selectedInstanceId]);
-
-  // Sincronização automática quando instância fica conectada
-  useEffect(() => {
-    const connectedInstances = instances.filter(
-      (inst) => inst.status === 'connected' && enabledInstanceIds.has(inst.id)
-    );
-
-    if (connectedInstances.length > 0) {
-      // Sincronizar automaticamente quando instância fica conectada
-      connectedInstances.forEach(async (instance) => {
-        try {
-          console.log(`[Chat] Sincronizando automaticamente conversas da instância ${instance.id}...`);
-          await chatService.syncConversations(instance.id, { limit: 200 });
-          // Recarregar conversas após sincronização
-          if (enabledInstanceIds.size > 0) {
-            loadConversations(Array.from(enabledInstanceIds));
+    // Se as instâncias mudaram, reconfigurar apenas se necessário
+    if (instancesIds !== previousInstancesRef.current) {
+      previousInstancesRef.current = instancesIds;
+      
+      // Verificar se precisa habilitar uma instância
+      setEnabledInstanceIds((prev) => {
+        if (prev.size === 0) {
+          const connected = instances.find((instance) => instance.status === 'connected');
+          const firstInstance = connected || instances[0];
+          if (firstInstance) {
+            // Usar setTimeout para evitar atualização durante render
+            setTimeout(() => {
+              setSelectedInstanceId(firstInstance.id);
+            }, 0);
+            return new Set([firstInstance.id]);
           }
-        } catch (error) {
-          console.error(`[Chat] Erro na sincronização automática da instância ${instance.id}:`, error);
         }
+        return prev;
       });
     }
-  }, [instances.map(i => `${i.id}-${i.status}`).join(','), enabledInstanceIds]);
+  }, [instances]);
+
+  // Separar a lógica de validação de selectedInstanceId em outro useEffect
+  useEffect(() => {
+    if (enabledInstanceIds.size > 0) {
+      const enabledArray = Array.from(enabledInstanceIds);
+      setSelectedInstanceId((currentSelected) => {
+        if (!currentSelected || !enabledInstanceIds.has(currentSelected)) {
+          return enabledArray[0] || null;
+        }
+        return currentSelected;
+      });
+    }
+  }, [enabledInstanceIds]);
 
   useEffect(() => {
     if (enabledInstanceIds.size === 0) {
       setConversations([]);
-      return;
-    }
+          return;
+        }
     setSelectedConversationId(null);
     setMessages([]);
     // Carregar conversas de todas as instâncias habilitadas
     loadConversations(Array.from(enabledInstanceIds));
   }, [enabledInstanceIds, loadConversations]);
-
-  // Sincronização automática inicial se não houver conversas
-  useEffect(() => {
-    const connectedInstances = instances.filter(
-      (inst) => inst.status === 'connected' && enabledInstanceIds.has(inst.id)
-    );
-
-    if (connectedInstances.length > 0 && conversations.length === 0 && !loadingConversations) {
-      // Aguardar um pouco antes de sincronizar para evitar múltiplas chamadas
-      const timer = setTimeout(async () => {
-        try {
-          console.log('[Chat] Nenhuma conversa encontrada, sincronizando automaticamente...');
-          for (const instance of connectedInstances) {
-            await chatService.syncConversations(instance.id, { limit: 200 });
-          }
-          // Recarregar conversas após sincronização
-          if (enabledInstanceIds.size > 0) {
-            loadConversations(Array.from(enabledInstanceIds));
-          }
-        } catch (error) {
-          console.error('[Chat] Erro na sincronização automática inicial:', error);
-        }
-      }, 2000); // Aguardar 2 segundos
-
-      return () => clearTimeout(timer);
-    }
-  }, [instances, enabledInstanceIds, conversations.length, loadingConversations]);
 
   useEffect(() => {
     if (

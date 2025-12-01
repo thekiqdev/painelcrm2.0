@@ -101,6 +101,13 @@ export class UazapiService {
     });
   }
 
+  async getWebhook(instanceToken: string) {
+    return this.request('/webhook', {
+      method: 'GET',
+      token: instanceToken,
+    });
+  }
+
   async sendTextMessage(instanceToken: string, payload: Record<string, unknown>) {
     return this.request('/send/text', {
       method: 'POST',

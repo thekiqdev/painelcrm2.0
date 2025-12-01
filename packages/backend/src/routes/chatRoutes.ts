@@ -11,6 +11,7 @@ import {
   getConversationMessages,
   sendMessage,
   configureInstanceWebhook,
+  getInstanceWebhook,
   syncConversationMessages,
   markConversationRead,
 } from '../controllers/chatController.js';
@@ -24,6 +25,7 @@ router.post('/instances', createInstance);
 router.post('/instances/:id/connect', connectInstance);
 router.get('/instances/:id/status', getInstanceStatus);
 router.delete('/instances/:id', deleteInstance);
+router.get('/instances/:id/webhook', getInstanceWebhook);
 router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations', getConversations);

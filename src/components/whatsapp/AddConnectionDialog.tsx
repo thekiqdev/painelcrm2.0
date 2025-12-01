@@ -157,7 +157,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         if (connectResponse?.connected || connectResponse?.loggedIn || instance?.status === 'open') {
           setConnectionStatus("connected");
           toast.success("Instância já está conectada!");
-        } else {
+      } else {
           throw new Error("QR Code não disponível na resposta. Verifique os logs do console.");
         }
       }

@@ -29,7 +29,6 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.5",
     "@types/cors": "^2.8.17",
-    "@types/socket.io": "^3.0.2",
     "typescript": "^5.3.3",
     "tsx": "^4.7.0"
   }

@@ -25,7 +25,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     // Não faça nada enquanto estamos carregando o estado de autenticação
     if (loading) return;
 
-    if (import.meta.env.DEV) {
+    if (process.env.NODE_ENV === 'development') {
       console.log('AuthGuard check:', {
         user: !!user,
         path: location.pathname,

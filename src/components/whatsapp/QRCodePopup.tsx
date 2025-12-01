@@ -169,32 +169,32 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
       const pairingCodeData = connectResponse?.pairingCode;
       
       if (connectResponse?.status === "open" || connectResponse?.instance?.state === "open") {
-        setIsConnected(true);
-        toast.success("Já conectado!", {
-          description: "Esta instância já estava conectada",
-        });
-        return;
-      }
-      
-      if (qrData) {
-        // Processar o base64 corretamente
-        const processedQRCode = processQRCodeBase64(typeof qrData === 'string' ? qrData : JSON.stringify(qrData));
-        
-        if (!processedQRCode || processedQRCode.trim() === '') {
-          throw new Error("QR Code processado está vazio");
+          setIsConnected(true);
+          toast.success("Já conectado!", {
+            description: "Esta instância já estava conectada",
+          });
+          return;
         }
         
-        setQrCode(processedQRCode);
-        
+      if (qrData) {
+          // Processar o base64 corretamente
+        const processedQRCode = processQRCodeBase64(typeof qrData === 'string' ? qrData : JSON.stringify(qrData));
+          
+          if (!processedQRCode || processedQRCode.trim() === '') {
+            throw new Error("QR Code processado está vazio");
+          }
+          
+          setQrCode(processedQRCode);
+          
         if (pairingCodeData) {
           setPairingCode(pairingCodeData);
-        }
-        
-        toast.success("QR Code gerado", {
-          description: "Escaneie o QR code com seu WhatsApp",
-        });
-        
-        // Iniciar verificação de conexão
+          }
+          
+          toast.success("QR Code gerado", {
+            description: "Escaneie o QR code com seu WhatsApp",
+          });
+          
+          // Iniciar verificação de conexão
         startConnectionPolling();
       } else {
         throw new Error("QR Code não foi retornado pela API");
