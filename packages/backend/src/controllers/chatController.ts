@@ -279,55 +279,143 @@ export async function listInstances(req: AuthRequest, res: Response) {
 
 export async function createInstance(req: AuthRequest, res: Response) {
   try {
-    ensureAdminToken();
-    const userId = req.userId!;
-    const data = instanceSchema.parse(req.body);
+    console.log('[CreateInstance] Starting instance creation...');
+    
+    // Verificar admin token
+    try {
+      ensureAdminToken();
+    } catch (adminError: any) {
+      console.error('[CreateInstance] Admin token error:', adminError.message);
+      res.status(403).json({ 
+        error: 'Admin token required',
+        details: adminError.message 
+      });
+      return;
+    }
 
-    const remoteInstance = (await uazapiService.createInstance(
-      data.name,
-      data.metadata
-    )) as AnyObject;
+    const userId = req.userId!;
+    console.log('[CreateInstance] User ID:', userId);
     
-    console.log('UazAPI createInstance response:', JSON.stringify(remoteInstance, null, 2));
+    // Validar dados
+    let data;
+    try {
+      data = instanceSchema.parse(req.body);
+      console.log('[CreateInstance] Validated data:', { name: data.name });
+    } catch (validationError: any) {
+      console.error('[CreateInstance] Validation error:', validationError.errors);
+      res.status(400).json({ 
+        error: 'Invalid instance data',
+        details: validationError.errors 
+      });
+      return;
+    }
+
+    // Criar instância na UazAPI
+    let remoteInstance: AnyObject;
+    try {
+      console.log('[CreateInstance] Calling UazAPI createInstance...');
+      remoteInstance = (await uazapiService.createInstance(
+        data.name,
+        data.metadata
+      )) as AnyObject;
+      
+      console.log('[CreateInstance] UazAPI response received:', {
+        hasInstance: !!remoteInstance?.instance,
+        hasToken: !!(remoteInstance?.instance?.token || remoteInstance?.token),
+        keys: Object.keys(remoteInstance || {}),
+      });
+    } catch (uazapiError: any) {
+      console.error('[CreateInstance] UazAPI error:', {
+        message: uazapiError.message,
+        status: uazapiError.status,
+        payload: uazapiError.payload,
+        stack: uazapiError.stack,
+      });
+      res.status(uazapiError.status || 500).json({ 
+        error: 'Failed to create instance in UazAPI',
+        details: uazapiError.message,
+        uazapiError: uazapiError.payload || uazapiError.message,
+      });
+      return;
+    }
     
+    // Extrair informações da resposta
     const instanceInfo = remoteInstance?.instance || remoteInstance;
     const instanceToken = instanceInfo?.token || remoteInstance?.token;
     const instanceName = instanceInfo?.name || instanceInfo?.instanceName || data.name;
     const instanceStatus = instanceInfo?.status || 'disconnected';
     
+    console.log('[CreateInstance] Extracted info:', {
+      instanceToken: instanceToken ? '***' + instanceToken.slice(-4) : 'MISSING',
+      instanceName,
+      instanceStatus,
+    });
+    
     if (!instanceToken) {
-      throw new Error('Token da instância não foi retornado pela UazAPI');
+      console.error('[CreateInstance] No token returned from UazAPI:', {
+        remoteInstance: JSON.stringify(remoteInstance).substring(0, 500),
+      });
+      res.status(500).json({ 
+        error: 'Token da instância não foi retornado pela UazAPI',
+        response: remoteInstance,
+      });
+      return;
     }
 
-    const inserted = await pool.query(
-      `
-      INSERT INTO chat_instances (
-        user_id, name, external_instance_name, instance_token, status, metadata
-      )
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (user_id, name)
-      DO UPDATE SET
-        external_instance_name = EXCLUDED.external_instance_name,
-        instance_token = EXCLUDED.instance_token,
-        status = EXCLUDED.status,
-        metadata = EXCLUDED.metadata,
-        updated_at = now()
-      RETURNING *
-    `,
-      [
-        userId,
-        data.name,
-        instanceName,
-        instanceToken,
-        instanceStatus,
-        JSON.stringify(remoteInstance || {}),
-      ]
-    );
+    // Salvar no banco
+    try {
+      const inserted = await pool.query(
+        `
+        INSERT INTO chat_instances (
+          user_id, name, external_instance_name, instance_token, status, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (user_id, name)
+        DO UPDATE SET
+          external_instance_name = EXCLUDED.external_instance_name,
+          instance_token = EXCLUDED.instance_token,
+          status = EXCLUDED.status,
+          metadata = EXCLUDED.metadata,
+          updated_at = now()
+        RETURNING *
+      `,
+        [
+          userId,
+          data.name,
+          instanceName,
+          instanceToken,
+          instanceStatus,
+          JSON.stringify(remoteInstance || {}),
+        ]
+      );
 
-    res.status(201).json(inserted.rows[0]);
+      console.log('[CreateInstance] Instance saved to database:', {
+        id: inserted.rows[0]?.id,
+        name: inserted.rows[0]?.name,
+      });
+
+      res.status(201).json(inserted.rows[0]);
+    } catch (dbError: any) {
+      console.error('[CreateInstance] Database error:', {
+        message: dbError.message,
+        code: dbError.code,
+        detail: dbError.detail,
+      });
+      res.status(500).json({ 
+        error: 'Failed to save instance to database',
+        details: dbError.message,
+      });
+    }
   } catch (error: any) {
-    console.error('Error creating instance:', error);
-    res.status(500).json({ error: error.message || 'Failed to create instance' });
+    console.error('[CreateInstance] Unexpected error:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+    });
+    res.status(500).json({ 
+      error: error.message || 'Failed to create instance',
+      type: error.name || 'UnknownError',
+    });
   }
 }
 
@@ -344,16 +432,28 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         : null);
 
     if (!resolvedUrl) {
-      console.warn('Auto-configure webhook skipped: URL not configured');
+      console.warn('[Auto-Webhook] Skipped: URL not configured', {
+        instance: instance.external_instance_name,
+        hasUAZAPI_WEBHOOK_URL: !!process.env.UAZAPI_WEBHOOK_URL,
+        hasPUBLIC_API_URL: !!process.env.PUBLIC_API_URL,
+      });
       return;
     }
 
     // Verificar se webhook já está configurado
     const existingWebhook = instance.metadata?.webhook;
     if (existingWebhook?.url === resolvedUrl) {
-      console.log('Webhook already configured, skipping auto-configuration');
+      console.log('[Auto-Webhook] Already configured, skipping', {
+        instance: instance.external_instance_name,
+        url: resolvedUrl,
+      });
       return;
     }
+
+    console.log('[Auto-Webhook] Configuring webhook...', {
+      instance: instance.external_instance_name,
+      url: resolvedUrl,
+    });
 
     const defaultEvents = ['messages', 'messages_update', 'chats', 'connection', 'leads'];
     const defaultExcludeMessages = ['wasSentByApi'];
@@ -438,13 +538,15 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     );
 
     // Se conectado com sucesso, configurar webhook automaticamente
-    if (response?.status === 'connected' || response?.status === 'open') {
+    // Também tentar configurar se status for 'connecting' (pode ser QR code)
+    if (response?.status === 'connected' || response?.status === 'open' || response?.status === 'connecting') {
       // Buscar instância atualizada
       const updatedInstance = await pool.query<ChatInstanceRow>(
         'SELECT * FROM chat_instances WHERE id = $1',
         [instance.id]
       );
       if (updatedInstance.rows[0]) {
+        // Configurar webhook mesmo se estiver connecting (será útil quando conectar)
         await autoConfigureWebhook(updatedInstance.rows[0]);
       }
     }
@@ -691,6 +793,43 @@ export async function getInstanceWebhook(req: AuthRequest, res: Response) {
   }
 }
 
+/**
+ * Força a configuração do webhook para uma instância
+ * Útil para reconfigurar ou configurar manualmente
+ */
+export async function forceConfigureWebhook(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+
+    const instance = await loadInstance(userId, id, res);
+    if (!instance) return;
+
+    console.log('[Force-Webhook] Forcing webhook configuration', {
+      instance: instance.external_instance_name,
+    });
+
+    await autoConfigureWebhook(instance);
+
+    // Buscar webhook configurado
+    let webhookResult = null;
+    try {
+      webhookResult = await uazapiService.getWebhook(instance.instance_token);
+    } catch (error: any) {
+      console.warn('Error fetching webhook from UazAPI:', error.message);
+    }
+
+    res.json({
+      configured: true,
+      webhook: webhookResult,
+      message: 'Webhook configuration forced',
+    });
+  } catch (error: any) {
+    console.error('Error forcing webhook configuration:', error);
+    res.status(500).json({ error: error.message || 'Failed to force webhook configuration' });
+  }
+}
+
 export async function getInstanceStatus(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
@@ -723,6 +862,18 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
         'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
         [finalStatus, instance.id]
       );
+      
+      // Se mudou para connected, configurar webhook automaticamente
+      if (finalStatus === 'connected' && instance.status !== 'connected') {
+        const updatedInstance = await pool.query<ChatInstanceRow>(
+          'SELECT * FROM chat_instances WHERE id = $1',
+          [instance.id]
+        );
+        if (updatedInstance.rows[0]) {
+          console.log('Instance status changed to connected, auto-configuring webhook...');
+          await autoConfigureWebhook(updatedInstance.rows[0]);
+        }
+      }
     }
     
     res.json(result);
@@ -1540,6 +1691,26 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           instance.id,
         ]
       );
+
+      // Se conectou pela primeira vez, configurar webhook automaticamente
+      if ((state === 'open' || state === 'connected') && 
+          (previousState !== 'open' && previousState !== 'connected')) {
+        try {
+          // Buscar instância atualizada
+          const updatedInstance = await pool.query<ChatInstanceRow>(
+            'SELECT * FROM chat_instances WHERE id = $1',
+            [instance.id]
+          );
+          if (updatedInstance.rows[0]) {
+            console.log(`[Webhook ${webhookId}] Instance connected, auto-configuring webhook...`);
+            await autoConfigureWebhook(updatedInstance.rows[0]);
+          }
+        } catch (webhookError: any) {
+          console.warn(`[Webhook ${webhookId}] Failed to auto-configure webhook:`, {
+            error: webhookError.message,
+          });
+        }
+      }
 
       // Criar notificações para mudanças de conexão
       try {

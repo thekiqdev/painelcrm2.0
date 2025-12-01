@@ -251,7 +251,7 @@ Este documento apresenta a estratégia para automatizar a entrega de mensagens e
 1. Testar recebimento de webhooks usando https://webhook.cool/
 2. Verificar que mensagens são processadas corretamente
 3. Testar criação de notificações
-4. Testar WebSocket no frontend
+4. Testar WebSocket no frontenda
 5. Testar automações (se implementadas)
 6. Verificar que filtro `wasSentByApi` previne loops
 7. Testar reconexão após falhas

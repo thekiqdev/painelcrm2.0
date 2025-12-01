@@ -32,18 +32,40 @@ export class UazapiService {
 
     if (options.useAdminToken) {
       if (!this.adminToken) {
-        throw new Error('UAZAPI_ADMIN_TOKEN is not configured');
+        const error = new Error('UAZAPI_ADMIN_TOKEN is not configured');
+        (error as any).status = 500;
+        throw error;
       }
       headers['admintoken'] = this.adminToken;
     } else if (options.token) {
       headers['token'] = options.token;
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: options.method || 'GET',
-      headers,
-      body: options.body,
+    const url = `${this.baseUrl}${path}`;
+    console.log(`[UazAPI] ${options.method || 'GET'} ${url}`, {
+      hasBody: !!options.body,
+      useAdminToken: options.useAdminToken,
+      hasToken: !!options.token,
     });
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: options.method || 'GET',
+        headers,
+        body: options.body,
+      });
+    } catch (fetchError: any) {
+      console.error('[UazAPI] Fetch error:', {
+        url,
+        error: fetchError.message,
+        code: fetchError.code,
+      });
+      const error = new Error(`Failed to connect to UazAPI: ${fetchError.message}`);
+      (error as any).status = 503;
+      (error as any).originalError = fetchError;
+      throw error;
+    }
 
     const text = await response.text();
     let payload: any = null;
@@ -55,10 +77,22 @@ export class UazapiService {
       }
     }
 
+    console.log(`[UazAPI] Response ${response.status}:`, {
+      ok: response.ok,
+      payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : 'not-object',
+      payloadPreview: typeof payload === 'string' ? payload.substring(0, 200) : JSON.stringify(payload).substring(0, 200),
+    });
+
     if (!response.ok) {
-      const error = new Error(payload?.error || response.statusText);
+      const error = new Error(payload?.error || payload?.message || response.statusText || 'UazAPI request failed');
       (error as any).status = response.status;
       (error as any).payload = payload;
+      (error as any).responseText = text;
+      console.error('[UazAPI] Request failed:', {
+        status: response.status,
+        statusText: response.statusText,
+        payload,
+      });
       throw error;
     }
 
