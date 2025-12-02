@@ -1826,38 +1826,8 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         );
       }
 
-      // Criar notificações para atualizações de status (apenas para mensagens enviadas)
-      if (updatedMessage.direction === 'outgoing') {
-        try {
-          // Buscar informações da conversa para a notificação
-          const conversationResult = await pool.query(
-            'SELECT id, contact_name, profile_name, phone_number, user_id FROM chat_conversations WHERE id = $1',
-            [updatedMessage.conversation_id]
-          );
-
-          if (conversationResult.rowCount && conversationResult.rowCount > 0) {
-            const conv = conversationResult.rows[0];
-
-            if (status === 'delivered') {
-              await notificationService.notifyMessageDelivered(conv.user_id, {
-                conversationId: conv.id,
-                messageId,
-                conversationName: conv.contact_name || conv.profile_name || conv.phone_number,
-              });
-            } else if (status === 'read') {
-              await notificationService.notifyMessageRead(conv.user_id, {
-                conversationId: conv.id,
-                messageId,
-                conversationName: conv.contact_name || conv.profile_name || conv.phone_number,
-              });
-            }
-          }
-        } catch (notifError: any) {
-          console.warn(`[Webhook ${webhookId}] Failed to create status notification:`, {
-            error: notifError.message,
-          });
-        }
-      }
+      // NOTA: Notificações de mensagem entregue/lida removidas
+      // O cliente já visualiza o status na conversa, não precisa de notificação separada
 
       console.log(`[Webhook ${webhookId}] Message status updated`, {
         messageId,

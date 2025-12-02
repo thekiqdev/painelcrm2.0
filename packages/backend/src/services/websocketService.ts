@@ -20,7 +20,13 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       methods: ['GET', 'POST'],
       credentials: true,
     },
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'], // Polling primeiro (mais confiável através de proxy)
+    path: '/socket.io/',
+    // Permitir upgrade de polling para websocket
+    allowUpgrades: true,
+    // Timeout mais longo para conexões através de proxy
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
   // Middleware de autenticação
