@@ -1282,7 +1282,13 @@ export async function markConversationRead(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const payload = markReadSchema.parse(req.body || {});
+    
+    console.log('[MarkRead] Starting mark conversation as read', {
+      userId,
+      conversationId: id,
+    });
+
+    const payload = markReadSchema.parse(req.body || { read: true });
 
     const conversationResult = await pool.query(
       `
@@ -1295,6 +1301,7 @@ export async function markConversationRead(req: AuthRequest, res: Response) {
     );
 
     if (conversationResult.rowCount === 0) {
+      console.warn('[MarkRead] Conversation not found', { conversationId: id, userId });
       res.status(404).json({ error: 'Conversa não encontrada' });
       return;
     }
@@ -1306,15 +1313,36 @@ export async function markConversationRead(req: AuthRequest, res: Response) {
       (conversation.metadata?.wa_chatid ?? null);
 
     if (!identifier) {
+      console.warn('[MarkRead] No identifier found', {
+        conversationId: id,
+        external_chat_id: conversation.external_chat_id,
+        phone_number: conversation.phone_number,
+        metadata: conversation.metadata,
+      });
       res.status(400).json({ error: 'Conversation has no WhatsApp identifier' });
       return;
     }
 
-    await uazapiService.readChat(conversation.instance_token, {
-      number: identifier,
-      read: payload.read,
-    });
+    // Tentar marcar como lida na UazAPI (pode falhar, mas não é crítico)
+    try {
+      await uazapiService.readChat(conversation.instance_token, {
+        number: identifier,
+        read: payload.read,
+      });
+      console.log('[MarkRead] Successfully marked as read in UazAPI', {
+        conversationId: id,
+        identifier,
+      });
+    } catch (uazapiError: any) {
+      // Não falhar se UazAPI der erro - apenas logar
+      console.warn('[MarkRead] Failed to mark as read in UazAPI (non-critical):', {
+        error: uazapiError.message,
+        conversationId: id,
+        identifier,
+      });
+    }
 
+    // Sempre atualizar no banco de dados local
     if (payload.read) {
       await pool.query(
         `
@@ -1324,11 +1352,19 @@ export async function markConversationRead(req: AuthRequest, res: Response) {
         `,
         [conversation.id]
       );
+      console.log('[MarkRead] Updated unread_count to 0 in database', {
+        conversationId: id,
+      });
     }
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error('Error updating read status:', error);
+    console.error('[MarkRead] Error updating read status:', {
+      error: error.message,
+      stack: error.stack,
+      conversationId: req.params.id,
+      userId: req.userId,
+    });
     res.status(500).json({ error: error.message || 'Failed to update read status' });
   }
 }
