@@ -26,8 +26,9 @@ router.get('/', (req: Request, res: Response) => {
   });
 });
 
-// Endpoint principal de webhook
-router.post('/', handleWebhook);
+// Endpoint principal de webhook - captura todas as rotas POST
+// A UazAPI pode enviar para diferentes paths como /messages/text, /messages, etc.
+router.post('*', handleWebhook);
 
 export default router;
 
