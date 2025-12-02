@@ -155,47 +155,84 @@ async function upsertConversation(
   instance: ChatInstanceRow,
   chatData: ReturnType<typeof normalizeChatPayload>
 ) {
-  if (!chatData) return null;
+  if (!chatData) {
+    console.warn('[UpsertConversation] chatData is null or undefined');
+    return null;
+  }
 
-  const result = await pool.query(
-    `
-    INSERT INTO chat_conversations (
-      user_id, instance_id, external_chat_id, external_fast_id,
-      contact_name, profile_name, phone_number, status,
-      last_message_preview, last_message_at, unread_count, metadata
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb)
-    ON CONFLICT (instance_id, external_chat_id)
-    DO UPDATE SET
-      external_fast_id = EXCLUDED.external_fast_id,
-      contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
-      profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
-      phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
-      status = COALESCE(EXCLUDED.status, chat_conversations.status),
-      last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
-      last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
-      unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
-      metadata = EXCLUDED.metadata,
-      updated_at = now()
-    RETURNING *
-  `,
-    [
-      instance.user_id,
-      instance.id,
-      chatData.externalChatId,
-      chatData.externalFastId,
-      chatData.contactName,
-      chatData.profileName,
-      chatData.phoneNumber,
-      chatData.status,
-      chatData.lastMessagePreview,
-      chatData.lastMessageAt,
-    chatData.unreadCount,
-      JSON.stringify(chatData.metadata || {}),
-    ]
-  );
+  const upsertId = randomUUID().substring(0, 8);
+  console.log(`[UpsertConversation ${upsertId}] Starting upsert`, {
+    instanceId: instance.id,
+    externalChatId: chatData.externalChatId,
+    contactName: chatData.contactName,
+    phoneNumber: chatData.phoneNumber,
+    lastMessagePreview: chatData.lastMessagePreview?.substring(0, 50),
+  });
 
-  return result.rows[0];
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO chat_conversations (
+        user_id, instance_id, external_chat_id, external_fast_id,
+        contact_name, profile_name, phone_number, status,
+        last_message_preview, last_message_at, unread_count, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb)
+      ON CONFLICT (instance_id, external_chat_id)
+      DO UPDATE SET
+        external_fast_id = EXCLUDED.external_fast_id,
+        contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
+        profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
+        phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
+        status = COALESCE(EXCLUDED.status, chat_conversations.status),
+        last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
+        last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
+        unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
+        metadata = EXCLUDED.metadata,
+        updated_at = now()
+      RETURNING *
+    `,
+      [
+        instance.user_id,
+        instance.id,
+        chatData.externalChatId,
+        chatData.externalFastId,
+        chatData.contactName,
+        chatData.profileName,
+        chatData.phoneNumber,
+        chatData.status,
+        chatData.lastMessagePreview,
+        chatData.lastMessageAt,
+        chatData.unreadCount,
+        JSON.stringify(chatData.metadata || {}),
+      ]
+    );
+
+    if (result.rowCount === 0 || !result.rows[0]) {
+      console.error(`[UpsertConversation ${upsertId}] No row returned from database`);
+      return null;
+    }
+
+    console.log(`[UpsertConversation ${upsertId}] Successfully upserted conversation`, {
+      conversationId: result.rows[0].id,
+      externalChatId: result.rows[0].external_chat_id,
+      wasInsert: !result.rows[0].updated_at || new Date(result.rows[0].updated_at).getTime() === new Date(result.rows[0].created_at).getTime(),
+    });
+
+    return result.rows[0];
+  } catch (error: any) {
+    console.error(`[UpsertConversation ${upsertId}] Database error:`, {
+      error: error.message,
+      code: error.code,
+      detail: error.detail,
+      stack: error.stack,
+      chatData: {
+        externalChatId: chatData.externalChatId,
+        instanceId: instance.id,
+      },
+    });
+    throw error;
+  }
 }
 
 async function saveMessage(
@@ -212,60 +249,105 @@ async function saveMessage(
     resetUnread?: boolean;
   }
 ) {
-  await pool.query(
-    `
-    INSERT INTO chat_messages (
-      conversation_id, direction, external_message_id, body,
-      media, status, sent_at, metadata
-    )
-    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
-    ON CONFLICT (conversation_id, external_message_id)
-    DO UPDATE SET
-      status = COALESCE(EXCLUDED.status, chat_messages.status),
-      metadata = EXCLUDED.metadata,
-      sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
-      body = COALESCE(EXCLUDED.body, chat_messages.body)
-  `,
-    [
-      conversationId,
-      direction,
-      payload.externalMessageId,
-      payload.body,
-      JSON.stringify(payload.media || []),
-      payload.status,
-      payload.sentAt,
-      JSON.stringify(payload.metadata || {}),
-    ]
-  );
+  const saveId = randomUUID().substring(0, 8);
+  console.log(`[SaveMessage ${saveId}] Starting save`, {
+    conversationId,
+    direction,
+    externalMessageId: payload.externalMessageId,
+    bodyPreview: payload.body?.substring(0, 50),
+    hasMedia: !!payload.media,
+  });
 
-  const unreadShouldReset = payload.resetUnread === true;
-  const skipUnread = payload.skipUnreadUpdate === true;
-  const effectiveSentAt = payload.sentAt || new Date();
-
-  await pool.query(
-    `
-    UPDATE chat_conversations
-    SET
-      last_message_preview = COALESCE($2, last_message_preview),
-      last_message_at = COALESCE($3, last_message_at),
-      unread_count = CASE
-        WHEN $4 THEN unread_count
-        WHEN $5 = 'incoming' THEN unread_count + 1
-        WHEN $6 THEN 0
-        ELSE unread_count
-      END,
-      updated_at = now()
-    WHERE id = $1
+  try {
+    const messageResult = await pool.query(
+      `
+      INSERT INTO chat_messages (
+        conversation_id, direction, external_message_id, body,
+        media, status, sent_at, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
+      ON CONFLICT (conversation_id, external_message_id)
+      DO UPDATE SET
+        status = COALESCE(EXCLUDED.status, chat_messages.status),
+        metadata = EXCLUDED.metadata,
+        sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
+        body = COALESCE(EXCLUDED.body, chat_messages.body)
+      RETURNING id, created_at, updated_at
     `,
-    [
+      [
+        conversationId,
+        direction,
+        payload.externalMessageId,
+        payload.body,
+        JSON.stringify(payload.media || []),
+        payload.status,
+        payload.sentAt,
+        JSON.stringify(payload.metadata || {}),
+      ]
+    );
+
+    if (messageResult.rowCount === 0) {
+      console.warn(`[SaveMessage ${saveId}] No row returned from message insert`);
+    } else {
+      const wasInsert = !messageResult.rows[0]?.updated_at || 
+        new Date(messageResult.rows[0]?.updated_at).getTime() === new Date(messageResult.rows[0]?.created_at).getTime();
+      console.log(`[SaveMessage ${saveId}] Message saved successfully`, {
+        messageId: messageResult.rows[0]?.id,
+        wasInsert,
+      });
+    }
+
+    const unreadShouldReset = payload.resetUnread === true;
+    const skipUnread = payload.skipUnreadUpdate === true;
+    const effectiveSentAt = payload.sentAt || new Date();
+
+    const conversationResult = await pool.query(
+      `
+      UPDATE chat_conversations
+      SET
+        last_message_preview = COALESCE($2, last_message_preview),
+        last_message_at = COALESCE($3, last_message_at),
+        unread_count = CASE
+          WHEN $4 THEN unread_count
+          WHEN $5 = 'incoming' THEN unread_count + 1
+          WHEN $6 THEN 0
+          ELSE unread_count
+        END,
+        updated_at = now()
+      WHERE id = $1
+      RETURNING id, unread_count, last_message_at, updated_at
+    `,
+      [
+        conversationId,
+        payload.body || null,
+        effectiveSentAt,
+        skipUnread,
+        direction,
+        unreadShouldReset,
+      ]
+    );
+
+    if (conversationResult.rowCount === 0) {
+      console.warn(`[SaveMessage ${saveId}] Conversation not found for update`, { conversationId });
+    } else {
+      console.log(`[SaveMessage ${saveId}] Conversation updated successfully`, {
+        conversationId: conversationResult.rows[0]?.id,
+        unreadCount: conversationResult.rows[0]?.unread_count,
+        lastMessageAt: conversationResult.rows[0]?.last_message_at,
+        updatedAt: conversationResult.rows[0]?.updated_at,
+      });
+    }
+  } catch (error: any) {
+    console.error(`[SaveMessage ${saveId}] Database error:`, {
+      error: error.message,
+      code: error.code,
+      detail: error.detail,
+      stack: error.stack,
       conversationId,
-      payload.body || null,
-      effectiveSentAt,
-      skipUnread,
       direction,
-      unreadShouldReset,
-    ]
-  );
+    });
+    throw error;
+  }
 }
 
 export async function listInstances(req: AuthRequest, res: Response) {
@@ -1434,14 +1516,32 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       }
 
       // Criar ou atualizar conversa
+      console.log(`[Webhook ${webhookId}] Attempting to upsert conversation`, {
+        chatId: extracted.chatId,
+        chatDataKeys: Object.keys(chatData),
+        hasExternalChatId: !!chatData.externalChatId,
+        hasContactName: !!chatData.contactName,
+      });
+
       const conversation = await upsertConversation(instance, chatData);
 
       if (!conversation) {
-        console.warn(`[Webhook ${webhookId}] Failed to upsert conversation`, {
+        console.error(`[Webhook ${webhookId}] Failed to upsert conversation`, {
           chatId: extracted.chatId,
+          chatData: {
+            externalChatId: chatData.externalChatId,
+            contactName: chatData.contactName,
+            phoneNumber: chatData.phoneNumber,
+          },
         });
         return;
       }
+
+      console.log(`[Webhook ${webhookId}] Conversation upserted successfully`, {
+        conversationId: conversation.id,
+        externalChatId: conversation.external_chat_id,
+        contactName: conversation.contact_name,
+      });
 
       // Extrair informações da mensagem
       const messageBody = extractMessageBody(message);
@@ -1462,6 +1562,14 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       }
 
       // Salvar mensagem
+      console.log(`[Webhook ${webhookId}] Attempting to save message`, {
+        conversationId: conversation.id,
+        messageId,
+        direction: extracted.direction,
+        bodyPreview: messageBody?.substring(0, 50),
+        hasMedia: media.length > 0,
+      });
+
       await saveMessage(conversation.id, extracted.direction, {
         externalMessageId: messageId,
         body: messageBody || null,
@@ -1474,6 +1582,11 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           isGroup: extracted.isGroup,
           originalPayload: payload,
         },
+      });
+
+      console.log(`[Webhook ${webhookId}] Message saved successfully`, {
+        conversationId: conversation.id,
+        messageId,
       });
 
       // Criar notificação para mensagens recebidas (incoming)
