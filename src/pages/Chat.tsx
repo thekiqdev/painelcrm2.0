@@ -58,6 +58,7 @@ import {
 import { InvoiceForm } from '@/components/finance/InvoiceForm';
 import { chatService, ChatConversation, ChatInstance, ChatMessage } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
+import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
 import { financeService } from '@/services/finance';
 import { proposalsService } from '@/services/proposals';
@@ -220,9 +221,9 @@ const Chat = () => {
   useEffect(() => {
     if (!selectedConversationId) {
       setMessages([]);
-      return;
-    }
-
+          return;
+        }
+        
     loadMessages(selectedConversationId);
   }, [selectedConversationId, loadMessages]);
 
@@ -231,6 +232,93 @@ const Chat = () => {
     loadClients();
     loadTicketCategories();
   }, [loadInstances]);
+
+  // WebSocket para atualização em tempo real de conversas
+  useEffect(() => {
+    if (!session?.token) return;
+
+    const socketUrl = import.meta.env.DEV 
+      ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+      : window.location.origin;
+
+    const socket: Socket = io(socketUrl, {
+      auth: { token: session.token },
+      transports: ['websocket', 'polling'],
+    });
+
+    socket.on('connect', () => {
+      console.log('[Chat] WebSocket connected');
+    });
+
+    // Escutar atualizações de conversa
+    socket.on('conversation_updated', (updatedConversation: ChatConversation) => {
+      console.log('[Chat] Conversation updated via WebSocket:', updatedConversation.id);
+      
+      setConversations((prev) => {
+        const existingIndex = prev.findIndex(c => c.id === updatedConversation.id);
+        if (existingIndex >= 0) {
+          // Atualizar conversa existente
+          const updated = [...prev];
+          updated[existingIndex] = updatedConversation;
+          // Mover para o topo (conversa mais recente)
+          updated.unshift(updated.splice(existingIndex, 1)[0]);
+          return updated;
+        } else {
+          // Adicionar nova conversa no topo
+          return [updatedConversation, ...prev];
+        }
+      });
+
+      // Se a conversa atualizada é a selecionada, recarregar mensagens
+      if (selectedConversationId === updatedConversation.id) {
+        loadMessages(updatedConversation.id);
+      }
+    });
+
+    // Escutar novas mensagens
+    socket.on('new_message', (data: { message: any; conversationId: string }) => {
+      console.log('[Chat] New message via WebSocket:', data.message.id);
+      
+      // Se a mensagem é da conversa selecionada, adicionar à lista
+      if (selectedConversationId === data.conversationId) {
+        setMessages((prev) => {
+          // Verificar se a mensagem já existe
+          if (prev.some(m => m.id === data.message.id || m.external_message_id === data.message.id)) {
+            return prev;
+          }
+          return [...prev, data.message as ChatMessage];
+        });
+      }
+
+      // Atualizar preview da conversa na lista
+      setConversations((prev) => {
+        const index = prev.findIndex(c => c.id === data.conversationId);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = {
+            ...updated[index],
+            last_message_preview: data.message.body,
+            last_message_at: data.message.sent_at,
+            unread_count: selectedConversationId === data.conversationId 
+              ? updated[index].unread_count 
+              : (updated[index].unread_count || 0) + 1,
+          };
+          // Mover para o topo
+          updated.unshift(updated.splice(index, 1)[0]);
+          return updated;
+        }
+        return prev;
+      });
+    });
+
+    socket.on('disconnect', () => {
+      console.log('[Chat] WebSocket disconnected');
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [user, selectedConversationId, loadMessages]);
 
   const loadClients = useCallback(async () => {
     try {

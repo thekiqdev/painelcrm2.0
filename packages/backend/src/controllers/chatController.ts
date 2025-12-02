@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { randomUUID } from 'crypto';
 import * as notificationService from '../services/notifications.js';
+import { emitConversationUpdate, emitNewMessage } from '../services/websocketService.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -170,43 +171,43 @@ async function upsertConversation(
   });
 
   try {
-    const result = await pool.query(
-      `
-      INSERT INTO chat_conversations (
-        user_id, instance_id, external_chat_id, external_fast_id,
-        contact_name, profile_name, phone_number, status,
+  const result = await pool.query(
+    `
+    INSERT INTO chat_conversations (
+      user_id, instance_id, external_chat_id, external_fast_id,
+      contact_name, profile_name, phone_number, status,
         last_message_preview, last_message_at, unread_count, metadata
-      )
+    )
       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb)
-      ON CONFLICT (instance_id, external_chat_id)
-      DO UPDATE SET
-        external_fast_id = EXCLUDED.external_fast_id,
-        contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
-        profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
-        phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
-        status = COALESCE(EXCLUDED.status, chat_conversations.status),
-        last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
-        last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
+    ON CONFLICT (instance_id, external_chat_id)
+    DO UPDATE SET
+      external_fast_id = EXCLUDED.external_fast_id,
+      contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
+      profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
+      phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
+      status = COALESCE(EXCLUDED.status, chat_conversations.status),
+      last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
+      last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
         unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
-        metadata = EXCLUDED.metadata,
-        updated_at = now()
-      RETURNING *
-    `,
-      [
-        instance.user_id,
-        instance.id,
-        chatData.externalChatId,
-        chatData.externalFastId,
-        chatData.contactName,
-        chatData.profileName,
-        chatData.phoneNumber,
-        chatData.status,
-        chatData.lastMessagePreview,
-        chatData.lastMessageAt,
+      metadata = EXCLUDED.metadata,
+      updated_at = now()
+    RETURNING *
+  `,
+    [
+      instance.user_id,
+      instance.id,
+      chatData.externalChatId,
+      chatData.externalFastId,
+      chatData.contactName,
+      chatData.profileName,
+      chatData.phoneNumber,
+      chatData.status,
+      chatData.lastMessagePreview,
+      chatData.lastMessageAt,
         chatData.unreadCount,
-        JSON.stringify(chatData.metadata || {}),
-      ]
-    );
+      JSON.stringify(chatData.metadata || {}),
+    ]
+  );
 
     if (result.rowCount === 0 || !result.rows[0]) {
       console.error(`[UpsertConversation ${upsertId}] No row returned from database`);
@@ -219,7 +220,7 @@ async function upsertConversation(
       wasInsert: !result.rows[0].updated_at || new Date(result.rows[0].updated_at).getTime() === new Date(result.rows[0].created_at).getTime(),
     });
 
-    return result.rows[0];
+  return result.rows[0];
   } catch (error: any) {
     console.error(`[UpsertConversation ${upsertId}] Database error:`, {
       error: error.message,
@@ -260,31 +261,31 @@ async function saveMessage(
 
   try {
     const messageResult = await pool.query(
-      `
-      INSERT INTO chat_messages (
-        conversation_id, direction, external_message_id, body,
-        media, status, sent_at, metadata
-      )
-      VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
-      ON CONFLICT (conversation_id, external_message_id)
-      DO UPDATE SET
-        status = COALESCE(EXCLUDED.status, chat_messages.status),
-        metadata = EXCLUDED.metadata,
-        sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
-        body = COALESCE(EXCLUDED.body, chat_messages.body)
+    `
+    INSERT INTO chat_messages (
+      conversation_id, direction, external_message_id, body,
+      media, status, sent_at, metadata
+    )
+    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
+    ON CONFLICT (conversation_id, external_message_id)
+    DO UPDATE SET
+      status = COALESCE(EXCLUDED.status, chat_messages.status),
+      metadata = EXCLUDED.metadata,
+      sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
+      body = COALESCE(EXCLUDED.body, chat_messages.body)
       RETURNING id, created_at
-    `,
-      [
-        conversationId,
-        direction,
-        payload.externalMessageId,
-        payload.body,
-        JSON.stringify(payload.media || []),
-        payload.status,
-        payload.sentAt,
-        JSON.stringify(payload.metadata || {}),
-      ]
-    );
+  `,
+    [
+      conversationId,
+      direction,
+      payload.externalMessageId,
+      payload.body,
+      JSON.stringify(payload.media || []),
+      payload.status,
+      payload.sentAt,
+      JSON.stringify(payload.metadata || {}),
+    ]
+  );
 
     if (messageResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] No row returned from message insert`);
@@ -368,8 +369,8 @@ export async function createInstance(req: AuthRequest, res: Response) {
     console.log('[CreateInstance] Starting instance creation...');
     
     // Verificar admin token
-    try {
-      ensureAdminToken();
+  try {
+    ensureAdminToken();
     } catch (adminError: any) {
       console.error('[CreateInstance] Admin token error:', adminError.message);
       res.status(403).json({ 
@@ -401,9 +402,9 @@ export async function createInstance(req: AuthRequest, res: Response) {
     try {
       console.log('[CreateInstance] Calling UazAPI createInstance...');
       remoteInstance = (await uazapiService.createInstance(
-        data.name,
-        data.metadata
-      )) as AnyObject;
+      data.name,
+      data.metadata
+    )) as AnyObject;
       
       console.log('[CreateInstance] UazAPI response received:', {
         hasInstance: !!remoteInstance?.instance,
@@ -450,37 +451,37 @@ export async function createInstance(req: AuthRequest, res: Response) {
 
     // Salvar no banco
     try {
-      const inserted = await pool.query(
-        `
-        INSERT INTO chat_instances (
-          user_id, name, external_instance_name, instance_token, status, metadata
-        )
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (user_id, name)
-        DO UPDATE SET
-          external_instance_name = EXCLUDED.external_instance_name,
-          instance_token = EXCLUDED.instance_token,
-          status = EXCLUDED.status,
-          metadata = EXCLUDED.metadata,
-          updated_at = now()
-        RETURNING *
-      `,
-        [
-          userId,
-          data.name,
+    const inserted = await pool.query(
+      `
+      INSERT INTO chat_instances (
+        user_id, name, external_instance_name, instance_token, status, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (user_id, name)
+      DO UPDATE SET
+        external_instance_name = EXCLUDED.external_instance_name,
+        instance_token = EXCLUDED.instance_token,
+        status = EXCLUDED.status,
+        metadata = EXCLUDED.metadata,
+        updated_at = now()
+      RETURNING *
+    `,
+      [
+        userId,
+        data.name,
           instanceName,
           instanceToken,
           instanceStatus,
-          JSON.stringify(remoteInstance || {}),
-        ]
-      );
+        JSON.stringify(remoteInstance || {}),
+      ]
+    );
 
       console.log('[CreateInstance] Instance saved to database:', {
         id: inserted.rows[0]?.id,
         name: inserted.rows[0]?.name,
       });
 
-      res.status(201).json(inserted.rows[0]);
+    res.status(201).json(inserted.rows[0]);
     } catch (dbError: any) {
       console.error('[CreateInstance] Database error:', {
         message: dbError.message,
@@ -1595,6 +1596,13 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         contactName: conversation.contact_name,
       });
 
+      // Emitir evento WebSocket para atualizar conversa em tempo real
+      try {
+        emitConversationUpdate(instance.user_id, conversation);
+      } catch (wsError: any) {
+        console.warn(`[Webhook ${webhookId}] Failed to emit conversation update:`, wsError.message);
+      }
+
       // Extrair informações da mensagem
       const messageBody = extractMessageBody(message);
       const media = extractMediaInfo(message);
@@ -1640,6 +1648,28 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         conversationId: conversation.id,
         messageId,
       });
+
+      // Emitir evento WebSocket para atualizar conversa e mensagem em tempo real
+      try {
+        // Buscar conversa atualizada para enviar dados completos
+        const updatedConversation = await pool.query(
+          'SELECT * FROM chat_conversations WHERE id = $1',
+          [conversation.id]
+        );
+        if (updatedConversation.rows[0]) {
+          emitConversationUpdate(instance.user_id, updatedConversation.rows[0]);
+        }
+        
+        emitNewMessage(instance.user_id, {
+          id: messageId,
+          conversation_id: conversation.id,
+          direction: extracted.direction,
+          body: messageBody,
+          sent_at: sentAt || new Date(),
+        }, conversation.id);
+      } catch (wsError: any) {
+        console.warn(`[Webhook ${webhookId}] Failed to emit WebSocket events:`, wsError.message);
+      }
 
       // Criar notificação para mensagens recebidas (incoming)
       if (extracted.direction === 'incoming') {

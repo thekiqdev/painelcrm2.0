@@ -143,6 +143,43 @@ export function emitToAll(event: string, data: any): void {
 }
 
 /**
+ * Emite atualização de conversa para um usuário específico
+ */
+export function emitConversationUpdate(userId: string, conversation: any): void {
+  if (!io) {
+    console.warn('[WebSocket] Cannot emit conversation update: WebSocket server not initialized');
+    return;
+  }
+
+  console.log(`[WebSocket] Emitting conversation update to user ${userId}:`, {
+    conversationId: conversation.id,
+    externalChatId: conversation.external_chat_id,
+  });
+
+  io.to(`user:${userId}`).emit('conversation_updated', conversation);
+}
+
+/**
+ * Emite nova mensagem para um usuário específico
+ */
+export function emitNewMessage(userId: string, message: any, conversationId: string): void {
+  if (!io) {
+    console.warn('[WebSocket] Cannot emit new message: WebSocket server not initialized');
+    return;
+  }
+
+  console.log(`[WebSocket] Emitting new message to user ${userId}:`, {
+    messageId: message.id,
+    conversationId,
+  });
+
+  io.to(`user:${userId}`).emit('new_message', {
+    message,
+    conversationId,
+  });
+}
+
+/**
  * Obtém o servidor WebSocket (para uso externo se necessário)
  */
 export function getIO(): SocketIOServer | null {
