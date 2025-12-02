@@ -49,8 +49,10 @@ const httpServer = createServer(app);
 const PORT = parseInt(process.env.API_PORT || '3001', 10);
 
 // Trust proxy - necessário quando atrás de Nginx/reverse proxy
-// Isso permite que Express confie nos headers X-Forwarded-* do proxy
-app.set('trust proxy', true);
+// Usar configuração segura para não confiar em qualquer IP arbitrário
+const trustProxySetting =
+  process.env.TRUST_PROXY_SETTING || 'loopback, linklocal, uniquelocal';
+app.set('trust proxy', trustProxySetting);
 
 // Middleware
 app.use(helmet());
