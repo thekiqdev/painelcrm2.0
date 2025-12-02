@@ -107,7 +107,7 @@ const statusBadgeClass = (status?: string | null) => {
 };
 
 const Chat = () => {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const navigate = useNavigate();
 
   const [instances, setInstances] = useState<ChatInstance[]>([]);
