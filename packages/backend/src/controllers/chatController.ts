@@ -1045,10 +1045,58 @@ export async function getConversations(req: AuthRequest, res: Response) {
 
     query += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
 
+    console.log('[GetConversations] Querying conversations', {
+      userId,
+      instanceId,
+      search: search || 'none',
+      queryParams: params,
+    });
+
     const conversations = await pool.query(query, params);
+    
+    console.log('[GetConversations] Query result', {
+      userId,
+      instanceId,
+      totalFound: conversations.rowCount,
+      conversationIds: conversations.rows.slice(0, 10).map(c => c.id),
+      sampleConversations: conversations.rows.slice(0, 3).map(c => ({
+        id: c.id,
+        external_chat_id: c.external_chat_id,
+        contact_name: c.contact_name,
+        instance_id: c.instance_id,
+        user_id: c.user_id,
+        last_message_at: c.last_message_at,
+      })),
+    });
+
+    // Verificar se há conversas no banco para este usuário mas não retornadas
+    if (conversations.rowCount === 0 && instanceId) {
+      const allConversationsCheck = await pool.query(
+        'SELECT id, user_id, instance_id, external_chat_id, contact_name FROM chat_conversations WHERE instance_id = $1 LIMIT 5',
+        [instanceId]
+      );
+      console.log('[GetConversations] Debug: Conversations in DB for this instance', {
+        instanceId,
+        found: allConversationsCheck.rowCount,
+        conversations: allConversationsCheck.rows.map(c => ({
+          id: c.id,
+          userId: c.user_id,
+          requestedUserId: userId,
+          userIdMatch: c.user_id === userId,
+          instanceId: c.instance_id,
+          externalChatId: c.external_chat_id,
+          contactName: c.contact_name,
+        })),
+      });
+    }
+
     res.json(conversations.rows);
   } catch (error: any) {
-    console.error('Error fetching conversations:', error);
+    console.error('[GetConversations] Error fetching conversations:', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.userId,
+    });
     res.status(500).json({ error: 'Failed to fetch conversations' });
   }
 }
