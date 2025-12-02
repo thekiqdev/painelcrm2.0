@@ -1968,16 +1968,18 @@ export async function handleWebhook(req: Request, res: Response) {
   });
 
   try {
-    // 1. Validar secret (se configurado)
-    // A UazAPI pode enviar o secret no header ou no body
+    // 1. Validar secret (se configurado e enviado)
+    // A UazAPI pode não enviar o secret mesmo se configurado
+    // Por isso, só validamos se o secret for enviado
     const secret = process.env.UAZAPI_WEBHOOK_SECRET;
-    if (secret) {
-      const receivedSecret = 
-        req.headers['x-uazapi-secret'] || 
-        req.body?.secret || 
-        req.body?.data?.secret ||
-        req.query?.secret;
-      
+    const receivedSecret = 
+      req.headers['x-uazapi-secret'] || 
+      req.body?.secret || 
+      req.body?.data?.secret ||
+      req.query?.secret;
+    
+    if (secret && receivedSecret) {
+      // Só validar se ambos secret e receivedSecret existem
       if (receivedSecret !== secret) {
         console.warn(`[Webhook ${webhookId}] Invalid secret`, {
           ip: req.ip,
@@ -1986,16 +1988,18 @@ export async function handleWebhook(req: Request, res: Response) {
           receivedSecretHeader: !!req.headers['x-uazapi-secret'],
           receivedSecretBody: !!req.body?.secret,
           receivedSecretQuery: !!req.query?.secret,
-          // Não logar o secret real por segurança
         });
         res.status(401).json({ error: 'Invalid webhook secret' });
         return;
       }
       
-      console.log(`[Webhook ${webhookId}] Secret validated successfully`, {
-        secretSource: req.headers['x-uazapi-secret'] ? 'header' : 
-                     req.body?.secret ? 'body' : 
-                     req.query?.secret ? 'query' : 'unknown',
+      console.log(`[Webhook ${webhookId}] Secret validated successfully`);
+    } else if (secret && !receivedSecret) {
+      // Secret configurado mas não enviado - permitir (UazAPI pode não enviar)
+      console.log(`[Webhook ${webhookId}] Secret configured but not received, allowing webhook`, {
+        hasSecret: !!secret,
+        receivedSecretHeader: !!req.headers['x-uazapi-secret'],
+        receivedSecretBody: !!req.body?.secret,
       });
     } else {
       console.log(`[Webhook ${webhookId}] No secret configured, skipping validation`);
