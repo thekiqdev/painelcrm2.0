@@ -104,6 +104,22 @@ server {
         proxy_intercept_errors off;
     }
 
+    # Servir arquivos estáticos (JS, CSS, imagens, etc)
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        root /usr/share/nginx/html;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Frontend routes - servir arquivos estáticos (DEVE VIR POR ÚLTIMO)
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
     # Health check
     location /health {
         access_log off;
