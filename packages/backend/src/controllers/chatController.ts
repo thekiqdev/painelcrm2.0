@@ -1041,10 +1041,37 @@ export async function getConversations(req: AuthRequest, res: Response) {
 
     query += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
 
+    console.log('[GetConversations] Querying conversations', {
+      userId,
+      instanceId: instanceId || 'all',
+      search: search || 'none',
+      queryParams: params,
+    });
+
     const conversations = await pool.query(query, params);
+    
+    console.log('[GetConversations] Query result', {
+      userId,
+      instanceId: instanceId || 'all',
+      totalFound: conversations.rowCount,
+      conversationIds: conversations.rows.map(c => c.id),
+      sampleConversations: conversations.rows.slice(0, 3).map(c => ({
+        id: c.id,
+        external_chat_id: c.external_chat_id,
+        contact_name: c.contact_name,
+        instance_id: c.instance_id,
+        user_id: c.user_id,
+        last_message_at: c.last_message_at,
+      })),
+    });
+
     res.json(conversations.rows);
   } catch (error: any) {
-    console.error('Error fetching conversations:', error);
+    console.error('[GetConversations] Error fetching conversations:', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.userId,
+    });
     res.status(500).json({ error: 'Failed to fetch conversations' });
   }
 }
