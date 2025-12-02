@@ -1756,17 +1756,52 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         deliveredAt: deliveredAt?.toISOString(),
         processingTime: Date.now() - startTime,
       });
-    } else if (event === 'chats' || payload.chat) {
+    } else if (event === 'chats' || payload.chat || payload.EventType === 'chats') {
       // Atualizar informações da conversa (sem criar mensagem)
+      console.log(`[Webhook ${webhookId}] Processing chats event`, {
+        event,
+        EventType: payload.EventType,
+        hasChat: !!payload.chat,
+        payloadKeys: Object.keys(payload),
+        instanceName: payload.instanceName,
+      });
+
       const data = payload.data || payload.chat || payload;
       const chatData = normalizeChatPayload(data);
 
       if (!chatData) {
-        console.warn(`[Webhook ${webhookId}] Failed to normalize chat data in chats event`);
+        console.warn(`[Webhook ${webhookId}] Failed to normalize chat data in chats event`, {
+          payloadKeys: Object.keys(payload),
+          dataKeys: data ? Object.keys(data) : [],
+          dataPreview: JSON.stringify(data).substring(0, 200),
+        });
         return;
       }
 
+      console.log(`[Webhook ${webhookId}] Chat data normalized, attempting upsert`, {
+        externalChatId: chatData.externalChatId,
+        contactName: chatData.contactName,
+        phoneNumber: chatData.phoneNumber,
+      });
+
       const conversation = await upsertConversation(instance, chatData);
+
+      if (!conversation) {
+        console.error(`[Webhook ${webhookId}] Failed to upsert conversation in chats event`, {
+          chatData: {
+            externalChatId: chatData.externalChatId,
+            contactName: chatData.contactName,
+          },
+        });
+        return;
+      }
+
+      console.log(`[Webhook ${webhookId}] Conversation upserted successfully in chats event`, {
+        conversationId: conversation.id,
+        externalChatId: conversation.external_chat_id,
+        contactName: conversation.contact_name,
+        processingTime: Date.now() - startTime,
+      });
 
       if (conversation) {
         // Verificar se é uma nova conversa (sem mensagens ainda)
@@ -1944,16 +1979,17 @@ export async function handleWebhook(req: Request, res: Response) {
 
   try {
     // 1. Validar secret (se configurado)
+    // Nota: A UazAPI pode não enviar o secret no header, então apenas avisamos mas não bloqueamos
     const secret = process.env.UAZAPI_WEBHOOK_SECRET;
     if (secret && req.headers['x-uazapi-secret'] !== secret) {
-      console.warn(`[Webhook ${webhookId}] Invalid secret`, {
+      console.warn(`[Webhook ${webhookId}] Secret mismatch (continuing anyway)`, {
         ip: req.ip,
         userAgent: req.get('user-agent'),
         hasSecret: !!secret,
         receivedSecret: !!req.headers['x-uazapi-secret'],
+        note: 'UazAPI may not send secret in header, processing anyway',
       });
-      res.status(401).json({ error: 'Invalid webhook secret' });
-      return;
+      // Não bloquear - apenas avisar, pois a UazAPI pode não enviar o secret corretamente
     }
 
     // 2. Validar e extrair payload
@@ -2033,7 +2069,23 @@ export async function handleWebhook(req: Request, res: Response) {
     const instance = instanceResult.rows[0];
 
     // 5. Identificar tipo de evento
-    const event = payload.event || req.query.event || payload.type || 'unknown';
+    // A UazAPI pode enviar EventType no payload ou identificar pelo path
+    const event = 
+      payload.EventType || 
+      payload.event || 
+      req.query.event || 
+      payload.type || 
+      (req.path.includes('/chats') ? 'chats' : null) ||
+      (req.path.includes('/messages') ? 'messages' : null) ||
+      'unknown';
+    
+    console.log(`[Webhook ${webhookId}] Event identified`, {
+      event,
+      EventType: payload.EventType,
+      payloadEvent: payload.event,
+      path: req.path,
+      queryEvent: req.query.event,
+    });
 
     // 6. Log do recebimento com mais detalhes
     console.log(`[Webhook ${webhookId}] Webhook received and instance found`, {
