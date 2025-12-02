@@ -272,11 +272,15 @@ const Chat = () => {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[Chat] WebSocket connected successfully, socket ID:', socket.id);
+      console.log('[Chat] WebSocket connected successfully, transport:', socket.io.engine.transport.name);
     });
 
     socket.on('connect_error', (error) => {
-      console.error('[Chat] WebSocket connection error:', error);
+      console.error('[Chat] WebSocket connection error:', error.message, error);
+      // Tentar forçar polling se websocket falhar
+      if (socket.io.engine && socket.io.engine.transport.name === 'websocket') {
+        console.log('[Chat] WebSocket failed, will retry with polling');
+      }
     });
 
     socket.on('error', (error) => {
@@ -285,6 +289,22 @@ const Chat = () => {
 
     socket.on('disconnect', (reason) => {
       console.log('[Chat] WebSocket disconnected:', reason);
+    });
+
+    socket.on('reconnect', (attemptNumber) => {
+      console.log('[Chat] WebSocket reconnected after', attemptNumber, 'attempts');
+    });
+
+    socket.on('reconnect_attempt', (attemptNumber) => {
+      console.log('[Chat] WebSocket reconnect attempt', attemptNumber);
+    });
+
+    socket.on('reconnect_error', (error) => {
+      console.error('[Chat] WebSocket reconnect error:', error);
+    });
+
+    socket.on('reconnect_failed', () => {
+      console.error('[Chat] WebSocket reconnect failed - giving up');
     });
 
     // Escutar atualizações de conversa
