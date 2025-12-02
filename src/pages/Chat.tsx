@@ -247,6 +247,7 @@ const Chat = () => {
       return;
     }
 
+    // Socket.IO automaticamente adiciona /socket.io/ na URL
     const socketUrl = import.meta.env.DEV 
       ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
       : window.location.origin;
@@ -259,8 +260,8 @@ const Chat = () => {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      reconnectionAttempts: 5,
-      timeout: 20000, // 20 segundos para timeout de conexão
+      reconnectionAttempts: Infinity, // Tentar reconectar indefinidamente
+      timeout: 20000, // 20 segundos para timeout de conexão inicial
       forceNew: false, // Reutilizar conexão se possível
     });
 

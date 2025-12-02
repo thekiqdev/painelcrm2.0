@@ -1597,8 +1597,13 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       });
 
       // Emitir evento WebSocket para atualizar conversa em tempo real
+      // OTIMIZAÇÃO: Usar dados já em memória (sem query adicional)
       try {
-        emitConversationUpdate(instance.user_id, conversation);
+        const conversationWithInstance = {
+          ...conversation,
+          instance_name: instance.name,
+        };
+        emitConversationUpdate(instance.user_id, conversationWithInstance);
       } catch (wsError: any) {
         console.warn(`[Webhook ${webhookId}] Failed to emit conversation update:`, wsError.message);
       }
@@ -1650,28 +1655,28 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       });
 
       // Emitir evento WebSocket para atualizar conversa e mensagem em tempo real
+      // OTIMIZAÇÃO: Usar dados já em memória (conversation) ao invés de query adicional
+      // Isso reduz carga no banco e melhora performance em produção
       try {
-        // Buscar conversa atualizada com instance_name para enviar dados completos
-        const updatedConversation = await pool.query(
-          `SELECT c.*, i.name as instance_name 
-           FROM chat_conversations c 
-           LEFT JOIN chat_instances i ON i.id = c.instance_id 
-           WHERE c.id = $1`,
-          [conversation.id]
-        );
-        if (updatedConversation.rows[0]) {
-          console.log(`[Webhook ${webhookId}] Emitting conversation update via WebSocket`, {
-            userId: instance.user_id,
-            conversationId: updatedConversation.rows[0].id,
-          });
-          emitConversationUpdate(instance.user_id, updatedConversation.rows[0]);
-        }
+        // Usar conversation já carregada (mais leve e rápido)
+        // Adicionar apenas instance_name se necessário
+        const conversationWithInstance = {
+          ...conversation,
+          instance_name: instance.name,
+        };
+        
+        console.log(`[Webhook ${webhookId}] Emitting conversation update via WebSocket`, {
+          userId: instance.user_id,
+          conversationId: conversation.id,
+        });
+        emitConversationUpdate(instance.user_id, conversationWithInstance);
         
         console.log(`[Webhook ${webhookId}] Emitting new message via WebSocket`, {
           userId: instance.user_id,
           conversationId: conversation.id,
           messageId,
         });
+        // Enviar apenas dados essenciais (leve para produção)
         emitNewMessage(instance.user_id, {
           id: messageId,
           conversation_id: conversation.id,
