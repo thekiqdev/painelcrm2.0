@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => ({
       // Redirecionar Supabase para stub para evitar erros de build
       "@/integrations/supabase/client": path.resolve(__dirname, "./src/integrations/supabase/client-stub.ts"),
       "@supabase/supabase-js": path.resolve(__dirname, "./src/integrations/supabase/supabase-stub.js"),
-      // Polyfill Buffer para Socket.IO
+      // Polyfill para Buffer (necessário para socket.io-client)
       "buffer": "buffer",
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
