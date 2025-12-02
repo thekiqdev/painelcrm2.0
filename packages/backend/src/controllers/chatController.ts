@@ -2001,7 +2001,8 @@ export async function handleWebhook(req: Request, res: Response) {
         ip: req.ip,
         bodyType: typeof req.body,
       });
-      res.status(400).json({ error: 'Empty payload' });
+      // Sempre responder 200 OK para que a UazAPI continue enviando webhooks
+      res.status(200).json({ received: true, webhookId, note: 'Empty payload' });
       return;
     }
 
@@ -2029,7 +2030,8 @@ export async function handleWebhook(req: Request, res: Response) {
         payload: JSON.stringify(payload).substring(0, 500),
         allPayloadKeys: Object.keys(payload),
       });
-      res.status(400).json({ error: 'Missing instance identifier' });
+      // Sempre responder 200 OK para que a UazAPI continue enviando webhooks
+      res.status(200).json({ received: true, webhookId, note: 'Missing instance identifier' });
       return;
     }
 
@@ -2064,7 +2066,9 @@ export async function handleWebhook(req: Request, res: Response) {
         })),
         ip: req.ip,
       });
-      res.status(404).json({ error: 'Instance not registered' });
+      // Sempre responder 200 OK para que a UazAPI continue enviando webhooks
+      // Mesmo que a instância não seja encontrada, não queremos que a UazAPI pare de enviar
+      res.status(200).json({ received: true, webhookId, note: 'Instance not registered' });
       return;
     }
 
