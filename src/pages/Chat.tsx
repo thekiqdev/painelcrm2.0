@@ -252,17 +252,21 @@ const Chat = () => {
       ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
       : window.location.origin;
 
-    console.log('[Chat] WebSocket: Connecting to', socketUrl);
+    console.log('[Chat] WebSocket: Connecting to', socketUrl, 'with token:', session.token ? 'present' : 'missing');
 
+    // Tentar polling primeiro (mais confiável através de proxy/nginx)
+    // WebSocket pode ter problemas com alguns proxies
     const socket: Socket = io(socketUrl, {
       auth: { token: session.token },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'], // Polling primeiro (mais confiável)
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      reconnectionAttempts: Infinity, // Tentar reconectar indefinidamente
-      timeout: 20000, // 20 segundos para timeout de conexão inicial
-      forceNew: false, // Reutilizar conexão se possível
+      reconnectionAttempts: Infinity,
+      timeout: 30000, // 30 segundos para timeout de conexão inicial
+      forceNew: false,
+      // Path padrão do Socket.IO
+      path: '/socket.io/',
     });
 
     socketRef.current = socket;
