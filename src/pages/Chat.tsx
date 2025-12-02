@@ -258,12 +258,12 @@ const Chat = () => {
     // WebSocket pode ter problemas com alguns proxies
     const socket: Socket = io(socketUrl, {
       auth: { token: session.token },
-      transports: ['polling', 'websocket'], // Polling primeiro (mais confiável)
+      transports: ['polling'], // Apenas polling inicialmente (mais confiável através de proxy)
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: Infinity,
-      timeout: 60000, // 60 segundos para timeout de conexão inicial (aumentado)
+      timeout: 30000, // 30 segundos para timeout de conexão inicial
       forceNew: false,
       // Path padrão do Socket.IO
       path: '/socket.io/',
@@ -271,6 +271,8 @@ const Chat = () => {
       query: {
         token: session.token,
       },
+      // Upgrade automático para websocket após conexão bem-sucedida
+      upgrade: true,
     });
 
     socketRef.current = socket;
