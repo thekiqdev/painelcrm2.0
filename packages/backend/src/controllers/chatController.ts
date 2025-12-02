@@ -1651,15 +1651,27 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
 
       // Emitir evento WebSocket para atualizar conversa e mensagem em tempo real
       try {
-        // Buscar conversa atualizada para enviar dados completos
+        // Buscar conversa atualizada com instance_name para enviar dados completos
         const updatedConversation = await pool.query(
-          'SELECT * FROM chat_conversations WHERE id = $1',
+          `SELECT c.*, i.name as instance_name 
+           FROM chat_conversations c 
+           LEFT JOIN chat_instances i ON i.id = c.instance_id 
+           WHERE c.id = $1`,
           [conversation.id]
         );
         if (updatedConversation.rows[0]) {
+          console.log(`[Webhook ${webhookId}] Emitting conversation update via WebSocket`, {
+            userId: instance.user_id,
+            conversationId: updatedConversation.rows[0].id,
+          });
           emitConversationUpdate(instance.user_id, updatedConversation.rows[0]);
         }
         
+        console.log(`[Webhook ${webhookId}] Emitting new message via WebSocket`, {
+          userId: instance.user_id,
+          conversationId: conversation.id,
+          messageId,
+        });
         emitNewMessage(instance.user_id, {
           id: messageId,
           conversation_id: conversation.id,
@@ -1668,7 +1680,10 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           sent_at: sentAt || new Date(),
         }, conversation.id);
       } catch (wsError: any) {
-        console.warn(`[Webhook ${webhookId}] Failed to emit WebSocket events:`, wsError.message);
+        console.error(`[Webhook ${webhookId}] Failed to emit WebSocket events:`, {
+          error: wsError.message,
+          stack: wsError.stack,
+        });
       }
 
       // Criar notificação para mensagens recebidas (incoming)

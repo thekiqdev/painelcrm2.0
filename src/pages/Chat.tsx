@@ -134,6 +134,7 @@ const Chat = () => {
   const [loadingLead, setLoadingLead] = useState(false);
   const [loadingClient, setLoadingClient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
 
   // Estados para dialogs
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
@@ -235,19 +236,47 @@ const Chat = () => {
 
   // WebSocket para atualização em tempo real de conversas
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.token) {
+      console.log('[Chat] WebSocket: No token available');
+      return;
+    }
+
+    // Se já existe uma conexão, não criar nova
+    if (socketRef.current?.connected) {
+      console.log('[Chat] WebSocket: Already connected');
+      return;
+    }
 
     const socketUrl = import.meta.env.DEV 
       ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
       : window.location.origin;
 
+    console.log('[Chat] WebSocket: Connecting to', socketUrl);
+
     const socket: Socket = io(socketUrl, {
       auth: { token: session.token },
       transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5,
     });
 
+    socketRef.current = socket;
+
     socket.on('connect', () => {
-      console.log('[Chat] WebSocket connected');
+      console.log('[Chat] WebSocket connected successfully, socket ID:', socket.id);
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('[Chat] WebSocket connection error:', error);
+    });
+
+    socket.on('error', (error) => {
+      console.error('[Chat] WebSocket error:', error);
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log('[Chat] WebSocket disconnected:', reason);
     });
 
     // Escutar atualizações de conversa
@@ -311,14 +340,17 @@ const Chat = () => {
       });
     });
 
-    socket.on('disconnect', () => {
-      console.log('[Chat] WebSocket disconnected');
-    });
-
     return () => {
-      socket.disconnect();
+      // Não desconectar aqui, deixar o socket gerenciar reconexão
+      // Apenas limpar a referência se necessário
+      if (socketRef.current) {
+        console.log('[Chat] WebSocket: Cleaning up socket reference');
+        // Não desconectar, apenas limpar referência
+        // socketRef.current.disconnect();
+        // socketRef.current = null;
+      }
     };
-  }, [user, selectedConversationId, loadMessages]);
+  }, [session?.token]); // Apenas reconectar se o token mudar
 
   const loadClients = useCallback(async () => {
     try {
