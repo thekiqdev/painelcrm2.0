@@ -25,9 +25,11 @@ server {
 
     # WebSocket/Socket.IO proxy - DEVE VIR ANTES DE / PARA NÃO SER CAPTURADO
     # IMPORTANTE: Socket.IO precisa de Upgrade headers e timeouts longos
-    location /socket.io/ {
+    # Captura tanto /socket.io/ quanto /socket.io (com ou sem barra final)
+    location ~ ^/socket\.io(/.*)?$ {
         set $backend "sistemas_painelcrm:3001";
-        proxy_pass http://$backend;
+        # Preservar o path completo incluindo query string
+        proxy_pass http://$backend$request_uri;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -45,6 +47,10 @@ server {
         add_header Access-Control-Allow-Origin * always;
         add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Authorization, Content-Type" always;
+        
+        # Logs para debug
+        access_log /var/log/nginx/socketio_access.log;
+        error_log /var/log/nginx/socketio_error.log;
         
         # Tratar OPTIONS para CORS
         if ($request_method = OPTIONS) {
