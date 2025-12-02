@@ -1969,16 +1969,36 @@ export async function handleWebhook(req: Request, res: Response) {
 
   try {
     // 1. Validar secret (se configurado)
+    // A UazAPI pode enviar o secret no header ou no body
     const secret = process.env.UAZAPI_WEBHOOK_SECRET;
-    if (secret && req.headers['x-uazapi-secret'] !== secret) {
-      console.warn(`[Webhook ${webhookId}] Invalid secret`, {
-        ip: req.ip,
-        userAgent: req.get('user-agent'),
-        hasSecret: !!secret,
-        receivedSecret: !!req.headers['x-uazapi-secret'],
+    if (secret) {
+      const receivedSecret = 
+        req.headers['x-uazapi-secret'] || 
+        req.body?.secret || 
+        req.body?.data?.secret ||
+        req.query?.secret;
+      
+      if (receivedSecret !== secret) {
+        console.warn(`[Webhook ${webhookId}] Invalid secret`, {
+          ip: req.ip,
+          userAgent: req.get('user-agent'),
+          hasSecret: !!secret,
+          receivedSecretHeader: !!req.headers['x-uazapi-secret'],
+          receivedSecretBody: !!req.body?.secret,
+          receivedSecretQuery: !!req.query?.secret,
+          // Não logar o secret real por segurança
+        });
+        res.status(401).json({ error: 'Invalid webhook secret' });
+        return;
+      }
+      
+      console.log(`[Webhook ${webhookId}] Secret validated successfully`, {
+        secretSource: req.headers['x-uazapi-secret'] ? 'header' : 
+                     req.body?.secret ? 'body' : 
+                     req.query?.secret ? 'query' : 'unknown',
       });
-      res.status(401).json({ error: 'Invalid webhook secret' });
-      return;
+    } else {
+      console.log(`[Webhook ${webhookId}] No secret configured, skipping validation`);
     }
 
     // 2. Validar e extrair payload
