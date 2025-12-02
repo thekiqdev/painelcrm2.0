@@ -42,7 +42,14 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
         },
       });
 
-      const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers.authorization?.split(' ')[1] ||
+        (typeof socket.handshake.query?.token === 'string'
+          ? socket.handshake.query?.token
+          : Array.isArray(socket.handshake.query?.token)
+          ? socket.handshake.query?.token[0]
+          : undefined);
 
       if (!token) {
         console.warn('[WebSocket] No token provided', {
