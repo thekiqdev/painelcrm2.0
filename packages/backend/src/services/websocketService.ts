@@ -21,32 +21,61 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       credentials: true,
     },
     transports: ['websocket', 'polling'],
-    // Otimizações para produção
-    pingTimeout: 60000, // 60 segundos
-    pingInterval: 25000, // 25 segundos
-    maxHttpBufferSize: 1e6, // 1MB
-    allowEIO3: true, // Compatibilidade com versões antigas
-    // Timeout de conexão
-    connectTimeout: 45000, // 45 segundos
   });
 
-  // Middleware de autenticação otimizado (sem query desnecessária)
+  // Middleware de autenticação
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
+      console.log('[WebSocket] Connection attempt', {
+        id: socket.id,
+        transport: socket.conn.transport.name,
+        handshake: {
+          auth: socket.handshake.auth ? 'present' : 'missing',
+          headers: Object.keys(socket.handshake.headers),
+          query: socket.handshake.query,
+        },
+      });
+
       const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
 
       if (!token) {
+        console.warn('[WebSocket] No token provided', {
+          socketId: socket.id,
+          authKeys: Object.keys(socket.handshake.auth || {}),
+          authHeaders: socket.handshake.headers.authorization ? 'present' : 'missing',
+        });
         return next(new Error('Authentication token required'));
       }
 
       const payload = verifyToken(token);
-      
-      // Não fazer query no banco - confiar no JWT (mais leve para produção)
-      // O JWT já valida o userId, não precisa verificar no banco a cada conexão
+      console.log('[WebSocket] Token verified', {
+        socketId: socket.id,
+        userId: payload.userId,
+      });
+
+      // Verificar se usuário existe
+      const result = await pool.query('SELECT id FROM users WHERE id = $1', [payload.userId]);
+
+      if (result.rowCount === 0) {
+        console.warn('[WebSocket] User not found', {
+          socketId: socket.id,
+          userId: payload.userId,
+        });
+        return next(new Error('User not found'));
+      }
+
       socket.userId = payload.userId;
+      console.log('[WebSocket] Authentication successful', {
+        socketId: socket.id,
+        userId: payload.userId,
+      });
       next();
     } catch (error: any) {
-      console.warn('[WebSocket] Authentication failed:', error.message);
+      console.error('[WebSocket] Authentication error', {
+        socketId: socket.id,
+        error: error.message,
+        stack: error.stack,
+      });
       next(new Error('Invalid or expired token'));
     }
   });

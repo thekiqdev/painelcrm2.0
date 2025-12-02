@@ -263,10 +263,14 @@ const Chat = () => {
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: Infinity,
-      timeout: 30000, // 30 segundos para timeout de conexão inicial
+      timeout: 60000, // 60 segundos para timeout de conexão inicial (aumentado)
       forceNew: false,
       // Path padrão do Socket.IO
       path: '/socket.io/',
+      // Adicionar query string com token como fallback
+      query: {
+        token: session.token,
+      },
     });
 
     socketRef.current = socket;
