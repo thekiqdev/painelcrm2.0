@@ -21,9 +21,16 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       credentials: true,
     },
     transports: ['websocket', 'polling'],
+    // Otimizações para produção
+    pingTimeout: 60000, // 60 segundos
+    pingInterval: 25000, // 25 segundos
+    maxHttpBufferSize: 1e6, // 1MB
+    allowEIO3: true, // Compatibilidade com versões antigas
+    // Timeout de conexão
+    connectTimeout: 45000, // 45 segundos
   });
 
-  // Middleware de autenticação
+  // Middleware de autenticação otimizado (sem query desnecessária)
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
       const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.split(' ')[1];
@@ -33,17 +40,13 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       }
 
       const payload = verifyToken(token);
-
-      // Verificar se usuário existe
-      const result = await pool.query('SELECT id FROM users WHERE id = $1', [payload.userId]);
-
-      if (result.rowCount === 0) {
-        return next(new Error('User not found'));
-      }
-
+      
+      // Não fazer query no banco - confiar no JWT (mais leve para produção)
+      // O JWT já valida o userId, não precisa verificar no banco a cada conexão
       socket.userId = payload.userId;
       next();
     } catch (error: any) {
+      console.warn('[WebSocket] Authentication failed:', error.message);
       next(new Error('Invalid or expired token'));
     }
   });

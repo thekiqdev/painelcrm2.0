@@ -258,7 +258,10 @@ const Chat = () => {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
       reconnectionAttempts: 5,
+      timeout: 20000, // 20 segundos para timeout de conexão
+      forceNew: false, // Reutilizar conexão se possível
     });
 
     socketRef.current = socket;
