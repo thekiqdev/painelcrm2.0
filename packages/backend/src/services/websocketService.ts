@@ -85,14 +85,18 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
     const userId = socket.userId;
 
     if (!userId) {
+      console.warn('[WebSocket] Connection without userId, disconnecting', {
+        socketId: socket.id,
+      });
       socket.disconnect();
       return;
     }
 
-    console.log(`[WebSocket] User connected: ${userId} (socket: ${socket.id})`);
+    console.log(`[WebSocket] User connected: ${userId} (socket: ${socket.id}, transport: ${socket.conn.transport.name})`);
 
     // Juntar usuário a uma sala específica para receber suas notificações
     socket.join(`user:${userId}`);
+    console.log(`[WebSocket] User ${userId} joined room user:${userId}`);
 
     // Enviar confirmação de conexão
     socket.emit('connected', {
@@ -100,6 +104,7 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       userId,
       timestamp: new Date().toISOString(),
     });
+    console.log(`[WebSocket] Sent connected event to user ${userId}`);
 
     // Evento para ping/pong (manter conexão viva)
     socket.on('ping', () => {
@@ -114,6 +119,15 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
     // Erro
     socket.on('error', (error) => {
       console.error(`[WebSocket] Error for user ${userId}:`, error);
+    });
+  });
+
+  // Log de tentativas de conexão que falharam
+  io.engine.on('connection_error', (err) => {
+    console.error('[WebSocket] Connection error:', {
+      message: err.message,
+      description: err.description,
+      context: err.context,
     });
   });
 
