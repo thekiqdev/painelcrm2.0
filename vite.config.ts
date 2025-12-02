@@ -2,7 +2,6 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
-import { nodePolyfills } from "vite-plugin-node-polyfills";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -14,14 +13,6 @@ export default defineConfig(({ mode }) => ({
     react(),
     mode === 'development' &&
     componentTagger(),
-    // Polyfills para Node.js (Buffer, process, etc) - necessário para Socket.IO
-    nodePolyfills({
-      // Incluir apenas os polyfills necessários
-      include: ['buffer'],
-      globals: {
-        Buffer: true,
-      },
-    }),
   ].filter(Boolean),
   resolve: {
     alias: {
@@ -29,12 +20,14 @@ export default defineConfig(({ mode }) => ({
       // Redirecionar Supabase para stub para evitar erros de build
       "@/integrations/supabase/client": path.resolve(__dirname, "./src/integrations/supabase/client-stub.ts"),
       "@supabase/supabase-js": path.resolve(__dirname, "./src/integrations/supabase/supabase-stub.js"),
+      // Polyfill Buffer para Socket.IO
+      "buffer": "buffer",
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
     mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients'],
+    include: ['@/services/clients', 'buffer'],
     exclude: ['@supabase/supabase-js'],
   },
   build: {
