@@ -48,6 +48,10 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = parseInt(process.env.API_PORT || '3001', 10);
 
+// Trust proxy - necessário quando atrás de Nginx/reverse proxy
+// Isso permite que Express confie nos headers X-Forwarded-* do proxy
+app.set('trust proxy', true);
+
 // Middleware
 app.use(helmet());
 // CORS - aceitar FRONTEND_URL e também URLs do Easypanel
