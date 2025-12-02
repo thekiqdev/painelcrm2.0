@@ -170,43 +170,43 @@ async function upsertConversation(
   });
 
   try {
-  const result = await pool.query(
-    `
-    INSERT INTO chat_conversations (
-      user_id, instance_id, external_chat_id, external_fast_id,
-      contact_name, profile_name, phone_number, status,
+    const result = await pool.query(
+      `
+      INSERT INTO chat_conversations (
+        user_id, instance_id, external_chat_id, external_fast_id,
+        contact_name, profile_name, phone_number, status,
         last_message_preview, last_message_at, unread_count, metadata
-    )
+      )
       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb)
-    ON CONFLICT (instance_id, external_chat_id)
-    DO UPDATE SET
-      external_fast_id = EXCLUDED.external_fast_id,
-      contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
-      profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
-      phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
-      status = COALESCE(EXCLUDED.status, chat_conversations.status),
-      last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
-      last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
+      ON CONFLICT (instance_id, external_chat_id)
+      DO UPDATE SET
+        external_fast_id = EXCLUDED.external_fast_id,
+        contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
+        profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
+        phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
+        status = COALESCE(EXCLUDED.status, chat_conversations.status),
+        last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
+        last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
         unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
-      metadata = EXCLUDED.metadata,
-      updated_at = now()
-    RETURNING *
-  `,
-    [
-      instance.user_id,
-      instance.id,
-      chatData.externalChatId,
-      chatData.externalFastId,
-      chatData.contactName,
-      chatData.profileName,
-      chatData.phoneNumber,
-      chatData.status,
-      chatData.lastMessagePreview,
-      chatData.lastMessageAt,
+        metadata = EXCLUDED.metadata,
+        updated_at = now()
+      RETURNING *
+    `,
+      [
+        instance.user_id,
+        instance.id,
+        chatData.externalChatId,
+        chatData.externalFastId,
+        chatData.contactName,
+        chatData.profileName,
+        chatData.phoneNumber,
+        chatData.status,
+        chatData.lastMessagePreview,
+        chatData.lastMessageAt,
         chatData.unreadCount,
-      JSON.stringify(chatData.metadata || {}),
-    ]
-  );
+        JSON.stringify(chatData.metadata || {}),
+      ]
+    );
 
     if (result.rowCount === 0 || !result.rows[0]) {
       console.error(`[UpsertConversation ${upsertId}] No row returned from database`);
@@ -219,7 +219,7 @@ async function upsertConversation(
       wasInsert: !result.rows[0].updated_at || new Date(result.rows[0].updated_at).getTime() === new Date(result.rows[0].created_at).getTime(),
     });
 
-  return result.rows[0];
+    return result.rows[0];
   } catch (error: any) {
     console.error(`[UpsertConversation ${upsertId}] Database error:`, {
       error: error.message,
@@ -260,40 +260,44 @@ async function saveMessage(
 
   try {
     const messageResult = await pool.query(
-    `
-    INSERT INTO chat_messages (
-      conversation_id, direction, external_message_id, body,
-      media, status, sent_at, metadata
-    )
-    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
-    ON CONFLICT (conversation_id, external_message_id)
-    DO UPDATE SET
-      status = COALESCE(EXCLUDED.status, chat_messages.status),
-      metadata = EXCLUDED.metadata,
-      sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
-      body = COALESCE(EXCLUDED.body, chat_messages.body)
-      RETURNING id, created_at, updated_at
-  `,
-    [
-      conversationId,
-      direction,
-      payload.externalMessageId,
-      payload.body,
-      JSON.stringify(payload.media || []),
-      payload.status,
-      payload.sentAt,
-      JSON.stringify(payload.metadata || {}),
-    ]
-  );
+      `
+      INSERT INTO chat_messages (
+        conversation_id, direction, external_message_id, body,
+        media, status, sent_at, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
+      ON CONFLICT (conversation_id, external_message_id)
+      DO UPDATE SET
+        status = COALESCE(EXCLUDED.status, chat_messages.status),
+        metadata = EXCLUDED.metadata,
+        sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
+        body = COALESCE(EXCLUDED.body, chat_messages.body)
+      RETURNING id, created_at
+    `,
+      [
+        conversationId,
+        direction,
+        payload.externalMessageId,
+        payload.body,
+        JSON.stringify(payload.media || []),
+        payload.status,
+        payload.sentAt,
+        JSON.stringify(payload.metadata || {}),
+      ]
+    );
 
     if (messageResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] No row returned from message insert`);
     } else {
-      const wasInsert = !messageResult.rows[0]?.updated_at || 
-        new Date(messageResult.rows[0]?.updated_at).getTime() === new Date(messageResult.rows[0]?.created_at).getTime();
+      // Verificar se foi insert ou update comparando created_at com o timestamp atual
+      const messageCreatedAt = new Date(messageResult.rows[0]?.created_at).getTime();
+      const now = Date.now();
+      const wasInsert = (now - messageCreatedAt) < 2000; // Se foi criado há menos de 2 segundos, provavelmente foi insert
+      
       console.log(`[SaveMessage ${saveId}] Message saved successfully`, {
         messageId: messageResult.rows[0]?.id,
         wasInsert,
+        createdAt: messageResult.rows[0]?.created_at,
       });
     }
 
@@ -364,8 +368,8 @@ export async function createInstance(req: AuthRequest, res: Response) {
     console.log('[CreateInstance] Starting instance creation...');
     
     // Verificar admin token
-  try {
-    ensureAdminToken();
+    try {
+      ensureAdminToken();
     } catch (adminError: any) {
       console.error('[CreateInstance] Admin token error:', adminError.message);
       res.status(403).json({ 
@@ -397,9 +401,9 @@ export async function createInstance(req: AuthRequest, res: Response) {
     try {
       console.log('[CreateInstance] Calling UazAPI createInstance...');
       remoteInstance = (await uazapiService.createInstance(
-      data.name,
-      data.metadata
-    )) as AnyObject;
+        data.name,
+        data.metadata
+      )) as AnyObject;
       
       console.log('[CreateInstance] UazAPI response received:', {
         hasInstance: !!remoteInstance?.instance,
@@ -446,37 +450,37 @@ export async function createInstance(req: AuthRequest, res: Response) {
 
     // Salvar no banco
     try {
-    const inserted = await pool.query(
-      `
-      INSERT INTO chat_instances (
-        user_id, name, external_instance_name, instance_token, status, metadata
-      )
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (user_id, name)
-      DO UPDATE SET
-        external_instance_name = EXCLUDED.external_instance_name,
-        instance_token = EXCLUDED.instance_token,
-        status = EXCLUDED.status,
-        metadata = EXCLUDED.metadata,
-        updated_at = now()
-      RETURNING *
-    `,
-      [
-        userId,
-        data.name,
+      const inserted = await pool.query(
+        `
+        INSERT INTO chat_instances (
+          user_id, name, external_instance_name, instance_token, status, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (user_id, name)
+        DO UPDATE SET
+          external_instance_name = EXCLUDED.external_instance_name,
+          instance_token = EXCLUDED.instance_token,
+          status = EXCLUDED.status,
+          metadata = EXCLUDED.metadata,
+          updated_at = now()
+        RETURNING *
+      `,
+        [
+          userId,
+          data.name,
           instanceName,
           instanceToken,
           instanceStatus,
-        JSON.stringify(remoteInstance || {}),
-      ]
-    );
+          JSON.stringify(remoteInstance || {}),
+        ]
+      );
 
       console.log('[CreateInstance] Instance saved to database:', {
         id: inserted.rows[0]?.id,
         name: inserted.rows[0]?.name,
       });
 
-    res.status(201).json(inserted.rows[0]);
+      res.status(201).json(inserted.rows[0]);
     } catch (dbError: any) {
       console.error('[CreateInstance] Database error:', {
         message: dbError.message,
@@ -1041,37 +1045,10 @@ export async function getConversations(req: AuthRequest, res: Response) {
 
     query += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
 
-    console.log('[GetConversations] Querying conversations', {
-      userId,
-      instanceId: instanceId || 'all',
-      search: search || 'none',
-      queryParams: params,
-    });
-
     const conversations = await pool.query(query, params);
-    
-    console.log('[GetConversations] Query result', {
-      userId,
-      instanceId: instanceId || 'all',
-      totalFound: conversations.rowCount,
-      conversationIds: conversations.rows.map(c => c.id),
-      sampleConversations: conversations.rows.slice(0, 3).map(c => ({
-        id: c.id,
-        external_chat_id: c.external_chat_id,
-        contact_name: c.contact_name,
-        instance_id: c.instance_id,
-        user_id: c.user_id,
-        last_message_at: c.last_message_at,
-      })),
-    });
-
     res.json(conversations.rows);
   } catch (error: any) {
-    console.error('[GetConversations] Error fetching conversations:', {
-      error: error.message,
-      stack: error.stack,
-      userId: req.userId,
-    });
+    console.error('Error fetching conversations:', error);
     res.status(500).json({ error: 'Failed to fetch conversations' });
   }
 }
@@ -1756,52 +1733,17 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         deliveredAt: deliveredAt?.toISOString(),
         processingTime: Date.now() - startTime,
       });
-    } else if (event === 'chats' || payload.chat || payload.EventType === 'chats') {
+    } else if (event === 'chats' || payload.chat) {
       // Atualizar informações da conversa (sem criar mensagem)
-      console.log(`[Webhook ${webhookId}] Processing chats event`, {
-        event,
-        EventType: payload.EventType,
-        hasChat: !!payload.chat,
-        payloadKeys: Object.keys(payload),
-        instanceName: payload.instanceName,
-      });
-
       const data = payload.data || payload.chat || payload;
       const chatData = normalizeChatPayload(data);
 
       if (!chatData) {
-        console.warn(`[Webhook ${webhookId}] Failed to normalize chat data in chats event`, {
-          payloadKeys: Object.keys(payload),
-          dataKeys: data ? Object.keys(data) : [],
-          dataPreview: JSON.stringify(data).substring(0, 200),
-        });
+        console.warn(`[Webhook ${webhookId}] Failed to normalize chat data in chats event`);
         return;
       }
-
-      console.log(`[Webhook ${webhookId}] Chat data normalized, attempting upsert`, {
-        externalChatId: chatData.externalChatId,
-        contactName: chatData.contactName,
-        phoneNumber: chatData.phoneNumber,
-      });
 
       const conversation = await upsertConversation(instance, chatData);
-
-      if (!conversation) {
-        console.error(`[Webhook ${webhookId}] Failed to upsert conversation in chats event`, {
-          chatData: {
-            externalChatId: chatData.externalChatId,
-            contactName: chatData.contactName,
-          },
-        });
-        return;
-      }
-
-      console.log(`[Webhook ${webhookId}] Conversation upserted successfully in chats event`, {
-        conversationId: conversation.id,
-        externalChatId: conversation.external_chat_id,
-        contactName: conversation.contact_name,
-        processingTime: Date.now() - startTime,
-      });
 
       if (conversation) {
         // Verificar se é uma nova conversa (sem mensagens ainda)
@@ -1961,7 +1903,7 @@ export async function handleWebhook(req: Request, res: Response) {
   const startTime = Date.now();
   const webhookId = randomUUID();
 
-  // Log inicial de TODAS as requisições recebidas - ANTES de qualquer validação
+  // Log inicial de TODAS as requisições recebidas
   console.log(`[Webhook ${webhookId}] ===== WEBHOOK RECEIVED =====`, {
     method: req.method,
     path: req.path,
@@ -1974,24 +1916,21 @@ export async function handleWebhook(req: Request, res: Response) {
     },
     query: req.query,
     bodyKeys: req.body ? Object.keys(req.body) : [],
-    hasBody: !!req.body,
-    bodyType: typeof req.body,
     timestamp: new Date().toISOString(),
   });
 
   try {
     // 1. Validar secret (se configurado)
-    // Nota: A UazAPI pode não enviar o secret no header, então apenas avisamos mas não bloqueamos
     const secret = process.env.UAZAPI_WEBHOOK_SECRET;
     if (secret && req.headers['x-uazapi-secret'] !== secret) {
-      console.warn(`[Webhook ${webhookId}] Secret mismatch (continuing anyway)`, {
+      console.warn(`[Webhook ${webhookId}] Invalid secret`, {
         ip: req.ip,
         userAgent: req.get('user-agent'),
         hasSecret: !!secret,
         receivedSecret: !!req.headers['x-uazapi-secret'],
-        note: 'UazAPI may not send secret in header, processing anyway',
       });
-      // Não bloquear - apenas avisar, pois a UazAPI pode não enviar o secret corretamente
+      res.status(401).json({ error: 'Invalid webhook secret' });
+      return;
     }
 
     // 2. Validar e extrair payload
@@ -2001,8 +1940,7 @@ export async function handleWebhook(req: Request, res: Response) {
         ip: req.ip,
         bodyType: typeof req.body,
       });
-      // Sempre responder 200 OK para que a UazAPI continue enviando webhooks
-      res.status(200).json({ received: true, webhookId, note: 'Empty payload' });
+      res.status(400).json({ error: 'Empty payload' });
       return;
     }
 
@@ -2030,8 +1968,7 @@ export async function handleWebhook(req: Request, res: Response) {
         payload: JSON.stringify(payload).substring(0, 500),
         allPayloadKeys: Object.keys(payload),
       });
-      // Sempre responder 200 OK para que a UazAPI continue enviando webhooks
-      res.status(200).json({ received: true, webhookId, note: 'Missing instance identifier' });
+      res.status(400).json({ error: 'Missing instance identifier' });
       return;
     }
 
@@ -2066,32 +2003,14 @@ export async function handleWebhook(req: Request, res: Response) {
         })),
         ip: req.ip,
       });
-      // Sempre responder 200 OK para que a UazAPI continue enviando webhooks
-      // Mesmo que a instância não seja encontrada, não queremos que a UazAPI pare de enviar
-      res.status(200).json({ received: true, webhookId, note: 'Instance not registered' });
+      res.status(404).json({ error: 'Instance not registered' });
       return;
     }
 
     const instance = instanceResult.rows[0];
 
     // 5. Identificar tipo de evento
-    // A UazAPI pode enviar EventType no payload ou identificar pelo path
-    const event = 
-      payload.EventType || 
-      payload.event || 
-      req.query.event || 
-      payload.type || 
-      (req.path.includes('/chats') ? 'chats' : null) ||
-      (req.path.includes('/messages') ? 'messages' : null) ||
-      'unknown';
-    
-    console.log(`[Webhook ${webhookId}] Event identified`, {
-      event,
-      EventType: payload.EventType,
-      payloadEvent: payload.event,
-      path: req.path,
-      queryEvent: req.query.event,
-    });
+    const event = payload.event || req.query.event || payload.type || 'unknown';
 
     // 6. Log do recebimento com mais detalhes
     console.log(`[Webhook ${webhookId}] Webhook received and instance found`, {
