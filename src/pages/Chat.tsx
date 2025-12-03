@@ -269,9 +269,9 @@ const Chat = () => {
     console.log('[Chat] WebSocket: Token length', session.token.length);
     console.log('[Chat] WebSocket: Full URL will be', `${socketUrl}/socket.io/`);
 
-    // Testar endpoint antes de conectar
-    const testUrl = `${socketUrl}/socket.io/?EIO=4&transport=polling&token=${encodeURIComponent(session.token)}`;
-    console.log('[Chat] Testing endpoint:', testUrl);
+    // Testar endpoint antes de conectar para verificar se está acessível
+    const testUrl = `${socketUrl}/socket.io/?EIO=4&transport=polling`;
+    console.log('[Chat] Testing endpoint accessibility:', testUrl);
     
     fetch(testUrl, {
       method: 'GET',
@@ -285,18 +285,24 @@ const Chat = () => {
         console.log('[Chat] Endpoint test response:', {
           status: res.status,
           statusText: res.statusText,
-          headers: Object.fromEntries(res.headers.entries()),
-          bodyPreview: text.substring(0, 200),
+          contentType: res.headers.get('content-type'),
+          bodyPreview: text.substring(0, 100),
+          bodyLength: text.length,
         });
+        
+        // Se a resposta não começa com "0{" (handshake do Socket.IO), há problema
+        if (!text.startsWith('0{')) {
+          console.error('[Chat] Invalid Socket.IO handshake response:', text);
+        }
       })
       .catch((err) => {
         console.error('[Chat] Endpoint test failed:', err);
       });
 
-    // Configuração simplificada do Socket.IO - apenas polling para evitar problemas
+    // Configuração simplificada - apenas polling para evitar problemas de parse
     const socketOptions = {
       auth: { token: session.token },
-      transports: ['polling'], // Apenas polling para evitar problemas de parse
+      transports: ['polling'], // Apenas polling para evitar problemas
       reconnection: true,
       reconnectionDelay: 2000,
       reconnectionDelayMax: 10000,
@@ -309,7 +315,7 @@ const Chat = () => {
       },
       withCredentials: true,
       upgrade: false, // Não fazer upgrade para websocket
-      // Remover transportOptions que podem causar problemas
+      // Remover transportOptions que podem causar problemas de parse
     } as const;
 
     const socket: Socket = io(socketUrl, socketOptions);

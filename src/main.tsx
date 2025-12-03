@@ -1,17 +1,28 @@
-// IMPORTANTE: Polyfills devem ser importados PRIMEIRO, antes de qualquer outra coisa
-import "./polyfills/process";
-import { Buffer } from "buffer";
-
-// Polyfill Buffer
-if (typeof window !== "undefined") {
-  (window as any).Buffer = Buffer;
-  (globalThis as any).Buffer = Buffer;
-}
-
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+
+// Polyfill para Buffer (necessário para socket.io-client no navegador)
+// Deve ser carregado ANTES de qualquer import do socket.io-client
+import { Buffer } from "buffer";
+
+// Garantir que Buffer está disponível globalmente antes de qualquer código usar
+if (typeof window !== "undefined") {
+  (window as any).Buffer = Buffer;
+  (globalThis as any).Buffer = Buffer;
+  // Também definir no global para compatibilidade
+  if (typeof global !== "undefined") {
+    (global as any).Buffer = Buffer;
+  }
+}
+
+// Verificar se Buffer está disponível
+if (typeof Buffer === "undefined") {
+  console.error("[main.tsx] Buffer polyfill failed to load!");
+} else {
+  console.log("[main.tsx] Buffer polyfill loaded successfully");
+}
 
 const rootElement = document.getElementById("root");
 
