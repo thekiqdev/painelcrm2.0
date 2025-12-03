@@ -20,12 +20,14 @@ export default defineConfig(({ mode }) => ({
       // Redirecionar Supabase para stub para evitar erros de build
       "@/integrations/supabase/client": path.resolve(__dirname, "./src/integrations/supabase/client-stub.ts"),
       "@supabase/supabase-js": path.resolve(__dirname, "./src/integrations/supabase/supabase-stub.js"),
+      // Polyfill para Buffer (usado por socket.io-client)
+      "buffer": "buffer",
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
     mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients'],
+    include: ['@/services/clients', 'buffer'],
     exclude: ['@supabase/supabase-js'],
   },
   build: {
