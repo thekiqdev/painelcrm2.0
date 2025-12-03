@@ -3,45 +3,25 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
-// Plugin para injetar polyfill de process no HTML (executa antes de qualquer script)
+// Plugin para injetar polyfill de process de forma agressiva
 const processPolyfillPlugin = () => ({
   name: 'process-polyfill',
+  // Injetar polyfill no HTML - deve ser o PRIMEIRO script a executar
   transformIndexHtml: {
     enforce: 'pre' as const,
     transform(html: string) {
-      // Injetar polyfill no início do HTML, antes de qualquer script
-      const polyfillScript = `
-    <script>
-      (function() {
-        'use strict';
-        if (typeof process === 'undefined') {
-          var processPolyfill = {
-            env: {},
-            browser: true,
-            version: '',
-            versions: {},
-            type: 'browser',
-            nextTick: function(fn) { setTimeout(fn, 0); },
-            cwd: function() { return '/'; },
-          };
-          try {
-            if (typeof window !== 'undefined') {
-              window.process = processPolyfill;
-            }
-            if (typeof globalThis !== 'undefined') {
-              globalThis.process = processPolyfill;
-            }
-            if (typeof global !== 'undefined') {
-              global.process = processPolyfill;
-            }
-          } catch(e) {
-            console.error('Error setting process polyfill:', e);
-          }
-        }
-      })();
-    </script>`;
-      // Inserir logo após <head> para garantir execução antes de tudo
-      return html.replace(/<head[^>]*>/i, `$&${polyfillScript}`);
+      // Polyfill minificado e otimizado - executa IMEDIATAMENTE
+      const polyfillScript = `<script>(function(){var p={env:{},browser:!0,version:"",versions:{},type:"browser",nextTick:function(f){setTimeout(f,0)},cwd:function(){return"/"}};try{typeof window!="undefined"&&(window.process=p),typeof globalThis!="undefined"&&(globalThis.process=p),typeof global!="undefined"&&(global.process=p)}catch(e){}typeof process=="undefined"&&(process=p)})();</script>`;
+      // Inserir ANTES de qualquer outro script ou link
+      if (html.includes('<head')) {
+        return html.replace(/(<head[^>]*>)/i, `$1${polyfillScript}`);
+      }
+      // Se não tiver head, inserir no início do body
+      if (html.includes('<body')) {
+        return html.replace(/(<body[^>]*>)/i, `$1${polyfillScript}`);
+      }
+      // Último recurso: inserir no início do documento
+      return polyfillScript + html;
     },
   },
 });
