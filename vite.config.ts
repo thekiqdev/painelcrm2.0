@@ -37,7 +37,7 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     target: 'esnext',
-    minify: 'esbuild',
+    minify: false, // TEMPORÁRIO: Desabilitar minificação para testar se resolve o problema do parser
     sourcemap: false,
     // Configuração do esbuild para preservar código do socket.io-client
     esbuild: {
