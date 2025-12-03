@@ -111,15 +111,15 @@ const AuthWhatsApp = () => {
               {loginType === "email" ? "E-mail" : "Telefone"}
             </Label>
             <div className="flex gap-2">
-              <Input
+            <Input
                 id="identifier"
                 type={loginType === "email" ? "email" : "tel"}
                 placeholder={loginType === "email" ? "seu@email.com" : "5511999999999"}
                 value={identifier}
                 onChange={handleIdentifierChange}
                 className="flex-1"
-                required
-              />
+              required
+            />
               <Button
                 type="button"
                 variant="outline"

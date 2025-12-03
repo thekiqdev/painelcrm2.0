@@ -20,31 +20,18 @@ export default defineConfig(({ mode }) => ({
       // Redirecionar Supabase para stub para evitar erros de build
       "@/integrations/supabase/client": path.resolve(__dirname, "./src/integrations/supabase/client-stub.ts"),
       "@supabase/supabase-js": path.resolve(__dirname, "./src/integrations/supabase/supabase-stub.js"),
-      // Polyfill para Buffer (usado pelo Socket.IO)
-      "buffer": "buffer",
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
     mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients', 'buffer'],
+    include: ['@/services/clients'],
     exclude: ['@supabase/supabase-js'],
   },
   build: {
     target: 'esnext',
     minify: 'esbuild',
     sourcemap: false,
-    rollupOptions: {
-      plugins: [
-        // Plugin para injetar Buffer globalmente
-        {
-          name: 'buffer-polyfill',
-          generateBundle() {
-            // Não precisa fazer nada aqui, o define já cuida disso
-          },
-        },
-      ],
-    },
   },
   define: {
     global: 'globalThis',

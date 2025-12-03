@@ -135,6 +135,9 @@ const Chat = () => {
   const [loadingClient, setLoadingClient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  // Refs para evitar closure stale nos handlers do Socket.IO
+  const selectedConversationIdRef = useRef<string | null>(null);
+  const enabledInstanceIdsRef = useRef<Set<string>>(new Set());
 
   // Estados para dialogs
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
@@ -216,6 +219,15 @@ const Chat = () => {
       setLoadingMessages(false);
     }
   }, []);
+
+  // Atualizar refs quando valores mudarem
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    enabledInstanceIdsRef.current = enabledInstanceIds;
+  }, [enabledInstanceIds]);
 
   // Carregar mensagens quando uma conversa é selecionada
   // Nota: Não usamos polling automático pois os webhooks atualizam em tempo real
@@ -347,7 +359,8 @@ const Chat = () => {
       });
 
       // Se a conversa atualizada é a selecionada, recarregar mensagens
-      if (selectedConversationId === updatedConversation.id) {
+      // Usar ref para evitar closure stale
+      if (selectedConversationIdRef.current === updatedConversation.id) {
         loadMessages(updatedConversation.id);
       }
     });
@@ -356,8 +369,11 @@ const Chat = () => {
     socket.on('new_message', (data: { message: any; conversationId: string }) => {
       console.log('[Chat] New message via WebSocket:', data.message.id);
       
+      // Usar ref para evitar closure stale
+      const currentSelectedId = selectedConversationIdRef.current;
+      
       // Se a mensagem é da conversa selecionada, adicionar à lista
-      if (selectedConversationId === data.conversationId) {
+      if (currentSelectedId === data.conversationId) {
         setMessages((prev) => {
           // Verificar se a mensagem já existe
           if (prev.some(m => m.id === data.message.id || m.external_message_id === data.message.id)) {
@@ -376,7 +392,7 @@ const Chat = () => {
             ...updated[index],
             last_message_preview: data.message.body,
             last_message_at: data.message.sent_at,
-            unread_count: selectedConversationId === data.conversationId 
+            unread_count: currentSelectedId === data.conversationId 
               ? updated[index].unread_count 
               : (updated[index].unread_count || 0) + 1,
           };
@@ -389,16 +405,14 @@ const Chat = () => {
     });
 
     return () => {
-      // Não desconectar aqui, deixar o socket gerenciar reconexão
-      // Apenas limpar a referência se necessário
+      // Limpar socket quando token mudar ou componente desmontar
       if (socketRef.current) {
-        console.log('[Chat] WebSocket: Cleaning up socket reference');
-        // Não desconectar, apenas limpar referência
-        // socketRef.current.disconnect();
-        // socketRef.current = null;
+        console.log('[Chat] WebSocket: Cleaning up socket');
+        socketRef.current.disconnect();
+        socketRef.current = null;
       }
     };
-  }, [session?.token]); // Apenas reconectar se o token mudar
+  }, [session?.token, loadMessages]); // Reconectar se token ou loadMessages mudar
 
   const loadClients = useCallback(async () => {
     try {
