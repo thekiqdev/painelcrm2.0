@@ -14,11 +14,17 @@ let io: SocketIOServer | null = null;
  * Inicializa o servidor WebSocket
  */
 export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
+  // Configurar CORS para Socket.IO - aceitar todas as origens em produção (Nginx já faz o controle)
+  const corsOrigins = process.env.FRONTEND_URL 
+    ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+    : true; // Aceitar todas em produção (Nginx controla)
+
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: process.env.FRONTEND_URL || '*',
-      methods: ['GET', 'POST'],
+      origin: corsOrigins,
+      methods: ['GET', 'POST', 'OPTIONS'],
       credentials: true,
+      allowedHeaders: ['Authorization', 'Content-Type'],
     },
     transports: ['polling', 'websocket'], // Polling primeiro (mais confiável através de proxy)
     path: '/socket.io/',
@@ -27,6 +33,10 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
     // Timeout mais longo para conexões através de proxy
     pingTimeout: 60000,
     pingInterval: 25000,
+    // Configurações adicionais para melhor compatibilidade
+    connectTimeout: 45000,
+    // Permitir polling longo para evitar timeouts
+    maxHttpBufferSize: 1e8,
   });
 
   // Middleware de autenticação

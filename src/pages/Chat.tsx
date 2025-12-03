@@ -263,22 +263,22 @@ const Chat = () => {
     // Em produção usamos URL relativa para garantir mesmo host e sticky session no proxy
     const socketUrl = isDev
       ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
-      : '';
+      : window.location.origin;
 
-    console.log('[Chat] WebSocket: Connecting to', socketUrl || 'relative origin', 'with token:', session.token ? 'present' : 'missing');
+    console.log('[Chat] WebSocket: Connecting to', socketUrl, 'with token:', session.token ? 'present' : 'missing');
     console.log('[Chat] WebSocket: Token length', session.token.length);
+    console.log('[Chat] WebSocket: Full URL will be', `${socketUrl}/socket.io/`);
 
-    // Tentar polling primeiro (mais confiável através de proxy/nginx)
-    // WebSocket pode ter problemas com alguns proxies
+    // Configuração mais robusta do Socket.IO
     const socketOptions = {
       auth: { token: session.token },
-      transports: ['polling'], // Apenas polling inicialmente (mais confiável através de proxy)
+      transports: ['polling', 'websocket'], // Tentar ambos, polling primeiro
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: Infinity,
-      timeout: 30000, // 30 segundos para timeout de conexão inicial
-      forceNew: false,
+      reconnectionDelayMax: 10000,
+      reconnectionAttempts: 5, // Limitar tentativas para evitar loop infinito
+      timeout: 20000, // 20 segundos para timeout de conexão inicial
+      forceNew: true, // Forçar nova conexão para evitar problemas com conexões antigas
       // Path padrão do Socket.IO
       path: '/socket.io/',
       // Adicionar query string com token como fallback
@@ -286,6 +286,9 @@ const Chat = () => {
         token: session.token,
       },
       withCredentials: true,
+      // Não usar upgrade automático inicialmente - deixar polling funcionar primeiro
+      upgrade: false,
+      // Configurações adicionais para polling
       transportOptions: {
         polling: {
           extraHeaders: {
@@ -293,34 +296,57 @@ const Chat = () => {
           },
         },
       },
-      // Upgrade automático para websocket após conexão bem-sucedida
-      upgrade: true,
     } as const;
 
-    const socket: Socket = socketUrl
-      ? io(socketUrl, socketOptions)
-      : io(socketOptions);
-
+    const socket: Socket = io(socketUrl, socketOptions);
     socketRef.current = socket;
 
+    // Logs detalhados para debug
     socket.on('connect', () => {
-      console.log('[Chat] WebSocket connected successfully, transport:', socket.io.engine.transport.name);
+      console.log('[Chat] WebSocket connected successfully', {
+        id: socket.id,
+        transport: socket.io.engine.transport.name,
+        url: socketUrl,
+      });
     });
 
     socket.on('connect_error', (error) => {
-      console.error('[Chat] WebSocket connection error:', error.message, error);
+      console.error('[Chat] WebSocket connection error:', {
+        message: error.message,
+        type: error.type,
+        description: error.description,
+        context: error.context,
+        transport: socket.io.engine?.transport?.name || 'unknown',
+        url: socketUrl,
+      });
+      
       // Tentar forçar polling se websocket falhar
       if (socket.io.engine && socket.io.engine.transport.name === 'websocket') {
         console.log('[Chat] WebSocket failed, will retry with polling');
+        socket.io.opts.transports = ['polling'];
       }
     });
 
     socket.on('error', (error) => {
-      console.error('[Chat] WebSocket error:', error);
+      console.error('[Chat] WebSocket error:', {
+        message: error.message || error,
+        type: (error as any).type,
+      });
+    });
+
+    // Listener para erros do engine (mais detalhado)
+    socket.io.on('error', (error) => {
+      console.error('[Chat] Socket.IO engine error:', {
+        message: error.message || error,
+        type: (error as any).type,
+      });
     });
 
     socket.on('disconnect', (reason) => {
-      console.log('[Chat] WebSocket disconnected:', reason);
+      console.log('[Chat] WebSocket disconnected:', {
+        reason,
+        wasConnected: socket.connected,
+      });
     });
 
     socket.on('reconnect', (attemptNumber) => {
