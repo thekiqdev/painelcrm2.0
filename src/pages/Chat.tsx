@@ -253,10 +253,24 @@ const Chat = () => {
       : window.location.origin;
 
     console.log('[Chat] WebSocket: Connecting to', socketUrl, 'with token:', session.token ? 'present' : 'missing');
+    console.log('[Chat] WebSocket: Token length', session.token.length);
+
+    // Garantir que o token chegue também via query string para o backend
+    const resolvedSocketUrl = socketUrl || window.location.origin;
+    let socketConnectionUrl = resolvedSocketUrl;
+    try {
+      const urlWithToken = new URL(resolvedSocketUrl);
+      urlWithToken.searchParams.set('token', session.token);
+      socketConnectionUrl = urlWithToken.toString();
+    } catch (error) {
+      console.warn('[Chat] WebSocket: Failed to append token to URL, falling back to manual concat', error);
+      const separator = resolvedSocketUrl.includes('?') ? '&' : '?';
+      socketConnectionUrl = `${resolvedSocketUrl}${separator}token=${encodeURIComponent(session.token)}`;
+    }
 
     // Tentar polling primeiro (mais confiável através de proxy/nginx)
     // WebSocket pode ter problemas com alguns proxies
-    const socket: Socket = io(socketUrl, {
+    const socket: Socket = io(socketConnectionUrl, {
       auth: { token: session.token },
       transports: ['polling'], // Apenas polling inicialmente (mais confiável através de proxy)
       reconnection: true,
