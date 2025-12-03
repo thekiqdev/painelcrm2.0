@@ -54,7 +54,11 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     global: 'globalThis',
-    // Não sobrescrever process completamente - apenas env
+    // Definir process para Socket.IO e outras libs que precisam
     'process.env': 'import.meta.env',
+    'process.browser': 'true',
+    'process.version': '"v"',
+    // Definir process como objeto mínimo para evitar erros
+    'typeof process': '"object"',
   },
 }));
