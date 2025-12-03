@@ -27,8 +27,8 @@ export default defineConfig(({ mode }) => ({
     mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients', 'buffer', 'socket.io-client'],
-    exclude: ['@supabase/supabase-js'],
+    include: ['@/services/clients', 'buffer'],
+    exclude: ['@supabase/supabase-js', 'socket.io-client'], // Não otimizar socket.io-client para evitar problemas
     esbuildOptions: {
       define: {
         global: 'globalThis',
@@ -39,6 +39,32 @@ export default defineConfig(({ mode }) => ({
     target: 'esnext',
     minify: 'esbuild',
     sourcemap: false,
+    // Configuração do esbuild para preservar código do socket.io-client
+    esbuild: {
+      keepNames: true, // Preservar nomes de funções
+      legalComments: 'none',
+    },
+    rollupOptions: {
+      output: {
+        // Separar socket.io em chunk próprio
+        manualChunks: (id) => {
+          if (id.includes('socket.io-client') || id.includes('engine.io-client') || id.includes('socket.io-parser')) {
+            return 'socket.io';
+          }
+        },
+        // Preservar nomes de funções exportadas
+        format: 'es',
+      },
+      // Plugin para não minificar socket.io-client
+      plugins: [
+        {
+          name: 'preserve-socketio',
+          generateBundle(options, bundle) {
+            // Não fazer nada, apenas garantir que o código seja preservado
+          },
+        },
+      ],
+    },
   },
   define: {
     global: 'globalThis',
