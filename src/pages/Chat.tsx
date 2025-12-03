@@ -247,30 +247,18 @@ const Chat = () => {
       return;
     }
 
-    // Socket.IO automaticamente adiciona /socket.io/ na URL
-    const socketUrl = import.meta.env.DEV 
+    const isDev = import.meta.env.DEV;
+    // Em produção usamos URL relativa para garantir mesmo host e sticky session no proxy
+    const socketUrl = isDev
       ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
-      : window.location.origin;
+      : '';
 
-    console.log('[Chat] WebSocket: Connecting to', socketUrl, 'with token:', session.token ? 'present' : 'missing');
+    console.log('[Chat] WebSocket: Connecting to', socketUrl || 'relative origin', 'with token:', session.token ? 'present' : 'missing');
     console.log('[Chat] WebSocket: Token length', session.token.length);
-
-    // Garantir que o token chegue também via query string para o backend
-    const resolvedSocketUrl = socketUrl || window.location.origin;
-    let socketConnectionUrl = resolvedSocketUrl;
-    try {
-      const urlWithToken = new URL(resolvedSocketUrl);
-      urlWithToken.searchParams.set('token', session.token);
-      socketConnectionUrl = urlWithToken.toString();
-    } catch (error) {
-      console.warn('[Chat] WebSocket: Failed to append token to URL, falling back to manual concat', error);
-      const separator = resolvedSocketUrl.includes('?') ? '&' : '?';
-      socketConnectionUrl = `${resolvedSocketUrl}${separator}token=${encodeURIComponent(session.token)}`;
-    }
 
     // Tentar polling primeiro (mais confiável através de proxy/nginx)
     // WebSocket pode ter problemas com alguns proxies
-    const socket: Socket = io(socketConnectionUrl, {
+    const socketOptions = {
       auth: { token: session.token },
       transports: ['polling'], // Apenas polling inicialmente (mais confiável através de proxy)
       reconnection: true,
@@ -285,9 +273,21 @@ const Chat = () => {
       query: {
         token: session.token,
       },
+      withCredentials: true,
+      transportOptions: {
+        polling: {
+          extraHeaders: {
+            Authorization: `Bearer ${session.token}`,
+          },
+        },
+      },
       // Upgrade automático para websocket após conexão bem-sucedida
       upgrade: true,
-    });
+    } as const;
+
+    const socket: Socket = socketUrl
+      ? io(socketUrl, socketOptions)
+      : io(socketOptions);
 
     socketRef.current = socket;
 
