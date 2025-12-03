@@ -27,19 +27,34 @@ export default defineConfig(({ mode }) => ({
     mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients', 'buffer'],
+    include: ['@/services/clients', 'buffer', 'socket.io-client'],
     exclude: ['@supabase/supabase-js'],
+    esbuildOptions: {
+      define: {
+        global: 'globalThis',
+      },
+    },
   },
   build: {
     target: 'esnext',
     minify: 'esbuild',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Manter nomes de funções para evitar problemas com minificação
+        manualChunks: {
+          'socket.io': ['socket.io-client'],
+        },
+      },
+    },
+    commonjsOptions: {
+      include: [/socket.io-client/, /node_modules/],
+      transformMixedEsModules: true,
+    },
   },
   define: {
     global: 'globalThis',
+    // Não sobrescrever process completamente - apenas env
     'process.env': 'import.meta.env',
-    'process': JSON.stringify({
-      env: {}
-    }),
   },
 }));

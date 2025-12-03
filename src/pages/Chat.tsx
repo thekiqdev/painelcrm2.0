@@ -269,33 +269,47 @@ const Chat = () => {
     console.log('[Chat] WebSocket: Token length', session.token.length);
     console.log('[Chat] WebSocket: Full URL will be', `${socketUrl}/socket.io/`);
 
-    // Configuração mais robusta do Socket.IO
+    // Testar endpoint antes de conectar
+    const testUrl = `${socketUrl}/socket.io/?EIO=4&transport=polling&token=${encodeURIComponent(session.token)}`;
+    console.log('[Chat] Testing endpoint:', testUrl);
+    
+    fetch(testUrl, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        'Authorization': `Bearer ${session.token}`,
+      },
+    })
+      .then(async (res) => {
+        const text = await res.text();
+        console.log('[Chat] Endpoint test response:', {
+          status: res.status,
+          statusText: res.statusText,
+          headers: Object.fromEntries(res.headers.entries()),
+          bodyPreview: text.substring(0, 200),
+        });
+      })
+      .catch((err) => {
+        console.error('[Chat] Endpoint test failed:', err);
+      });
+
+    // Configuração simplificada do Socket.IO - apenas polling para evitar problemas
     const socketOptions = {
       auth: { token: session.token },
-      transports: ['polling', 'websocket'], // Tentar ambos, polling primeiro
+      transports: ['polling'], // Apenas polling para evitar problemas de parse
       reconnection: true,
-      reconnectionDelay: 1000,
+      reconnectionDelay: 2000,
       reconnectionDelayMax: 10000,
-      reconnectionAttempts: 5, // Limitar tentativas para evitar loop infinito
-      timeout: 20000, // 20 segundos para timeout de conexão inicial
-      forceNew: true, // Forçar nova conexão para evitar problemas com conexões antigas
-      // Path padrão do Socket.IO
+      reconnectionAttempts: 3, // Limitar tentativas
+      timeout: 10000, // 10 segundos para timeout
+      forceNew: true,
       path: '/socket.io/',
-      // Adicionar query string com token como fallback
       query: {
         token: session.token,
       },
       withCredentials: true,
-      // Não usar upgrade automático inicialmente - deixar polling funcionar primeiro
-      upgrade: false,
-      // Configurações adicionais para polling
-      transportOptions: {
-        polling: {
-          extraHeaders: {
-            Authorization: `Bearer ${session.token}`,
-          },
-        },
-      },
+      upgrade: false, // Não fazer upgrade para websocket
+      // Remover transportOptions que podem causar problemas
     } as const;
 
     const socket: Socket = io(socketUrl, socketOptions);
