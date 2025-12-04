@@ -22,14 +22,14 @@ export default defineConfig(({ mode }) => ({
       "@supabase/supabase-js": path.resolve(__dirname, "./src/integrations/supabase/supabase-stub.js"),
       // Polyfill para Buffer (usado por socket.io-client)
       "buffer": "buffer",
-      // Polyfill para url (usado por socket.io-client)
-      "url": "url",
+      // Polyfill para url (usado por socket.io-client) - usar nosso polyfill customizado
+      "url": path.resolve(__dirname, "./src/polyfills/url-polyfill.ts"),
     },
     extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
     mainFields: ['module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients', 'buffer', 'url'],
+    include: ['@/services/clients', 'buffer'],
     exclude: ['@supabase/supabase-js', 'socket.io-client'], // Não otimizar socket.io-client para evitar problemas
     esbuildOptions: {
       define: {

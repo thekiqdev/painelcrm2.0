@@ -9,8 +9,8 @@ import "./index.css";
 // Polyfill para Buffer
 import { Buffer } from "buffer";
 
-// Polyfill para url (necessário para socket.io-client)
-import * as url from "url";
+// Polyfill customizado para url que expõe Url.parse
+import "./polyfills/url-polyfill";
 
 // Garantir que Buffer está disponível globalmente
 if (typeof window !== "undefined") {
@@ -22,27 +22,11 @@ if (typeof window !== "undefined") {
   }
 }
 
-// Garantir que url está disponível globalmente
-if (typeof window !== "undefined") {
-  (window as any).url = url;
-  (globalThis as any).url = url;
-  // Também definir no global para compatibilidade
-  if (typeof global !== "undefined") {
-    (global as any).url = url;
-  }
-}
-
 // Verificar se polyfills estão disponíveis
 if (typeof Buffer === "undefined") {
   console.error("[main.tsx] Buffer polyfill failed to load!");
 } else {
   console.log("[main.tsx] Buffer polyfill loaded successfully");
-}
-
-if (typeof url === "undefined") {
-  console.error("[main.tsx] url polyfill failed to load!");
-} else {
-  console.log("[main.tsx] url polyfill loaded successfully");
 }
 
 const rootElement = document.getElementById("root");
