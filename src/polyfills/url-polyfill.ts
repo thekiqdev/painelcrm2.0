@@ -70,3 +70,4 @@ if (typeof window !== 'undefined') {
 
 // Exportar como default também
 export default urlModule;
+
