@@ -111,7 +111,7 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       readyState: socket.readyState,
     });
     
-    socket.on('error', (err) => {
+    socket.on('error', (err: any) => {
       console.error('[WebSocket] Socket transport error:', {
         socketId: socket.id,
         error: err.message,
