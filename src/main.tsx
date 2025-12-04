@@ -3,11 +3,16 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
-// Polyfill para Buffer (necessário para socket.io-client no navegador)
-// Deve ser carregado ANTES de qualquer import do socket.io-client
+// Polyfills para socket.io-client no navegador
+// Devem ser carregados ANTES de qualquer import do socket.io-client
+
+// Polyfill para Buffer
 import { Buffer } from "buffer";
 
-// Garantir que Buffer está disponível globalmente antes de qualquer código usar
+// Polyfill para url (necessário para socket.io-client)
+import * as url from "url";
+
+// Garantir que Buffer está disponível globalmente
 if (typeof window !== "undefined") {
   (window as any).Buffer = Buffer;
   (globalThis as any).Buffer = Buffer;
@@ -17,11 +22,27 @@ if (typeof window !== "undefined") {
   }
 }
 
-// Verificar se Buffer está disponível
+// Garantir que url está disponível globalmente
+if (typeof window !== "undefined") {
+  (window as any).url = url;
+  (globalThis as any).url = url;
+  // Também definir no global para compatibilidade
+  if (typeof global !== "undefined") {
+    (global as any).url = url;
+  }
+}
+
+// Verificar se polyfills estão disponíveis
 if (typeof Buffer === "undefined") {
   console.error("[main.tsx] Buffer polyfill failed to load!");
 } else {
   console.log("[main.tsx] Buffer polyfill loaded successfully");
+}
+
+if (typeof url === "undefined") {
+  console.error("[main.tsx] url polyfill failed to load!");
+} else {
+  console.log("[main.tsx] url polyfill loaded successfully");
 }
 
 const rootElement = document.getElementById("root");
