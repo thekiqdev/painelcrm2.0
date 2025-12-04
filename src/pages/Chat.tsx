@@ -333,7 +333,10 @@ const Chat = () => {
     socket.on('connect_error', (error) => {
       // Log completo do erro
       console.error('[Chat] WebSocket connection error:', error);
-      console.error('[Chat] WebSocket connection error details:', {
+      
+      // Capturar detalhes do erro XHR se disponível
+      const xhrError = (error as any).xhr || (error as any).req;
+      const errorDetails: any = {
         message: error.message,
         type: error.type,
         description: error.description,
@@ -343,7 +346,26 @@ const Chat = () => {
         errorString: String(error),
         errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error)),
         stack: (error as any).stack,
-      });
+      };
+      
+      // Adicionar detalhes do XHR se disponível
+      if (xhrError) {
+        errorDetails.xhr = {
+          status: xhrError.status,
+          statusText: xhrError.statusText,
+          response: xhrError.response,
+          responseText: xhrError.responseText,
+          readyState: xhrError.readyState,
+        };
+      }
+      
+      // Verificar se há erro de rede
+      if ((error as any).code === 'ECONNREFUSED' || (error as any).code === 'ENOTFOUND') {
+        errorDetails.networkError = true;
+        errorDetails.networkCode = (error as any).code;
+      }
+      
+      console.error('[Chat] WebSocket connection error details:', errorDetails);
       
       // Tentar forçar polling se websocket falhar
       if (socket.io.engine && socket.io.engine.transport.name === 'websocket') {
@@ -362,14 +384,37 @@ const Chat = () => {
     // Listener para erros do engine (mais detalhado)
     socket.io.on('error', (error) => {
       console.error('[Chat] Socket.IO engine error:', error);
-      console.error('[Chat] Socket.IO engine error details:', {
+      
+      const errorDetails: any = {
         message: (error as any).message || String(error),
         type: (error as any).type,
         description: (error as any).description,
         errorString: String(error),
         errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error)),
         stack: (error as any).stack,
-      });
+      };
+      
+      // Capturar detalhes do transporte se disponível
+      if (socket.io.engine) {
+        errorDetails.engine = {
+          transport: socket.io.engine.transport?.name,
+          readyState: socket.io.engine.readyState,
+        };
+      }
+      
+      // Capturar detalhes do XHR se disponível
+      const xhrError = (error as any).xhr || (error as any).req;
+      if (xhrError) {
+        errorDetails.xhr = {
+          status: xhrError.status,
+          statusText: xhrError.statusText,
+          response: xhrError.response,
+          responseText: xhrError.responseText,
+          readyState: xhrError.readyState,
+        };
+      }
+      
+      console.error('[Chat] Socket.IO engine error details:', errorDetails);
     });
 
     socket.on('disconnect', (reason) => {

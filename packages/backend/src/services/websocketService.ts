@@ -103,6 +103,23 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
     }
   });
 
+  // Log de todas as requisições de polling
+  io.engine.on('connection', (socket) => {
+    console.log('[WebSocket] Engine connection:', {
+      id: socket.id,
+      transport: socket.transport?.name,
+      readyState: socket.readyState,
+    });
+    
+    socket.on('error', (err) => {
+      console.error('[WebSocket] Socket transport error:', {
+        socketId: socket.id,
+        error: err.message,
+        stack: err.stack,
+      });
+    });
+  });
+
   // Gerenciar conexões
   io.on('connection', (socket: AuthenticatedSocket) => {
     const userId = socket.userId;
@@ -151,6 +168,19 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       message: err.message,
       description: err.description,
       context: err.context,
+      req: err.req ? {
+        method: err.req.method,
+        url: err.req.url,
+        headers: Object.keys(err.req.headers || {}),
+      } : undefined,
+    });
+  });
+  
+  // Log de erros de transporte
+  io.engine.on('error', (err) => {
+    console.error('[WebSocket] Engine error:', {
+      message: err.message,
+      stack: err.stack,
     });
   });
 
