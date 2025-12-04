@@ -331,13 +331,18 @@ const Chat = () => {
     });
 
     socket.on('connect_error', (error) => {
-      console.error('[Chat] WebSocket connection error:', {
+      // Log completo do erro
+      console.error('[Chat] WebSocket connection error:', error);
+      console.error('[Chat] WebSocket connection error details:', {
         message: error.message,
         type: error.type,
         description: error.description,
         context: error.context,
         transport: socket.io.engine?.transport?.name || 'unknown',
         url: socketUrl,
+        errorString: String(error),
+        errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+        stack: (error as any).stack,
       });
       
       // Tentar forçar polling se websocket falhar
@@ -356,9 +361,14 @@ const Chat = () => {
 
     // Listener para erros do engine (mais detalhado)
     socket.io.on('error', (error) => {
-      console.error('[Chat] Socket.IO engine error:', {
-        message: error.message || error,
+      console.error('[Chat] Socket.IO engine error:', error);
+      console.error('[Chat] Socket.IO engine error details:', {
+        message: (error as any).message || String(error),
         type: (error as any).type,
+        description: (error as any).description,
+        errorString: String(error),
+        errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+        stack: (error as any).stack,
       });
     });
 
