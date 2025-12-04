@@ -29,7 +29,8 @@ export function urlPolyfillPlugin(): Plugin {
         }
         
         // Função parse compatível com Node.js url.parse
-        function urlParse(urlString, parseQueryString, slashesDenoteHost) {
+        // Declarada como var para evitar problemas de hoisting
+        var urlParse = function(urlString, parseQueryString, slashesDenoteHost) {
           if (!urlString || typeof urlString !== 'string') {
             throw new TypeError('Parameter "url" must be a string, not ' + typeof urlString);
           }
@@ -104,14 +105,15 @@ export function urlPolyfillPlugin(): Plugin {
               port: port || null,
             };
           }
-        }
+        };
         
-        // Criar objeto Url
-        window.Url = {
+        // Criar objeto Url ANTES de qualquer outra coisa
+        // Usar var para garantir que está disponível imediatamente
+        var UrlObject = {
           parse: urlParse,
           format: function(urlObj) {
             if (!urlObj || typeof urlObj !== 'object') return '';
-            let url = '';
+            var url = '';
             if (urlObj.protocol) url += urlObj.protocol + (urlObj.slashes ? '//' : '');
             if (urlObj.auth) url += urlObj.auth + '@';
             if (urlObj.host) url += urlObj.host;
@@ -133,8 +135,9 @@ export function urlPolyfillPlugin(): Plugin {
           }
         };
         
-        // Garantir disponibilidade em globalThis também
-        globalThis.Url = window.Url;
+        // Atribuir imediatamente para evitar problemas de inicialização
+        window.Url = UrlObject;
+        globalThis.Url = UrlObject;
         
         // Também expor via require se necessário
         if (typeof window.require === 'undefined') {
@@ -142,14 +145,22 @@ export function urlPolyfillPlugin(): Plugin {
             if (id === 'url') {
               return {
                 parse: urlParse,
-                format: window.Url.format,
-                resolve: window.Url.resolve,
-                Url: window.Url
+                format: UrlObject.format,
+                resolve: UrlObject.resolve,
+                Url: UrlObject
               };
             }
             throw new Error('Cannot find module \\'' + id + '\\'');
           };
         }
+        
+        // Garantir que está disponível também como propriedade do módulo url
+        window.url = {
+          parse: urlParse,
+          format: UrlObject.format,
+          resolve: UrlObject.resolve,
+          Url: UrlObject
+        };
         
         console.log('[Polyfill] Url.parse polyfill loaded successfully');
       })();
