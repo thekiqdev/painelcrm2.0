@@ -68,6 +68,22 @@ function ensureAdminToken() {
   }
 }
 
+/**
+ * Normaliza um número de telefone removendo caracteres especiais
+ * e deixando apenas dígitos para comparação consistente
+ * @param phone - Número de telefone em qualquer formato
+ * @returns Número normalizado (apenas dígitos) ou null se inválido
+ */
+function normalizePhoneNumber(phone: string | null | undefined): string | null {
+  if (!phone || typeof phone !== 'string') {
+    return null;
+  }
+  // Remove todos os caracteres não numéricos
+  const normalized = phone.replace(/\D/g, '');
+  // Retorna null se ficar vazio ou muito curto (menos de 10 dígitos)
+  return normalized.length >= 10 ? normalized : null;
+}
+
 function normalizeChatPayload(raw: any) {
   if (!raw || typeof raw !== 'object') {
     return null;
@@ -170,15 +186,67 @@ async function upsertConversation(
     lastMessagePreview: chatData.lastMessagePreview?.substring(0, 50),
   });
 
+  // Buscar client_id e lead_id pelo telefone normalizado
+  let clientId: string | null = null;
+  let leadId: string | null = null;
+  const normalizedPhone = normalizePhoneNumber(chatData.phoneNumber);
+
+  if (normalizedPhone) {
+    try {
+      // Primeiro, buscar cliente (prioridade sobre lead)
+      const clientResult = await pool.query(
+        `
+        SELECT id FROM clients
+        WHERE user_id = $1
+          AND phone IS NOT NULL
+          AND phone <> ''
+          AND regexp_replace(phone, '\\D', '', 'g') = $2
+        LIMIT 1
+        `,
+        [instance.user_id, normalizedPhone]
+      );
+
+      if (clientResult.rowCount > 0) {
+        clientId = clientResult.rows[0].id;
+        console.log(`[UpsertConversation ${upsertId}] Found client`, { clientId, phone: normalizedPhone });
+      } else {
+        // Se não encontrou cliente, buscar lead
+        const leadResult = await pool.query(
+          `
+          SELECT id FROM leads
+          WHERE user_id = $1
+            AND phone IS NOT NULL
+            AND phone <> ''
+            AND regexp_replace(phone, '\\D', '', 'g') = $2
+          LIMIT 1
+          `,
+          [instance.user_id, normalizedPhone]
+        );
+
+        if (leadResult.rowCount > 0) {
+          leadId = leadResult.rows[0].id;
+          console.log(`[UpsertConversation ${upsertId}] Found lead`, { leadId, phone: normalizedPhone });
+        }
+      }
+    } catch (linkError: any) {
+      console.error(`[UpsertConversation ${upsertId}] Error linking to client/lead:`, {
+        error: linkError.message,
+        phone: normalizedPhone,
+      });
+      // Não falha o upsert se houver erro ao buscar cliente/lead
+    }
+  }
+
   try {
   const result = await pool.query(
     `
     INSERT INTO chat_conversations (
       user_id, instance_id, external_chat_id, external_fast_id,
       contact_name, profile_name, phone_number, status,
-        last_message_preview, last_message_at, unread_count, metadata
+        last_message_preview, last_message_at, unread_count, metadata,
+        client_id, lead_id
     )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14)
     ON CONFLICT (instance_id, external_chat_id)
     DO UPDATE SET
       external_fast_id = EXCLUDED.external_fast_id,
@@ -190,6 +258,11 @@ async function upsertConversation(
       last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
         unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
       metadata = EXCLUDED.metadata,
+      client_id = COALESCE(EXCLUDED.client_id, chat_conversations.client_id),
+      lead_id = CASE 
+        WHEN EXCLUDED.client_id IS NOT NULL THEN NULL 
+        ELSE COALESCE(EXCLUDED.lead_id, chat_conversations.lead_id) 
+      END,
       updated_at = now()
     RETURNING *
   `,
@@ -206,6 +279,8 @@ async function upsertConversation(
       chatData.lastMessageAt,
         chatData.unreadCount,
       JSON.stringify(chatData.metadata || {}),
+      clientId,
+      leadId,
     ]
   );
 
@@ -217,6 +292,8 @@ async function upsertConversation(
     console.log(`[UpsertConversation ${upsertId}] Successfully upserted conversation`, {
       conversationId: result.rows[0].id,
       externalChatId: result.rows[0].external_chat_id,
+      clientId: result.rows[0].client_id,
+      leadId: result.rows[0].lead_id,
       wasInsert: !result.rows[0].updated_at || new Date(result.rows[0].updated_at).getTime() === new Date(result.rows[0].created_at).getTime(),
     });
 
@@ -1021,18 +1098,64 @@ export async function syncConversations(req: AuthRequest, res: Response) {
 export async function getConversations(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
-    const { instanceId, search } = req.query;
+    const { instanceId, search, assignedTo, unassigned, status, queue } = req.query;
     const params: any[] = [userId];
+    let paramIndex = 2;
+
     let query = `
-      SELECT c.*, i.name as instance_name
+      SELECT
+        c.*,
+        i.name as instance_name,
+        -- Cliente inferido pelo telefone, se ainda não houver client_id salvo
+        COALESCE(c.client_id, cl.id) as client_id,
+        -- Lead inferido pelo telefone (apenas informação derivada, não altera a tabela)
+        COALESCE(c.lead_id, l.id) as lead_id
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN clients cl
+        ON cl.user_id = c.user_id
+       AND cl.id = COALESCE(c.client_id, cl.id)
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND cl.phone IS NOT NULL
+       AND cl.phone <> ''
+       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
+      LEFT JOIN leads l
+        ON l.user_id = c.user_id
+       AND l.id = COALESCE(c.lead_id, l.id)
+       AND c.client_id IS NULL
+       AND l.phone IS NOT NULL
+       AND l.phone <> ''
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
       WHERE c.user_id = $1
     `;
 
     if (instanceId) {
       params.push(instanceId);
       query += ` AND c.instance_id = $${params.length}`;
+      paramIndex++;
+    }
+
+    if (assignedTo === 'me') {
+      params.push(userId);
+      query += ` AND c.assigned_to = $${params.length}`;
+      paramIndex++;
+    } else if (unassigned === 'true') {
+      query += ` AND (c.assigned_to IS NULL OR c.assigned_to = '00000000-0000-0000-0000-000000000000'::uuid)`;
+    }
+
+    if (status && typeof status === 'string') {
+      params.push(status);
+      query += ` AND c.status = $${params.length}`;
+      paramIndex++;
+    }
+
+    if (queue && typeof queue === 'string') {
+      params.push(queue);
+      query += ` AND c.queue = $${params.length}`;
+      paramIndex++;
     }
 
     if (search && typeof search === 'string') {
@@ -1131,6 +1254,95 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
   } catch (error: any) {
     console.error('Error fetching conversation messages:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+}
+
+/**
+ * Busca o perfil completo (cliente ou lead) vinculado a uma conversa
+ * GET /api/chat/conversations/:id/profile
+ */
+export async function getConversationProfile(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+
+    // Buscar a conversa com client_id e lead_id
+    const conversationResult = await pool.query(
+      `
+      SELECT 
+        c.id,
+        c.client_id,
+        c.lead_id,
+        c.phone_number,
+        COALESCE(c.client_id, cl.id) as resolved_client_id,
+        COALESCE(c.lead_id, l.id) as resolved_lead_id
+      FROM chat_conversations c
+      LEFT JOIN clients cl
+        ON cl.user_id = c.user_id
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND cl.phone IS NOT NULL
+       AND cl.phone <> ''
+       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
+      LEFT JOIN leads l
+        ON l.user_id = c.user_id
+       AND c.client_id IS NULL
+       AND l.phone IS NOT NULL
+       AND l.phone <> ''
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+      WHERE c.id = $1 AND c.user_id = $2
+      `,
+      [id, userId]
+    );
+
+    if (conversationResult.rowCount === 0) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+
+    const conversation = conversationResult.rows[0];
+    const clientId = conversation.resolved_client_id || conversation.client_id;
+    const leadId = conversation.resolved_lead_id || conversation.lead_id;
+
+    // Priorizar cliente sobre lead
+    if (clientId) {
+      const clientResult = await pool.query(
+        'SELECT * FROM clients WHERE id = $1 AND user_id = $2',
+        [clientId, userId]
+      );
+      if (clientResult.rowCount > 0) {
+        res.json({
+          type: 'client',
+          profile: clientResult.rows[0],
+        });
+        return;
+      }
+    }
+
+    if (leadId) {
+      const leadResult = await pool.query(
+        'SELECT * FROM leads WHERE id = $1 AND user_id = $2',
+        [leadId, userId]
+      );
+      if (leadResult.rowCount > 0) {
+        res.json({
+          type: 'lead',
+          profile: leadResult.rows[0],
+        });
+        return;
+      }
+    }
+
+    // Se não encontrou cliente nem lead, retornar null
+    res.json({
+      type: null,
+      profile: null,
+    });
+  } catch (error: any) {
+    console.error('Error fetching conversation profile:', error);
+    res.status(500).json({ error: 'Failed to fetch profile' });
   }
 }
 

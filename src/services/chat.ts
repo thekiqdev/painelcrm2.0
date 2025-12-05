@@ -18,6 +18,7 @@ export interface ChatConversation {
   instance_id: string;
   instance_name?: string;
   client_id?: string | null;
+  leadId?: string | null;
   external_chat_id: string;
   contactName?: string | null;
   profileName?: string | null;
@@ -32,6 +33,11 @@ export interface ChatConversation {
   unreadCount: number;
   metadata?: Record<string, unknown> | null;
   updated_at?: string;
+}
+
+export interface ConversationProfile {
+  type: 'client' | 'lead' | null;
+  profile: any | null;
 }
 
 export interface ChatMessage {
@@ -66,6 +72,7 @@ const normalizeConversation = (raw: any): ChatConversation => {
     instance_id: raw.instance_id,
     instance_name: raw.instance_name,
     client_id: raw.client_id ?? null,
+    leadId: raw.lead_id ?? null,
     external_chat_id: raw.external_chat_id,
     contactName: raw.contact_name ?? null,
     profileName: raw.profile_name ?? null,
@@ -205,6 +212,14 @@ export const chatService = {
       throw new Error(response.error);
     }
     return response.data;
+  },
+
+  async getConversationProfile(conversationId: string): Promise<ConversationProfile> {
+    const response = await apiClient.get<ConversationProfile>(`/api/chat/conversations/${conversationId}/profile`);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data || { type: null, profile: null };
   },
 };
 

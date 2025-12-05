@@ -15,6 +15,8 @@ import {
   Ticket,
   Receipt,
   FileSignature,
+  User,
+  ExternalLink,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -716,37 +718,6 @@ const Chat = () => {
     null;
   const connectionStatus = activeInstance?.status || 'disconnected';
 
-  const checkIfLeadExists = useCallback(async (phone: string) => {
-    if (!phone) {
-      setCurrentLead(null);
-      return;
-    }
-
-    setLoadingLead(true);
-    try {
-      const response = await apiClient.get('/api/leads');
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      const leads = Array.isArray(response.data) ? response.data : [];
-      // Buscar lead pelo telefone (normalizar para comparação)
-      const normalizedPhone = phone.replace(/\D/g, '');
-      const foundLead = leads.find((lead: any) => {
-        if (!lead.phone) return false;
-        const leadPhone = lead.phone.replace(/\D/g, '');
-        return leadPhone === normalizedPhone || leadPhone.endsWith(normalizedPhone) || normalizedPhone.endsWith(leadPhone);
-      });
-
-      setCurrentLead(foundLead || null);
-    } catch (error) {
-      console.error('Erro ao verificar lead:', error);
-      setCurrentLead(null);
-    } finally {
-      setLoadingLead(false);
-    }
-  }, []);
-
   const handleSelectConversation = async (conversationId: string) => {
     setSelectedConversationId(conversationId);
     await loadMessages(conversationId);
@@ -763,46 +734,32 @@ const Chat = () => {
       }
     }
 
-    // Buscar lead e cliente por telefone
-    if (conversation?.phoneNumber) {
-      await Promise.all([
-        checkIfLeadExists(conversation.phoneNumber),
-        checkIfClientExists(conversation.phoneNumber),
-      ]);
-        } else {
-      setCurrentLead(null);
-      setCurrentClient(null);
-    }
+    // Buscar perfil (cliente ou lead) vinculado à conversa
+    await loadConversationProfile(conversationId);
   };
 
-  const checkIfClientExists = useCallback(async (phone: string) => {
-    if (!phone) {
-      setCurrentClient(null);
-      return;
-    }
-
+  const loadConversationProfile = useCallback(async (conversationId: string) => {
     setLoadingClient(true);
+    setLoadingLead(true);
     try {
-      const response = await apiClient.get('/api/clients');
-      if (response.error) {
-        throw new Error(response.error);
+      const profile = await chatService.getConversationProfile(conversationId);
+      if (profile.type === 'client' && profile.profile) {
+        setCurrentClient(profile.profile);
+        setCurrentLead(null);
+      } else if (profile.type === 'lead' && profile.profile) {
+        setCurrentLead(profile.profile);
+        setCurrentClient(null);
+      } else {
+        setCurrentClient(null);
+        setCurrentLead(null);
       }
-
-      const clients = Array.isArray(response.data) ? response.data : [];
-      // Buscar cliente pelo telefone (normalizar para comparação)
-      const normalizedPhone = phone.replace(/\D/g, '');
-      const foundClient = clients.find((client: any) => {
-        if (!client.phone) return false;
-        const clientPhone = client.phone.replace(/\D/g, '');
-        return clientPhone === normalizedPhone || clientPhone.endsWith(normalizedPhone) || normalizedPhone.endsWith(clientPhone);
-      });
-
-      setCurrentClient(foundClient || null);
-      } catch (error) {
-      console.error('Erro ao verificar cliente:', error);
+    } catch (error) {
+      console.error('Erro ao carregar perfil da conversa:', error);
       setCurrentClient(null);
+      setCurrentLead(null);
     } finally {
       setLoadingClient(false);
+      setLoadingLead(false);
     }
   }, []);
 
@@ -907,9 +864,9 @@ const Chat = () => {
         throw new Error(response.error);
       }
 
-      // Atualizar o lead atual após criar
-      if (selectedConversation.phoneNumber) {
-        await checkIfLeadExists(selectedConversation.phoneNumber);
+      // Atualizar o perfil da conversa após criar lead
+      if (selectedConversationId) {
+        await loadConversationProfile(selectedConversationId);
       }
 
       toast.success('Lead adicionado com sucesso!');
@@ -945,10 +902,9 @@ const Chat = () => {
       // Marcar lead como convertido
       await apiClient.patch(`/api/leads/${currentLead.id}`, { status: 'Convertido' });
 
-      // Limpar lead atual e atualizar cliente
-      setCurrentLead(null);
-      if (selectedConversation.phoneNumber) {
-        await checkIfClientExists(selectedConversation.phoneNumber);
+      // Atualizar o perfil da conversa após converter lead para cliente
+      if (selectedConversationId) {
+        await loadConversationProfile(selectedConversationId);
       }
 
       toast.success('Lead convertido para cliente com sucesso!');
@@ -1443,12 +1399,24 @@ const Chat = () => {
                               )}
                             </Avatar>
                             <div>
-                              <h3 className="font-semibold">
-                                {selectedConversation.contactName ||
-                                  selectedConversation.profileName ||
-                                  selectedConversation.phoneNumber ||
-                                  selectedConversation.external_chat_id}
-                              </h3>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold">
+                                  {selectedConversation.contactName ||
+                                    selectedConversation.profileName ||
+                                    selectedConversation.phoneNumber ||
+                                    selectedConversation.external_chat_id}
+                                </h3>
+                                {selectedConversation.client_id && (
+                                  <Badge variant="default" className="text-xs">
+                                    Cliente
+                                  </Badge>
+                                )}
+                                {!selectedConversation.client_id && selectedConversation.leadId && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Lead
+                                  </Badge>
+                                )}
+                              </div>
                               {selectedConversation.phoneNumber && (
                               <p className="text-xs text-muted-foreground">
                                   {selectedConversation.phoneNumber}
@@ -1457,6 +1425,24 @@ const Chat = () => {
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2 items-center">
+                            {(currentClient || currentLead) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  if (currentClient) {
+                                    navigate(`/clients/${currentClient.id}`);
+                                  } else if (currentLead) {
+                                    // Se houver rota para leads, usar aqui
+                                    toast.info('Visualização de perfil de lead em desenvolvimento');
+                                  }
+                                }}
+                                className="h-8 w-8"
+                                title={currentClient ? 'Ver perfil do cliente' : 'Ver perfil do lead'}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"

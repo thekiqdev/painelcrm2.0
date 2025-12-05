@@ -9,6 +9,7 @@ import {
   syncConversations,
   getConversations,
   getConversationMessages,
+  getConversationProfile,
   sendMessage,
   configureInstanceWebhook,
   getInstanceWebhook,
@@ -32,6 +33,7 @@ router.post('/instances/:id/webhook/force', forceConfigureWebhook);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations', getConversations);
 router.get('/conversations/:id/messages', getConversationMessages);
+router.get('/conversations/:id/profile', getConversationProfile);
 router.post('/conversations/:id/messages/sync', syncConversationMessages);
 router.post('/messages', sendMessage);
 router.post('/conversations/:id/mark-read', markConversationRead);
