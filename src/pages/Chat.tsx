@@ -443,8 +443,27 @@ const Chat = () => {
     });
 
     // Escutar atualizações de conversa
-    socket.on('conversation_updated', (updatedConversation: ChatConversation) => {
-      console.log('[Chat] Conversation updated via WebSocket:', updatedConversation.id);
+    socket.on('conversation_updated', (raw: any) => {
+      console.log('[Chat] Conversation updated via WebSocket (raw):', raw?.id);
+
+      // Normalizar payload do backend (snake_case -> camelCase)
+      const updatedConversation: ChatConversation = {
+        id: raw.id,
+        user_id: raw.user_id,
+        instance_id: raw.instance_id,
+        instance_name: raw.instance_name,
+        client_id: raw.client_id ?? null,
+        external_chat_id: raw.external_chat_id,
+        contactName: raw.contact_name ?? null,
+        profileName: raw.profile_name ?? null,
+        phoneNumber: raw.phone_number ?? null,
+        status: raw.status ?? null,
+        lastMessagePreview: raw.last_message_preview ?? null,
+        lastMessageAt: raw.last_message_at ?? null,
+        unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
+        metadata: raw.metadata ?? null,
+        updated_at: raw.updated_at,
+      };
       
       setConversations((prev) => {
         const existingIndex = prev.findIndex(c => c.id === updatedConversation.id);
@@ -455,10 +474,9 @@ const Chat = () => {
           // Mover para o topo (conversa mais recente)
           updated.unshift(updated.splice(existingIndex, 1)[0]);
           return updated;
-        } else {
-          // Adicionar nova conversa no topo
-          return [updatedConversation, ...prev];
         }
+        // Adicionar nova conversa no topo
+        return [updatedConversation, ...prev];
       });
 
       // Se a conversa atualizada é a selecionada, recarregar mensagens
@@ -470,8 +488,21 @@ const Chat = () => {
 
     // Escutar novas mensagens
     socket.on('new_message', (data: { message: any; conversationId: string }) => {
-      console.log('[Chat] New message via WebSocket:', data.message.id);
+      console.log('[Chat] New message via WebSocket (raw):', data.message);
       
+      // Normalizar mensagem recebida (formato semelhante ao usado no chatService)
+      const normalizedMessage: ChatMessage = {
+        id: data.message.id,
+        conversation_id: data.message.conversation_id || data.conversationId,
+        direction: data.message.direction === 'outgoing' ? 'outgoing' : 'incoming',
+        external_message_id: data.message.external_message_id ?? null,
+        body: data.message.body ?? null,
+        status: data.message.status ?? null,
+        sentAt: data.message.sent_at ?? data.message.created_at ?? null,
+        metadata: data.message.metadata ?? null,
+        created_at: data.message.created_at,
+      };
+
       // Usar ref para evitar closure stale
       const currentSelectedId = selectedConversationIdRef.current;
       
@@ -479,10 +510,10 @@ const Chat = () => {
       if (currentSelectedId === data.conversationId) {
         setMessages((prev) => {
           // Verificar se a mensagem já existe
-          if (prev.some(m => m.id === data.message.id || m.external_message_id === data.message.id)) {
+          if (prev.some(m => m.id === normalizedMessage.id || m.external_message_id === normalizedMessage.external_message_id)) {
             return prev;
           }
-          return [...prev, data.message as ChatMessage];
+          return [...prev, normalizedMessage];
         });
       }
 
@@ -491,13 +522,14 @@ const Chat = () => {
         const index = prev.findIndex(c => c.id === data.conversationId);
         if (index >= 0) {
           const updated = [...prev];
+          const conv = updated[index];
           updated[index] = {
-            ...updated[index],
-            last_message_preview: data.message.body,
-            last_message_at: data.message.sent_at,
-            unread_count: currentSelectedId === data.conversationId 
-              ? updated[index].unread_count 
-              : (updated[index].unread_count || 0) + 1,
+            ...conv,
+            lastMessagePreview: normalizedMessage.body,
+            lastMessageAt: normalizedMessage.sentAt || conv.lastMessageAt || conv.updated_at || null,
+            unreadCount: currentSelectedId === data.conversationId 
+              ? conv.unreadCount 
+              : (conv.unreadCount || 0) + 1,
           };
           // Mover para o topo
           updated.unshift(updated.splice(index, 1)[0]);
