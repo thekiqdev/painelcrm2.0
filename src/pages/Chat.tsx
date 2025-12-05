@@ -122,7 +122,7 @@ const Chat = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
   const [newInstanceName, setNewInstanceName] = useState('');
-  const [activeTab, setActiveTab] = useState<'unread' | 'read' | 'leads' | 'clients'>('unread');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'read' | 'leads' | 'clients'>('all');
 
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(false);
@@ -699,23 +699,46 @@ const Chat = () => {
     [filteredConversations],
   );
 
+  const leadConversations = useMemo(
+    () =>
+      filteredConversations.filter(
+        (conversation) => !conversation.client_id,
+      ),
+    [filteredConversations],
+  );
+
+  const clientConversations = useMemo(
+    () =>
+      filteredConversations.filter(
+        (conversation) => !!conversation.client_id,
+      ),
+    [filteredConversations],
+  );
+
   // Determinar quais conversas mostrar baseado na aba ativa
   const conversationsToShow = useMemo(() => {
     switch (activeTab) {
+      case 'all':
+        return filteredConversations;
       case 'unread':
         return unreadConversations;
       case 'read':
         return readConversations;
       case 'leads':
-        // Não aplicar filtro - mostrar todas
-        return filteredConversations;
+        return leadConversations;
       case 'clients':
-        // Não aplicar filtro - mostrar todas
-        return filteredConversations;
+        return clientConversations;
       default:
         return filteredConversations;
     }
-  }, [activeTab, unreadConversations, readConversations, filteredConversations]);
+  }, [
+    activeTab,
+    filteredConversations,
+    unreadConversations,
+    readConversations,
+    leadConversations,
+    clientConversations,
+  ]);
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
@@ -1423,20 +1446,38 @@ const Chat = () => {
           {/* Filtros (Tabs) */}
           {enabledInstanceIds.size > 0 && (
             <div className="flex-1 flex items-center">
-              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'unread' | 'read' | 'leads' | 'clients')} className="w-full">
+              <Tabs
+                value={activeTab}
+                onValueChange={(value) =>
+                  setActiveTab(value as 'all' | 'unread' | 'read' | 'leads' | 'clients')
+                }
+                className="w-full"
+              >
                 <TabsList className="h-9">
+                  <TabsTrigger value="all" className="text-sm">
+                    Todos
+                  </TabsTrigger>
                   <TabsTrigger value="unread" className="text-sm">
                     Não lidos
                     {unreadConversations.length > 0 && (
-                      <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0 h-4">
+                      <Badge
+                        variant="destructive"
+                        className="ml-1.5 text-[10px] px-1.5 py-0 h-4"
+                      >
                         {unreadConversations.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-                  <TabsTrigger value="read" className="text-sm">Lidos</TabsTrigger>
-                  <TabsTrigger value="leads" className="text-sm">Leads</TabsTrigger>
-                  <TabsTrigger value="clients" className="text-sm">Clientes</TabsTrigger>
-            </TabsList>
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="read" className="text-sm">
+                    Lidos
+                  </TabsTrigger>
+                  <TabsTrigger value="leads" className="text-sm">
+                    Leads
+                  </TabsTrigger>
+                  <TabsTrigger value="clients" className="text-sm">
+                    Clientes
+                  </TabsTrigger>
+                </TabsList>
               </Tabs>
             </div>
           )}
