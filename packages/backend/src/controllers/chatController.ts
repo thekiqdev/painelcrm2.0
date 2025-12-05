@@ -1027,8 +1027,11 @@ export async function syncConversations(req: AuthRequest, res: Response) {
 export async function getConversations(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
-    const { instanceId, search } = req.query;
+    const { instanceId, search, assignedTo, unassigned, status, queue } = req.query;
+
     const params: any[] = [userId];
+    let paramIndex = 2;
+
     let query = `
       SELECT c.*, i.name as instance_name
       FROM chat_conversations c
@@ -1038,16 +1041,51 @@ export async function getConversations(req: AuthRequest, res: Response) {
 
     if (instanceId) {
       params.push(instanceId);
-      query += ` AND c.instance_id = $${params.length}`;
+      query += ` AND c.instance_id = $${paramIndex}`;
+      paramIndex++;
     }
 
+    // Filtro por responsável
+    if (assignedTo && typeof assignedTo === 'string') {
+      if (assignedTo === 'me') {
+        params.push(userId);
+        query += ` AND c.assigned_to = $${paramIndex}`;
+        paramIndex++;
+      } else {
+        params.push(assignedTo);
+        query += ` AND c.assigned_to = $${paramIndex}`;
+        paramIndex++;
+      }
+    }
+
+    // Filtro por não atribuídas (fila)
+    if (unassigned === 'true' || unassigned === '1') {
+      query += ' AND c.assigned_to IS NULL';
+    }
+
+    // Filtro por status de atendimento
+    if (status && typeof status === 'string') {
+      params.push(status);
+      query += ` AND c.status = $${paramIndex}`;
+      paramIndex++;
+    }
+
+    // Filtro por fila / queue lógica
+    if (queue && typeof queue === 'string') {
+      params.push(queue);
+      query += ` AND c.queue = $${paramIndex}`;
+      paramIndex++;
+    }
+
+    // Filtro de busca textual
     if (search && typeof search === 'string') {
       params.push(`%${search.toLowerCase()}%`);
       query += ` AND (
-        LOWER(COALESCE(c.contact_name, '')) LIKE $${params.length} OR
-        LOWER(COALESCE(c.profile_name, '')) LIKE $${params.length} OR
-        LOWER(COALESCE(c.phone_number, '')) LIKE $${params.length}
+        LOWER(COALESCE(c.contact_name, '')) LIKE $${paramIndex} OR
+        LOWER(COALESCE(c.profile_name, '')) LIKE $${paramIndex} OR
+        LOWER(COALESCE(c.phone_number, '')) LIKE $${paramIndex}
       )`;
+      paramIndex++;
     }
 
     query += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
@@ -1056,6 +1094,10 @@ export async function getConversations(req: AuthRequest, res: Response) {
       userId,
       instanceId,
       search: search || 'none',
+      assignedTo,
+      unassigned,
+      status,
+      queue,
       queryParams: params,
     });
 
@@ -1075,27 +1117,6 @@ export async function getConversations(req: AuthRequest, res: Response) {
         last_message_at: c.last_message_at,
       })),
     });
-
-    // Verificar se há conversas no banco para este usuário mas não retornadas
-    if (conversations.rowCount === 0 && instanceId) {
-      const allConversationsCheck = await pool.query(
-        'SELECT id, user_id, instance_id, external_chat_id, contact_name FROM chat_conversations WHERE instance_id = $1 LIMIT 5',
-        [instanceId]
-      );
-      console.log('[GetConversations] Debug: Conversations in DB for this instance', {
-        instanceId,
-        found: allConversationsCheck.rowCount,
-        conversations: allConversationsCheck.rows.map(c => ({
-          id: c.id,
-          userId: c.user_id,
-          requestedUserId: userId,
-          userIdMatch: c.user_id === userId,
-          instanceId: c.instance_id,
-          externalChatId: c.external_chat_id,
-          contactName: c.contact_name,
-        })),
-      });
-    }
 
     res.json(conversations.rows);
   } catch (error: any) {

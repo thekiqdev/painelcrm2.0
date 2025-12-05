@@ -26,6 +26,14 @@ export interface ChatConversation {
    * URL da foto/avatar do contato (derivada do metadata.image / imagePreview da UazAPI)
    */
   avatarUrl?: string | null;
+  /**
+   * Usuário atualmente responsável pela conversa
+   */
+  assignedTo?: string | null;
+  /**
+   * Fila/time lógico (ex.: suporte, comercial)
+   */
+  queue?: string | null;
   status?: string | null;
   lastMessagePreview?: string | null;
   lastMessageAt?: string | null;
@@ -71,6 +79,8 @@ const normalizeConversation = (raw: any): ChatConversation => {
     profileName: raw.profile_name ?? null,
     phoneNumber: raw.phone_number ?? null,
     avatarUrl,
+    assignedTo: raw.assigned_to ?? null,
+    queue: raw.queue ?? null,
     status: raw.status ?? null,
     lastMessagePreview: raw.last_message_preview ?? null,
     lastMessageAt: raw.last_message_at ?? null,
@@ -147,10 +157,21 @@ export const chatService = {
     return response.data;
   },
 
-  async getConversations(filters?: { instanceId?: string; search?: string }) {
+  async getConversations(filters?: {
+    instanceId?: string;
+    search?: string;
+    assignedTo?: string;
+    unassigned?: boolean;
+    status?: string;
+    queue?: string;
+  }) {
     const params = new URLSearchParams();
     if (filters?.instanceId) params.append('instanceId', filters.instanceId);
     if (filters?.search) params.append('search', filters.search);
+    if (filters?.assignedTo) params.append('assignedTo', filters.assignedTo);
+    if (filters?.unassigned) params.append('unassigned', 'true');
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.queue) params.append('queue', filters.queue);
 
     const url = `/api/chat/conversations${params.toString() ? `?${params.toString()}` : ''}`;
     const response = await apiClient.get<ChatConversation[]>(url);

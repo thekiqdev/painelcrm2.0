@@ -15,6 +15,7 @@ import {
   Ticket,
   Receipt,
   FileSignature,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -158,6 +159,9 @@ const Chat = () => {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [transferReason, setTransferReason] = useState<string>('');
 
+  // Filtro de dono da conversa: todos / meus / fila (não atribuídos)
+  const [ownerFilter, setOwnerFilter] = useState<'all' | 'mine' | 'unassigned'>('all');
+
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
     try {
@@ -176,10 +180,16 @@ const Chat = () => {
   const loadConversations = useCallback(async (instanceIds: string | string[]) => {
     setLoadingConversations(true);
     try {
-      // Etapa 4: passar a carregar conversas do usuário inteiro,
-      // não apenas das instâncias habilitadas. Isso evita que o
-      // histórico "suma" quando a instância é trocada.
-      const allConversations: ChatConversation[] = await chatService.getConversations();
+      // Carregar conversas do usuário inteiro com filtros de dono (Meus / Fila / Todos)
+      const filters: Parameters<typeof chatService.getConversations>[0] = {};
+
+      if (ownerFilter === 'mine' && user?.id) {
+        filters.assignedTo = 'me';
+      } else if (ownerFilter === 'unassigned') {
+        filters.unassigned = true;
+      }
+
+      const allConversations: ChatConversation[] = await chatService.getConversations(filters);
 
       // Remover duplicatas baseado no external_chat_id e ordenar por última mensagem
       const uniqueConversations = Array.from(
@@ -202,7 +212,7 @@ const Chat = () => {
     } finally {
       setLoadingConversations(false);
     }
-  }, []);
+  }, [ownerFilter, user?.id]);
 
   const loadMessages = useCallback(async (conversationId: string) => {
     setLoadingMessages(true);
@@ -1439,7 +1449,7 @@ const Chat = () => {
           <div className="flex-1 flex flex-col min-h-0 px-6 pb-6 overflow-hidden">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
                 <Card className="md:col-span-1 flex flex-col min-h-0">
-                  <CardHeader className="px-4 py-3 border-b flex-shrink-0">
+                  <CardHeader className="px-4 py-3 border-b flex-shrink-0 space-y-2">
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
@@ -1448,6 +1458,32 @@ const Chat = () => {
                         placeholder="Buscar conversas..."
                         className="pl-9 h-9"
                       />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant={ownerFilter === 'all' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setOwnerFilter('all')}
+                      >
+                        Todos
+                      </Button>
+                      <Button
+                        variant={ownerFilter === 'mine' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setOwnerFilter('mine')}
+                      >
+                        Meus
+                      </Button>
+                      <Button
+                        variant={ownerFilter === 'unassigned' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setOwnerFilter('unassigned')}
+                      >
+                        Fila
+                      </Button>
                     </div>
                   </CardHeader>
                   <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
@@ -1520,6 +1556,15 @@ const Chat = () => {
                             >
                               <RefreshCw className={`h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`} />
                             </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={handleOpenTransferDialog}
+                              className="h-8 w-8"
+                              title="Transferir chat"
+                            >
+                              <ArrowLeftRight className="h-4 w-4" />
+                            </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -1549,13 +1594,6 @@ const Chat = () => {
                                       <Ticket className="mr-2 h-4 w-4" />
                                       Abrir ticket
                                     </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      onClick={handleOpenTransferDialog}
-                                    >
-                                      <UserPlus className="mr-2 h-4 w-4" />
-                                      Transferir chat
-                                    </DropdownMenuItem>
                                   </>
                                 ) : currentLead ? (
                                   <>
@@ -1575,13 +1613,6 @@ const Chat = () => {
                                     <DropdownMenuItem onClick={handleOpenTicket}>
                                       <Ticket className="mr-2 h-4 w-4" />
                                       Abrir ticket
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      onClick={handleOpenTransferDialog}
-                                    >
-                                      <UserPlus className="mr-2 h-4 w-4" />
-                                      Transferir chat
                                     </DropdownMenuItem>
                                   </>
                                 ) : (
