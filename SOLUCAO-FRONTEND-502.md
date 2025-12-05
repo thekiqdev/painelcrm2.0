@@ -83,3 +83,4 @@ Para diagnosticar melhor, preciso saber:
 2. Compartilhe os resultados
 3. Com base nos resultados, ajustaremos a configuração
 
+

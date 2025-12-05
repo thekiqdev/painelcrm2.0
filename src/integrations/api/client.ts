@@ -2,36 +2,34 @@
 // O Nginx faz proxy de /api para o backend
 // Em desenvolvimento, usar VITE_API_URL ou localhost
 const getApiUrl = () => {
-  const envUrl = import.meta.env.VITE_API_URL;
-  
-  // Se VITE_API_URL não está definido ou está vazio, usar URL relativa (produção)
-  if (!envUrl || envUrl.trim() === '') {
-    return '';
+  // Em desenvolvimento, sempre usar VITE_API_URL ou localhost:3001
+  if (import.meta.env.DEV) {
+    const envUrl = import.meta.env.VITE_API_URL;
+    return envUrl || 'http://localhost:3001';
   }
   
-  // Se está rodando no navegador (não é SSR)
+  // Em produção (navegador)
   if (typeof window !== 'undefined') {
     // Se está em HTTPS, sempre usar URL relativa para evitar Mixed Content
     if (window.location.protocol === 'https:') {
       return '';
     }
     
-    // Se VITE_API_URL contém hostname interno do Docker (sem domínio público)
-    // Exemplos: painelcrm:3001, localhost:3001 (mas não localhost em dev)
-    const isInternalHost = envUrl.includes('painelcrm:') || 
-                          envUrl.includes('localhost:') && !import.meta.env.DEV;
+    const envUrl = import.meta.env.VITE_API_URL;
     
-    if (isInternalHost) {
+    // Se VITE_API_URL não está definido ou está vazio, usar URL relativa
+    if (!envUrl || envUrl.trim() === '') {
+      return '';
+    }
+    
+    // Se VITE_API_URL contém hostname interno do Docker (sem domínio público)
+    // Exemplos: painelcrm:3001
+    if (envUrl.includes('painelcrm:')) {
       return '';
     }
   }
   
-  // Em desenvolvimento local, usar a URL configurada
-  if (import.meta.env.DEV) {
-    return envUrl || 'http://localhost:3001';
-  }
-  
-  // Em produção, sempre usar URL relativa
+  // Em produção (SSR ou outros casos), usar URL relativa
   return '';
 };
 
@@ -82,6 +80,17 @@ class ApiClient {
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    // Debug: log da URL em desenvolvimento
+    if (import.meta.env.DEV) {
+      console.log('[API Client] Request:', {
+        method: options.method || 'GET',
+        url,
+        baseURL: this.baseURL,
+        endpoint,
+        hasToken: !!this.token,
+      });
     }
 
     try {

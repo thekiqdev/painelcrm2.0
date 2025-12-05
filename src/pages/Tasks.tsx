@@ -31,6 +31,17 @@ const Tasks = () => {
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [newChecklistItem, setNewChecklistItem] = useState("");
+  const [isEditingTask, setIsEditingTask] = useState(false);
+  const [editTaskFields, setEditTaskFields] = useState({
+    title: "",
+    description: "",
+    dueDate: undefined as Date | undefined,
+    time: "",
+    priority: "medium" as "low" | "medium" | "high",
+    status: "pending" as "pending" | "completed",
+    assignee: "",
+    deal: "",
+  });
 
   // Estados do formulário
   const [formTitle, setFormTitle] = useState("");
@@ -110,6 +121,7 @@ const Tasks = () => {
         time: formTime || undefined,
         status: "pending",
         priority: formPriority,
+        clientId: selectedClient?.id || undefined,
         client: selectedClient?.name || formClient || undefined,
         deal: formDeal || undefined,
         assignee: formAssignee || undefined,
@@ -137,9 +149,31 @@ const Tasks = () => {
   };
 
   // Função para abrir o modal de detalhes da tarefa
+  const resetEditTaskFields = (task: Task) => {
+    setEditTaskFields({
+      title: task.title || "",
+      description: task.description || "",
+      dueDate: task.date ? new Date(task.date) : undefined,
+      time: task.time || "",
+      priority: task.priority || "medium",
+      status: task.status,
+      assignee: task.assignee || "",
+      deal: task.deal || "",
+    });
+  };
+
   const openTaskDetail = (task: Task) => {
     setSelectedTask(task);
+    setIsEditingTask(false);
+    resetEditTaskFields(task);
     setTaskDetailOpen(true);
+  };
+
+const closeTaskDetail = () => {
+    setTaskDetailOpen(false);
+    setSelectedTask(null);
+    setNewChecklistItem("");
+    setIsEditingTask(false);
   };
 
   // Função para alternar status de um item no checklist
@@ -222,6 +256,29 @@ const Tasks = () => {
     } catch (error) {
       console.error("Erro ao remover item do checklist:", error);
       toast.error("Erro ao remover item");
+    }
+  };
+
+  const saveTaskEdits = async () => {
+    if (!selectedTask) return;
+    try {
+      const updatedTask = await tasksService.updateTask(selectedTask.id, {
+        title: editTaskFields.title,
+        description: editTaskFields.description || undefined,
+        date: editTaskFields.dueDate ? format(editTaskFields.dueDate, "yyyy-MM-dd") : null,
+        time: editTaskFields.time || null,
+        priority: editTaskFields.priority,
+        status: editTaskFields.status,
+        assignee: editTaskFields.assignee || null,
+        deal: editTaskFields.deal || null,
+      });
+      setTasks(prev => prev.map(task => (task.id === updatedTask.id ? updatedTask : task)));
+    setSelectedTask(updatedTask);
+      setIsEditingTask(false);
+      toast.success("Tarefa atualizada com sucesso!");
+    } catch (error) {
+      console.error("Erro ao atualizar tarefa:", error);
+      toast.error("Não foi possível atualizar a tarefa");
     }
   };
 
@@ -450,9 +507,9 @@ const Tasks = () => {
       </Tabs>
 
       {/* Modal de Detalhes da Tarefa */}
-      <Dialog open={taskDetailOpen} onOpenChange={setTaskDetailOpen}>
+      <Dialog open={taskDetailOpen} onOpenChange={(open) => (open ? setTaskDetailOpen(true) : closeTaskDetail())}>
         {selectedTask && (
-          <DialogContent className="sm:max-w-[600px]">
+          <DialogContent className="w-[95vw] max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <div className="flex items-center gap-2">
                 <Checkbox 
@@ -479,11 +536,137 @@ const Tasks = () => {
               </div>
             </DialogHeader>
             <div className="grid gap-6">
+              {isEditingTask ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3">
+                    <Label>Título</Label>
+                    <Input
+                      value={editTaskFields.title}
+                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, title: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid gap-3">
+                    <Label>Descrição</Label>
+                    <Textarea
+                      value={editTaskFields.description}
+                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, description: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Data de vencimento</Label>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className="w-full justify-start text-left font-normal"
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {editTaskFields.dueDate ? format(editTaskFields.dueDate, "dd/MM/yyyy") : <span>Selecionar data</span>}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0">
+                          <Calendar
+                            mode="single"
+                            selected={editTaskFields.dueDate}
+                            onSelect={(date) => setEditTaskFields(prev => ({ ...prev, dueDate: date || undefined }))}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Horário</Label>
+                      <Input
+                        type="time"
+                        value={editTaskFields.time}
+                        onChange={(e) => setEditTaskFields(prev => ({ ...prev, time: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Prioridade</Label>
+                      <Select
+                        value={editTaskFields.priority}
+                        onValueChange={(value: "low" | "medium" | "high") => setEditTaskFields(prev => ({ ...prev, priority: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="high">Alta</SelectItem>
+                          <SelectItem value="medium">Média</SelectItem>
+                          <SelectItem value="low">Baixa</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Status</Label>
+                      <Select
+                        value={editTaskFields.status}
+                        onValueChange={(value: "pending" | "completed") => setEditTaskFields(prev => ({ ...prev, status: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pending">Pendente</SelectItem>
+                          <SelectItem value="completed">Concluída</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Responsável</Label>
+                    <Input
+                      value={editTaskFields.assignee}
+                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, assignee: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Negócio</Label>
+                    <Input
+                      value={editTaskFields.deal}
+                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, deal: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
               {selectedTask.description && (
                 <div>
                   <h4 className="text-sm font-semibold mb-1">Descrição</h4>
                   <p className="text-sm text-muted-foreground">{selectedTask.description}</p>
                 </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                    {selectedTask.date && (
+                      <div className="flex gap-2">
+                        <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                        <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
+                      </div>
+                    )}
+                    {selectedTask.time && (
+                      <div className="flex gap-2">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <span>Horário: {selectedTask.time}</span>
+                      </div>
+                    )}
+                    {selectedTask.assignee && (
+                      <div className="flex gap-2 items-center">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        <span>Responsável: {selectedTask.assignee}</span>
+                      </div>
+                    )}
+                    {selectedTask.deal && (
+                      <div className="flex gap-2 items-center">
+                        <FileText className="h-4 w-4 text-muted-foreground" />
+                        <span>Negócio: {selectedTask.deal}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
               
               <div>
@@ -550,53 +733,54 @@ const Tasks = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Detalhes</h4>
-                  <div className="space-y-2 text-sm">
-                    {selectedTask.date && (
-                    <div className="flex gap-2">
-                      <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                      <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
-                    </div>
-                    )}
-                    {selectedTask.time && (
-                      <div className="flex gap-2">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <span>Horário: {selectedTask.time}</span>
-                      </div>
-                    )}
-                    {selectedTask.assignee && (
-                      <div className="flex gap-2 items-center">
-                        <User className="h-4 w-4 text-muted-foreground" />
-                        <span>Responsável: {selectedTask.assignee}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Ações</h4>
-                  <div className="space-y-2">
-                    <Button variant="outline" size="sm" className="w-full justify-start">
-                      <Edit className="mr-2 h-4 w-4" />
+              <div className="flex flex-col sm:flex-row gap-2">
+                {isEditingTask ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => {
+                        if (selectedTask) {
+                          resetEditTaskFields(selectedTask);
+                        }
+                        setIsEditingTask(false);
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button className="flex-1" onClick={saveTaskEdits}>
+                      Salvar alterações
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setIsEditingTask(true)}
+                    >
                       Editar tarefa
                     </Button>
                     <Button 
-                      variant={selectedTask.status === "completed" ? "default" : "secondary"} 
-                      size="sm" 
-                      className="w-full justify-start"
+                      variant="outline"
+                      className="flex-1"
                       onClick={() => handleToggleTaskStatus(selectedTask.id)}
                     >
-                      <CheckSquare className="mr-2 h-4 w-4" />
                       {selectedTask.status === "completed" ? "Marcar como pendente" : "Marcar como concluída"}
                     </Button>
-                  </div>
-                </div>
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={() => handleDeleteTask(selectedTask.id)}
+                    >
+                      Excluir tarefa
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
             <DialogFooter>
-              <Button onClick={() => setTaskDetailOpen(false)}>Fechar</Button>
+              <Button onClick={closeTaskDetail}>Fechar</Button>
             </DialogFooter>
           </DialogContent>
         )}

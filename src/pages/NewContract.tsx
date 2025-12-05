@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,9 +76,12 @@ interface ContractFormData {
 }
 
 const NewContract = () => {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
-  const [step, setStep] = useState<'select' | 'edit'>('select');
+  const [isEditMode, setIsEditMode] = useState(!!id);
+  const [step, setStep] = useState<'select' | 'edit'>(id ? 'edit' : 'select');
   const [selectedOption, setSelectedOption] = useState<'blank' | 'template'>('blank');
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
   const [signers, setSigners] = useState<Omit<ContractSigner, 'id' | 'contract_id' | 'created_at' | 'signed_at' | 'signature_data'>[]>([]);
@@ -110,7 +113,10 @@ const NewContract = () => {
   useEffect(() => {
     loadTemplates();
     loadClients();
-  }, []);
+    if (id) {
+      loadContractForEdit();
+    }
+  }, [id]);
 
   const loadTemplates = async () => {
     try {
@@ -129,6 +135,63 @@ const NewContract = () => {
     } catch (error) {
       console.error('Error loading clients:', error);
       setClients([]); // Garantir que sempre seja um array
+    }
+  };
+
+  const loadContractForEdit = async () => {
+    if (!id) return;
+    
+    try {
+      setLoading(true);
+      const contract = await contractsService.getContractById(id);
+      
+      // Carregar assinantes
+      const contractSigners = await contractsService.getContractSigners(id);
+      setSigners(contractSigners.map(s => ({
+        name: s.name,
+        email: s.email,
+        role: s.role,
+        signing_order: s.signing_order || undefined,
+      })));
+
+      // Preencher formulário com dados do contrato
+      setFormData({
+        title: contract.title,
+        client_id: contract.client_id || '',
+        responsible_id: contract.responsible_id || '',
+        template_id: contract.template_id || '',
+        content_html: contract.content_html || '',
+        start_date: contract.start_date ? new Date(contract.start_date) : null,
+        end_date: contract.end_date ? new Date(contract.end_date) : null,
+        auto_renew: contract.auto_renew,
+        renewal_period: contract.renewal_period?.toString() || '12',
+        total_value: contract.total_value?.toString() || '',
+        currency: contract.currency || 'BRL',
+        linked_proposal_id: contract.linked_proposal_id || '',
+        linked_invoice_id: contract.linked_invoice_id || '',
+        variables: contract.variables || {},
+        signature_settings: contract.signature_settings || {
+          require_otp: false,
+          require_terms: false,
+          invitation_message: 'Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.',
+        },
+      });
+
+      // Se tiver template, carregar conteúdo
+      if (contract.template_id) {
+        setSelectedOption('template');
+        await handleTemplateSelect(contract.template_id);
+      } else {
+        setSelectedOption('blank');
+      }
+
+      setStep('edit');
+    } catch (error) {
+      console.error('Error loading contract:', error);
+      toast.error('Erro ao carregar contrato');
+      navigate('/contracts');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -182,46 +245,93 @@ const NewContract = () => {
     try {
       setLoading(true);
 
-      // Create contract
-      const contract = await contractsService.createContract({
-        title: formData.title,
-        client_id: formData.client_id || undefined,
-        responsible_id: formData.responsible_id || undefined,
-        template_id: formData.template_id || undefined,
-        content_html: formData.content_html,
-        start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
-        end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
-        auto_renew: formData.auto_renew,
-        renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
-        total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
-        currency: formData.currency,
-        linked_proposal_id: formData.linked_proposal_id || undefined,
-        linked_invoice_id: formData.linked_invoice_id || undefined,
-        variables: formData.variables,
-        signature_settings: formData.signature_settings,
-        status: 'DRAFT',
-      });
+      if (isEditMode && id) {
+        // Atualizar contrato existente
+        await contractsService.updateContract(id, {
+          title: formData.title,
+          client_id: formData.client_id || undefined,
+          responsible_id: formData.responsible_id || undefined,
+          template_id: formData.template_id || undefined,
+          content_html: formData.content_html,
+          start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
+          end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
+          auto_renew: formData.auto_renew,
+          renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
+          total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
+          currency: formData.currency,
+          linked_proposal_id: formData.linked_proposal_id || undefined,
+          linked_invoice_id: formData.linked_invoice_id || undefined,
+          variables: formData.variables,
+          signature_settings: formData.signature_settings,
+        });
 
-      // Create signers
-      if (signers.length > 0) {
+        // Atualizar assinantes (remover todos e recriar)
+        const existingSigners = await contractsService.getContractSigners(id);
+        for (const signer of existingSigners) {
+          await contractsService.deleteContractSigner(signer.id);
+        }
         for (const signer of signers) {
-          await contractsService.createContractSigner(contract.id, {
+          await contractsService.createContractSigner(id, {
             name: signer.name,
             email: signer.email,
             role: signer.role,
             signing_order: signer.signing_order || undefined,
           });
         }
+
+        toast.success('Contrato atualizado com sucesso');
+        
+        // Voltar para o lugar correto
+        if (location.state?.fromClientProfile) {
+          const contract = await contractsService.getContractById(id);
+          if (contract.client_id) {
+            navigate(`/clients/${contract.client_id}/contracts`);
+            return;
+          }
+        }
+        navigate(`/contracts/${id}`);
+      } else {
+      // Create contract
+        const contract = await contractsService.createContract({
+          title: formData.title,
+          client_id: formData.client_id || undefined,
+          responsible_id: formData.responsible_id || undefined,
+          template_id: formData.template_id || undefined,
+          content_html: formData.content_html,
+          start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
+          end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
+          auto_renew: formData.auto_renew,
+          renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
+          total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
+          currency: formData.currency,
+          linked_proposal_id: formData.linked_proposal_id || undefined,
+          linked_invoice_id: formData.linked_invoice_id || undefined,
+          variables: formData.variables,
+          signature_settings: formData.signature_settings,
+          status: 'DRAFT',
+        });
+
+      // Create signers
+      if (signers.length > 0) {
+          for (const signer of signers) {
+            await contractsService.createContractSigner(contract.id, {
+              name: signer.name,
+              email: signer.email,
+              role: signer.role,
+              signing_order: signer.signing_order || undefined,
+            });
+          }
       }
 
       // Create event
-      await contractsService.createContractEvent(contract.id, {
+        await contractsService.createContractEvent(contract.id, {
         event_type: 'CREATED',
         description: 'Contrato criado como rascunho',
       });
 
       toast.success('Rascunho salvo com sucesso');
       navigate(`/contracts/${contract.id}`);
+      }
     } catch (error) {
       console.error('Error saving draft:', error);
       toast.error('Erro ao salvar rascunho');
@@ -247,38 +357,92 @@ const NewContract = () => {
     try {
       setLoading(true);
 
+      if (isEditMode && id) {
+        // Atualizar contrato existente
+        await contractsService.updateContract(id, {
+          title: formData.title,
+          client_id: formData.client_id || undefined,
+          responsible_id: formData.responsible_id || undefined,
+          template_id: formData.template_id || undefined,
+          content_html: formData.content_html,
+          start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
+          end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
+          auto_renew: formData.auto_renew,
+          renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
+          total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
+          currency: formData.currency,
+          linked_proposal_id: formData.linked_proposal_id || undefined,
+          linked_invoice_id: formData.linked_invoice_id || undefined,
+          variables: formData.variables,
+          signature_settings: formData.signature_settings,
+          status: 'PENDING_SIGNATURE',
+        });
+
+        // Atualizar assinantes
+        const existingSigners = await contractsService.getContractSigners(id);
+        for (const signer of existingSigners) {
+          await contractsService.deleteContractSigner(signer.id);
+        }
+        for (const signer of signers) {
+          await contractsService.createContractSigner(id, {
+            name: signer.name,
+            email: signer.email,
+            role: signer.role,
+            signing_order: signer.signing_order || undefined,
+          });
+        }
+
+        // Create event
+        await contractsService.createContractEvent(id, {
+          event_type: 'SENT_FOR_SIGNATURE',
+          description: 'Contrato enviado para assinatura',
+          metadata: { signers: signers.map(s => ({ name: s.name, email: s.email })) },
+        });
+
+        toast.success('Contrato atualizado e enviado para assinatura');
+        
+        // Voltar para o lugar correto
+        if (location.state?.fromClientProfile) {
+          const contract = await contractsService.getContractById(id);
+          if (contract.client_id) {
+            navigate(`/clients/${contract.client_id}/contracts`);
+            return;
+          }
+        }
+        navigate(`/contracts/${id}`);
+      } else {
       // Create contract
-      const contract = await contractsService.createContract({
-        title: formData.title,
-        client_id: formData.client_id || undefined,
-        responsible_id: formData.responsible_id || undefined,
-        template_id: formData.template_id || undefined,
-        content_html: formData.content_html,
-        start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
-        end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
-        auto_renew: formData.auto_renew,
-        renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
-        total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
-        currency: formData.currency,
-        linked_proposal_id: formData.linked_proposal_id || undefined,
-        linked_invoice_id: formData.linked_invoice_id || undefined,
-        variables: formData.variables,
-        signature_settings: formData.signature_settings,
-        status: 'PENDING_SIGNATURE',
-      });
+        const contract = await contractsService.createContract({
+          title: formData.title,
+          client_id: formData.client_id || undefined,
+          responsible_id: formData.responsible_id || undefined,
+          template_id: formData.template_id || undefined,
+          content_html: formData.content_html,
+          start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
+          end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
+          auto_renew: formData.auto_renew,
+          renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
+          total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
+          currency: formData.currency,
+          linked_proposal_id: formData.linked_proposal_id || undefined,
+          linked_invoice_id: formData.linked_invoice_id || undefined,
+          variables: formData.variables,
+          signature_settings: formData.signature_settings,
+          status: 'PENDING_SIGNATURE',
+        });
 
       // Create signers
-      for (const signer of signers) {
-        await contractsService.createContractSigner(contract.id, {
-          name: signer.name,
-          email: signer.email,
-          role: signer.role,
-          signing_order: signer.signing_order || undefined,
-        });
-      }
+        for (const signer of signers) {
+          await contractsService.createContractSigner(contract.id, {
+            name: signer.name,
+            email: signer.email,
+            role: signer.role,
+            signing_order: signer.signing_order || undefined,
+          });
+        }
 
       // Create event
-      await contractsService.createContractEvent(contract.id, {
+        await contractsService.createContractEvent(contract.id, {
         event_type: 'SENT_FOR_SIGNATURE',
         description: 'Contrato enviado para assinatura',
         metadata: { signers: signers.map(s => ({ name: s.name, email: s.email })) },
@@ -286,6 +450,7 @@ const NewContract = () => {
 
       toast.success('Contrato enviado para assinatura');
       navigate(`/contracts/${contract.id}`);
+      }
     } catch (error) {
       console.error('Error sending for signature:', error);
       toast.error('Erro ao enviar contrato');
@@ -393,11 +558,32 @@ const NewContract = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => setStep('select')}>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => {
+              if (isEditMode && id) {
+                // Voltar para o lugar correto
+                if (location.state?.fromClientProfile) {
+                  contractsService.getContractById(id).then(contract => {
+                    if (contract.client_id) {
+                      navigate(`/clients/${contract.client_id}/contracts`);
+                    } else {
+                      navigate(`/contracts/${id}`);
+                    }
+                  });
+                } else {
+                  navigate(`/contracts/${id}`);
+                }
+              } else {
+                setStep('select');
+              }
+            }}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">Novo Contrato</h1>
+            <h1 className="text-2xl font-bold">{isEditMode ? 'Editar Contrato' : 'Novo Contrato'}</h1>
             <p className="text-sm text-muted-foreground">
               Preencha os detalhes do contrato
             </p>
@@ -467,34 +653,34 @@ const NewContract = () => {
                     <Command>
                       <CommandInput placeholder="Buscar cliente..." />
                       <CommandList>
-                        <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
-                        <CommandGroup>
+                      <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
+                      <CommandGroup>
                           {(clients || []).map((client) => (
-                            <CommandItem
-                              key={client.id}
-                              value={`${client.name} ${client.email || ''} ${client.company || ''}`}
-                              onSelect={() => {
-                                setFormData({ ...formData, client_id: client.id });
-                                setClientSearchOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  formData.client_id === client.id ? "opacity-100" : "opacity-0"
-                                )}
-                              />
-                              <div className="flex flex-col">
-                                <span>{client.name}</span>
-                                {(client.email || client.company) && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {[client.company, client.email].filter(Boolean).join(' • ')}
-                                  </span>
-                                )}
-                              </div>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
+                          <CommandItem
+                            key={client.id}
+                            value={`${client.name} ${client.email || ''} ${client.company || ''}`}
+                            onSelect={() => {
+                              setFormData({ ...formData, client_id: client.id });
+                              setClientSearchOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                formData.client_id === client.id ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            <div className="flex flex-col">
+                              <span>{client.name}</span>
+                              {(client.email || client.company) && (
+                                <span className="text-xs text-muted-foreground">
+                                  {[client.company, client.email].filter(Boolean).join(' • ')}
+                                </span>
+                              )}
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
                       </CommandList>
                     </Command>
                   </PopoverContent>
