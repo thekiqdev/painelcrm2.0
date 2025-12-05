@@ -22,6 +22,10 @@ export interface ChatConversation {
   contactName?: string | null;
   profileName?: string | null;
   phoneNumber?: string | null;
+  /**
+   * URL da foto/avatar do contato (derivada do metadata.image / imagePreview da UazAPI)
+   */
+  avatarUrl?: string | null;
   status?: string | null;
   lastMessagePreview?: string | null;
   lastMessageAt?: string | null;
@@ -42,23 +46,39 @@ export interface ChatMessage {
   created_at?: string;
 }
 
-const normalizeConversation = (raw: any): ChatConversation => ({
-  id: raw.id,
-  user_id: raw.user_id,
-  instance_id: raw.instance_id,
-  instance_name: raw.instance_name,
-  client_id: raw.client_id ?? null,
-  external_chat_id: raw.external_chat_id,
-  contactName: raw.contact_name ?? null,
-  profileName: raw.profile_name ?? null,
-  phoneNumber: raw.phone_number ?? null,
-  status: raw.status ?? null,
-  lastMessagePreview: raw.last_message_preview ?? null,
-  lastMessageAt: raw.last_message_at ?? null,
-  unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
-  metadata: raw.metadata ?? null,
-  updated_at: raw.updated_at,
-});
+const normalizeConversation = (raw: any): ChatConversation => {
+  const metadata = raw.metadata || {};
+
+  const avatarUrl =
+    // Campos diretos na tabela (caso venham a existir)
+    raw.image ||
+    raw.image_preview ||
+    raw.imagePreview ||
+    // Campos dentro do metadata retornado pela UazAPI
+    metadata.image ||
+    metadata.image_preview ||
+    metadata.imagePreview ||
+    null;
+
+  return {
+    id: raw.id,
+    user_id: raw.user_id,
+    instance_id: raw.instance_id,
+    instance_name: raw.instance_name,
+    client_id: raw.client_id ?? null,
+    external_chat_id: raw.external_chat_id,
+    contactName: raw.contact_name ?? null,
+    profileName: raw.profile_name ?? null,
+    phoneNumber: raw.phone_number ?? null,
+    avatarUrl,
+    status: raw.status ?? null,
+    lastMessagePreview: raw.last_message_preview ?? null,
+    lastMessageAt: raw.last_message_at ?? null,
+    unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
+    metadata: metadata ?? null,
+    updated_at: raw.updated_at,
+  };
+};
 
 const normalizeMessage = (raw: any): ChatMessage => ({
   id: raw.id,

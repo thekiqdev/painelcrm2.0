@@ -1589,12 +1589,25 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       const data = payload.data || payload.message || payload;
       const message = extracted.message;
 
-      // Preparar dados para conversa
+      // Muitos provedores (incluindo UazAPI) enviam um objeto de chat separado
+      // com campos como wa_contactName, name, image, etc.
+      // Damos preferência a essas informações para preencher corretamente
+      // o nome e a foto do contato no CRM.
+      const baseChat =
+        (data && (data.chat || data.contact || data.conversation)) ||
+        (message && (message.chat || message.contact || message.conversation)) ||
+        {};
+
+      // Preparar dados para conversa, combinando:
+      // - dados do chat (nome, imagem, etc.)
+      // - dados do payload/data
+      // - dados da mensagem
       const chatData = normalizeChatPayload({
-          ...data,
-          ...message,
+        ...baseChat,
+        ...data,
+        ...message,
         wa_chatid: extracted.chatId,
-          wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
+        wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
         wa_lastMsgText: extractMessageBody(message),
         isGroup: extracted.isGroup,
       });

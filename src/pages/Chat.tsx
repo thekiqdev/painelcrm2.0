@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Avatar } from '@/components/ui/avatar';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import {
   Popover,
@@ -1215,9 +1215,16 @@ const Chat = () => {
     >
       <div className="flex items-start gap-3">
           <Avatar className="h-10 w-10">
-            <div className="bg-primary/10 text-primary h-full w-full flex items-center justify-center font-semibold uppercase">
-              {(identifier || '?').charAt(0)}
-            </div>
+            {conversation.avatarUrl ? (
+              <AvatarImage
+                src={conversation.avatarUrl}
+                alt={identifier || 'Contato WhatsApp'}
+              />
+            ) : (
+              <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
+                {(identifier || '?').charAt(0)}
+              </AvatarFallback>
+            )}
         </Avatar>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
@@ -1415,13 +1422,25 @@ const Chat = () => {
                         <div className="flex items-start justify-between gap-2 flex-wrap">
                           <div className="flex items-center gap-3">
                             <Avatar className="h-10 w-10">
-                              <div className="bg-primary/10 text-primary h-full w-full flex items-center justify-center font-semibold uppercase">
-                                {(selectedConversation.contactName ||
-                                  selectedConversation.profileName ||
-                                  selectedConversation.phoneNumber ||
-                                  selectedConversation.external_chat_id
-                                ).charAt(0)}
-                                </div>
+                              {selectedConversation.avatarUrl ? (
+                                <AvatarImage
+                                  src={selectedConversation.avatarUrl}
+                                  alt={
+                                    selectedConversation.contactName ||
+                                    selectedConversation.profileName ||
+                                    selectedConversation.phoneNumber ||
+                                    selectedConversation.external_chat_id
+                                  }
+                                />
+                              ) : (
+                                <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
+                                  {(selectedConversation.contactName ||
+                                    selectedConversation.profileName ||
+                                    selectedConversation.phoneNumber ||
+                                    selectedConversation.external_chat_id
+                                  ).charAt(0)}
+                                </AvatarFallback>
+                              )}
                             </Avatar>
                             <div>
                               <h3 className="font-semibold">
