@@ -299,10 +299,11 @@ const Chat = () => {
         console.error('[Chat] Endpoint test failed:', err);
       });
 
-    // Configuração simplificada - apenas polling para evitar problemas de parse
+    // Configuração: usar apenas WebSocket para evitar o caminho de XHR/polling do engine.io,
+    // que depende de polyfills de URL e pode quebrar em alguns ambientes.
     const socketOptions = {
       auth: { token: session.token },
-      transports: ['polling'], // Apenas polling para evitar problemas
+      transports: ['websocket'], // Forçar apenas WebSocket
       reconnection: true,
       reconnectionDelay: 2000,
       reconnectionDelayMax: 10000,
@@ -314,7 +315,8 @@ const Chat = () => {
         token: session.token,
       },
       withCredentials: true,
-      upgrade: false, // Não fazer upgrade para websocket
+      // Com apenas 'websocket' como transporte, o upgrade é desnecessário
+      upgrade: false,
       // Remover transportOptions que podem causar problemas de parse
     } as const;
 
