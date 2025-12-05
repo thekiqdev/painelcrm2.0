@@ -1033,9 +1033,17 @@ export async function getConversations(req: AuthRequest, res: Response) {
     let paramIndex = 2;
 
     let query = `
-      SELECT c.*, i.name as instance_name
+      SELECT
+        c.*,
+        i.name as instance_name,
+        -- Se já houver client_id na conversa, mantemos; caso contrário,
+        -- tentamos inferir pelo telefone do cliente (normalizado).
+        COALESCE(c.client_id, cl.id) as client_id
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN clients cl
+        ON cl.user_id = c.user_id
+       AND regexp_replace(COALESCE(cl.phone, ''), '\\\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\\\D', '', 'g')
       WHERE c.user_id = $1
     `;
 
