@@ -23,20 +23,24 @@ async function runMigration() {
   try {
     console.log('📦 Executando migration de chat...');
     
-    // Ler o arquivo SQL
-    const sqlFile = join(__dirname, '../../../database/init/15_create_chat_tables.sql');
-    const sql = readFileSync(sqlFile, 'utf-8');
-    
-    console.log(`📄 Arquivo: ${sqlFile}`);
-    
-    // Executar o SQL
-    await pool.query(sql);
+    // 1) Criar tabelas base (se ainda não existirem)
+    const baseSqlFile = join(__dirname, '../../../database/init/15_create_chat_tables.sql');
+    const baseSql = readFileSync(baseSqlFile, 'utf-8');
+    console.log(`📄 Arquivo base: ${baseSqlFile}`);
+    await pool.query(baseSql);
+
+    // 2) Aplicar alterações incrementais (atribuição/fila/eventos)
+    const alterSqlFile = join(__dirname, '../../../database/init/16_alter_chat_conversations_add_assignment.sql');
+    const alterSql = readFileSync(alterSqlFile, 'utf-8');
+    console.log(`📄 Arquivo incremental: ${alterSqlFile}`);
+    await pool.query(alterSql);
     
     console.log('✅ Migration executada com sucesso!');
-    console.log('✅ Tabelas criadas:');
+    console.log('✅ Tabelas criadas/atualizadas:');
     console.log('   - chat_instances');
-    console.log('   - chat_conversations');
+    console.log('   - chat_conversations (+ campos de atribuição/fila)');
     console.log('   - chat_messages');
+    console.log('   - chat_conversation_events');
     
     process.exit(0);
   } catch (error) {

@@ -15,6 +15,7 @@ import {
   forceConfigureWebhook,
   syncConversationMessages,
   markConversationRead,
+  transferConversation,
 } from '../controllers/chatController.js';
 
 const router = Router();
@@ -35,6 +36,7 @@ router.get('/conversations/:id/messages', getConversationMessages);
 router.post('/conversations/:id/messages/sync', syncConversationMessages);
 router.post('/messages', sendMessage);
 router.post('/conversations/:id/mark-read', markConversationRead);
+router.post('/conversations/:id/transfer', transferConversation);
 
 export default router;
 

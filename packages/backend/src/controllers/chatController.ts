@@ -42,6 +42,12 @@ const markReadSchema = z.object({
   read: z.boolean().default(true),
 });
 
+const transferConversationSchema = z.object({
+  toUserId: z.string().uuid(),
+  queue: z.string().min(1).optional(),
+  reason: z.string().max(1000).optional(),
+});
+
 const sendMessageSchema = z.object({
   conversationId: z.string().uuid(),
   text: z.string().min(1),
@@ -1366,6 +1372,95 @@ export async function markConversationRead(req: AuthRequest, res: Response) {
       userId: req.userId,
     });
     res.status(500).json({ error: error.message || 'Failed to update read status' });
+  }
+}
+
+/**
+ * Transfere uma conversa para outro atendente / usuário
+ * Atualiza os campos de atribuição na conversa e registra um evento de histórico.
+ */
+export async function transferConversation(req: AuthRequest, res: Response) {
+  try {
+    const ownerUserId = req.userId!;
+    const { id } = req.params;
+
+    const payload = transferConversationSchema.parse(req.body || {});
+
+    // Buscar conversa garantindo que pertence ao usuário dono da conta
+    const conversationResult = await pool.query(
+      `
+        SELECT *
+        FROM chat_conversations
+        WHERE id = $1 AND user_id = $2
+      `,
+      [id, ownerUserId]
+    );
+
+    if (conversationResult.rowCount === 0) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+
+    const conversation = conversationResult.rows[0];
+    const previousAssignedTo = conversation.assigned_to || null;
+    const previousQueue = conversation.queue || null;
+
+    // Atualizar conversa com novo responsável / fila
+    const updatedConversationResult = await pool.query(
+      `
+        UPDATE chat_conversations
+        SET
+          assigned_to = $1,
+          queue = COALESCE($2, queue),
+          last_assigned_at = now(),
+          last_assigned_by = $3,
+          updated_at = now()
+        WHERE id = $4
+        RETURNING *
+      `,
+      [payload.toUserId, payload.queue ?? null, ownerUserId, id]
+    );
+
+    const updatedConversation = updatedConversationResult.rows[0];
+
+    // Registrar evento de transferência
+    await pool.query(
+      `
+        INSERT INTO chat_conversation_events (
+          conversation_id,
+          type,
+          from_user_id,
+          to_user_id,
+          payload
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb)
+      `,
+      [
+        id,
+        'transferred',
+        previousAssignedTo,
+        payload.toUserId,
+        JSON.stringify({
+          reason: payload.reason || null,
+          previousQueue,
+          newQueue: payload.queue ?? previousQueue,
+          triggeredBy: ownerUserId,
+        }),
+      ]
+    );
+
+    res.json({
+      success: true,
+      conversation: updatedConversation,
+    });
+  } catch (error: any) {
+    console.error('[TransferConversation] Error transferring conversation:', {
+      error: error.message,
+      stack: error.stack,
+      conversationId: req.params.id,
+      userId: req.userId,
+    });
+    res.status(500).json({ error: error.message || 'Failed to transfer conversation' });
   }
 }
 
