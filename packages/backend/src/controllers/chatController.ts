@@ -167,6 +167,22 @@ async function upsertConversation(
     return null;
   }
 
+  // Evitar criar conversas "fantasmas" sem telefone/nome/mensagem
+  const hasBasicInfo =
+    (chatData.phoneNumber && chatData.phoneNumber.trim().length > 0) ||
+    (chatData.contactName && chatData.contactName.trim().length > 0) ||
+    (chatData.profileName && chatData.profileName.trim().length > 0);
+
+  const hasMessageInfo = !!chatData.lastMessagePreview || !!chatData.lastMessageAt;
+
+  if (!hasBasicInfo && !hasMessageInfo) {
+    console.log('[UpsertConversation] Skipping chat without basic or message info', {
+      instanceId: instance.id,
+      externalChatId: chatData.externalChatId,
+    });
+    return null;
+  }
+
   const upsertId = randomUUID().substring(0, 8);
   console.log(`[UpsertConversation ${upsertId}] Starting upsert`, {
     instanceId: instance.id,
@@ -1736,10 +1752,10 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       // - dados da mensagem
       const chatData = normalizeChatPayload({
         ...baseChat,
-        ...data,
-        ...message,
+          ...data,
+          ...message,
         wa_chatid: extracted.chatId,
-        wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
+          wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
         wa_lastMsgText: extractMessageBody(message),
         isGroup: extracted.isGroup,
       });
