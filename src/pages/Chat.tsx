@@ -56,6 +56,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { InvoiceForm } from '@/components/finance/InvoiceForm';
+import { settingsService } from '@/services/settings';
 import { chatService, ChatConversation, ChatInstance, ChatMessage } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
 import { io, Socket } from 'socket.io-client';
@@ -145,11 +146,17 @@ const Chat = () => {
   const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [ticketDialogOpen, setTicketDialogOpen] = useState(false);
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   
   // Estados para formulários
   const [clients, setClients] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [ticketCategories, setTicketCategories] = useState<any[]>([]);
+
+  // Estados para transferência de chat
+  const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [transferReason, setTransferReason] = useState<string>('');
 
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
@@ -169,19 +176,11 @@ const Chat = () => {
   const loadConversations = useCallback(async (instanceIds: string | string[]) => {
     setLoadingConversations(true);
     try {
-      const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
-      const allConversations: ChatConversation[] = [];
-      
-      // Carregar conversas de todas as instâncias habilitadas
-      for (const instanceId of ids) {
-        try {
-          const data = await chatService.getConversations({ instanceId });
-          allConversations.push(...data);
-        } catch (error) {
-          console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
-        }
-      }
-      
+      // Etapa 4: passar a carregar conversas do usuário inteiro,
+      // não apenas das instâncias habilitadas. Isso evita que o
+      // histórico "suma" quando a instância é trocada.
+      const allConversations: ChatConversation[] = await chatService.getConversations();
+
       // Remover duplicatas baseado no external_chat_id e ordenar por última mensagem
       const uniqueConversations = Array.from(
         new Map(allConversations.map((conv) => [conv.external_chat_id, conv])).values()
@@ -1104,6 +1103,28 @@ const Chat = () => {
     }
   };
 
+  const loadAvailableAgents = useCallback(async () => {
+    try {
+      const profiles = await settingsService.getUserProfiles();
+      if (!profiles || profiles.length === 0) return;
+
+      const profileId = profiles[0].id;
+      const members = await settingsService.getProfileMembers(profileId);
+
+      const agents = members.map((member) => ({
+        id: member.user_id,
+        name: member.email || `Usuário ${member.user_id.slice(0, 8)}`,
+      }));
+
+      setAvailableAgents(agents);
+      if (agents.length > 0 && !selectedAgentId) {
+        setSelectedAgentId(agents[0].id);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar atendentes para transferência:', error);
+    }
+  }, [selectedAgentId]);
+
   const handleCreateContract = () => {
     if (!currentClient) return;
     setContractDialogOpen(true);
@@ -1139,6 +1160,38 @@ const Chat = () => {
     } catch (error) {
       console.error('Erro ao criar contrato:', error);
       toast.error('Não foi possível criar o contrato', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleOpenTransferDialog = () => {
+    if (!selectedConversationId) {
+      toast.error('Nenhuma conversa selecionada para transferir');
+      return;
+    }
+    loadAvailableAgents();
+    setTransferDialogOpen(true);
+  };
+
+  const handleTransferConversation = async () => {
+    if (!selectedConversationId || !selectedAgentId) {
+      toast.error('Selecione um atendente para transferir o chat');
+      return;
+    }
+
+    try {
+      await chatService.transferConversation(selectedConversationId, {
+        toUserId: selectedAgentId,
+        reason: transferReason || undefined,
+      });
+
+      toast.success('Chat transferido com sucesso');
+      setTransferDialogOpen(false);
+      setTransferReason('');
+    } catch (error) {
+      console.error('Erro ao transferir conversa:', error);
+      toast.error('Não foi possível transferir o chat', {
         description: error instanceof Error ? error.message : undefined,
       });
     }
@@ -1496,6 +1549,13 @@ const Chat = () => {
                                       <Ticket className="mr-2 h-4 w-4" />
                                       Abrir ticket
                                     </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={handleOpenTransferDialog}
+                                    >
+                                      <UserPlus className="mr-2 h-4 w-4" />
+                                      Transferir chat
+                                    </DropdownMenuItem>
                                   </>
                                 ) : currentLead ? (
                                   <>
@@ -1515,6 +1575,13 @@ const Chat = () => {
                                     <DropdownMenuItem onClick={handleOpenTicket}>
                                       <Ticket className="mr-2 h-4 w-4" />
                                       Abrir ticket
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={handleOpenTransferDialog}
+                                    >
+                                      <UserPlus className="mr-2 h-4 w-4" />
+                                      Transferir chat
                                     </DropdownMenuItem>
                                   </>
                                 ) : (
@@ -1830,6 +1897,60 @@ const Chat = () => {
               <Button type="submit">Criar Ticket</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Transferência de Chat */}
+      <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Transferir chat</DialogTitle>
+            <DialogDescription>
+              Selecione o atendente para o qual deseja transferir esta conversa.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="transferAgent">Atendente</Label>
+              <Select
+                value={selectedAgentId}
+                onValueChange={(value) => setSelectedAgentId(value)}
+              >
+                <SelectTrigger id="transferAgent">
+                  <SelectValue placeholder="Selecione um atendente" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableAgents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="transferReason">Motivo (opcional)</Label>
+              <Textarea
+                id="transferReason"
+                value={transferReason}
+                onChange={(e) => setTransferReason(e.target.value)}
+                placeholder="Ex.: Encaminhando para o time financeiro..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setTransferDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" onClick={handleTransferConversation}>
+              Confirmar transferência
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

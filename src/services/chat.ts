@@ -160,6 +160,17 @@ export const chatService = {
     return (response.data || []).map(normalizeConversation);
   },
 
+  async transferConversation(conversationId: string, payload: { toUserId: string; queue?: string; reason?: string }) {
+    const response = await apiClient.post<{ success: boolean; conversation: any }>(
+      `/api/chat/conversations/${conversationId}/transfer`,
+      payload
+    );
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data;
+  },
+
   async getConversationMessages(conversationId: string) {
     const response = await apiClient.get<ChatMessage[]>(`/api/chat/conversations/${conversationId}/messages`);
     if (response.error) {
