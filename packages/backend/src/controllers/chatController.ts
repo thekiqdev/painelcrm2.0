@@ -1036,14 +1036,22 @@ export async function getConversations(req: AuthRequest, res: Response) {
       SELECT
         c.*,
         i.name as instance_name,
-        -- Se já houver client_id na conversa, mantemos; caso contrário,
-        -- tentamos inferir pelo telefone do cliente (normalizado).
-        COALESCE(c.client_id, cl.id) as client_id
+        -- Cliente inferido pelo telefone, se ainda não houver client_id salvo
+        COALESCE(c.client_id, cl.id) as client_id,
+        -- Lead inferido pelo telefone (apenas informação derivada, não altera a tabela)
+        l.id as lead_id
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
       LEFT JOIN clients cl
         ON cl.user_id = c.user_id
        AND regexp_replace(COALESCE(cl.phone, ''), '\\\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\\\D', '', 'g')
+      LEFT JOIN leads l
+        ON l.user_id = c.user_id
+       AND l.phone IS NOT NULL
+       AND l.phone <> ''
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND regexp_replace(l.phone, '\\\\D', '', 'g') = regexp_replace(c.phone_number, '\\\\D', '', 'g')
       WHERE c.user_id = $1
     `;
 

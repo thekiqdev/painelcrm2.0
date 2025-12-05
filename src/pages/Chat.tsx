@@ -702,7 +702,7 @@ const Chat = () => {
   const leadConversations = useMemo(
     () =>
       filteredConversations.filter(
-        (conversation) => !conversation.client_id,
+        (conversation) => !conversation.client_id && !!conversation.leadId,
       ),
     [filteredConversations],
   );

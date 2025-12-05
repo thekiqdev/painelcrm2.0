@@ -34,6 +34,10 @@ export interface ChatConversation {
    * Fila/time lógico (ex.: suporte, comercial)
    */
   queue?: string | null;
+  /**
+   * Lead associado (derivado via telefone na tabela leads)
+   */
+  leadId?: string | null;
   status?: string | null;
   lastMessagePreview?: string | null;
   lastMessageAt?: string | null;
@@ -81,6 +85,7 @@ const normalizeConversation = (raw: any): ChatConversation => {
     avatarUrl,
     assignedTo: raw.assigned_to ?? null,
     queue: raw.queue ?? null,
+    leadId: raw.lead_id ?? null,
     status: raw.status ?? null,
     lastMessagePreview: raw.last_message_preview ?? null,
     lastMessageAt: raw.last_message_at ?? null,
