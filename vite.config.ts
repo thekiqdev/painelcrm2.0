@@ -30,8 +30,10 @@ export default defineConfig(({ mode }) => ({
     mainFields: ['browser', 'module', 'main'],
   },
   optimizeDeps: {
-    include: ['@/services/clients', 'buffer', 'url'],
-    exclude: ['@supabase/supabase-js', 'socket.io-client'], // Não otimizar socket.io-client para evitar problemas
+    // Incluir apenas o que realmente precisamos pré-empacotar
+    include: ['@/services/clients', 'buffer'],
+    // Não otimizar socket.io-client para evitar problemas de escolha do build errado
+    exclude: ['@supabase/supabase-js', 'socket.io-client'],
     esbuildOptions: {
       define: {
         global: 'globalThis',
