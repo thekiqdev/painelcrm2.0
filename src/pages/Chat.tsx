@@ -475,8 +475,8 @@ const Chat = () => {
           updated.unshift(updated.splice(existingIndex, 1)[0]);
           return updated;
         }
-        // Adicionar nova conversa no topo
-        return [updatedConversation, ...prev];
+          // Adicionar nova conversa no topo
+          return [updatedConversation, ...prev];
       });
 
       // Se a conversa atualizada é a selecionada, recarregar mensagens
@@ -502,7 +502,7 @@ const Chat = () => {
         metadata: data.message.metadata ?? null,
         created_at: data.message.created_at,
       };
-
+      
       // Usar ref para evitar closure stale
       const currentSelectedId = selectedConversationIdRef.current;
       
@@ -820,7 +820,7 @@ const Chat = () => {
       if (enabledInstanceIds.size > 0) {
         loadConversations(Array.from(enabledInstanceIds));
       }
-      toast.success('Mensagem enviada com sucesso!');
+      // Removido toast de sucesso para evitar notificação a cada envio
     } catch (error) {
       console.error('Erro ao enviar mensagem:', error);
       toast.error('Não foi possível enviar a mensagem', {
