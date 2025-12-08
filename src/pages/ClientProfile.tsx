@@ -94,10 +94,7 @@ const ClientProfile = () => {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [conversations, setConversations] = useState<ChatConversation[]>([]);
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loadingConversations, setLoadingConversations] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
   const [isEditingTask, setIsEditingTask] = useState(false);
@@ -183,15 +180,9 @@ const ClientProfile = () => {
 
   useEffect(() => {
     if (activeTab === "messages" && client?.id) {
-      loadClientConversations();
+      loadClientMessages();
     }
   }, [activeTab, client?.id]);
-
-  useEffect(() => {
-    if (selectedConversationId) {
-      loadConversationMessages(selectedConversationId);
-    }
-  }, [selectedConversationId]);
 
   const loadClientData = async () => {
     if (!id) return;
@@ -302,30 +293,17 @@ const ClientProfile = () => {
     }
   };
 
-  const loadClientConversations = async () => {
+  const loadClientMessages = async () => {
     if (!client?.id) return;
     
     try {
-      setLoadingConversations(true);
-      const convs = await chatService.getConversations({ clientId: client.id });
-      setConversations(convs || []);
-    } catch (error) {
-      console.error("Erro ao carregar conversas:", error);
-      toast.error("Erro ao carregar conversas do WhatsApp");
-      setConversations([]);
-    } finally {
-      setLoadingConversations(false);
-    }
-  };
-
-  const loadConversationMessages = async (conversationId: string) => {
-    try {
       setLoadingMessages(true);
-      const msgs = await chatService.getConversationMessages(conversationId);
+      // Buscar todas as mensagens do cliente (agregadas de todas as conversas vinculadas)
+      const msgs = await chatService.getClientMessages(client.id);
       setMessages(msgs || []);
     } catch (error) {
       console.error("Erro ao carregar mensagens:", error);
-      toast.error("Erro ao carregar mensagens");
+      toast.error("Erro ao carregar mensagens do WhatsApp");
       setMessages([]);
     } finally {
       setLoadingMessages(false);
@@ -1335,129 +1313,88 @@ const ClientProfile = () => {
             </Card>
           )}
 
-          {/* Aba Mensagens - Conversas do WhatsApp */}
+          {/* Aba Mensagens - Histórico completo do WhatsApp */}
           {activeTab === "messages" && (
             <Card className="flex flex-col h-[calc(100vh-200px)]">
               <CardHeader>
-                <CardTitle>Mensagens do WhatsApp</CardTitle>
+                <CardTitle>Histórico de Mensagens do WhatsApp</CardTitle>
+                {client?.phone && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {client.phone}
+                  </p>
+                )}
               </CardHeader>
-              <CardContent className="flex-1 flex gap-4 min-h-0 p-4">
-                {/* Lista de conversas */}
-                <div className="w-80 border-r pr-4 flex flex-col">
-                  <div className="mb-4">
-                    <h3 className="font-semibold text-sm mb-2">Conversas</h3>
-                    {loadingConversations ? (
-                      <div className="text-center text-muted-foreground text-sm py-4">
-                        <RefreshCw className="h-4 w-4 animate-spin inline-block mr-2" />
-                        Carregando...
-                      </div>
-                    ) : conversations.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">
-                        Nenhuma conversa encontrada
-                      </p>
-                    ) : (
-                      <div className="space-y-2 max-h-[calc(100vh-350px)] overflow-y-auto">
-                        {conversations.map((conv) => (
-                          <div
-                            key={conv.id}
-                            onClick={() => setSelectedConversationId(conv.id)}
-                            className={`p-3 rounded-lg cursor-pointer border transition-colors ${
-                              selectedConversationId === conv.id
-                                ? 'bg-primary/10 border-primary'
-                                : 'hover:bg-muted'
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
-                                {(conv.contactName || conv.phoneNumber || '?').charAt(0).toUpperCase()}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium text-sm truncate">
-                                  {conv.contactName || conv.profileName || conv.phoneNumber || 'Sem nome'}
-                                </p>
-                                {conv.lastMessagePreview && (
-                                  <p className="text-xs text-muted-foreground truncate">
-                                    {conv.lastMessagePreview}
-                                  </p>
-                                )}
-                                {conv.lastMessageAt && (
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    {formatRelativeDate(conv.lastMessageAt)}
-                                  </p>
-                                )}
-                              </div>
-                              {conv.unreadCount > 0 && (
-                                <Badge variant="default" className="text-xs">
-                                  {conv.unreadCount}
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+              <CardContent className="flex-1 flex flex-col min-h-0 p-4">
+                {loadingMessages ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center text-muted-foreground">
+                      <RefreshCw className="h-4 w-4 animate-spin inline-block mr-2" />
+                      Carregando histórico de mensagens...
+                    </div>
                   </div>
-                </div>
+                ) : messages.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center text-muted-foreground">
+                      <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p className="font-medium">Nenhuma mensagem encontrada</p>
+                      <p className="text-sm mt-2">
+                        O histórico de mensagens do WhatsApp aparecerá aqui quando houver conversas com este cliente.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-y-auto space-y-4 p-4">
+                    {messages.map((message) => {
+                      const messageDate = message.sentAt ? new Date(message.sentAt) : null;
+                      const showDateSeparator = (() => {
+                        const msgIndex = messages.indexOf(message);
+                        if (msgIndex === 0) return true;
+                        const prevMessage = messages[msgIndex - 1];
+                        const prevDate = prevMessage.sentAt ? new Date(prevMessage.sentAt) : null;
+                        if (!messageDate || !prevDate) return false;
+                        return messageDate.toDateString() !== prevDate.toDateString();
+                      })();
 
-                {/* Área de mensagens */}
-                <div className="flex-1 flex flex-col min-w-0">
-                  {selectedConversationId ? (
-                    <>
-                      {loadingMessages ? (
-                        <div className="flex-1 flex items-center justify-center">
-                          <div className="text-center text-muted-foreground">
-                            <RefreshCw className="h-4 w-4 animate-spin inline-block mr-2" />
-                            Carregando mensagens...
-                          </div>
-                        </div>
-                      ) : messages.length === 0 ? (
-                        <div className="flex-1 flex items-center justify-center">
-                          <p className="text-muted-foreground text-sm">
-                            Nenhuma mensagem disponível
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="flex-1 overflow-y-auto space-y-4 p-4">
-                          {messages.map((message) => (
+                      return (
+                        <React.Fragment key={message.id}>
+                          {showDateSeparator && messageDate && (
+                            <div className="flex items-center justify-center my-4">
+                              <div className="px-3 py-1 bg-muted rounded-full text-xs text-muted-foreground">
+                                {messageDate.toLocaleDateString('pt-BR', {
+                                  day: '2-digit',
+                                  month: 'long',
+                                  year: 'numeric'
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          <div
+                            className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                          >
                             <div
-                              key={message.id}
-                              className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                              className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                                message.direction === 'outgoing'
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted'
+                              }`}
                             >
-                              <div
-                                className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                              <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
+                              <span
+                                className={`text-[10px] mt-1 block ${
                                   message.direction === 'outgoing'
-                                    ? 'bg-primary text-primary-foreground'
-                                    : 'bg-muted'
+                                    ? 'text-primary-foreground/80'
+                                    : 'text-muted-foreground'
                                 }`}
                               >
-                                <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
-                                <span
-                                  className={`text-[10px] mt-1 block ${
-                                    message.direction === 'outgoing'
-                                      ? 'text-primary-foreground/80'
-                                      : 'text-muted-foreground'
-                                  }`}
-                                >
-                                  {formatHour(message.sentAt)}
-                                </span>
-                              </div>
+                                {formatHour(message.sentAt)}
+                              </span>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="flex-1 flex items-center justify-center">
-                      <div className="text-center text-muted-foreground">
-                        <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                        <p className="font-medium">Selecione uma conversa</p>
-                        <p className="text-sm mt-2">
-                          Escolha uma conversa na lista ao lado para ver as mensagens
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

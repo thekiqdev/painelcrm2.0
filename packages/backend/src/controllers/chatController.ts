@@ -1266,6 +1266,83 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
 }
 
 /**
+ * Busca todas as mensagens de um cliente, agregando de todas as conversas vinculadas
+ * GET /api/chat/clients/:clientId/messages
+ */
+export async function getClientMessages(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { clientId } = req.params;
+
+    // Verificar se o cliente existe e pertence ao usuário
+    const clientCheck = await pool.query(
+      'SELECT id, phone FROM clients WHERE id = $1 AND user_id = $2',
+      [clientId, userId]
+    );
+
+    if (clientCheck.rowCount === 0) {
+      res.status(404).json({ error: 'Cliente não encontrado' });
+      return;
+    }
+
+    const client = clientCheck.rows[0];
+    const clientPhone = client.phone ? client.phone.replace(/\D/g, '') : null;
+
+    if (!clientPhone) {
+      res.json([]);
+      return;
+    }
+
+    // Buscar todas as conversas vinculadas ao cliente (por client_id ou por telefone)
+    const conversationsResult = await pool.query(
+      `
+      SELECT DISTINCT c.id
+      FROM chat_conversations c
+      LEFT JOIN clients cl
+        ON cl.user_id = c.user_id
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND cl.phone IS NOT NULL
+       AND cl.phone <> ''
+       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
+      WHERE c.user_id = $1
+        AND (
+          c.client_id = $2
+          OR cl.id = $2
+          OR regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g') = $3
+        )
+      `,
+      [userId, clientId, clientPhone]
+    );
+
+    if (conversationsResult.rowCount === 0) {
+      res.json([]);
+      return;
+    }
+
+    const conversationIds = conversationsResult.rows.map(row => row.id);
+
+    // Buscar todas as mensagens de todas as conversas vinculadas ao cliente
+    const messages = await pool.query(
+      `
+        SELECT m.*
+        FROM chat_messages m
+        WHERE m.conversation_id = ANY($1::uuid[])
+        ORDER BY 
+          COALESCE(m.sent_at, m.created_at) ASC
+        LIMIT 1000
+      `,
+      [conversationIds]
+    );
+
+    res.json(messages.rows);
+  } catch (error: any) {
+    console.error('Error fetching client messages:', error);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+}
+
+/**
  * Busca o perfil completo (cliente ou lead) vinculado a uma conversa
  * GET /api/chat/conversations/:id/profile
  */
