@@ -147,6 +147,15 @@ const Chat = () => {
   const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [ticketDialogOpen, setTicketDialogOpen] = useState(false);
+  const [instanceDetailsDialogOpen, setInstanceDetailsDialogOpen] = useState(false);
+  const [selectedInstanceForDetails, setSelectedInstanceForDetails] = useState<ChatInstance | null>(null);
+  const [instancePhoneNumber, setInstancePhoneNumber] = useState<string | null>(null);
+  const [loadingInstanceDetails, setLoadingInstanceDetails] = useState(false);
+  const [syncingConversationsByPeriod, setSyncingConversationsByPeriod] = useState(false);
+  const [generatingQRCode, setGeneratingQRCode] = useState(false);
+  const [qrCodeData, setQrCodeData] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
   
   // Estados para formulários
   const [clients, setClients] = useState<any[]>([]);
@@ -1301,11 +1310,19 @@ const Chat = () => {
                           <div
                             key={instance.id}
                             className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors"
-                            onClick={() => {
-                              handleToggleInstance(instance.id);
-                              if (!isEnabled) {
-                                setSelectedInstanceId(instance.id);
+                            onClick={(e) => {
+                              // Se clicar no checkbox, apenas toggle
+                              if ((e.target as HTMLElement).closest('[role="checkbox"]')) {
+                                handleToggleInstance(instance.id);
+                                if (!isEnabled) {
+                                  setSelectedInstanceId(instance.id);
+                                }
+                                return;
                               }
+                              // Se clicar no card, abrir modal de detalhes
+                              setSelectedInstanceForDetails(instance);
+                              setInstanceDetailsDialogOpen(true);
+                              loadInstanceDetails(instance.id);
                             }}
                           >
                             <Checkbox
@@ -1874,6 +1891,145 @@ const Chat = () => {
               <Button type="submit">Criar Ticket</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Detalhes da Instância */}
+      <Dialog open={instanceDetailsDialogOpen} onOpenChange={setInstanceDetailsDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Detalhes da Instância</DialogTitle>
+            <DialogDescription>
+              Informações e ações disponíveis para esta instância do WhatsApp
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedInstanceForDetails && (
+            <div className="space-y-6 py-4">
+              {/* Informações da Instância */}
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm font-semibold text-muted-foreground">Nome da Instância</Label>
+                  <p className="text-base font-medium">{selectedInstanceForDetails.name}</p>
+                </div>
+                
+                <div>
+                  <Label className="text-sm font-semibold text-muted-foreground">Status</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className={`w-2 h-2 rounded-full ${
+                      selectedInstanceForDetails.status === 'connected' ? 'bg-emerald-500'
+                      : selectedInstanceForDetails.status === 'connecting' ? 'bg-amber-500'
+                      : 'bg-gray-400'
+                    }`} />
+                    <p className="text-base">
+                      {selectedInstanceForDetails.status === 'connected' ? 'Conectado' 
+                        : selectedInstanceForDetails.status === 'connecting' ? 'Conectando'
+                        : 'Desconectado'}
+                    </p>
+                  </div>
+                </div>
+
+                {loadingInstanceDetails ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Carregando número conectado...
+                  </div>
+                ) : instancePhoneNumber ? (
+                  <div>
+                    <Label className="text-sm font-semibold text-muted-foreground">Número Conectado</Label>
+                    <p className="text-base">{instancePhoneNumber}</p>
+                  </div>
+                ) : (
+                  <div>
+                    <Label className="text-sm font-semibold text-muted-foreground">Número Conectado</Label>
+                    <p className="text-base text-muted-foreground">Não conectado</p>
+                  </div>
+                )}
+
+                {selectedInstanceForDetails.external_instance_name && (
+                  <div>
+                    <Label className="text-sm font-semibold text-muted-foreground">Nome Externo</Label>
+                    <p className="text-base">{selectedInstanceForDetails.external_instance_name}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t pt-4 space-y-4">
+                {/* Sincronizar Conversas */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Sincronizar Conversas</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Obter todas as conversas do WhatsApp existentes para o número conectado
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleSyncConversationsByPeriod}
+                      disabled={syncingConversationsByPeriod || !selectedInstanceForDetails.id}
+                      className="flex-1"
+                    >
+                      {syncingConversationsByPeriod ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                          Sincronizando...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Sincronizar Conversas
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Gerar QR Code */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Conectar QR Code</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Gerar um novo QR code para conectar esta instância ao WhatsApp
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleGenerateQRCode}
+                      disabled={generatingQRCode || !selectedInstanceForDetails.id}
+                      variant="outline"
+                      className="flex-1"
+                    >
+                      {generatingQRCode ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                          Gerando...
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare className="h-4 w-4 mr-2" />
+                          Gerar QR Code
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  
+                  {qrCodeData && (
+                    <div className="mt-4 p-4 bg-muted rounded-lg flex flex-col items-center gap-4">
+                      <p className="text-sm font-medium">Escaneie o QR Code com seu WhatsApp</p>
+                      <img 
+                        src={qrCodeData} 
+                        alt="QR Code" 
+                        className="max-w-[300px] w-full border rounded-lg"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setQrCodeData(null)}
+                      >
+                        Fechar QR Code
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
