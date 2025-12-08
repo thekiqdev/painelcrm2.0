@@ -1430,20 +1430,10 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     }
 
     // Buscar todas as conversas vinculadas a este cliente
-    // Buscar o telefone do cliente para usar na busca
-    const clientPhoneResult = await pool.query(
-      'SELECT phone FROM clients WHERE id = $1 AND user_id = $2',
-      [clientId, userId]
-    );
-    
-    const clientPhone = clientPhoneResult.rows[0]?.phone;
-    // Normalizar telefone do cliente se existir, caso contrário usar string vazia
-    const normalizedClientPhone = clientPhone ? clientPhone.replace(/\D/g, '') : '';
-
-    // Buscar conversas vinculadas pelo client_id ou pelo telefone
-    // A query busca conversas que:
-    // 1. Têm client_id = clientId (vinculação direta)
-    // 2. Têm telefone que corresponde ao telefone do cliente (via JOIN ou comparação direta)
+    // A busca é feita de 3 formas:
+    // 1. Conversas com client_id = clientId (vinculação direta)
+    // 2. Conversas com telefone que corresponde ao telefone do cliente (via JOIN)
+    // 3. Conversas que podem ter sido vinculadas pelo telefone mesmo sem client_id salvo
     const conversationsResult = await pool.query(
       `
       SELECT DISTINCT 
@@ -1464,17 +1454,13 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
        AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
       WHERE c.user_id = $1
         AND (
+          -- Vinculação direta por client_id
           c.client_id = $2
+          -- Vinculação via JOIN (telefone corresponde)
           OR cl.id = $2
-          OR (
-            $3 <> ''
-            AND c.phone_number IS NOT NULL
-            AND c.phone_number <> ''
-            AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3
-          )
         )
       `,
-      [userId, clientId, normalizedClientPhone]
+      [userId, clientId]
     );
 
     if ((conversationsResult.rowCount ?? 0) === 0) {
