@@ -1500,9 +1500,17 @@ export async function syncConversations(req: AuthRequest, res: Response) {
 }
 
 export async function getConversations(req: AuthRequest, res: Response) {
+  const requestId = randomUUID().substring(0, 8);
   try {
     const userId = req.userId!;
     const { instanceId, search, assignedTo, unassigned, status, queue, clientId } = req.query;
+    
+    console.log(`[GetConversations ${requestId}] Starting request`, {
+      userId,
+      instanceId,
+      queryParams: { search, assignedTo, unassigned, status, queue, clientId },
+    });
+    
     const params: any[] = [userId];
     let paramIndex = 2;
 
@@ -1730,14 +1738,25 @@ export async function getConversations(req: AuthRequest, res: Response) {
       });
     }
 
+    console.log(`[GetConversations ${requestId}] Returning conversations`, {
+      count: conversations.rows.length,
+    });
+    
     res.json(conversations.rows);
   } catch (error: any) {
-    console.error('[GetConversations] Error fetching conversations:', {
+    console.error(`[GetConversations ${requestId}] Error fetching conversations:`, {
       error: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
       stack: error.stack,
       userId: req.userId,
+      instanceId: req.query.instanceId,
     });
-    res.status(500).json({ error: 'Failed to fetch conversations' });
+    res.status(500).json({ 
+      error: 'Failed to fetch conversations',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
   }
 }
 
@@ -2533,24 +2552,36 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         hasMedia: media.length > 0,
       });
 
-      await saveMessage(conversation.id, extracted.direction, {
-        externalMessageId: messageId,
-        body: messageBody || null,
-        media: media.length > 0 ? media : null,
-        status: message.status || (extracted.direction === 'outgoing' ? 'sent' : null),
-        sentAt: sentAt || new Date(),
-        metadata: {
-          ...message,
-          messageType: extracted.messageType,
-          isGroup: extracted.isGroup,
-          originalPayload: payload,
-        },
-      });
+      try {
+        await saveMessage(conversation.id, extracted.direction, {
+          externalMessageId: messageId,
+          body: messageBody || null,
+          media: media.length > 0 ? media : null,
+          status: message.status || (extracted.direction === 'outgoing' ? 'sent' : null),
+          sentAt: sentAt || new Date(),
+          metadata: {
+            ...message,
+            messageType: extracted.messageType,
+            isGroup: extracted.isGroup,
+            originalPayload: payload,
+          },
+        });
 
-      console.log(`[Webhook ${webhookId}] Message saved successfully`, {
-        conversationId: conversation.id,
-        messageId,
-      });
+        console.log(`[Webhook ${webhookId}] Message saved successfully`, {
+          conversationId: conversation.id,
+          messageId,
+        });
+      } catch (saveError: any) {
+        console.error(`[Webhook ${webhookId}] Error saving message:`, {
+          error: saveError.message,
+          code: saveError.code,
+          detail: saveError.detail,
+          stack: saveError.stack,
+          conversationId: conversation.id,
+          messageId,
+        });
+        // Não re-throw para não quebrar o fluxo, mas logar o erro
+      }
 
       // Emitir evento WebSocket para atualizar conversa e mensagem em tempo real
       // OTIMIZAÇÃO: Usar dados já em memória (conversation) ao invés de query adicional
