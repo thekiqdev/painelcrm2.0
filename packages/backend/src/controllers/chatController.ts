@@ -1106,40 +1106,30 @@ export async function getConversations(req: AuthRequest, res: Response) {
       SELECT
         c.*,
         i.name as instance_name,
-        -- Cliente: usar o client_id salvo ou buscar pelo telefone
-        COALESCE(
-          c.client_id,
-          CASE 
-            WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' 
-            THEN (
-              SELECT cl.id 
-              FROM clients cl
-              WHERE cl.user_id = c.user_id
-                AND cl.phone IS NOT NULL
-                AND cl.phone <> ''
-                AND regexp_replace(cl.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-              LIMIT 1
-            )
-            ELSE NULL
-          END
-        ) as client_id,
-        -- Lead: apenas se não houver client_id, buscar pelo telefone
+        -- Cliente: usar o client_id salvo ou buscar pelo telefone via JOIN
+        COALESCE(c.client_id, cl.id) as client_id,
+        -- Lead: apenas se não houver client_id, buscar pelo telefone via JOIN
         CASE 
-          WHEN c.client_id IS NOT NULL THEN NULL
-          WHEN c.lead_id IS NOT NULL THEN c.lead_id
-          WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' THEN (
-            SELECT l.id 
-            FROM leads l
-            WHERE l.user_id = c.user_id
-              AND l.phone IS NOT NULL
-              AND l.phone <> ''
-              AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-            LIMIT 1
-          )
-          ELSE NULL
+          WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
+          ELSE COALESCE(c.lead_id, l.id)
         END as lead_id
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN clients cl
+        ON cl.user_id = c.user_id
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND cl.phone IS NOT NULL
+       AND cl.phone <> ''
+       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
+      LEFT JOIN leads l
+        ON l.user_id = c.user_id
+       AND COALESCE(c.client_id, cl.id) IS NULL
+       AND l.phone IS NOT NULL
+       AND l.phone <> ''
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
       WHERE c.user_id = $1
     `;
 
@@ -1229,10 +1219,19 @@ export async function getConversations(req: AuthRequest, res: Response) {
   } catch (error: any) {
     console.error('[GetConversations] Error fetching conversations:', {
       error: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
+      position: error.position,
       stack: error.stack,
       userId: req.userId,
+      instanceId: req.query.instanceId,
     });
-    res.status(500).json({ error: 'Failed to fetch conversations' });
+    res.status(500).json({ 
+      error: 'Failed to fetch conversations',
+      message: error.message,
+      detail: error.detail,
+    });
   }
 }
 
