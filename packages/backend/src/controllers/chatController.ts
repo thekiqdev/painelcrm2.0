@@ -1694,8 +1694,38 @@ export async function getConversations(req: AuthRequest, res: Response) {
             error: simpleError.message,
             code: simpleError.code,
             detail: simpleError.detail,
+            hint: simpleError.hint,
           });
-          throw simpleError;
+          
+          // Último recurso: query muito simples sem nenhum JOIN
+          try {
+            console.warn('[GetConversations] Trying minimal query as last resort');
+            const minimalParams: any[] = [userId];
+            let minimalQuery = `
+              SELECT c.*, NULL as instance_name, c.client_id, c.lead_id
+              FROM chat_conversations c
+              WHERE c.user_id = $1
+            `;
+            
+            if (instanceId) {
+              minimalParams.push(instanceId);
+              minimalQuery += ` AND c.instance_id = $${minimalParams.length}`;
+            }
+            
+            minimalQuery += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
+            
+            conversations = await pool.query(minimalQuery, minimalParams);
+            console.log('[GetConversations] Minimal query executed successfully', { 
+              rowCount: conversations.rowCount ?? 0 
+            });
+          } catch (minimalError: any) {
+            console.error('[GetConversations] Even minimal query failed:', {
+              error: minimalError.message,
+              code: minimalError.code,
+              detail: minimalError.detail,
+            });
+            throw minimalError;
+          }
         }
       } else {
         throw queryError;
