@@ -1106,29 +1106,40 @@ export async function getConversations(req: AuthRequest, res: Response) {
       SELECT
         c.*,
         i.name as instance_name,
-        -- Cliente inferido pelo telefone, se ainda não houver client_id salvo
-        COALESCE(c.client_id, cl.id) as client_id,
-        -- Lead inferido pelo telefone (apenas informação derivada, não altera a tabela)
-        COALESCE(c.lead_id, l.id) as lead_id
+        -- Cliente: usar o client_id salvo ou buscar pelo telefone
+        COALESCE(
+          c.client_id,
+          CASE 
+            WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' 
+            THEN (
+              SELECT cl.id 
+              FROM clients cl
+              WHERE cl.user_id = c.user_id
+                AND cl.phone IS NOT NULL
+                AND cl.phone <> ''
+                AND regexp_replace(cl.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+              LIMIT 1
+            )
+            ELSE NULL
+          END
+        ) as client_id,
+        -- Lead: apenas se não houver client_id, buscar pelo telefone
+        CASE 
+          WHEN c.client_id IS NOT NULL THEN NULL
+          WHEN c.lead_id IS NOT NULL THEN c.lead_id
+          WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' THEN (
+            SELECT l.id 
+            FROM leads l
+            WHERE l.user_id = c.user_id
+              AND l.phone IS NOT NULL
+              AND l.phone <> ''
+              AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+            LIMIT 1
+          )
+          ELSE NULL
+        END as lead_id
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
-      LEFT JOIN clients cl
-        ON cl.user_id = c.user_id
-       AND cl.id = COALESCE(c.client_id, cl.id)
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND cl.phone IS NOT NULL
-       AND cl.phone <> ''
-       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
-      LEFT JOIN leads l
-        ON l.user_id = c.user_id
-       AND l.id = COALESCE(c.lead_id, l.id)
-       AND c.client_id IS NULL
-       AND l.phone IS NOT NULL
-       AND l.phone <> ''
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
       WHERE c.user_id = $1
     `;
 
@@ -1274,24 +1285,37 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
         c.client_id,
         c.lead_id,
         c.phone_number,
-        COALESCE(c.client_id, cl.id) as resolved_client_id,
-        COALESCE(c.lead_id, l.id) as resolved_lead_id
+        COALESCE(
+          c.client_id,
+          CASE 
+            WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' 
+            THEN (
+              SELECT cl.id 
+              FROM clients cl
+              WHERE cl.user_id = c.user_id
+                AND cl.phone IS NOT NULL
+                AND cl.phone <> ''
+                AND regexp_replace(cl.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+              LIMIT 1
+            )
+            ELSE NULL
+          END
+        ) as resolved_client_id,
+        CASE 
+          WHEN c.client_id IS NOT NULL THEN NULL
+          WHEN c.lead_id IS NOT NULL THEN c.lead_id
+          WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' THEN (
+            SELECT l.id 
+            FROM leads l
+            WHERE l.user_id = c.user_id
+              AND l.phone IS NOT NULL
+              AND l.phone <> ''
+              AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+            LIMIT 1
+          )
+          ELSE NULL
+        END as resolved_lead_id
       FROM chat_conversations c
-      LEFT JOIN clients cl
-        ON cl.user_id = c.user_id
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND cl.phone IS NOT NULL
-       AND cl.phone <> ''
-       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
-      LEFT JOIN leads l
-        ON l.user_id = c.user_id
-       AND c.client_id IS NULL
-       AND l.phone IS NOT NULL
-       AND l.phone <> ''
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
       WHERE c.id = $1 AND c.user_id = $2
       `,
       [id, userId]
@@ -1367,21 +1391,32 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     }
 
     // Buscar todas as conversas vinculadas a este cliente
+    // Primeiro, buscar o telefone do cliente
+    const clientPhoneResult = await pool.query(
+      'SELECT phone FROM clients WHERE id = $1 AND user_id = $2',
+      [clientId, userId]
+    );
+    
+    const clientPhone = clientPhoneResult.rows[0]?.phone;
+    const normalizedClientPhone = clientPhone ? clientPhone.replace(/\D/g, '') : null;
+
+    // Buscar conversas vinculadas pelo client_id ou pelo telefone
     const conversationsResult = await pool.query(
       `
       SELECT DISTINCT c.id, c.phone_number, c.contact_name, c.profile_name, c.external_chat_id
       FROM chat_conversations c
-      LEFT JOIN clients cl
-        ON cl.user_id = c.user_id
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND cl.phone IS NOT NULL
-       AND cl.phone <> ''
-       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
       WHERE c.user_id = $1
-        AND (c.client_id = $2 OR cl.id = $2)
+        AND (
+          c.client_id = $2
+          OR (
+            $3 IS NOT NULL
+            AND c.phone_number IS NOT NULL
+            AND c.phone_number <> ''
+            AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3
+          )
+        )
       `,
-      [userId, clientId]
+      [userId, clientId, normalizedClientPhone]
     );
 
     if (conversationsResult.rowCount === 0) {
