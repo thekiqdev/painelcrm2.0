@@ -1555,9 +1555,40 @@ export async function getConversations(req: AuthRequest, res: Response) {
     `;
 
     if (instanceId) {
-      params.push(instanceId);
-      query += ` AND c.instance_id = $${params.length}`;
-      paramIndex++;
+      // Com a nova estrutura baseada em telefone, buscar conversas pelo número conectado da instância
+      // em vez de apenas pelo instance_id
+      try {
+        const instanceResult = await pool.query(
+          'SELECT connected_phone_number FROM chat_instances WHERE id = $1',
+          [instanceId]
+        );
+        
+        const instancePhone = instanceResult.rows[0]?.connected_phone_number
+          ? normalizePhoneNumber(instanceResult.rows[0].connected_phone_number)
+          : null;
+        
+        if (instancePhone) {
+          // Filtrar por instance_phone_normalizado (nova estrutura)
+          params.push(instancePhone);
+          query += ` AND c.instance_phone_normalizado = $${params.length}`;
+          paramIndex++;
+          console.log(`[GetConversations ${requestId}] Filtering by instance phone: ${instancePhone}`);
+        } else {
+          // Fallback: se não tiver número conectado, filtrar por instance_id
+          params.push(instanceId);
+          query += ` AND c.instance_id = $${params.length}`;
+          paramIndex++;
+          console.log(`[GetConversations ${requestId}] Instance has no connected phone, filtering by instance_id`);
+        }
+      } catch (instanceError: any) {
+        // Se der erro ao buscar instância, usar fallback por instance_id
+        console.warn(`[GetConversations ${requestId}] Error fetching instance phone, using instance_id fallback:`, {
+          error: instanceError.message,
+        });
+        params.push(instanceId);
+        query += ` AND c.instance_id = $${params.length}`;
+        paramIndex++;
+      }
     }
 
     if (assignedTo === 'me') {
@@ -1642,8 +1673,28 @@ export async function getConversations(req: AuthRequest, res: Response) {
         `;
         
         if (instanceId) {
-          simpleParams.push(instanceId);
-          simpleQuery += ` AND c.instance_id = $${simpleParams.length}`;
+          // Tentar buscar pelo número conectado da instância
+          try {
+            const instanceResult = await pool.query(
+              'SELECT connected_phone_number FROM chat_instances WHERE id = $1',
+              [instanceId]
+            );
+            
+            const instancePhone = instanceResult.rows[0]?.connected_phone_number
+              ? normalizePhoneNumber(instanceResult.rows[0].connected_phone_number)
+              : null;
+            
+            if (instancePhone) {
+              simpleParams.push(instancePhone);
+              simpleQuery += ` AND c.instance_phone_normalizado = $${simpleParams.length}`;
+            } else {
+              simpleParams.push(instanceId);
+              simpleQuery += ` AND c.instance_id = $${simpleParams.length}`;
+            }
+          } catch {
+            simpleParams.push(instanceId);
+            simpleQuery += ` AND c.instance_id = $${simpleParams.length}`;
+          }
         }
         
         if (assignedTo === 'me') {
@@ -1708,8 +1759,28 @@ export async function getConversations(req: AuthRequest, res: Response) {
             `;
             
             if (instanceId) {
-              minimalParams.push(instanceId);
-              minimalQuery += ` AND c.instance_id = $${minimalParams.length}`;
+              // Tentar buscar pelo número conectado da instância
+              try {
+                const instanceResult = await pool.query(
+                  'SELECT connected_phone_number FROM chat_instances WHERE id = $1',
+                  [instanceId]
+                );
+                
+                const instancePhone = instanceResult.rows[0]?.connected_phone_number
+                  ? normalizePhoneNumber(instanceResult.rows[0].connected_phone_number)
+                  : null;
+                
+                if (instancePhone) {
+                  minimalParams.push(instancePhone);
+                  minimalQuery += ` AND c.instance_phone_normalizado = $${minimalParams.length}`;
+                } else {
+                  minimalParams.push(instanceId);
+                  minimalQuery += ` AND c.instance_id = $${minimalParams.length}`;
+                }
+              } catch {
+                minimalParams.push(instanceId);
+                minimalQuery += ` AND c.instance_id = $${minimalParams.length}`;
+              }
             }
             
             minimalQuery += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
