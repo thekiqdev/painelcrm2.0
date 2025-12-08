@@ -206,7 +206,7 @@ async function upsertConversation(
         [instance.user_id, normalizedPhone]
       );
 
-      if (clientResult.rowCount > 0) {
+      if ((clientResult.rowCount ?? 0) > 0) {
         clientId = clientResult.rows[0].id;
         console.log(`[UpsertConversation ${upsertId}] Found client`, { clientId, phone: normalizedPhone });
       } else {
@@ -223,7 +223,7 @@ async function upsertConversation(
           [instance.user_id, normalizedPhone]
         );
 
-        if (leadResult.rowCount > 0) {
+        if ((leadResult.rowCount ?? 0) > 0) {
           leadId = leadResult.rows[0].id;
           console.log(`[UpsertConversation ${upsertId}] Found lead`, { leadId, phone: normalizedPhone });
         }
@@ -1312,7 +1312,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
         'SELECT * FROM clients WHERE id = $1 AND user_id = $2',
         [clientId, userId]
       );
-      if (clientResult.rowCount > 0) {
+      if ((clientResult.rowCount ?? 0) > 0) {
         res.json({
           type: 'client',
           profile: clientResult.rows[0],
@@ -1326,7 +1326,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
         'SELECT * FROM leads WHERE id = $1 AND user_id = $2',
         [leadId, userId]
       );
-      if (leadResult.rowCount > 0) {
+      if ((leadResult.rowCount ?? 0) > 0) {
         res.json({
           type: 'lead',
           profile: leadResult.rows[0],
