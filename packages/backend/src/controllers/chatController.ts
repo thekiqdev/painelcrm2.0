@@ -1472,10 +1472,20 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     }
 
     // Buscar todas as mensagens dessas conversas
+    // Usar ANY com array UUID para melhor performance
     const messagesResult = await pool.query(
       `
       SELECT 
-        m.*,
+        m.id,
+        m.conversation_id,
+        m.direction,
+        m.external_message_id,
+        m.body,
+        m.media,
+        m.status,
+        m.sent_at,
+        m.metadata,
+        m.created_at,
         c.phone_number,
         c.contact_name,
         c.profile_name,
@@ -1497,7 +1507,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       detail: error.detail,
       stack: error.stack,
       clientId: req.params.id,
-      userId: req.userId,
+      userId,
     });
     res.status(500).json({ 
       error: 'Failed to fetch messages',
