@@ -944,22 +944,85 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     
     const normalizedConnectedPhone = normalizePhoneNumber(connectedPhone);
 
-    await pool.query(
-      `
-      UPDATE chat_instances
-      SET status = $1,
-          connected_phone_number = COALESCE($2, connected_phone_number),
-          metadata = metadata || $3::jsonb,
-          updated_at = now()
-      WHERE id = $4
-    `,
-      [
-        response?.status || 'connecting',
-        normalizedConnectedPhone,
-        JSON.stringify({ lastConnect: response }),
-        instance.id
-      ]
-    );
+    // Verificar se a coluna connected_phone_number existe antes de tentar atualizá-la
+    // Isso permite compatibilidade durante a transição antes da migration ser executada
+    try {
+      // Tentar atualizar com a nova coluna
+      await pool.query(
+        `
+        UPDATE chat_instances
+        SET status = $1,
+            connected_phone_number = COALESCE($2, connected_phone_number),
+            metadata = metadata || $3::jsonb,
+            updated_at = now()
+        WHERE id = $4
+      `,
+        [
+          response?.status || 'connecting',
+          normalizedConnectedPhone,
+          JSON.stringify({ lastConnect: response }),
+          instance.id
+        ]
+      );
+    } catch (columnError: any) {
+      // Se a coluna não existir, tentar criá-la e depois atualizar
+      if (columnError.code === '42703' || columnError.message?.includes('does not exist')) {
+        console.warn('[ConnectInstance] Column connected_phone_number does not exist, attempting to create it', {
+          instanceId: instance.id,
+          error: columnError.message,
+        });
+        try {
+          // Criar a coluna
+          await pool.query(
+            'ALTER TABLE chat_instances ADD COLUMN IF NOT EXISTS connected_phone_number TEXT'
+          );
+          console.log('[ConnectInstance] Column created successfully, retrying update');
+          // Tentar atualizar novamente
+          await pool.query(
+            `
+            UPDATE chat_instances
+            SET status = $1,
+                connected_phone_number = COALESCE($2, connected_phone_number),
+                metadata = metadata || $3::jsonb,
+                updated_at = now()
+            WHERE id = $4
+          `,
+            [
+              response?.status || 'connecting',
+              normalizedConnectedPhone,
+              JSON.stringify({ lastConnect: response }),
+              instance.id
+            ]
+          );
+        } catch (createError: any) {
+          // Se não conseguir criar, atualizar sem a coluna (fallback)
+          console.warn('[ConnectInstance] Could not create column, updating without it', {
+            error: createError.message,
+            instanceId: instance.id,
+          });
+          await pool.query(
+            `
+            UPDATE chat_instances
+            SET status = $1,
+                metadata = metadata || $2::jsonb,
+                updated_at = now()
+            WHERE id = $3
+          `,
+            [
+              response?.status || 'connecting',
+              JSON.stringify({ 
+                lastConnect: response,
+                connectedPhone: normalizedConnectedPhone 
+              }),
+              instance.id
+            ]
+          );
+        }
+      } else {
+        // Re-throw se for outro tipo de erro
+        throw columnError;
+      }
+    }
 
     // Se conectado com sucesso, configurar webhook automaticamente
     // Também tentar configurar se status for 'connecting' (pode ser QR code)
