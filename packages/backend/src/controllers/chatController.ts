@@ -1109,9 +1109,20 @@ export async function getConversations(req: AuthRequest, res: Response) {
         -- Cliente: usar o client_id salvo ou buscar pelo telefone via JOIN
         COALESCE(c.client_id, cl.id) as client_id,
         -- Lead: apenas se não houver client_id, buscar pelo telefone via JOIN
+        -- Usar COALESCE para lidar com lead_id que pode não existir
         CASE 
           WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
-          ELSE COALESCE(c.lead_id, l.id)
+          ELSE (
+            SELECT l2.id 
+            FROM leads l2
+            WHERE l2.user_id = c.user_id
+              AND l2.phone IS NOT NULL
+              AND l2.phone <> ''
+              AND c.phone_number IS NOT NULL
+              AND c.phone_number <> ''
+              AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+            LIMIT 1
+          )
         END as lead_id
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
@@ -1122,14 +1133,6 @@ export async function getConversations(req: AuthRequest, res: Response) {
        AND cl.phone IS NOT NULL
        AND cl.phone <> ''
        AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
-      LEFT JOIN leads l
-        ON l.user_id = c.user_id
-       AND COALESCE(c.client_id, cl.id) IS NULL
-       AND l.phone IS NOT NULL
-       AND l.phone <> ''
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
       WHERE c.user_id = $1
     `;
 
@@ -1139,13 +1142,15 @@ export async function getConversations(req: AuthRequest, res: Response) {
       paramIndex++;
     }
 
-    if (assignedTo === 'me') {
-      params.push(userId);
-      query += ` AND c.assigned_to = $${params.length}`;
-      paramIndex++;
-    } else if (unassigned === 'true') {
-      query += ` AND (c.assigned_to IS NULL OR c.assigned_to = '00000000-0000-0000-0000-000000000000'::uuid)`;
-    }
+    // Filtros opcionais - removidos assigned_to e queue pois podem não existir
+    // TODO: Reativar quando a migration 16 for executada
+    // if (assignedTo === 'me') {
+    //   params.push(userId);
+    //   query += ` AND c.assigned_to = $${params.length}`;
+    //   paramIndex++;
+    // } else if (unassigned === 'true') {
+    //   query += ` AND (c.assigned_to IS NULL OR c.assigned_to = '00000000-0000-0000-0000-000000000000'::uuid)`;
+    // }
 
     if (status && typeof status === 'string') {
       params.push(status);
@@ -1153,11 +1158,11 @@ export async function getConversations(req: AuthRequest, res: Response) {
       paramIndex++;
     }
 
-    if (queue && typeof queue === 'string') {
-      params.push(queue);
-      query += ` AND c.queue = $${params.length}`;
-      paramIndex++;
-    }
+    // if (queue && typeof queue === 'string') {
+    //   params.push(queue);
+    //   query += ` AND c.queue = $${params.length}`;
+    //   paramIndex++;
+    // }
 
     if (search && typeof search === 'string') {
       params.push(`%${search.toLowerCase()}%`);
