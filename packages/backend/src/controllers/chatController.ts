@@ -220,48 +220,81 @@ async function upsertConversation(
   }
 
   try {
-  // Query sem lead_id (coluna pode não existir)
-  // TODO: Adicionar lead_id quando a migration 17 for executada
-  const result = await pool.query(
+  // Verificar se a conversa já existe
+  const existingResult = await pool.query(
     `
-    INSERT INTO chat_conversations (
-      user_id, instance_id, external_chat_id, external_fast_id,
-      contact_name, profile_name, phone_number, status,
+    SELECT id FROM chat_conversations
+    WHERE instance_id = $1 AND external_chat_id = $2
+    LIMIT 1
+    `,
+    [instance.id, chatData.externalChatId]
+  );
+
+  let result;
+  if ((existingResult.rowCount ?? 0) > 0) {
+    // Atualizar conversa existente
+    const conversationId = existingResult.rows[0].id;
+    result = await pool.query(
+      `
+      UPDATE chat_conversations SET
+        external_fast_id = COALESCE($1, external_fast_id),
+        contact_name = COALESCE($2, contact_name),
+        profile_name = COALESCE($3, profile_name),
+        phone_number = COALESCE($4, phone_number),
+        status = COALESCE($5, status),
+        last_message_preview = COALESCE($6, last_message_preview),
+        last_message_at = COALESCE($7, last_message_at),
+        unread_count = COALESCE($8, unread_count),
+        metadata = $9::jsonb,
+        client_id = COALESCE($10, client_id),
+        updated_at = now()
+      WHERE id = $11
+      RETURNING *
+      `,
+      [
+        chatData.externalFastId,
+        chatData.contactName,
+        chatData.profileName,
+        chatData.phoneNumber,
+        chatData.status || 'open',
+        chatData.lastMessagePreview,
+        chatData.lastMessageAt,
+        chatData.unreadCount || 0,
+        JSON.stringify(chatData.metadata || {}),
+        clientId,
+        conversationId,
+      ]
+    );
+  } else {
+    // Inserir nova conversa
+    result = await pool.query(
+      `
+      INSERT INTO chat_conversations (
+        user_id, instance_id, external_chat_id, external_fast_id,
+        contact_name, profile_name, phone_number, status,
         last_message_preview, last_message_at, unread_count, metadata,
         client_id
-    )
+      )
       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13)
-    ON CONFLICT (instance_id, external_chat_id)
-    DO UPDATE SET
-      external_fast_id = EXCLUDED.external_fast_id,
-      contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
-      profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
-      phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
-      status = COALESCE(EXCLUDED.status, chat_conversations.status),
-      last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
-      last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
-        unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
-      metadata = EXCLUDED.metadata,
-      client_id = COALESCE(EXCLUDED.client_id, chat_conversations.client_id),
-      updated_at = now()
-    RETURNING *
-  `,
-    [
-      instance.user_id,
-      instance.id,
-      chatData.externalChatId,
-      chatData.externalFastId,
-      chatData.contactName,
-      chatData.profileName,
-      chatData.phoneNumber,
-      chatData.status,
-      chatData.lastMessagePreview,
-      chatData.lastMessageAt,
+      RETURNING *
+      `,
+      [
+        instance.user_id,
+        instance.id,
+        chatData.externalChatId,
+        chatData.externalFastId,
+        chatData.contactName,
+        chatData.profileName,
+        chatData.phoneNumber,
+        chatData.status,
+        chatData.lastMessagePreview,
+        chatData.lastMessageAt,
         chatData.unreadCount,
-      JSON.stringify(chatData.metadata || {}),
-      clientId,
-    ]
-  );
+        JSON.stringify(chatData.metadata || {}),
+        clientId,
+      ]
+    );
+  }
 
     if (result.rowCount === 0 || !result.rows[0]) {
       console.error(`[UpsertConversation ${upsertId}] No row returned from database`);
