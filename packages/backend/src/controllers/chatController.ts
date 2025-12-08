@@ -1518,21 +1518,31 @@ export async function getConversations(req: AuthRequest, res: Response) {
       LEFT JOIN chat_instances i ON i.id = c.instance_id
       LEFT JOIN clients cl
         ON cl.user_id = c.user_id
-       AND cl.id = COALESCE(c.client_id, cl.id)
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND cl.phone IS NOT NULL
-       AND cl.phone <> ''
-       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
+       AND (
+         (c.client_id IS NOT NULL AND cl.id = c.client_id)
+         OR (
+           c.client_id IS NULL
+           AND c.phone_number IS NOT NULL
+           AND c.phone_number <> ''
+           AND cl.phone IS NOT NULL
+           AND cl.phone <> ''
+           AND regexp_replace(cl.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+         )
+       )
       LEFT JOIN leads l
         ON l.user_id = c.user_id
-       AND l.id = COALESCE(c.lead_id, l.id)
        AND c.client_id IS NULL
-       AND l.phone IS NOT NULL
-       AND l.phone <> ''
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+       AND (
+         (c.lead_id IS NOT NULL AND l.id = c.lead_id)
+         OR (
+           c.lead_id IS NULL
+           AND c.phone_number IS NOT NULL
+           AND c.phone_number <> ''
+           AND l.phone IS NOT NULL
+           AND l.phone <> ''
+           AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+         )
+       )
       WHERE c.user_id = $1
     `;
 
