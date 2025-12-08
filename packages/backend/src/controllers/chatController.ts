@@ -1424,7 +1424,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       [clientId, userId]
     );
 
-    if (clientResult.rowCount === 0) {
+    if ((clientResult.rowCount ?? 0) === 0) {
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
     }
@@ -1458,12 +1458,18 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       [userId, clientId, normalizedClientPhone]
     );
 
-    if (conversationsResult.rowCount === 0) {
+    if ((conversationsResult.rowCount ?? 0) === 0) {
       res.json([]);
       return;
     }
 
     const conversationIds = conversationsResult.rows.map((row) => row.id);
+
+    // Se não há conversas, retornar array vazio
+    if (conversationIds.length === 0) {
+      res.json([]);
+      return;
+    }
 
     // Buscar todas as mensagens dessas conversas
     const messagesResult = await pool.query(
@@ -1485,8 +1491,19 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
 
     res.json(messagesResult.rows.reverse());
   } catch (error: any) {
-    console.error('Error fetching client messages:', error);
-    res.status(500).json({ error: 'Failed to fetch messages' });
+    console.error('Error fetching client messages:', {
+      error: error.message,
+      code: error.code,
+      detail: error.detail,
+      stack: error.stack,
+      clientId: req.params.id,
+      userId: req.userId,
+    });
+    res.status(500).json({ 
+      error: 'Failed to fetch messages',
+      message: error.message,
+      detail: error.detail,
+    });
   }
 }
 
