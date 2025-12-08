@@ -1109,7 +1109,7 @@ export async function syncConversations(req: AuthRequest, res: Response) {
 export async function getConversations(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
-    const { instanceId, search, assignedTo, unassigned, status, queue } = req.query;
+    const { instanceId, search, assignedTo, unassigned, status, queue, startDate, endDate } = req.query;
     const params: any[] = [userId];
     let paramIndex = 2;
 
@@ -1197,6 +1197,19 @@ export async function getConversations(req: AuthRequest, res: Response) {
         LOWER(COALESCE(c.profile_name, '')) LIKE $${params.length} OR
         LOWER(COALESCE(c.phone_number, '')) LIKE $${params.length}
       )`;
+    }
+
+    // Filtros de data
+    if (startDate && typeof startDate === 'string') {
+      params.push(new Date(startDate));
+      query += ` AND (COALESCE(c.last_message_at, c.created_at) >= $${params.length})`;
+      paramIndex++;
+    }
+
+    if (endDate && typeof endDate === 'string') {
+      params.push(new Date(endDate));
+      query += ` AND (COALESCE(c.last_message_at, c.created_at) <= $${params.length})`;
+      paramIndex++;
     }
 
     query += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';

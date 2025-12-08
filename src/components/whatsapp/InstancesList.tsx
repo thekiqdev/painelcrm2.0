@@ -27,6 +27,7 @@ import {
 import { chatService, ChatInstance } from "@/services/chat";
 import { toast } from "sonner";
 import QRCodePopup from "./QRCodePopup";
+import { InstanceDetailsDialog } from "./InstanceDetailsDialog";
 
 interface InstancesListProps {
   onAddInstance: () => void;
@@ -46,6 +47,8 @@ export const InstancesList: React.FC<InstancesListProps> = ({
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
   const [generatingQR, setGeneratingQR] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
+  const [selectedInstance, setSelectedInstance] = useState<ChatInstance | null>(null);
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const instancesRef = useRef<ChatInstance[]>([]);
 
   const loadInstances = async () => {
@@ -284,7 +287,14 @@ export const InstancesList: React.FC<InstancesListProps> = ({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {instances.map((instance) => (
-                <Card key={instance.id} className="relative hover:shadow-lg transition-all duration-200 border-border/50">
+                <Card 
+                  key={instance.id} 
+                  className="relative hover:shadow-lg transition-all duration-200 border-border/50 cursor-pointer"
+                  onClick={() => {
+                    setSelectedInstance(instance);
+                    setDetailsDialogOpen(true);
+                  }}
+                >
                   <CardHeader className="pb-3 space-y-0">
                     <div className="flex items-start justify-between gap-3 mb-2">
                       <div className="flex-1 min-w-0">
@@ -327,7 +337,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 pt-3 border-t">
+                    <div className="flex items-center gap-2 pt-3 border-t" onClick={(e) => e.stopPropagation()}>
                       <Button
                         variant="default"
                         size="sm"
@@ -420,6 +430,16 @@ export const InstancesList: React.FC<InstancesListProps> = ({
           // Recarregar instâncias para atualizar status
           await loadInstances();
         }}
+      />
+
+      <InstanceDetailsDialog
+        instance={selectedInstance}
+        isOpen={detailsDialogOpen}
+        onClose={() => {
+          setDetailsDialogOpen(false);
+          setSelectedInstance(null);
+        }}
+        onInstanceUpdated={loadInstances}
       />
     </>
   );
