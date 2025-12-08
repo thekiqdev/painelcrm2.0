@@ -1507,7 +1507,36 @@ export async function getConversations(req: AuthRequest, res: Response) {
       queryParams: params,
     });
 
-    const conversations = await pool.query(query, params);
+    let conversations;
+    try {
+      conversations = await pool.query(query, params);
+    } catch (queryError: any) {
+      // Se houver erro relacionado a colunas que não existem, tentar query simplificada
+      if (queryError.code === '42703' || queryError.message?.includes('does not exist')) {
+        console.warn('[GetConversations] Column error detected, trying simplified query', {
+          error: queryError.message,
+          code: queryError.code,
+        });
+        // Query simplificada sem as novas colunas
+        const simpleQuery = `
+          SELECT
+            c.*,
+            i.name as instance_name,
+            c.client_id,
+            c.lead_id
+          FROM chat_conversations c
+          LEFT JOIN chat_instances i ON i.id = c.instance_id
+          WHERE c.user_id = $1
+            ${instanceId ? `AND c.instance_id = $2` : ''}
+          ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
+          LIMIT 200
+        `;
+        const simpleParams = instanceId ? [userId, instanceId] : [userId];
+        conversations = await pool.query(simpleQuery, simpleParams);
+      } else {
+        throw queryError;
+      }
+    }
     
     console.log('[GetConversations] Query result', {
       userId,
