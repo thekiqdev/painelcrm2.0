@@ -1494,7 +1494,8 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
         c.phone_number,
         c.contact_name,
         c.profile_name,
-        c.external_chat_id
+        c.external_chat_id,
+        c.instance_id
       FROM chat_messages m
       INNER JOIN chat_conversations c ON c.id = m.conversation_id
       WHERE m.conversation_id = ANY($1::uuid[])
@@ -1504,7 +1505,14 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       [conversationIds]
     );
 
-    res.json(messagesResult.rows.reverse());
+    // Retornar mensagens e também a primeira conversation_id encontrada para facilitar envio
+    const firstConversationId = conversationIds.length > 0 ? conversationIds[0] : null;
+    
+    res.json({
+      messages: messagesResult.rows.reverse(),
+      conversationId: firstConversationId,
+      conversationIds: conversationIds,
+    });
   } catch (error: any) {
     console.error('Error fetching client messages:', {
       error: error.message,

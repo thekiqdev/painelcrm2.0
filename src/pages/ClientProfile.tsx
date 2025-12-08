@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ClientSidebar } from "@/components/clients/ClientSidebar";
 import { clientsService } from "@/services/clients";
@@ -14,7 +14,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare } from "lucide-react";
+import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, Send } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useAuth } from "@/contexts/AuthContext";
+import { io, Socket } from "socket.io-client";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
@@ -100,6 +103,12 @@ const ClientProfile = () => {
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const [clientMessages, setClientMessages] = useState<ChatMessage[]>([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [newMessage, setNewMessage] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const { session } = useAuth();
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -462,20 +471,156 @@ const ClientProfile = () => {
     }
   };
 
-  const loadClientMessages = async () => {
+  const formatHour = (value?: string | null) => {
+    if (!value) return '--:--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '--:--';
+    return date.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const formatRelativeDate = (value?: string | null) => {
+    if (!value) return 'Sem data';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Sem data';
+    const now = Date.now();
+    const diff = now - date.getTime();
+
+    if (diff < 60_000) return 'Agora mesmo';
+    if (diff < 3_600_000) {
+      const minutes = Math.floor(diff / 60_000);
+      return `${minutes} min atrás`;
+    }
+    if (diff < 86_400_000) {
+      return `Hoje ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  };
+
+  const loadClientMessages = useCallback(async () => {
     if (!id) return;
     
     try {
       setIsLoadingMessages(true);
-      const messages = await chatService.getClientMessages(id);
-      setClientMessages(messages || []);
+      const result = await chatService.getClientMessages(id);
+      setClientMessages(result.messages || []);
+      setConversationId(result.conversationId);
     } catch (error: any) {
       console.error("Erro ao carregar mensagens:", error);
       toast.error("Erro ao carregar mensagens do WhatsApp");
     } finally {
       setIsLoadingMessages(false);
     }
+  }, [id]);
+
+  const handleSendMessage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!conversationId || !newMessage.trim()) {
+      if (!conversationId) {
+        toast.error("Nenhuma conversa encontrada para este cliente");
+      }
+      return;
+    }
+
+    try {
+      setSendingMessage(true);
+      await chatService.sendMessage(conversationId, newMessage.trim());
+      setNewMessage('');
+      await loadClientMessages();
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error);
+      toast.error('Não foi possível enviar a mensagem', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setSendingMessage(false);
+    }
   };
+
+  // Scroll para o final das mensagens
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [clientMessages]);
+
+  // WebSocket para atualização em tempo real de mensagens
+  useEffect(() => {
+    if (!session?.token || !conversationId) {
+      return;
+    }
+
+    if (socketRef.current?.connected) {
+      return;
+    }
+
+    const isDev = import.meta.env.DEV;
+    const socketUrl = isDev
+      ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+      : window.location.origin;
+
+    const socket = io(socketUrl, {
+      auth: {
+        token: session.token,
+      },
+      transports: ['websocket'],
+    });
+
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('[ClientProfile] WebSocket connected');
+    });
+
+    socket.on('disconnect', () => {
+      console.log('[ClientProfile] WebSocket disconnected');
+    });
+
+    socket.on('new_message', (data: any) => {
+      // Normalizar dados recebidos (snake_case para camelCase)
+      const normalizedData = {
+        id: data.id || data.message_id,
+        conversationId: data.conversation_id || data.conversationId,
+        direction: data.direction,
+        body: data.body || data.text,
+        sentAt: data.sent_at || data.sentAt || data.created_at || data.createdAt,
+        status: data.status,
+        metadata: data.metadata,
+      };
+
+      // Verificar se a mensagem pertence à conversa atual
+      if (normalizedData.conversationId === conversationId) {
+        setClientMessages((prev) => {
+          // Evitar duplicatas
+          if (prev.some((m) => m.id === normalizedData.id)) {
+            return prev;
+          }
+          return [...prev, normalizedData as ChatMessage].sort((a, b) => {
+            const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
+            const dateB = b.sentAt ? new Date(b.sentAt).getTime() : 0;
+            return dateA - dateB;
+          });
+        });
+      }
+    });
+
+    socket.on('conversation_updated', (data: any) => {
+      // Se a conversa atual foi atualizada, recarregar mensagens
+      const normalizedData = {
+        id: data.id || data.conversation_id || data.conversationId,
+      };
+      if (normalizedData.id === conversationId) {
+        loadClientMessages();
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [session?.token, conversationId, loadClientMessages]);
 
   const getStatusBadgeVariant = (status: string) => {
     switch (status) {
@@ -1286,48 +1431,78 @@ const ClientProfile = () => {
 
           {/* Aba de Mensagens */}
           {activeTab === "messages" && (
-            <Card>
-              <CardHeader>
+            <Card className="flex flex-col h-[calc(100vh-200px)]">
+              <CardHeader className="flex-shrink-0">
                 <CardTitle>Mensagens do WhatsApp</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex-1 flex flex-col min-h-0 p-0">
                 {isLoadingMessages ? (
                   <div className="text-center text-muted-foreground flex items-center justify-center gap-2 py-8">
                     <RefreshCw className="h-4 w-4 animate-spin" />
                     Carregando mensagens...
                   </div>
-                ) : clientMessages.length === 0 ? (
-                  <div className="text-center text-muted-foreground text-sm py-8">
-                    Nenhuma mensagem do WhatsApp encontrada para este cliente
-                  </div>
                 ) : (
-                  <div className="space-y-4 max-h-[600px] overflow-y-auto">
-                    {clientMessages.map((message) => (
-                      <div 
-                        key={message.id}
-                        className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <div 
-                          className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
-                            message.direction === 'outgoing'
-                              ? 'bg-primary text-primary-foreground' 
-                              : 'bg-muted'
-                          }`}
-                        >
-                          <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
-                          <span
-                            className={`text-[10px] mt-1 block ${
-                              message.direction === 'outgoing'
-                                ? 'text-primary-foreground/80'
-                                : 'text-muted-foreground'
-                            }`}
-                          >
-                            {message.sentAt ? format(new Date(message.sentAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : 'Data não disponível'}
-                          </span>
-                        </div>
+                  <>
+                    <ScrollArea className="flex-1 min-h-0 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
+                      <div className="p-4">
+                        {clientMessages.length === 0 ? (
+                          <div className="text-center text-muted-foreground text-sm py-8">
+                            Nenhuma mensagem do WhatsApp encontrada para este cliente
+                          </div>
+                        ) : (
+                          <div className="space-y-4 pb-4">
+                            {clientMessages.map((message) => (
+                              <div 
+                                key={message.id}
+                                className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                              >
+                                <div 
+                                  className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                                    message.direction === 'outgoing'
+                                      ? 'bg-primary text-primary-foreground' 
+                                      : 'bg-muted'
+                                  }`}
+                                >
+                                  <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
+                                  <span
+                                    className={`text-[10px] mt-1 block ${
+                                      message.direction === 'outgoing'
+                                        ? 'text-primary-foreground/80'
+                                        : 'text-muted-foreground'
+                                    }`}
+                                  >
+                                    {message.sentAt ? (
+                                      <>
+                                        {formatRelativeDate(message.sentAt)} • {formatHour(message.sentAt)}
+                                      </>
+                                    ) : 'Data não disponível'}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                            <div ref={messagesEndRef} />
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                    </ScrollArea>
+                    {conversationId && (
+                      <form onSubmit={handleSendMessage} className="border-t p-3 flex gap-2 flex-shrink-0">
+                        <Input 
+                          placeholder="Digite uma mensagem..."
+                          value={newMessage}
+                          onChange={(event) => setNewMessage(event.target.value)}
+                          disabled={sendingMessage}
+                        />
+                        <Button 
+                          type="submit" 
+                          size="icon"
+                          disabled={sendingMessage || !newMessage.trim()}
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </form>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>

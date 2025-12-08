@@ -222,12 +222,17 @@ export const chatService = {
     return response.data || { type: null, profile: null };
   },
 
-  async getClientMessages(clientId: string): Promise<ChatMessage[]> {
-    const response = await apiClient.get<ChatMessage[]>(`/api/chat/clients/${clientId}/messages`);
+  async getClientMessages(clientId: string): Promise<{ messages: ChatMessage[]; conversationId: string | null; conversationIds: string[] }> {
+    const response = await apiClient.get<{ messages: ChatMessage[]; conversationId: string | null; conversationIds: string[] }>(`/api/chat/clients/${clientId}/messages`);
     if (response.error) {
       throw new Error(response.error);
     }
-    return (response.data || []).map(normalizeMessage);
+    const data = response.data || { messages: [], conversationId: null, conversationIds: [] };
+    return {
+      messages: (data.messages || []).map(normalizeMessage),
+      conversationId: data.conversationId || null,
+      conversationIds: data.conversationIds || [],
+    };
   },
 };
 
