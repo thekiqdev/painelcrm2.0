@@ -1440,13 +1440,29 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     const normalizedClientPhone = clientPhone ? clientPhone.replace(/\D/g, '') : null;
 
     // Buscar conversas vinculadas pelo client_id ou pelo telefone
+    // Também buscar conversas que podem ter sido vinculadas via JOIN (client_id derivado)
     const conversationsResult = await pool.query(
       `
-      SELECT DISTINCT c.id, c.phone_number, c.contact_name, c.profile_name, c.external_chat_id
+      SELECT DISTINCT 
+        c.id, 
+        c.phone_number, 
+        c.contact_name, 
+        c.profile_name, 
+        c.external_chat_id,
+        COALESCE(c.client_id, cl.id) as resolved_client_id
       FROM chat_conversations c
+      LEFT JOIN clients cl
+        ON cl.user_id = c.user_id
+       AND cl.id = $2
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND cl.phone IS NOT NULL
+       AND cl.phone <> ''
+       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
       WHERE c.user_id = $1
         AND (
           c.client_id = $2
+          OR cl.id = $2
           OR (
             $3 IS NOT NULL
             AND c.phone_number IS NOT NULL
