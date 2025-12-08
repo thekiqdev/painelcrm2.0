@@ -154,10 +154,11 @@ export const chatService = {
     return response.data;
   },
 
-  async getConversations(filters?: { instanceId?: string; search?: string }) {
+  async getConversations(filters?: { instanceId?: string; search?: string; clientId?: string }) {
     const params = new URLSearchParams();
     if (filters?.instanceId) params.append('instanceId', filters.instanceId);
     if (filters?.search) params.append('search', filters.search);
+    if (filters?.clientId) params.append('clientId', filters.clientId);
 
     const url = `/api/chat/conversations${params.toString() ? `?${params.toString()}` : ''}`;
     const response = await apiClient.get<ChatConversation[]>(url);

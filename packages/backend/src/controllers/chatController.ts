@@ -1098,7 +1098,7 @@ export async function syncConversations(req: AuthRequest, res: Response) {
 export async function getConversations(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
-    const { instanceId, search, assignedTo, unassigned, status, queue } = req.query;
+    const { instanceId, search, assignedTo, unassigned, status, queue, clientId } = req.query;
     const params: any[] = [userId];
     let paramIndex = 2;
 
@@ -1155,6 +1155,14 @@ export async function getConversations(req: AuthRequest, res: Response) {
     if (queue && typeof queue === 'string') {
       params.push(queue);
       query += ` AND c.queue = $${params.length}`;
+      paramIndex++;
+    }
+
+    if (clientId && typeof clientId === 'string') {
+      // Quando filtrar por clientId, precisamos garantir que o JOIN com clients está correto
+      // e que o filtro seja aplicado corretamente
+      params.push(clientId);
+      query += ` AND (c.client_id = $${params.length} OR cl.id = $${params.length})`;
       paramIndex++;
     }
 

@@ -5,6 +5,7 @@ import { clientsService } from "@/services/clients";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
+import { chatService, ChatConversation, ChatMessage } from "@/services/chat";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare } from "lucide-react";
+import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, MessageSquare, Send } from "lucide-react";
 import { format } from "date-fns";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { cn } from "@/lib/utils";
@@ -93,6 +94,11 @@ const ClientProfile = () => {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
   const [isEditingTask, setIsEditingTask] = useState(false);
   const [newChecklistItem, setNewChecklistItem] = useState("");
@@ -176,10 +182,16 @@ const ClientProfile = () => {
   }, [activeTab, id]);
 
   useEffect(() => {
-    if (activeTab === "contracts" && id) {
-      loadContracts();
+    if (activeTab === "messages" && client?.id) {
+      loadClientConversations();
     }
-  }, [activeTab, id]);
+  }, [activeTab, client?.id]);
+
+  useEffect(() => {
+    if (selectedConversationId) {
+      loadConversationMessages(selectedConversationId);
+    }
+  }, [selectedConversationId]);
 
   const loadClientData = async () => {
     if (!id) return;
@@ -288,6 +300,64 @@ const ClientProfile = () => {
       console.error("Erro ao carregar tarefas:", error);
       setClientTasks([]);
     }
+  };
+
+  const loadClientConversations = async () => {
+    if (!client?.id) return;
+    
+    try {
+      setLoadingConversations(true);
+      const convs = await chatService.getConversations({ clientId: client.id });
+      setConversations(convs || []);
+    } catch (error) {
+      console.error("Erro ao carregar conversas:", error);
+      toast.error("Erro ao carregar conversas do WhatsApp");
+      setConversations([]);
+    } finally {
+      setLoadingConversations(false);
+    }
+  };
+
+  const loadConversationMessages = async (conversationId: string) => {
+    try {
+      setLoadingMessages(true);
+      const msgs = await chatService.getConversationMessages(conversationId);
+      setMessages(msgs || []);
+    } catch (error) {
+      console.error("Erro ao carregar mensagens:", error);
+      toast.error("Erro ao carregar mensagens");
+      setMessages([]);
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  const formatHour = (value?: string | null) => {
+    if (!value) return '--:--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '--:--';
+    return date.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const formatRelativeDate = (value?: string | null) => {
+    if (!value) return 'Sem data';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Sem data';
+    const now = Date.now();
+    const diff = now - date.getTime();
+
+    if (diff < 60_000) return 'Agora mesmo';
+    if (diff < 3_600_000) {
+      const minutes = Math.floor(diff / 60_000);
+      return `${minutes} min atrás`;
+    }
+    if (diff < 86_400_000) {
+      return `Hoje ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   };
 
   const handleAddTask = async (values: z.infer<typeof taskSchema>) => {
@@ -1265,14 +1335,140 @@ const ClientProfile = () => {
             </Card>
           )}
 
+          {/* Aba Mensagens - Conversas do WhatsApp */}
+          {activeTab === "messages" && (
+            <Card className="flex flex-col h-[calc(100vh-200px)]">
+              <CardHeader>
+                <CardTitle>Mensagens do WhatsApp</CardTitle>
+              </CardHeader>
+              <CardContent className="flex-1 flex gap-4 min-h-0 p-4">
+                {/* Lista de conversas */}
+                <div className="w-80 border-r pr-4 flex flex-col">
+                  <div className="mb-4">
+                    <h3 className="font-semibold text-sm mb-2">Conversas</h3>
+                    {loadingConversations ? (
+                      <div className="text-center text-muted-foreground text-sm py-4">
+                        <RefreshCw className="h-4 w-4 animate-spin inline-block mr-2" />
+                        Carregando...
+                      </div>
+                    ) : conversations.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        Nenhuma conversa encontrada
+                      </p>
+                    ) : (
+                      <div className="space-y-2 max-h-[calc(100vh-350px)] overflow-y-auto">
+                        {conversations.map((conv) => (
+                          <div
+                            key={conv.id}
+                            onClick={() => setSelectedConversationId(conv.id)}
+                            className={`p-3 rounded-lg cursor-pointer border transition-colors ${
+                              selectedConversationId === conv.id
+                                ? 'bg-primary/10 border-primary'
+                                : 'hover:bg-muted'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
+                                {(conv.contactName || conv.phoneNumber || '?').charAt(0).toUpperCase()}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm truncate">
+                                  {conv.contactName || conv.profileName || conv.phoneNumber || 'Sem nome'}
+                                </p>
+                                {conv.lastMessagePreview && (
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    {conv.lastMessagePreview}
+                                  </p>
+                                )}
+                                {conv.lastMessageAt && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {formatRelativeDate(conv.lastMessageAt)}
+                                  </p>
+                                )}
+                              </div>
+                              {conv.unreadCount > 0 && (
+                                <Badge variant="default" className="text-xs">
+                                  {conv.unreadCount}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Área de mensagens */}
+                <div className="flex-1 flex flex-col min-w-0">
+                  {selectedConversationId ? (
+                    <>
+                      {loadingMessages ? (
+                        <div className="flex-1 flex items-center justify-center">
+                          <div className="text-center text-muted-foreground">
+                            <RefreshCw className="h-4 w-4 animate-spin inline-block mr-2" />
+                            Carregando mensagens...
+                          </div>
+                        </div>
+                      ) : messages.length === 0 ? (
+                        <div className="flex-1 flex items-center justify-center">
+                          <p className="text-muted-foreground text-sm">
+                            Nenhuma mensagem disponível
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex-1 overflow-y-auto space-y-4 p-4">
+                          {messages.map((message) => (
+                            <div
+                              key={message.id}
+                              className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                            >
+                              <div
+                                className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                                  message.direction === 'outgoing'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-muted'
+                                }`}
+                              >
+                                <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
+                                <span
+                                  className={`text-[10px] mt-1 block ${
+                                    message.direction === 'outgoing'
+                                      ? 'text-primary-foreground/80'
+                                      : 'text-muted-foreground'
+                                  }`}
+                                >
+                                  {formatHour(message.sentAt)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center">
+                      <div className="text-center text-muted-foreground">
+                        <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p className="font-medium">Selecione uma conversa</p>
+                        <p className="text-sm mt-2">
+                          Escolha uma conversa na lista ao lado para ver as mensagens
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Outras abas - placeholder */}
-          {(activeTab === "opportunities" || activeTab === "messages" || activeTab === "calendar" || 
+          {(activeTab === "opportunities" || activeTab === "calendar" || 
             activeTab === "finance" || activeTab === "settings") && (
             <Card>
               <CardHeader>
                 <CardTitle>
                   {activeTab === "opportunities" && "Oportunidades"}
-                  {activeTab === "messages" && "Mensagens"}
                   {activeTab === "calendar" && "Agenda"}
                   {activeTab === "finance" && "Financeiro"}
                   {activeTab === "settings" && "Configurações"}
