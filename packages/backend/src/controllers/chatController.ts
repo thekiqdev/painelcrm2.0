@@ -186,12 +186,28 @@ async function upsertConversation(
     lastMessagePreview: chatData.lastMessagePreview?.substring(0, 50),
   });
 
-  // Buscar client_id e lead_id pelo telefone normalizado
+  // 1. Obter número conectado na instância
+  const instanceResult = await pool.query(
+    'SELECT connected_phone_number FROM chat_instances WHERE id = $1',
+    [instance.id]
+  );
+  const instancePhone = instanceResult.rows[0]?.connected_phone_number 
+    ? normalizePhoneNumber(instanceResult.rows[0].connected_phone_number)
+    : null;
+  
+  // 2. Normalizar telefone do contato
+  const contactPhone = normalizePhoneNumber(chatData.phoneNumber);
+
+  if (!contactPhone) {
+    console.warn(`[UpsertConversation ${upsertId}] No contact phone number, using fallback`);
+    // Fallback: usar comportamento antigo se não tiver telefone do contato
+  }
+
+  // 3. Buscar client_id e lead_id pelo telefone normalizado do contato
   let clientId: string | null = null;
   let leadId: string | null = null;
-  const normalizedPhone = normalizePhoneNumber(chatData.phoneNumber);
 
-  if (normalizedPhone) {
+  if (contactPhone) {
     try {
       // Primeiro, buscar cliente (prioridade sobre lead)
       const clientResult = await pool.query(
@@ -203,12 +219,12 @@ async function upsertConversation(
           AND regexp_replace(phone, '\\D', '', 'g') = $2
         LIMIT 1
         `,
-        [instance.user_id, normalizedPhone]
+        [instance.user_id, contactPhone]
       );
 
-      if (clientResult.rowCount > 0) {
+      if (clientResult.rowCount && clientResult.rowCount > 0) {
         clientId = clientResult.rows[0].id;
-        console.log(`[UpsertConversation ${upsertId}] Found client`, { clientId, phone: normalizedPhone });
+        console.log(`[UpsertConversation ${upsertId}] Found client`, { clientId, phone: contactPhone });
       } else {
         // Se não encontrou cliente, buscar lead
         const leadResult = await pool.query(
@@ -220,69 +236,285 @@ async function upsertConversation(
             AND regexp_replace(phone, '\\D', '', 'g') = $2
           LIMIT 1
           `,
-          [instance.user_id, normalizedPhone]
+          [instance.user_id, contactPhone]
         );
 
-        if (leadResult.rowCount > 0) {
+        if (leadResult.rowCount && leadResult.rowCount > 0) {
           leadId = leadResult.rows[0].id;
-          console.log(`[UpsertConversation ${upsertId}] Found lead`, { leadId, phone: normalizedPhone });
+          console.log(`[UpsertConversation ${upsertId}] Found lead`, { leadId, phone: contactPhone });
         }
       }
     } catch (linkError: any) {
       console.error(`[UpsertConversation ${upsertId}] Error linking to client/lead:`, {
         error: linkError.message,
-        phone: normalizedPhone,
+        phone: contactPhone,
       });
       // Não falha o upsert se houver erro ao buscar cliente/lead
     }
   }
 
   try {
-  const result = await pool.query(
-    `
-    INSERT INTO chat_conversations (
-      user_id, instance_id, external_chat_id, external_fast_id,
-      contact_name, profile_name, phone_number, status,
-        last_message_preview, last_message_at, unread_count, metadata,
-        client_id, lead_id
-    )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14)
-    ON CONFLICT (instance_id, external_chat_id)
-    DO UPDATE SET
-      external_fast_id = EXCLUDED.external_fast_id,
-      contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
-      profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
-      phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
-      status = COALESCE(EXCLUDED.status, chat_conversations.status),
-      last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
-      last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
-        unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
-      metadata = EXCLUDED.metadata,
-      client_id = COALESCE(EXCLUDED.client_id, chat_conversations.client_id),
-      lead_id = CASE 
-        WHEN EXCLUDED.client_id IS NOT NULL THEN NULL 
-        ELSE COALESCE(EXCLUDED.lead_id, chat_conversations.lead_id) 
-      END,
-      updated_at = now()
-    RETURNING *
-  `,
-    [
-      instance.user_id,
-      instance.id,
-      chatData.externalChatId,
-      chatData.externalFastId,
-      chatData.contactName,
-      chatData.profileName,
-      chatData.phoneNumber,
-      chatData.status,
-      chatData.lastMessagePreview,
-      chatData.lastMessageAt,
+  // 4. Buscar conversa existente pela nova chave única (se tiver ambos os telefones)
+  let existingConversationId: string | null = null;
+  
+  if (instancePhone && contactPhone) {
+    const existingConv = await pool.query(
+      `SELECT id FROM chat_conversations 
+       WHERE user_id = $1 
+         AND instance_phone_normalizado = $2
+         AND contact_phone_normalizado = $3
+       LIMIT 1`,
+      [instance.user_id, instancePhone, contactPhone]
+    );
+    
+    if (existingConv.rowCount && existingConv.rowCount > 0) {
+      existingConversationId = existingConv.rows[0].id;
+      console.log(`[UpsertConversation ${upsertId}] Found existing conversation by phone`, {
+        conversationId: existingConversationId,
+        instancePhone,
+        contactPhone,
+      });
+    }
+  }
+
+  // 5. Se não encontrou pela nova chave, tentar pela antiga (compatibilidade durante migração)
+  if (!existingConversationId) {
+    const fallbackConv = await pool.query(
+      `SELECT id FROM chat_conversations 
+       WHERE instance_id = $1 AND external_chat_id = $2
+       LIMIT 1`,
+      [instance.id, chatData.externalChatId]
+    );
+    
+    if (fallbackConv.rowCount && fallbackConv.rowCount > 0) {
+      existingConversationId = fallbackConv.rows[0].id;
+      console.log(`[UpsertConversation ${upsertId}] Found existing conversation by instance+external (fallback)`, {
+        conversationId: existingConversationId,
+      });
+      
+      // Atualizar telefones normalizados na conversa existente
+      if (instancePhone && contactPhone) {
+        await pool.query(
+          `UPDATE chat_conversations 
+           SET instance_phone_normalizado = $1, contact_phone_normalizado = $2
+           WHERE id = $3`,
+          [instancePhone, contactPhone, existingConversationId]
+        );
+      }
+    }
+  }
+
+  // 6. Se encontrou conversa existente, atualizar e retornar
+  if (existingConversationId) {
+    const updateResult = await pool.query(
+      `
+      UPDATE chat_conversations SET
+        instance_id = $1,
+        external_fast_id = COALESCE($2, external_fast_id),
+        contact_name = COALESCE($3, contact_name),
+        profile_name = COALESCE($4, profile_name),
+        phone_number = COALESCE($5, phone_number),
+        status = COALESCE($6, status),
+        last_message_preview = COALESCE($7, last_message_preview),
+        last_message_at = COALESCE($8, last_message_at),
+        unread_count = COALESCE($9, unread_count),
+        metadata = $10::jsonb,
+        client_id = COALESCE($11, client_id),
+        lead_id = CASE 
+          WHEN $11 IS NOT NULL THEN NULL 
+          ELSE COALESCE($12, lead_id) 
+        END,
+        instance_phone_normalizado = COALESCE($13, instance_phone_normalizado),
+        contact_phone_normalizado = COALESCE($14, contact_phone_normalizado),
+        updated_at = now()
+      WHERE id = $15
+      RETURNING *
+      `,
+      [
+        instance.id,
+        chatData.externalFastId,
+        chatData.contactName,
+        chatData.profileName,
+        chatData.phoneNumber,
+        chatData.status,
+        chatData.lastMessagePreview,
+        chatData.lastMessageAt,
         chatData.unreadCount,
-      JSON.stringify(chatData.metadata || {}),
-      clientId,
-      leadId,
-    ]
-  );
+        JSON.stringify(chatData.metadata || {}),
+        clientId,
+        leadId,
+        instancePhone,
+        contactPhone,
+        existingConversationId,
+      ]
+    );
+    
+    if (updateResult.rowCount > 0) {
+      console.log(`[UpsertConversation ${upsertId}] Updated existing conversation`, {
+        conversationId: updateResult.rows[0].id,
+        instancePhone,
+        contactPhone,
+      });
+      return updateResult.rows[0];
+    }
+  }
+
+  // 7. Criar nova conversa se não encontrou existente
+  // Se tiver ambos os telefones, tentar inserir usando nova lógica
+  // Caso contrário, usar fallback para comportamento antigo
+  let result: any = null;
+  
+  if (!existingConversationId) {
+    if (instancePhone && contactPhone) {
+      // Tentar inserir usando nova chave única
+      // Se der conflito no índice único, buscar e atualizar
+      try {
+        result = await pool.query(
+          `
+          INSERT INTO chat_conversations (
+            user_id, instance_id, external_chat_id, external_fast_id,
+            contact_name, profile_name, phone_number, status,
+              last_message_preview, last_message_at, unread_count, metadata,
+              client_id, lead_id, instance_phone_normalizado, contact_phone_normalizado
+          )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15, $16)
+          RETURNING *
+        `,
+          [
+            instance.user_id,
+            instance.id,
+            chatData.externalChatId,
+            chatData.externalFastId,
+            chatData.contactName,
+            chatData.profileName,
+            chatData.phoneNumber,
+            chatData.status,
+            chatData.lastMessagePreview,
+            chatData.lastMessageAt,
+              chatData.unreadCount,
+            JSON.stringify(chatData.metadata || {}),
+            clientId,
+            leadId,
+            instancePhone,
+            contactPhone,
+          ]
+        );
+      } catch (insertError: any) {
+        // Se der erro de constraint única, buscar a conversa existente
+        if (insertError.code === '23505') {
+          console.log(`[UpsertConversation ${upsertId}] Unique constraint violation, fetching existing conversation`);
+          const conflictConv = await pool.query(
+            `SELECT id FROM chat_conversations 
+             WHERE user_id = $1 
+               AND instance_phone_normalizado = $2
+               AND contact_phone_normalizado = $3
+             LIMIT 1`,
+            [instance.user_id, instancePhone, contactPhone]
+          );
+          
+          if (conflictConv.rowCount && conflictConv.rowCount > 0) {
+            existingConversationId = conflictConv.rows[0].id;
+            // Atualizar a conversa existente (mesma lógica do passo 6)
+            result = await pool.query(
+              `
+              UPDATE chat_conversations SET
+                instance_id = $1,
+                external_fast_id = COALESCE($2, external_fast_id),
+                contact_name = COALESCE($3, contact_name),
+                profile_name = COALESCE($4, profile_name),
+                phone_number = COALESCE($5, phone_number),
+                status = COALESCE($6, status),
+                last_message_preview = COALESCE($7, last_message_preview),
+                last_message_at = COALESCE($8, last_message_at),
+                unread_count = COALESCE($9, unread_count),
+                metadata = $10::jsonb,
+                client_id = COALESCE($11, client_id),
+                lead_id = CASE 
+                  WHEN $11 IS NOT NULL THEN NULL 
+                  ELSE COALESCE($12, lead_id) 
+                END,
+                updated_at = now()
+              WHERE id = $13
+              RETURNING *
+              `,
+              [
+                instance.id,
+                chatData.externalFastId,
+                chatData.contactName,
+                chatData.profileName,
+                chatData.phoneNumber,
+                chatData.status,
+                chatData.lastMessagePreview,
+                chatData.lastMessageAt,
+                chatData.unreadCount,
+                JSON.stringify(chatData.metadata || {}),
+                clientId,
+                leadId,
+                existingConversationId,
+              ]
+            );
+          } else {
+            throw insertError; // Re-throw se não encontrou a conversa
+          }
+        } else {
+          throw insertError; // Re-throw outros erros
+        }
+      }
+    }
+    
+    // Fallback: comportamento antigo se não tiver telefones ou se deu erro
+    if (!result || result.rowCount === 0) {
+      result = await pool.query(
+        `
+        INSERT INTO chat_conversations (
+          user_id, instance_id, external_chat_id, external_fast_id,
+          contact_name, profile_name, phone_number, status,
+            last_message_preview, last_message_at, unread_count, metadata,
+            client_id, lead_id, instance_phone_normalizado, contact_phone_normalizado
+        )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15, $16)
+        ON CONFLICT (instance_id, external_chat_id)
+        DO UPDATE SET
+          external_fast_id = COALESCE(EXCLUDED.external_fast_id, chat_conversations.external_fast_id),
+          contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
+          profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
+          phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
+          status = COALESCE(EXCLUDED.status, chat_conversations.status),
+          last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
+          last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
+            unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
+          metadata = EXCLUDED.metadata,
+          client_id = COALESCE(EXCLUDED.client_id, chat_conversations.client_id),
+          lead_id = CASE 
+            WHEN EXCLUDED.client_id IS NOT NULL THEN NULL 
+            ELSE COALESCE(EXCLUDED.lead_id, chat_conversations.lead_id) 
+          END,
+          instance_phone_normalizado = COALESCE(EXCLUDED.instance_phone_normalizado, chat_conversations.instance_phone_normalizado),
+          contact_phone_normalizado = COALESCE(EXCLUDED.contact_phone_normalizado, chat_conversations.contact_phone_normalizado),
+          updated_at = now()
+        RETURNING *
+      `,
+        [
+          instance.user_id,
+          instance.id,
+          chatData.externalChatId,
+          chatData.externalFastId,
+          chatData.contactName,
+          chatData.profileName,
+          chatData.phoneNumber,
+          chatData.status,
+          chatData.lastMessagePreview,
+          chatData.lastMessageAt,
+            chatData.unreadCount,
+          JSON.stringify(chatData.metadata || {}),
+          clientId,
+          leadId,
+          instancePhone,
+          contactPhone,
+        ]
+      );
+    }
+  }
 
     if (result.rowCount === 0 || !result.rows[0]) {
       console.error(`[UpsertConversation ${upsertId}] No row returned from database`);
@@ -690,15 +922,31 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
     console.log('UazAPI connectInstance response:', JSON.stringify(response, null, 2));
 
+    // Extrair número conectado da resposta da UazAPI
+    const connectedPhone = response?.phone 
+      || response?.number 
+      || response?.connectedPhone
+      || response?.data?.phone
+      || response?.data?.number
+      || data.phone; // fallback para o phone passado no body
+    
+    const normalizedConnectedPhone = normalizePhoneNumber(connectedPhone);
+
     await pool.query(
       `
       UPDATE chat_instances
       SET status = $1,
-          metadata = metadata || $2::jsonb,
+          connected_phone_number = COALESCE($2, connected_phone_number),
+          metadata = metadata || $3::jsonb,
           updated_at = now()
-      WHERE id = $3
+      WHERE id = $4
     `,
-      [response?.status || 'connecting', JSON.stringify({ lastConnect: response }), instance.id]
+      [
+        response?.status || 'connecting',
+        normalizedConnectedPhone,
+        JSON.stringify({ lastConnect: response }),
+        instance.id
+      ]
     );
 
     // Se conectado com sucesso, configurar webhook automaticamente
@@ -1202,14 +1450,14 @@ export async function getConversations(req: AuthRequest, res: Response) {
     });
 
     // Verificar se há conversas no banco para este usuário mas não retornadas
-    if (conversations.rowCount === 0 && instanceId) {
+    if ((conversations.rowCount ?? 0) === 0 && instanceId) {
       const allConversationsCheck = await pool.query(
         'SELECT id, user_id, instance_id, external_chat_id, contact_name FROM chat_conversations WHERE instance_id = $1 LIMIT 5',
         [instanceId]
       );
       console.log('[GetConversations] Debug: Conversations in DB for this instance', {
         instanceId,
-        found: allConversationsCheck.rowCount,
+        found: allConversationsCheck.rowCount ?? 0,
         conversations: allConversationsCheck.rows.map(c => ({
           id: c.id,
           userId: c.user_id,
@@ -1274,13 +1522,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { clientId } = req.params;
 
-    console.log('[GetClientMessages] Route called', { 
-      userId, 
-      clientId,
-      method: req.method,
-      path: req.path,
-      originalUrl: req.originalUrl
-    });
+    console.log('[GetClientMessages] Starting', { userId, clientId });
 
     // Verificar se o cliente existe e pertence ao usuário
     const clientCheck = await pool.query(
@@ -1288,7 +1530,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       [clientId, userId]
     );
 
-    if (clientCheck.rowCount === 0) {
+    if ((clientCheck.rowCount ?? 0) === 0) {
       console.log('[GetClientMessages] Client not found', { clientId, userId });
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
@@ -1318,31 +1560,25 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
           updated_at = now()
       WHERE user_id = $2
         AND client_id IS NULL
-        AND phone_number IS NOT NULL
-        AND phone_number <> ''
-        AND regexp_replace(phone_number, '\\D', '', 'g') = $3
+        AND contact_phone_normalizado = $3
       `,
       [clientId, userId, clientPhone]
     );
 
     // Buscar todas as conversas vinculadas ao cliente
-    // 1. Por client_id direto na tabela
-    // 2. Por telefone normalizado (caso o client_id não esteja preenchido ainda)
+    // Usando contact_phone_normalizado (nova estrutura)
+    // Pode haver múltiplas conversas se o cliente falou com diferentes números do admin
     const conversationsResult = await pool.query(
       `
-      SELECT DISTINCT c.id, c.phone_number, c.client_id
+      SELECT DISTINCT c.id, c.phone_number, c.client_id, c.instance_phone_normalizado, c.contact_phone_normalizado
       FROM chat_conversations c
       WHERE c.user_id = $1
         AND (
           -- Conversas com client_id vinculado diretamente
           c.client_id = $2
           OR
-          -- Conversas com telefone que corresponde ao cliente
-          (
-            c.phone_number IS NOT NULL
-            AND c.phone_number <> ''
-            AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3
-          )
+          -- Conversas com telefone normalizado que corresponde ao cliente
+          c.contact_phone_normalizado = $3
         )
       `,
       [userId, clientId, clientPhone]
@@ -1353,7 +1589,9 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       conversations: conversationsResult.rows.map(c => ({
         id: c.id,
         phone_number: c.phone_number,
-        client_id: c.client_id
+        client_id: c.client_id,
+        instance_phone: c.instance_phone_normalizado,
+        contact_phone: c.contact_phone_normalizado
       }))
     });
 
@@ -1366,6 +1604,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     const conversationIds = conversationsResult.rows.map(row => row.id);
 
     // Buscar todas as mensagens de todas as conversas vinculadas ao cliente
+    // Agregar mensagens de todas as conversas (pode haver múltiplas se cliente falou com diferentes números do admin)
     const messages = await pool.query(
       `
         SELECT m.*
@@ -1450,7 +1689,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
         'SELECT * FROM clients WHERE id = $1 AND user_id = $2',
         [clientId, userId]
       );
-      if (clientResult.rowCount > 0) {
+      if (clientResult.rowCount && clientResult.rowCount > 0) {
         res.json({
           type: 'client',
           profile: clientResult.rows[0],
@@ -1464,7 +1703,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
         'SELECT * FROM leads WHERE id = $1 AND user_id = $2',
         [leadId, userId]
       );
-      if (leadResult.rowCount > 0) {
+      if (leadResult.rowCount && leadResult.rowCount > 0) {
         res.json({
           type: 'lead',
           profile: leadResult.rows[0],
