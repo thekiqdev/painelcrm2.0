@@ -349,7 +349,7 @@ async function upsertConversation(
       ]
     );
     
-    if (updateResult.rowCount > 0) {
+    if (updateResult.rowCount && updateResult.rowCount > 0) {
       console.log(`[UpsertConversation ${upsertId}] Updated existing conversation`, {
         conversationId: updateResult.rows[0].id,
         instancePhone,
@@ -370,10 +370,10 @@ async function upsertConversation(
       // Se der conflito no índice único, buscar e atualizar
       try {
         result = await pool.query(
-          `
-          INSERT INTO chat_conversations (
-            user_id, instance_id, external_chat_id, external_fast_id,
-            contact_name, profile_name, phone_number, status,
+    `
+    INSERT INTO chat_conversations (
+      user_id, instance_id, external_chat_id, external_fast_id,
+      contact_name, profile_name, phone_number, status,
               last_message_preview, last_message_at, unread_count, metadata,
               client_id, lead_id, instance_phone_normalizado, contact_phone_normalizado
           )
@@ -473,17 +473,17 @@ async function upsertConversation(
             client_id, lead_id, instance_phone_normalizado, contact_phone_normalizado
         )
           VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15, $16)
-        ON CONFLICT (instance_id, external_chat_id)
-        DO UPDATE SET
+    ON CONFLICT (instance_id, external_chat_id)
+    DO UPDATE SET
           external_fast_id = COALESCE(EXCLUDED.external_fast_id, chat_conversations.external_fast_id),
-          contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
-          profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
-          phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
-          status = COALESCE(EXCLUDED.status, chat_conversations.status),
-          last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
-          last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
-            unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
-          metadata = EXCLUDED.metadata,
+      contact_name = COALESCE(EXCLUDED.contact_name, chat_conversations.contact_name),
+      profile_name = COALESCE(EXCLUDED.profile_name, chat_conversations.profile_name),
+      phone_number = COALESCE(EXCLUDED.phone_number, chat_conversations.phone_number),
+      status = COALESCE(EXCLUDED.status, chat_conversations.status),
+      last_message_preview = COALESCE(EXCLUDED.last_message_preview, chat_conversations.last_message_preview),
+      last_message_at = COALESCE(EXCLUDED.last_message_at, chat_conversations.last_message_at),
+        unread_count = COALESCE(EXCLUDED.unread_count, chat_conversations.unread_count),
+      metadata = EXCLUDED.metadata,
           client_id = COALESCE(EXCLUDED.client_id, chat_conversations.client_id),
           lead_id = CASE 
             WHEN EXCLUDED.client_id IS NOT NULL THEN NULL 
@@ -491,28 +491,28 @@ async function upsertConversation(
           END,
           instance_phone_normalizado = COALESCE(EXCLUDED.instance_phone_normalizado, chat_conversations.instance_phone_normalizado),
           contact_phone_normalizado = COALESCE(EXCLUDED.contact_phone_normalizado, chat_conversations.contact_phone_normalizado),
-          updated_at = now()
-        RETURNING *
-      `,
-        [
-          instance.user_id,
-          instance.id,
-          chatData.externalChatId,
-          chatData.externalFastId,
-          chatData.contactName,
-          chatData.profileName,
-          chatData.phoneNumber,
-          chatData.status,
-          chatData.lastMessagePreview,
-          chatData.lastMessageAt,
-            chatData.unreadCount,
-          JSON.stringify(chatData.metadata || {}),
+      updated_at = now()
+    RETURNING *
+  `,
+    [
+      instance.user_id,
+      instance.id,
+      chatData.externalChatId,
+      chatData.externalFastId,
+      chatData.contactName,
+      chatData.profileName,
+      chatData.phoneNumber,
+      chatData.status,
+      chatData.lastMessagePreview,
+      chatData.lastMessageAt,
+        chatData.unreadCount,
+      JSON.stringify(chatData.metadata || {}),
           clientId,
           leadId,
           instancePhone,
           contactPhone,
-        ]
-      );
+    ]
+  );
     }
   }
 
@@ -2193,10 +2193,10 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       // - dados da mensagem
       const chatData = normalizeChatPayload({
         ...baseChat,
-        ...data,
-        ...message,
+          ...data,
+          ...message,
         wa_chatid: extracted.chatId,
-        wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
+          wa_lastMsgTimestamp: message.timestamp || message.messageTimestamp,
         wa_lastMsgText: extractMessageBody(message),
         isGroup: extracted.isGroup,
       });
