@@ -1517,8 +1517,9 @@ export async function getConversations(req: AuthRequest, res: Response) {
           error: queryError.message,
           code: queryError.code,
         });
-        // Query simplificada sem as novas colunas
-        const simpleQuery = `
+        // Query simplificada sem JOINs complexos que podem falhar
+        const simpleParams: any[] = [userId];
+        let simpleQuery = `
           SELECT
             c.*,
             i.name as instance_name,
@@ -1527,11 +1528,46 @@ export async function getConversations(req: AuthRequest, res: Response) {
           FROM chat_conversations c
           LEFT JOIN chat_instances i ON i.id = c.instance_id
           WHERE c.user_id = $1
-            ${instanceId ? `AND c.instance_id = $2` : ''}
-          ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
-          LIMIT 200
         `;
-        const simpleParams = instanceId ? [userId, instanceId] : [userId];
+        
+        if (instanceId) {
+          simpleParams.push(instanceId);
+          simpleQuery += ` AND c.instance_id = $${simpleParams.length}`;
+        }
+        
+        if (assignedTo === 'me') {
+          simpleParams.push(userId);
+          simpleQuery += ` AND c.assigned_to = $${simpleParams.length}`;
+        } else if (unassigned === 'true') {
+          simpleQuery += ` AND (c.assigned_to IS NULL OR c.assigned_to = '00000000-0000-0000-0000-000000000000'::uuid)`;
+        }
+        
+        if (status && typeof status === 'string') {
+          simpleParams.push(status);
+          simpleQuery += ` AND c.status = $${simpleParams.length}`;
+        }
+        
+        if (queue && typeof queue === 'string') {
+          simpleParams.push(queue);
+          simpleQuery += ` AND c.queue = $${simpleParams.length}`;
+        }
+        
+        if (clientId && typeof clientId === 'string') {
+          simpleParams.push(clientId);
+          simpleQuery += ` AND c.client_id = $${simpleParams.length}`;
+        }
+        
+        if (search && typeof search === 'string') {
+          simpleParams.push(`%${search.toLowerCase()}%`);
+          simpleQuery += ` AND (
+            LOWER(COALESCE(c.contact_name, '')) LIKE $${simpleParams.length} OR
+            LOWER(COALESCE(c.profile_name, '')) LIKE $${simpleParams.length} OR
+            LOWER(COALESCE(c.phone_number, '')) LIKE $${simpleParams.length}
+          )`;
+        }
+        
+        simpleQuery += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
+        
         conversations = await pool.query(simpleQuery, simpleParams);
       } else {
         throw queryError;
