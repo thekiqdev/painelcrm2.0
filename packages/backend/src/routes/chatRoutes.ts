@@ -9,8 +9,8 @@ import {
   syncConversations,
   getConversations,
   getConversationMessages,
-  getClientMessages,
   getConversationProfile,
+  getClientMessages,
   sendMessage,
   configureInstanceWebhook,
   getInstanceWebhook,
@@ -33,10 +33,9 @@ router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/instances/:id/webhook/force', forceConfigureWebhook);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations', getConversations);
-// Rotas específicas de clients devem vir antes das rotas genéricas de conversations
-router.get('/clients/:clientId/messages', getClientMessages);
 router.get('/conversations/:id/messages', getConversationMessages);
 router.get('/conversations/:id/profile', getConversationProfile);
+router.get('/clients/:id/messages', getClientMessages);
 router.post('/conversations/:id/messages/sync', syncConversationMessages);
 router.post('/messages', sendMessage);
 router.post('/conversations/:id/mark-read', markConversationRead);

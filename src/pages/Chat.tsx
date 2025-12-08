@@ -1159,6 +1159,25 @@ const Chat = () => {
     const isActive = selectedConversationId === conversation.id;
     const unread = conversation.unreadCount ?? 0;
     const identifier = conversation.contactName || conversation.profileName || conversation.phoneNumber || conversation.external_chat_id;
+    const hasProfile = !!(conversation.client_id || conversation.leadId);
+
+    const handleAvatarClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (conversation.client_id) {
+        navigate(`/clients/${conversation.client_id}`);
+      } else if (conversation.leadId) {
+        toast.info('Visualização de perfil de lead em desenvolvimento');
+      }
+    };
+
+    const handleNameClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (conversation.client_id) {
+        navigate(`/clients/${conversation.client_id}`);
+      } else if (conversation.leadId) {
+        toast.info('Visualização de perfil de lead em desenvolvimento');
+      }
+    };
 
     return (
       <button
@@ -1170,7 +1189,10 @@ const Chat = () => {
         }`}
     >
       <div className="flex items-start gap-3">
-          <Avatar className="h-10 w-10">
+          <Avatar 
+            className={`h-10 w-10 ${hasProfile ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+            onClick={hasProfile ? handleAvatarClick : undefined}
+          >
             {conversation.avatarUrl ? (
               <AvatarImage
                 src={conversation.avatarUrl}
@@ -1184,7 +1206,15 @@ const Chat = () => {
         </Avatar>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <div className="font-medium truncate">{identifier}</div>
+              <div 
+                className={`font-medium truncate ${hasProfile ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                onClick={hasProfile ? handleNameClick : undefined}
+              >
+                {identifier}
+                {hasProfile && (
+                  <ExternalLink className="inline-block h-3 w-3 ml-1 text-muted-foreground" />
+                )}
+              </div>
               <span className="text-xs text-muted-foreground whitespace-nowrap">
                 {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
             </span>
@@ -1193,6 +1223,16 @@ const Chat = () => {
               {conversation.lastMessagePreview || 'Sem mensagens recentes'}
           </p>
           <div className="flex items-center gap-2 mt-1">
+              {conversation.client_id && (
+                <Badge variant="default" className="text-[10px]">
+                  Cliente
+                </Badge>
+              )}
+              {!conversation.client_id && conversation.leadId && (
+                <Badge variant="secondary" className="text-[10px]">
+                  Lead
+                </Badge>
+              )}
               {conversation.status && (
                 <Badge
                   variant="outline"
@@ -1377,7 +1417,16 @@ const Chat = () => {
                       <CardHeader className="px-4 py-3 border-b space-y-2 flex-shrink-0">
                         <div className="flex items-start justify-between gap-2 flex-wrap">
                           <div className="flex items-center gap-3">
-                            <Avatar className="h-10 w-10">
+                            <Avatar 
+                              className={`h-10 w-10 ${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                              onClick={() => {
+                                if (currentClient) {
+                                  navigate(`/clients/${currentClient.id}`);
+                                } else if (currentLead) {
+                                  toast.info('Visualização de perfil de lead em desenvolvimento');
+                                }
+                              }}
+                            >
                               {selectedConversation.avatarUrl ? (
                                 <AvatarImage
                                   src={selectedConversation.avatarUrl}
@@ -1398,7 +1447,16 @@ const Chat = () => {
                                 </AvatarFallback>
                               )}
                             </Avatar>
-                            <div>
+                            <div 
+                              className={`${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                              onClick={() => {
+                                if (currentClient) {
+                                  navigate(`/clients/${currentClient.id}`);
+                                } else if (currentLead) {
+                                  toast.info('Visualização de perfil de lead em desenvolvimento');
+                                }
+                              }}
+                            >
                               <div className="flex items-center gap-2">
                                 <h3 className="font-semibold">
                                   {selectedConversation.contactName ||

@@ -5,7 +5,7 @@ import { clientsService } from "@/services/clients";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
-import { chatService, ChatConversation, ChatMessage } from "@/services/chat";
+import { chatService, ChatMessage } from "@/services/chat";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,8 +14,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, MessageSquare, Send } from "lucide-react";
+import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare } from "lucide-react";
 import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { cn } from "@/lib/utils";
 import { useForm } from "react-hook-form";
@@ -94,11 +95,11 @@ const ClientProfile = () => {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(false);
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
   const [isEditingTask, setIsEditingTask] = useState(false);
   const [newChecklistItem, setNewChecklistItem] = useState("");
+  const [clientMessages, setClientMessages] = useState<ChatMessage[]>([]);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -179,10 +180,10 @@ const ClientProfile = () => {
   }, [activeTab, id]);
 
   useEffect(() => {
-    if (activeTab === "messages" && client?.id) {
+    if (activeTab === "messages" && id) {
       loadClientMessages();
     }
-  }, [activeTab, client?.id]);
+  }, [activeTab, id]);
 
   const loadClientData = async () => {
     if (!id) return;
@@ -291,51 +292,6 @@ const ClientProfile = () => {
       console.error("Erro ao carregar tarefas:", error);
       setClientTasks([]);
     }
-  };
-
-  const loadClientMessages = async () => {
-    if (!client?.id) return;
-    
-    try {
-      setLoadingMessages(true);
-      // Buscar todas as mensagens do cliente (agregadas de todas as conversas vinculadas)
-      const msgs = await chatService.getClientMessages(client.id);
-      setMessages(msgs || []);
-    } catch (error) {
-      console.error("Erro ao carregar mensagens:", error);
-      toast.error("Erro ao carregar mensagens do WhatsApp");
-      setMessages([]);
-    } finally {
-      setLoadingMessages(false);
-    }
-  };
-
-  const formatHour = (value?: string | null) => {
-    if (!value) return '--:--';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '--:--';
-    return date.toLocaleTimeString('pt-BR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatRelativeDate = (value?: string | null) => {
-    if (!value) return 'Sem data';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 'Sem data';
-    const now = Date.now();
-    const diff = now - date.getTime();
-
-    if (diff < 60_000) return 'Agora mesmo';
-    if (diff < 3_600_000) {
-      const minutes = Math.floor(diff / 60_000);
-      return `${minutes} min atrás`;
-    }
-    if (diff < 86_400_000) {
-      return `Hoje ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
-    }
-    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   };
 
   const handleAddTask = async (values: z.infer<typeof taskSchema>) => {
@@ -503,6 +459,21 @@ const ClientProfile = () => {
       toast.error("Erro ao carregar contratos");
     } finally {
       setIsLoadingContracts(false);
+    }
+  };
+
+  const loadClientMessages = async () => {
+    if (!id) return;
+    
+    try {
+      setIsLoadingMessages(true);
+      const messages = await chatService.getClientMessages(id);
+      setClientMessages(messages || []);
+    } catch (error: any) {
+      console.error("Erro ao carregar mensagens:", error);
+      toast.error("Erro ao carregar mensagens do WhatsApp");
+    } finally {
+      setIsLoadingMessages(false);
     }
   };
 
@@ -1313,86 +1284,49 @@ const ClientProfile = () => {
             </Card>
           )}
 
-          {/* Aba Mensagens - Histórico completo do WhatsApp */}
+          {/* Aba de Mensagens */}
           {activeTab === "messages" && (
-            <Card className="flex flex-col h-[calc(100vh-200px)]">
+            <Card>
               <CardHeader>
-                <CardTitle>Histórico de Mensagens do WhatsApp</CardTitle>
-                {client?.phone && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {client.phone}
-                  </p>
-                )}
+                <CardTitle>Mensagens do WhatsApp</CardTitle>
               </CardHeader>
-              <CardContent className="flex-1 flex flex-col min-h-0 p-4">
-                {loadingMessages ? (
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="text-center text-muted-foreground">
-                      <RefreshCw className="h-4 w-4 animate-spin inline-block mr-2" />
-                      Carregando histórico de mensagens...
-                    </div>
+              <CardContent>
+                {isLoadingMessages ? (
+                  <div className="text-center text-muted-foreground flex items-center justify-center gap-2 py-8">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Carregando mensagens...
                   </div>
-                ) : messages.length === 0 ? (
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="text-center text-muted-foreground">
-                      <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p className="font-medium">Nenhuma mensagem encontrada</p>
-                      <p className="text-sm mt-2">
-                        O histórico de mensagens do WhatsApp aparecerá aqui quando houver conversas com este cliente.
-                      </p>
-                    </div>
+                ) : clientMessages.length === 0 ? (
+                  <div className="text-center text-muted-foreground text-sm py-8">
+                    Nenhuma mensagem do WhatsApp encontrada para este cliente
                   </div>
                 ) : (
-                  <div className="flex-1 overflow-y-auto space-y-4 p-4">
-                    {messages.map((message) => {
-                      const messageDate = message.sentAt ? new Date(message.sentAt) : null;
-                      const showDateSeparator = (() => {
-                        const msgIndex = messages.indexOf(message);
-                        if (msgIndex === 0) return true;
-                        const prevMessage = messages[msgIndex - 1];
-                        const prevDate = prevMessage.sentAt ? new Date(prevMessage.sentAt) : null;
-                        if (!messageDate || !prevDate) return false;
-                        return messageDate.toDateString() !== prevDate.toDateString();
-                      })();
-
-                      return (
-                        <React.Fragment key={message.id}>
-                          {showDateSeparator && messageDate && (
-                            <div className="flex items-center justify-center my-4">
-                              <div className="px-3 py-1 bg-muted rounded-full text-xs text-muted-foreground">
-                                {messageDate.toLocaleDateString('pt-BR', {
-                                  day: '2-digit',
-                                  month: 'long',
-                                  year: 'numeric'
-                                })}
-                              </div>
-                            </div>
-                          )}
-                          <div
-                            className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                  <div className="space-y-4 max-h-[600px] overflow-y-auto">
+                    {clientMessages.map((message) => (
+                      <div 
+                        key={message.id}
+                        className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div 
+                          className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                            message.direction === 'outgoing'
+                              ? 'bg-primary text-primary-foreground' 
+                              : 'bg-muted'
+                          }`}
+                        >
+                          <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
+                          <span
+                            className={`text-[10px] mt-1 block ${
+                              message.direction === 'outgoing'
+                                ? 'text-primary-foreground/80'
+                                : 'text-muted-foreground'
+                            }`}
                           >
-                            <div
-                              className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
-                                message.direction === 'outgoing'
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted'
-                              }`}
-                            >
-                              <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
-                              <span
-                                className={`text-[10px] mt-1 block ${
-                                  message.direction === 'outgoing'
-                                    ? 'text-primary-foreground/80'
-                                    : 'text-muted-foreground'
-                                }`}
-                              >
-                                {formatHour(message.sentAt)}
-                              </span>
-                            </div>
-                          </div>
-                        </React.Fragment>
-                      );
-                    })}
+                            {message.sentAt ? format(new Date(message.sentAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : 'Data não disponível'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </CardContent>

@@ -67,23 +67,23 @@ const normalizeConversation = (raw: any): ChatConversation => {
     null;
 
   return {
-    id: raw.id,
-    user_id: raw.user_id,
-    instance_id: raw.instance_id,
-    instance_name: raw.instance_name,
-    client_id: raw.client_id ?? null,
+  id: raw.id,
+  user_id: raw.user_id,
+  instance_id: raw.instance_id,
+  instance_name: raw.instance_name,
+  client_id: raw.client_id ?? null,
     leadId: raw.lead_id ?? null,
-    external_chat_id: raw.external_chat_id,
-    contactName: raw.contact_name ?? null,
-    profileName: raw.profile_name ?? null,
-    phoneNumber: raw.phone_number ?? null,
+  external_chat_id: raw.external_chat_id,
+  contactName: raw.contact_name ?? null,
+  profileName: raw.profile_name ?? null,
+  phoneNumber: raw.phone_number ?? null,
     avatarUrl,
-    status: raw.status ?? null,
-    lastMessagePreview: raw.last_message_preview ?? null,
-    lastMessageAt: raw.last_message_at ?? null,
-    unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
+  status: raw.status ?? null,
+  lastMessagePreview: raw.last_message_preview ?? null,
+  lastMessageAt: raw.last_message_at ?? null,
+  unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
     metadata: metadata ?? null,
-    updated_at: raw.updated_at,
+  updated_at: raw.updated_at,
   };
 };
 
@@ -154,11 +154,10 @@ export const chatService = {
     return response.data;
   },
 
-  async getConversations(filters?: { instanceId?: string; search?: string; clientId?: string }) {
+  async getConversations(filters?: { instanceId?: string; search?: string }) {
     const params = new URLSearchParams();
     if (filters?.instanceId) params.append('instanceId', filters.instanceId);
     if (filters?.search) params.append('search', filters.search);
-    if (filters?.clientId) params.append('clientId', filters.clientId);
 
     const url = `/api/chat/conversations${params.toString() ? `?${params.toString()}` : ''}`;
     const response = await apiClient.get<ChatConversation[]>(url);
