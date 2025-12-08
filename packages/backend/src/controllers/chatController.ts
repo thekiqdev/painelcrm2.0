@@ -1418,36 +1418,32 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
   try {
     const { id: clientId } = req.params;
 
-    console.log('[GetClientMessages] Starting', { userId, clientId });
-
     // Verificar se o cliente existe e pertence ao usuário
     const clientResult = await pool.query(
-      'SELECT id, phone FROM clients WHERE id = $1 AND user_id = $2',
+      'SELECT id FROM clients WHERE id = $1 AND user_id = $2',
       [clientId, userId]
     );
 
     if ((clientResult.rowCount ?? 0) === 0) {
-      console.log('[GetClientMessages] Client not found', { clientId, userId });
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
     }
 
-    // Buscar o telefone do cliente
-    const clientPhone = clientResult.rows[0]?.phone;
-    const normalizedClientPhone = clientPhone ? clientPhone.replace(/\D/g, '') : null;
+    // Buscar todas as conversas vinculadas a este cliente
+    // Primeiro, buscar o telefone do cliente
+    const clientPhoneResult = await pool.query(
+      'SELECT phone FROM clients WHERE id = $1 AND user_id = $2',
+      [clientId, userId]
+    );
     
-    console.log('[GetClientMessages] Client found', { 
-      clientId, 
-      phone: clientPhone, 
-      normalizedPhone: normalizedClientPhone 
-    });
+    const clientPhone = clientPhoneResult.rows[0]?.phone;
+    const normalizedClientPhone = clientPhone ? clientPhone.replace(/\D/g, '') : null;
 
     // Buscar conversas vinculadas pelo client_id ou pelo telefone
-    // Simplificar a query para evitar problemas com JOINs complexos
+    // Também buscar conversas que podem ter sido vinculadas via JOIN (client_id derivado)
     let conversationsResult;
-    
     if (normalizedClientPhone) {
-      // Buscar por client_id OU por telefone normalizado
+      // Se temos telefone normalizado, usar na query
       conversationsResult = await pool.query(
         `
         SELECT DISTINCT 
@@ -1455,22 +1451,32 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
           c.phone_number, 
           c.contact_name, 
           c.profile_name, 
-          c.external_chat_id
+          c.external_chat_id,
+          COALESCE(c.client_id, cl.id) as resolved_client_id
         FROM chat_conversations c
+        LEFT JOIN clients cl
+          ON cl.user_id = c.user_id
+         AND cl.id = $2
+         AND c.phone_number IS NOT NULL
+         AND c.phone_number <> ''
+         AND cl.phone IS NOT NULL
+         AND cl.phone <> ''
+         AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
         WHERE c.user_id = $1
           AND (
-            c.client_id = $2::uuid
+            c.client_id = $2
+            OR cl.id = $2
             OR (
               c.phone_number IS NOT NULL
               AND c.phone_number <> ''
-              AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3
+              AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3::text
             )
           )
         `,
         [userId, clientId, normalizedClientPhone]
       );
     } else {
-      // Se não tem telefone, buscar apenas por client_id
+      // Se não temos telefone, buscar apenas por client_id
       conversationsResult = await pool.query(
         `
         SELECT DISTINCT 
@@ -1478,22 +1484,25 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
           c.phone_number, 
           c.contact_name, 
           c.profile_name, 
-          c.external_chat_id
+          c.external_chat_id,
+          COALESCE(c.client_id, cl.id) as resolved_client_id
         FROM chat_conversations c
+        LEFT JOIN clients cl
+          ON cl.user_id = c.user_id
+         AND cl.id = $2
+         AND c.phone_number IS NOT NULL
+         AND c.phone_number <> ''
+         AND cl.phone IS NOT NULL
+         AND cl.phone <> ''
+         AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
         WHERE c.user_id = $1
-          AND c.client_id = $2::uuid
+          AND (c.client_id = $2 OR cl.id = $2)
         `,
         [userId, clientId]
       );
     }
 
-    console.log('[GetClientMessages] Conversations found', { 
-      count: conversationsResult.rowCount ?? 0,
-      conversationIds: conversationsResult.rows.map(r => r.id).slice(0, 5)
-    });
-
     if ((conversationsResult.rowCount ?? 0) === 0) {
-      console.log('[GetClientMessages] No conversations found, returning empty array');
       res.json([]);
       return;
     }
@@ -1502,15 +1511,12 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
 
     // Se não há conversas, retornar array vazio
     if (conversationIds.length === 0) {
-      console.log('[GetClientMessages] Conversation IDs array is empty');
       res.json([]);
       return;
     }
 
     // Buscar todas as mensagens dessas conversas
     // Usar ANY com array UUID para melhor performance
-    console.log('[GetClientMessages] Fetching messages', { conversationCount: conversationIds.length });
-    
     const messagesResult = await pool.query(
       `
       SELECT 
@@ -1537,7 +1543,6 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       [conversationIds]
     );
 
-    console.log('[GetClientMessages] Messages found', { count: messagesResult.rowCount ?? 0 });
     res.json(messagesResult.rows.reverse());
   } catch (error: any) {
     console.error('Error fetching client messages:', {
