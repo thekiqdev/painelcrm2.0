@@ -175,11 +175,19 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     }
   };
 
-  // Extrair número do telefone do metadata ou external_instance_name
+  // Extrair número do telefone conectado do metadata
   const getPhoneNumber = () => {
     if (!instance) return null;
     
-    // Tentar extrair do external_instance_name (formato: nome_numero)
+    // Prioridade 1: Número conectado salvo no metadata (quando leu o QR code)
+    if (instance.metadata && typeof instance.metadata === 'object') {
+      const metadata = instance.metadata as any;
+      if (metadata.connectedPhone) {
+        return metadata.connectedPhone;
+      }
+    }
+    
+    // Prioridade 2: Tentar extrair do external_instance_name (formato: nome_numero)
     if (instance.external_instance_name) {
       const match = instance.external_instance_name.match(/(\d+)$/);
       if (match) {
@@ -187,7 +195,7 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
       }
     }
     
-    // Tentar extrair do metadata
+    // Prioridade 3: Outros campos do metadata
     if (instance.metadata && typeof instance.metadata === 'object') {
       const metadata = instance.metadata as any;
       return metadata.phone || metadata.phoneNumber || metadata.number || null;

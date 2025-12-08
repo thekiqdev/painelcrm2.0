@@ -701,6 +701,30 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
     console.log('UazAPI connectInstance response:', JSON.stringify(response, null, 2));
 
+    // Extrair número conectado da resposta
+    const connectedPhone = 
+      response?.owner || 
+      response?.phone || 
+      response?.number || 
+      response?.instance?.owner || 
+      response?.instance?.phone || 
+      response?.instance?.number ||
+      response?.data?.owner ||
+      response?.data?.phone ||
+      response?.data?.number ||
+      null;
+
+    // Preparar metadata atualizado
+    const updatedMetadata: any = {
+      lastConnect: response,
+    };
+
+    // Se encontrou número conectado, salvar
+    if (connectedPhone) {
+      updatedMetadata.connectedPhone = connectedPhone;
+      console.log('[ConnectInstance] Connected phone found:', connectedPhone);
+    }
+
     await pool.query(
       `
       UPDATE chat_instances
@@ -709,7 +733,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
           updated_at = now()
       WHERE id = $3
     `,
-      [response?.status || 'connecting', JSON.stringify({ lastConnect: response }), instance.id]
+      [response?.status || 'connecting', JSON.stringify(updatedMetadata), instance.id]
     );
 
     // Se conectado com sucesso, configurar webhook automaticamente
@@ -1021,6 +1045,19 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
     const connected = result?.connected || instanceData?.connected;
     const loggedIn = result?.loggedIn || instanceData?.loggedIn;
     
+    // Extrair número conectado da resposta
+    const connectedPhone = 
+      result?.owner || 
+      result?.phone || 
+      result?.number || 
+      instanceData?.owner || 
+      instanceData?.phone || 
+      instanceData?.number ||
+      result?.data?.owner ||
+      result?.data?.phone ||
+      result?.data?.number ||
+      null;
+    
     // Determinar status final
     let finalStatus = instance.status;
     if (newStatus === 'open' || newStatus === 'connected' || connected === true || loggedIn === true) {
@@ -1031,11 +1068,24 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       finalStatus = newStatus;
     }
     
-    // Atualizar no banco se mudou
-    if (finalStatus !== instance.status) {
+    // Preparar metadata atualizado
+    const currentMetadata = instance.metadata || {};
+    const updatedMetadata: any = {
+      ...currentMetadata,
+      lastStatusCheck: result,
+    };
+
+    // Se encontrou número conectado, salvar
+    if (connectedPhone) {
+      updatedMetadata.connectedPhone = connectedPhone;
+      console.log('[GetInstanceStatus] Connected phone found:', connectedPhone);
+    }
+    
+    // Atualizar no banco se mudou status ou número conectado
+    if (finalStatus !== instance.status || (connectedPhone && currentMetadata?.connectedPhone !== connectedPhone)) {
       await pool.query(
-        'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
-        [finalStatus, instance.id]
+        'UPDATE chat_instances SET status = $1, metadata = $2::jsonb, updated_at = now() WHERE id = $3',
+        [finalStatus, JSON.stringify(updatedMetadata), instance.id]
       );
       
       // Se mudou para connected, configurar webhook automaticamente
