@@ -1430,133 +1430,52 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     }
 
     // Buscar todas as conversas vinculadas a este cliente
-    // Primeiro, buscar o telefone do cliente
+    // Buscar o telefone do cliente para usar na busca
     const clientPhoneResult = await pool.query(
       'SELECT phone FROM clients WHERE id = $1 AND user_id = $2',
       [clientId, userId]
     );
     
-    let clientPhone = clientPhoneResult.rows[0]?.phone;
-    
-    // Se o cliente não tem telefone cadastrado, buscar o telefone das conversas já vinculadas
-    if (!clientPhone) {
-      const conversationPhoneResult = await pool.query(
-        `
-        SELECT DISTINCT phone_number 
-        FROM chat_conversations 
-        WHERE client_id = $1 
-          AND user_id = $2 
-          AND phone_number IS NOT NULL 
-          AND phone_number <> ''
-        LIMIT 1
-        `,
-        [clientId, userId]
-      );
-      
-      if (conversationPhoneResult.rows.length > 0) {
-        clientPhone = conversationPhoneResult.rows[0].phone_number;
-        console.log(`[GetClientMessages] Using phone from conversation: ${clientPhone}`);
-      } else {
-        // Se ainda não encontrou, buscar por telefone normalizado nas conversas
-        // que podem estar vinculadas pelo telefone mesmo sem client_id salvo
-        const phoneFromConversationsResult = await pool.query(
-          `
-          SELECT DISTINCT c.phone_number
-          FROM chat_conversations c
-          LEFT JOIN clients cl
-            ON cl.user_id = c.user_id
-           AND cl.id = $1
-           AND c.phone_number IS NOT NULL
-           AND c.phone_number <> ''
-           AND cl.phone IS NOT NULL
-           AND cl.phone <> ''
-           AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
-          WHERE c.user_id = $2
-            AND c.phone_number IS NOT NULL
-            AND c.phone_number <> ''
-            AND cl.id = $1
-          LIMIT 1
-          `,
-          [clientId, userId]
-        );
-        
-        if (phoneFromConversationsResult.rows.length > 0) {
-          clientPhone = phoneFromConversationsResult.rows[0].phone_number;
-          console.log(`[GetClientMessages] Using phone from JOIN conversation: ${clientPhone}`);
-        }
-      }
-    }
-    
-    const normalizedClientPhone = clientPhone ? normalizePhoneNumber(clientPhone) : null;
-    
-    if (!normalizedClientPhone) {
-      console.warn(`[GetClientMessages] No phone found for client ${clientId}, will search only by client_id`);
-    } else {
-      console.log(`[GetClientMessages] Normalized phone: ${normalizedClientPhone} for client ${clientId}`);
-    }
+    const clientPhone = clientPhoneResult.rows[0]?.phone;
+    // Normalizar telefone do cliente se existir, caso contrário usar string vazia
+    const normalizedClientPhone = clientPhone ? clientPhone.replace(/\D/g, '') : '';
 
     // Buscar conversas vinculadas pelo client_id ou pelo telefone
-    // Também buscar conversas que podem ter sido vinculadas via JOIN (client_id derivado)
-    let conversationsResult;
-    if (normalizedClientPhone) {
-      // Se temos telefone normalizado, usar na query
-      conversationsResult = await pool.query(
-        `
-        SELECT DISTINCT 
-          c.id, 
-          c.phone_number, 
-          c.contact_name, 
-          c.profile_name, 
-          c.external_chat_id,
-          COALESCE(c.client_id, cl.id) as resolved_client_id
-        FROM chat_conversations c
-        LEFT JOIN clients cl
-          ON cl.user_id = c.user_id
-         AND cl.id = $2
-         AND c.phone_number IS NOT NULL
-         AND c.phone_number <> ''
-         AND cl.phone IS NOT NULL
-         AND cl.phone <> ''
-         AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
-        WHERE c.user_id = $1
-          AND (
-            c.client_id = $2
-            OR cl.id = $2
-            OR (
-              c.phone_number IS NOT NULL
-              AND c.phone_number <> ''
-              AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3
-            )
+    // A query busca conversas que:
+    // 1. Têm client_id = clientId (vinculação direta)
+    // 2. Têm telefone que corresponde ao telefone do cliente (via JOIN ou comparação direta)
+    const conversationsResult = await pool.query(
+      `
+      SELECT DISTINCT 
+        c.id, 
+        c.phone_number, 
+        c.contact_name, 
+        c.profile_name, 
+        c.external_chat_id,
+        COALESCE(c.client_id, cl.id) as resolved_client_id
+      FROM chat_conversations c
+      LEFT JOIN clients cl
+        ON cl.user_id = c.user_id
+       AND cl.id = $2
+       AND c.phone_number IS NOT NULL
+       AND c.phone_number <> ''
+       AND cl.phone IS NOT NULL
+       AND cl.phone <> ''
+       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
+      WHERE c.user_id = $1
+        AND (
+          c.client_id = $2
+          OR cl.id = $2
+          OR (
+            $3 <> ''
+            AND c.phone_number IS NOT NULL
+            AND c.phone_number <> ''
+            AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3
           )
-        `,
-        [userId, clientId, normalizedClientPhone]
-      );
-    } else {
-      // Se não temos telefone, buscar apenas por client_id
-      conversationsResult = await pool.query(
-        `
-        SELECT DISTINCT 
-          c.id, 
-          c.phone_number, 
-          c.contact_name, 
-          c.profile_name, 
-          c.external_chat_id,
-          COALESCE(c.client_id, cl.id) as resolved_client_id
-        FROM chat_conversations c
-        LEFT JOIN clients cl
-          ON cl.user_id = c.user_id
-         AND cl.id = $2
-         AND c.phone_number IS NOT NULL
-         AND c.phone_number <> ''
-         AND cl.phone IS NOT NULL
-         AND cl.phone <> ''
-         AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
-        WHERE c.user_id = $1
-          AND (c.client_id = $2 OR cl.id = $2)
-        `,
-        [userId, clientId]
-      );
-    }
+        )
+      `,
+      [userId, clientId, normalizedClientPhone]
+    );
 
     if ((conversationsResult.rowCount ?? 0) === 0) {
       res.json([]);
