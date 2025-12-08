@@ -1414,8 +1414,8 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
  * GET /api/chat/clients/:id/messages
  */
 export async function getClientMessages(req: AuthRequest, res: Response) {
+  const userId = req.userId!;
   try {
-    const userId = req.userId!;
     const { id: clientId } = req.params;
 
     // Verificar se o cliente existe e pertence ao usuário
