@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -46,6 +46,7 @@ import type { Contract, ContractStatus, ContractSigner, ContractEvent } from "@/
 const ContractDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [contract, setContract] = useState<Contract | null>(null);
   const [signers, setSigners] = useState<ContractSigner[]>([]);
@@ -195,7 +196,19 @@ const ContractDetails = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/contracts')}>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => {
+              // Se veio do perfil do cliente, voltar para o perfil
+              // Caso contrário, voltar para a listagem geral de contratos
+              if (location.state?.fromClientProfile && contract.client_id) {
+                navigate(`/clients/${contract.client_id}/contracts`);
+              } else {
+                navigate('/contracts');
+              }
+            }}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>

@@ -82,17 +82,17 @@ export default function NewTicket() {
 
     try {
       const data = await ticketsService.createTicket({
-        contact_name: formData.contact_name,
-        contact_email: formData.contact_email,
+          contact_name: formData.contact_name,
+          contact_email: formData.contact_email,
         contact_phone: formData.contact_phone || undefined,
-        subject: formData.subject,
-        description: formData.description,
+          subject: formData.subject,
+          description: formData.description,
         category_id: formData.category_id || undefined,
-        priority: formData.priority,
+          priority: formData.priority,
         client_id: formData.client_id || undefined,
-        tags: formData.tags,
-        channel: 'internal',
-        status: 'new',
+          tags: formData.tags,
+          channel: 'internal',
+          status: 'new',
       });
 
       toast({

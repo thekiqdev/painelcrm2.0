@@ -15,6 +15,16 @@ interface User {
   whatsapp_connected?: boolean;
   registration_complete?: boolean;
   created_at?: string;
+  default_profile_id?: string | null;
+}
+
+interface SignUpParams {
+  identifier: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  whatsapp?: string;
 }
 
 type AuthContextType = {
@@ -24,7 +34,7 @@ type AuthContextType = {
   profile: any | null;
   registrationComplete: boolean;
   signIn: (identifier: string, password: string) => Promise<void>;
-  signUp: (identifier: string, password: string) => Promise<void>;
+  signUp: (params: SignUpParams) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: any) => Promise<void>;
   updateRegistrationStep: (step: string, completed: boolean) => Promise<void>;
@@ -126,20 +136,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signUp = async (identifier: string, password: string) => {
+  const signUp = async ({
+    identifier,
+    password,
+    firstName,
+    lastName,
+    companyName,
+    whatsapp,
+  }: SignUpParams) => {
     try {
-      // Determine if identifier is email or phone
-      const isEmail = identifier.includes('@');
-      const email = isEmail ? identifier.trim().toLowerCase() : null;
-      const whatsapp = isEmail ? null : identifier.replace(/\D/g, '');
+      const trimmedIdentifier = identifier.trim();
+      const isEmail = trimmedIdentifier.includes('@');
+      const normalizedWhatsapp = whatsapp
+        ? whatsapp.replace(/\D/g, '')
+        : !isEmail
+          ? trimmedIdentifier.replace(/\D/g, '')
+          : undefined;
+      const email = isEmail ? trimmedIdentifier.toLowerCase() : null;
       
-      // If phone, create email from phone number (temporary until we update backend)
-      const registerEmail = email || `${whatsapp}@multicrm.app`;
+      const registerEmail = email || `${normalizedWhatsapp}@multicrm.app`;
       
-      const response = await apiClient.post<{ user: User; token: string }>('/api/auth/register', {
+      const payload = {
         email: registerEmail,
         password,
-        whatsapp: whatsapp || null,
+        whatsapp: normalizedWhatsapp || null,
+        first_name: firstName,
+        last_name: lastName,
+        company_name: companyName,
+      };
+      
+      const response = await apiClient.post<{ user: User; token: string }>('/api/auth/register', {
+        ...payload,
       });
 
       if (response.error) {
@@ -162,7 +189,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
-      // Limpar estado local primeiro
+      // Call logout endpoint primeiro (enquanto ainda temos o token)
+      // Ignorar erros, pois o logout é principalmente client-side com JWT
+      try {
+        await apiClient.post('/api/auth/logout');
+      } catch (logoutError) {
+        // Ignorar erros do endpoint de logout
+      }
+      
+      // Limpar estado local
       setProfile(null);
       setRegistrationComplete(false);
       setUser(null);
@@ -172,14 +207,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await clearAuthState();
       apiClient.setToken(null);
       
-      // Call logout endpoint (optional, mainly for server-side cleanup)
-      await apiClient.post('/api/auth/logout');
-      
       toast.success('Logout realizado com sucesso!');
       navigate('/');
     } catch (error: any) {
-      console.error('Erro durante o logout:', error);
-      // Even if logout fails, clear local state
+      // Se algo der errado, garantir que o estado local seja limpo
+      setProfile(null);
+      setRegistrationComplete(false);
+      setUser(null);
+      setSession(null);
+      await clearAuthState();
       apiClient.setToken(null);
       toast.success('Logout realizado com sucesso!');
       navigate('/');

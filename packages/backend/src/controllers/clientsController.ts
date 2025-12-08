@@ -285,3 +285,173 @@ export async function deleteClient(req: AuthRequest, res: Response): Promise<voi
   }
 }
 
+// Client Tasks endpoints
+const clientTaskSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().optional().nullable(),
+  status: z.string().optional().nullable(),
+  due_date: z.string().optional().nullable(),
+});
+
+export async function getClientTasks(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+
+    // Verificar se o cliente pertence ao usuário
+    const clientCheck = await pool.query(
+      'SELECT id FROM clients WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+
+    if (clientCheck.rows.length === 0) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM client_tasks WHERE client_id = $1 AND user_id = $2 ORDER BY created_at DESC',
+      [id, userId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching client tasks:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function createClientTask(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const taskData = clientTaskSchema.parse(req.body);
+    const { client_id } = req.body;
+
+    if (!client_id) {
+      res.status(400).json({ error: 'client_id is required' });
+      return;
+    }
+
+    // Verificar se o cliente pertence ao usuário
+    const clientCheck = await pool.query(
+      'SELECT id FROM clients WHERE id = $1 AND user_id = $2',
+      [client_id, userId]
+    );
+
+    if (clientCheck.rows.length === 0) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+
+    const dueDate = taskData.due_date ? new Date(taskData.due_date) : null;
+
+    const result = await pool.query(
+      `INSERT INTO client_tasks (user_id, client_id, title, description, status, due_date)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        userId,
+        client_id,
+        taskData.title,
+        taskData.description || null,
+        taskData.status || 'Pendente',
+        dueDate,
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('Error creating client task:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function updateClientTask(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+    const taskData = clientTaskSchema.partial().parse(req.body);
+
+    // Verificar se a tarefa pertence ao usuário
+    const taskCheck = await pool.query(
+      'SELECT id FROM client_tasks WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+
+    if (taskCheck.rows.length === 0) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
+
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (taskData.title !== undefined) {
+      updates.push(`title = $${paramIndex++}`);
+      values.push(taskData.title);
+    }
+    if (taskData.description !== undefined) {
+      updates.push(`description = $${paramIndex++}`);
+      values.push(taskData.description || null);
+    }
+    if (taskData.status !== undefined) {
+      updates.push(`status = $${paramIndex++}`);
+      values.push(taskData.status || null);
+    }
+    if (taskData.due_date !== undefined) {
+      updates.push(`due_date = $${paramIndex++}`);
+      values.push(taskData.due_date ? new Date(taskData.due_date) : null);
+    }
+
+    if (updates.length === 0) {
+      res.status(400).json({ error: 'No fields to update' });
+      return;
+    }
+
+    values.push(id, userId);
+    const result = await pool.query(
+      `UPDATE client_tasks
+       SET ${updates.join(', ')}, updated_at = now()
+       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       RETURNING *`,
+      values
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('Error updating client task:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function deleteClientTask(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'DELETE FROM client_tasks WHERE id = $1 AND user_id = $2 RETURNING id',
+      [id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
+
+    res.json({ message: 'Task deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting client task:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+

@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const Register = () => {
   const navigate = useNavigate();
-  const { user, signUp, updateProfile } = useAuth();
+  const { user, signUp } = useAuth();
   const [name, setName] = React.useState("");
   const [lastName, setLastName] = React.useState("");
   const [company, setCompany] = React.useState("");
@@ -52,14 +52,13 @@ const Register = () => {
       console.log('Registering new user with WhatsApp:', whatsapp);
       
       // Registrar o usuário
-      await signUp(whatsapp, password);
-      
-      // Atualizar perfil com informações adicionais
-      await updateProfile({
-        first_name: name,
-        last_name: lastName,
-        company_name: company,
-        whatsapp_number: whatsapp,
+      await signUp({
+        identifier: whatsapp,
+        password,
+        firstName: name,
+        lastName,
+        companyName: company,
+        whatsapp,
       });
       
       toast.success("Conta criada com sucesso!");
