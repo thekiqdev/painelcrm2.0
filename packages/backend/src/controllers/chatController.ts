@@ -1082,12 +1082,27 @@ export async function getConversations(req: AuthRequest, res: Response) {
 
     let query = `
       SELECT
-        c.*,
+        c.id,
+        c.user_id,
+        c.instance_id,
+        c.external_chat_id,
+        c.external_fast_id,
+        c.contact_name,
+        c.profile_name,
+        c.phone_number,
+        c.status,
+        c.last_message_preview,
+        c.last_message_at,
+        c.unread_count,
+        c.metadata,
+        c.created_at,
+        c.updated_at,
+        c.client_id,
         i.name as instance_name,
         -- Cliente: usar o client_id salvo ou buscar pelo telefone via JOIN
         COALESCE(c.client_id, cl.id) as client_id,
         -- Lead: apenas se não houver client_id, buscar pelo telefone via JOIN
-        -- Usar COALESCE para lidar com lead_id que pode não existir
+        -- NOTA: Não usamos c.lead_id diretamente pois a coluna pode não existir
         CASE 
           WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
           ELSE (
@@ -1265,7 +1280,6 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
       SELECT 
         c.id,
         c.client_id,
-        c.lead_id,
         c.phone_number,
         COALESCE(
           c.client_id,
@@ -1283,9 +1297,19 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
             ELSE NULL
           END
         ) as resolved_client_id,
+        -- Lead: buscar apenas se não houver client_id (sem depender de coluna lead_id)
         CASE 
-          WHEN c.client_id IS NOT NULL THEN NULL
-          WHEN c.lead_id IS NOT NULL THEN c.lead_id
+          WHEN COALESCE(c.client_id, (
+            SELECT cl2.id 
+            FROM clients cl2
+            WHERE cl2.user_id = c.user_id
+              AND cl2.phone IS NOT NULL
+              AND cl2.phone <> ''
+              AND c.phone_number IS NOT NULL
+              AND c.phone_number <> ''
+              AND regexp_replace(cl2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+            LIMIT 1
+          )) IS NOT NULL THEN NULL
           WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' THEN (
             SELECT l.id 
             FROM leads l
