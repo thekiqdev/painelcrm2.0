@@ -1274,7 +1274,13 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { clientId } = req.params;
 
-    console.log('[GetClientMessages] Starting', { userId, clientId });
+    console.log('[GetClientMessages] Route called', { 
+      userId, 
+      clientId,
+      method: req.method,
+      path: req.path,
+      originalUrl: req.originalUrl
+    });
 
     // Verificar se o cliente existe e pertence ao usuário
     const clientCheck = await pool.query(

@@ -224,11 +224,20 @@ export const chatService = {
   },
 
   async getClientMessages(clientId: string): Promise<ChatMessage[]> {
-    const response = await apiClient.get<ChatMessage[]>(`/api/chat/clients/${clientId}/messages`);
+    const url = `/api/chat/clients/${clientId}/messages`;
+    console.log('[ChatService] getClientMessages', { clientId, url });
+    const response = await apiClient.get<ChatMessage[]>(url);
     if (response.error) {
-      throw new Error(response.error);
+      console.error('[ChatService] getClientMessages error', { 
+        error: response.error, 
+        details: response.details,
+        url 
+      });
+      throw new Error(response.error || 'Erro ao buscar mensagens do cliente');
     }
-    return (response.data || []).map(normalizeMessage);
+    const messages = (response.data || []).map(normalizeMessage);
+    console.log('[ChatService] getClientMessages success', { count: messages.length });
+    return messages;
   },
 };
 

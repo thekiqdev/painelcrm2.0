@@ -34,6 +34,7 @@ router.post('/instances/:id/webhook/force', forceConfigureWebhook);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations', getConversations);
 // Rotas específicas de clients devem vir antes das rotas genéricas de conversations
+// IMPORTANTE: Esta rota deve vir antes de /conversations/:id/* para evitar conflitos
 router.get('/clients/:clientId/messages', getClientMessages);
 router.get('/conversations/:id/messages', getConversationMessages);
 router.get('/conversations/:id/profile', getConversationProfile);
