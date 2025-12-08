@@ -914,6 +914,18 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     const instance = await loadInstance(userId, id, res);
     if (!instance) return;
 
+    // Verificar se o token da instância existe
+    if (!instance.instance_token) {
+      console.error('[ConnectInstance] Instance token is missing', {
+        instanceId: instance.id,
+        instanceName: instance.name,
+      });
+      res.status(400).json({ 
+        error: 'Token da instância não encontrado. Por favor, recrie a instância.' 
+      });
+      return;
+    }
+
     // Se phone não foi fornecido, não passar para gerar QR code
     const response = (await uazapiService.connectInstance(
       instance.instance_token,
@@ -1359,7 +1371,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         -- Lead inferido pelo telefone (apenas informação derivada, não altera a tabela)
         COALESCE(c.lead_id, l.id) as lead_id
       FROM chat_conversations c
-      INNER JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN chat_instances i ON i.id = c.instance_id
       LEFT JOIN clients cl
         ON cl.user_id = c.user_id
        AND cl.id = COALESCE(c.client_id, cl.id)
