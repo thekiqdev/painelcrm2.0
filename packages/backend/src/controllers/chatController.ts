@@ -1274,6 +1274,8 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { clientId } = req.params;
 
+    console.log('[GetClientMessages] Starting', { userId, clientId });
+
     // Verificar se o cliente existe e pertence ao usuário
     const clientCheck = await pool.query(
       'SELECT id, phone FROM clients WHERE id = $1 AND user_id = $2',
@@ -1281,41 +1283,76 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     );
 
     if (clientCheck.rowCount === 0) {
+      console.log('[GetClientMessages] Client not found', { clientId, userId });
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
     }
 
     const client = clientCheck.rows[0];
-    const clientPhone = client.phone ? client.phone.replace(/\D/g, '') : null;
+    const clientPhone = normalizePhoneNumber(client.phone);
+
+    console.log('[GetClientMessages] Client found', { 
+      clientId: client.id, 
+      phone: client.phone, 
+      normalizedPhone: clientPhone 
+    });
 
     if (!clientPhone) {
+      console.log('[GetClientMessages] Client has no phone number');
       res.json([]);
       return;
     }
 
-    // Buscar todas as conversas vinculadas ao cliente (por client_id ou por telefone)
+    // Primeiro, atualizar conversas que têm o telefone mas não têm client_id
+    // Isso garante que conversas antigas sejam vinculadas ao cliente
+    await pool.query(
+      `
+      UPDATE chat_conversations
+      SET client_id = $1,
+          updated_at = now()
+      WHERE user_id = $2
+        AND client_id IS NULL
+        AND phone_number IS NOT NULL
+        AND phone_number <> ''
+        AND regexp_replace(phone_number, '\\D', '', 'g') = $3
+      `,
+      [clientId, userId, clientPhone]
+    );
+
+    // Buscar todas as conversas vinculadas ao cliente
+    // 1. Por client_id direto na tabela
+    // 2. Por telefone normalizado (caso o client_id não esteja preenchido ainda)
     const conversationsResult = await pool.query(
       `
-      SELECT DISTINCT c.id
+      SELECT DISTINCT c.id, c.phone_number, c.client_id
       FROM chat_conversations c
-      LEFT JOIN clients cl
-        ON cl.user_id = c.user_id
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND cl.phone IS NOT NULL
-       AND cl.phone <> ''
-       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
       WHERE c.user_id = $1
         AND (
+          -- Conversas com client_id vinculado diretamente
           c.client_id = $2
-          OR cl.id = $2
-          OR regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g') = $3
+          OR
+          -- Conversas com telefone que corresponde ao cliente
+          (
+            c.phone_number IS NOT NULL
+            AND c.phone_number <> ''
+            AND regexp_replace(c.phone_number, '\\D', '', 'g') = $3
+          )
         )
       `,
       [userId, clientId, clientPhone]
     );
 
+    console.log('[GetClientMessages] Conversations found', { 
+      count: conversationsResult.rowCount,
+      conversations: conversationsResult.rows.map(c => ({
+        id: c.id,
+        phone_number: c.phone_number,
+        client_id: c.client_id
+      }))
+    });
+
     if (conversationsResult.rowCount === 0) {
+      console.log('[GetClientMessages] No conversations found for client');
       res.json([]);
       return;
     }
@@ -1335,9 +1372,19 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       [conversationIds]
     );
 
+    console.log('[GetClientMessages] Messages found', { 
+      count: messages.rowCount,
+      conversationIds: conversationIds.length
+    });
+
     res.json(messages.rows);
   } catch (error: any) {
-    console.error('Error fetching client messages:', error);
+    console.error('[GetClientMessages] Error:', {
+      error: error.message,
+      stack: error.stack,
+      clientId: req.params.clientId,
+      userId: req.userId
+    });
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 }
