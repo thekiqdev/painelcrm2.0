@@ -770,6 +770,49 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     let response: AnyObject;
     let instanceToUse = instance;
 
+    // Verificar status da instância antes de tentar conectar
+    let currentStatus: AnyObject | null = null;
+    try {
+      currentStatus = (await uazapiService.getInstanceStatus(instance.instance_token)) as AnyObject;
+      const instanceData = currentStatus?.instance || currentStatus;
+      const status = instanceData?.status || currentStatus?.status || instance.status;
+      const connected = currentStatus?.connected || instanceData?.connected || false;
+      const loggedIn = currentStatus?.loggedIn || instanceData?.loggedIn || false;
+
+      // Se a instância já está conectada, desconectar primeiro para gerar novo QR code
+      if ((status === 'connected' || connected || loggedIn) && !data.phone) {
+        console.log('[ConnectInstance] Instância já conectada, desconectando para gerar novo QR code...', {
+          instanceId: instance.id,
+          status,
+          connected,
+          loggedIn,
+        });
+
+        try {
+          await uazapiService.disconnectInstance(instance.instance_token);
+          console.log('[ConnectInstance] Instância desconectada com sucesso');
+          
+          // Atualizar status no banco
+          await pool.query(
+            'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
+            ['disconnected', instance.id]
+          );
+        } catch (disconnectError: any) {
+          console.warn('[ConnectInstance] Erro ao desconectar instância (pode não ser crítico):', {
+            error: disconnectError.message,
+            status: disconnectError.status,
+          });
+          // Continuar mesmo se desconexão falhar
+        }
+      }
+    } catch (statusError: any) {
+      // Se não conseguir verificar status, continuar normalmente
+      console.log('[ConnectInstance] Não foi possível verificar status da instância, continuando...', {
+        error: statusError.message,
+        status: statusError.status,
+      });
+    }
+
     try {
       // Tentar conectar com o token atual
       response = (await uazapiService.connectInstance(
@@ -777,13 +820,30 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         data.phone || undefined
       )) as AnyObject;
     } catch (connectError: any) {
-      // Se o erro for "Invalid token", criar nova instância
+      // Tratar diferentes tipos de erro
       const errorMessage = connectError?.message || '';
+      const errorStatus = connectError?.status;
+      
+      // Erro 429: Too Many Requests (rate limiting)
+      if (errorStatus === 429) {
+        console.error('[ConnectInstance] Rate limit atingido (429)', {
+          instanceId: instance.id,
+          message: errorMessage,
+        });
+        res.status(429).json({ 
+          error: 'Muitas requisições. Por favor, aguarde alguns instantes antes de tentar novamente.',
+          details: errorMessage,
+          retryAfter: 60, // Sugerir aguardar 60 segundos
+        });
+        return;
+      }
+
+      // Se o erro for "Invalid token", criar nova instância
       const isInvalidToken = 
         errorMessage.toLowerCase().includes('invalid token') ||
         errorMessage.toLowerCase().includes('token inválido') ||
-        connectError?.status === 401 ||
-        connectError?.status === 403;
+        errorStatus === 401 ||
+        errorStatus === 403;
 
       if (isInvalidToken) {
         console.log('[ConnectInstance] Token inválido detectado, criando nova instância...', {

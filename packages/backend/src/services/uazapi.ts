@@ -120,6 +120,13 @@ export class UazapiService {
     });
   }
 
+  async disconnectInstance(instanceToken: string) {
+    return this.request('/instance/disconnect', {
+      method: 'POST',
+      token: instanceToken,
+    });
+  }
+
   async getInstanceStatus(instanceToken: string) {
     return this.request('/instance/status', {
       method: 'GET',
