@@ -2165,12 +2165,55 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     });
 
     // Buscar conversa atualizada e mensagem salva para emitir via WebSocket
+    // IMPORTANTE: Usar query similar a getConversations para garantir todos os campos
     const [updatedConversationResult, savedMessageResult] = await Promise.all([
       pool.query(
         `
-          SELECT c.*, i.name as instance_name
+          SELECT
+            c.id,
+            c.user_id,
+            c.instance_id,
+            c.external_chat_id,
+            c.external_fast_id,
+            c.contact_name,
+            c.profile_name,
+            c.phone_number,
+            c.status,
+            c.last_message_preview,
+            c.last_message_at,
+            c.unread_count,
+            c.metadata,
+            c.created_at,
+            c.updated_at,
+            c.client_id,
+            c.phone_key,
+            i.name as instance_name,
+            -- Cliente: usar o client_id salvo ou buscar pelo telefone via JOIN
+            COALESCE(c.client_id, cl.id) as client_id,
+            -- Lead: apenas se não houver client_id, buscar pelo telefone via JOIN
+            CASE 
+              WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
+              ELSE (
+                SELECT l2.id 
+                FROM leads l2
+                WHERE l2.user_id = c.user_id
+                  AND l2.phone IS NOT NULL
+                  AND l2.phone <> ''
+                  AND c.phone_number IS NOT NULL
+                  AND c.phone_number <> ''
+                  AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+                LIMIT 1
+              )
+            END as lead_id
           FROM chat_conversations c
           INNER JOIN chat_instances i ON i.id = c.instance_id
+          LEFT JOIN clients cl
+            ON cl.user_id = c.user_id
+           AND c.phone_number IS NOT NULL
+           AND c.phone_number <> ''
+           AND cl.phone IS NOT NULL
+           AND cl.phone <> ''
+           AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
           WHERE c.id = $1
         `,
         [data.conversationId]
