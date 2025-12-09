@@ -201,8 +201,35 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     // Nome do perfil
     const name = metadata?.connectedProfileName || null;
     
-    // Foto do perfil
-    const pictureUrl = metadata?.connectedProfilePicUrl || null;
+    // Foto do perfil - verificar múltiplos campos possíveis
+    let pictureUrl: string | null = null;
+    if (metadata?.connectedProfilePicUrl) {
+      pictureUrl = metadata.connectedProfilePicUrl;
+    } else if (metadata?.profilePicUrl) {
+      pictureUrl = metadata.profilePicUrl;
+    } else if (metadata?.profilePicture) {
+      pictureUrl = metadata.profilePicture;
+    } else if (metadata?.pictureUrl) {
+      pictureUrl = metadata.pictureUrl;
+    } else if (metadata?.lastConnect?.profilePicUrl) {
+      pictureUrl = metadata.lastConnect.profilePicUrl;
+    } else if (metadata?.lastConnect?.instance?.profilePicUrl) {
+      pictureUrl = metadata.lastConnect.instance.profilePicUrl;
+    } else if (metadata?.lastStatusCheck?.profilePicUrl) {
+      pictureUrl = metadata.lastStatusCheck.profilePicUrl;
+    } else if (metadata?.lastStatusCheck?.instance?.profilePicUrl) {
+      pictureUrl = metadata.lastStatusCheck.instance.profilePicUrl;
+    }
+    
+    // Debug: log para verificar o que está sendo encontrado
+    console.log('[InstanceDetailsDialog] Profile info:', {
+      hasMetadata: !!metadata,
+      connectedProfilePicUrl: metadata?.connectedProfilePicUrl,
+      profilePicUrl: metadata?.profilePicUrl,
+      lastConnect: metadata?.lastConnect ? Object.keys(metadata.lastConnect) : null,
+      lastStatusCheck: metadata?.lastStatusCheck ? Object.keys(metadata.lastStatusCheck) : null,
+      foundPictureUrl: pictureUrl,
+    });
     
     return { phone, name, pictureUrl };
   };

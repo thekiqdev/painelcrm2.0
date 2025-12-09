@@ -729,7 +729,19 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       instanceData?.profilePicture ||
       response?.pictureUrl ||
       instanceData?.pictureUrl ||
+      response?.profile_pic_url ||
+      instanceData?.profile_pic_url ||
       null;
+    
+    console.log('[ConnectInstance] Profile info extraction:', {
+      hasResponse: !!response,
+      hasInstanceData: !!instanceData,
+      responseKeys: response ? Object.keys(response) : [],
+      instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
+      profilePicUrl,
+      profileName,
+      connectedPhone,
+    });
 
     // Preparar metadata atualizado
     const updatedMetadata: any = {
@@ -1097,7 +1109,19 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       instanceData?.profilePicture ||
       result?.pictureUrl ||
       instanceData?.pictureUrl ||
+      result?.profile_pic_url ||
+      instanceData?.profile_pic_url ||
       null;
+    
+    console.log('[GetInstanceStatus] Profile info extraction:', {
+      hasResult: !!result,
+      hasInstanceData: !!instanceData,
+      resultKeys: result ? Object.keys(result) : [],
+      instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
+      profilePicUrl,
+      profileName,
+      connectedPhone,
+    });
     
     // Determinar status final
     let finalStatus = instance.status;
