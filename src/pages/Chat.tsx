@@ -485,12 +485,27 @@ const Chat = () => {
           // Atualizar conversa existente
           const updated = [...prev];
           updated[existingIndex] = updatedConversation;
-          // Mover para o topo (conversa mais recente)
-          updated.unshift(updated.splice(existingIndex, 1)[0]);
-          return updated;
+          // Mover para o topo (conversa mais recente) baseado em lastMessageAt
+          const sorted = updated.sort((a, b) => {
+            const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            return dateB - dateA; // Mais recente primeiro
+          });
+          console.log('[Chat] Conversation updated and sorted', {
+            conversationId: updatedConversation.id,
+            lastMessageAt: updatedConversation.lastMessageAt,
+            position: sorted.findIndex(c => c.id === updatedConversation.id),
+          });
+          return sorted;
         }
-          // Adicionar nova conversa no topo
-          return [updatedConversation, ...prev];
+        // Adicionar nova conversa no topo
+        const newList = [updatedConversation, ...prev];
+        // Ordenar por lastMessageAt
+        return newList.sort((a, b) => {
+          const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+          const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+          return dateB - dateA; // Mais recente primeiro
+        });
       });
 
       // Se a conversa atualizada é a selecionada, recarregar mensagens

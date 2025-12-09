@@ -2164,6 +2164,10 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       metadata: messageResponse,
     });
 
+    // Pequeno delay para garantir que a atualização da conversa foi commitada no banco
+    // Isso evita problemas de race condition
+    await new Promise(resolve => setTimeout(resolve, 50));
+
     // Buscar conversa atualizada e mensagem salva para emitir via WebSocket
     // IMPORTANTE: Usar query similar a getConversations para garantir todos os campos
     const [updatedConversationResult, savedMessageResult] = await Promise.all([
