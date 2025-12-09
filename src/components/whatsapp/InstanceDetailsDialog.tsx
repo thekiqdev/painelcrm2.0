@@ -203,26 +203,42 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     
     // Foto do perfil - verificar múltiplos campos possíveis
     let pictureUrl: string | null = null;
+    
+    // Prioridade 1: Campo salvo diretamente
     if (metadata?.connectedProfilePicUrl) {
       pictureUrl = metadata.connectedProfilePicUrl;
-    } else if (metadata?.profilePicUrl) {
+    } 
+    // Prioridade 2: Campos diretos no metadata
+    else if (metadata?.profilePicUrl) {
       pictureUrl = metadata.profilePicUrl;
     } else if (metadata?.profilePicture) {
       pictureUrl = metadata.profilePicture;
     } else if (metadata?.pictureUrl) {
       pictureUrl = metadata.pictureUrl;
-    } else if (metadata?.lastConnect?.profilePicUrl) {
-      pictureUrl = metadata.lastConnect.profilePicUrl;
-    } else if (metadata?.lastConnect?.instance?.profilePicUrl) {
+    } 
+    // Prioridade 3: Dentro de lastConnect.instance (mais comum)
+    else if (metadata?.lastConnect?.instance?.profilePicUrl) {
       pictureUrl = metadata.lastConnect.instance.profilePicUrl;
+    } else if (metadata?.lastConnect?.instance?.profilePicture) {
+      pictureUrl = metadata.lastConnect.instance.profilePicture;
+    } else if (metadata?.lastConnect?.instance?.pictureUrl) {
+      pictureUrl = metadata.lastConnect.instance.pictureUrl;
     } else if (metadata?.lastConnect?.instance?.profile_pic_url) {
       pictureUrl = metadata.lastConnect.instance.profile_pic_url;
-    } else if (metadata?.lastStatusCheck?.profilePicUrl) {
-      pictureUrl = metadata.lastStatusCheck.profilePicUrl;
-    } else if (metadata?.lastStatusCheck?.instance?.profilePicUrl) {
+    } else if (metadata?.lastConnect?.profilePicUrl) {
+      pictureUrl = metadata.lastConnect.profilePicUrl;
+    }
+    // Prioridade 4: Dentro de lastStatusCheck.instance
+    else if (metadata?.lastStatusCheck?.instance?.profilePicUrl) {
       pictureUrl = metadata.lastStatusCheck.instance.profilePicUrl;
+    } else if (metadata?.lastStatusCheck?.instance?.profilePicture) {
+      pictureUrl = metadata.lastStatusCheck.instance.profilePicture;
+    } else if (metadata?.lastStatusCheck?.instance?.pictureUrl) {
+      pictureUrl = metadata.lastStatusCheck.instance.pictureUrl;
     } else if (metadata?.lastStatusCheck?.instance?.profile_pic_url) {
       pictureUrl = metadata.lastStatusCheck.instance.profile_pic_url;
+    } else if (metadata?.lastStatusCheck?.profilePicUrl) {
+      pictureUrl = metadata.lastStatusCheck.profilePicUrl;
     }
     
     // Debug: log detalhado para verificar o que está sendo encontrado
