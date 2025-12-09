@@ -53,6 +53,8 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
 }) => {
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(false);
+  const [syncingMessages, setSyncingMessages] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null);
   const [generatingQR, setGeneratingQR] = useState(false);
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
   const [qrCodeOpen, setQrCodeOpen] = useState(false);
@@ -106,6 +108,11 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
 
       const data = await chatService.getConversations(filters);
       setConversations(data || []);
+      
+      // Após buscar conversas, sincronizar mensagens de cada uma
+      if (data && data.length > 0) {
+        await syncAllConversationMessages(data);
+      }
     } catch (error) {
       console.error("Erro ao carregar conversas:", error);
       toast.error("Erro ao carregar conversas", {
@@ -113,6 +120,46 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
       });
     } finally {
       setLoadingConversations(false);
+    }
+  };
+
+  const syncAllConversationMessages = async (conversationsList: ChatConversation[]) => {
+    if (!conversationsList || conversationsList.length === 0) return;
+    
+    try {
+      setSyncingMessages(true);
+      setSyncProgress({ current: 0, total: conversationsList.length });
+      
+      // Sincronizar mensagens de cada conversa em paralelo (limitado a 5 por vez para não sobrecarregar)
+      const batchSize = 5;
+      for (let i = 0; i < conversationsList.length; i += batchSize) {
+        const batch = conversationsList.slice(i, i + batchSize);
+        
+        await Promise.allSettled(
+          batch.map(async (conversation) => {
+            try {
+              await chatService.syncConversationMessages(conversation.id, { limit: 100 });
+            } catch (error) {
+              console.error(`Erro ao sincronizar mensagens da conversa ${conversation.id}:`, error);
+              // Não interromper o processo se uma conversa falhar
+            }
+          })
+        );
+        
+        setSyncProgress({ current: Math.min(i + batchSize, conversationsList.length), total: conversationsList.length });
+      }
+      
+      toast.success("Mensagens sincronizadas", {
+        description: `${conversationsList.length} conversa(s) processada(s)`,
+      });
+    } catch (error) {
+      console.error("Erro ao sincronizar mensagens:", error);
+      toast.error("Erro ao sincronizar mensagens", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro",
+      });
+    } finally {
+      setSyncingMessages(false);
+      setSyncProgress(null);
     }
   };
 
@@ -548,19 +595,19 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
 
                   <Button
                     onClick={loadConversations}
-                    disabled={loadingConversations || (period === "custom" && (!startDate || !endDate))}
+                    disabled={loadingConversations || syncingMessages || (period === "custom" && (!startDate || !endDate))}
                     size="sm"
                     className="w-full"
                   >
-                    {loadingConversations ? (
+                    {loadingConversations || syncingMessages ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Carregando...
+                        {loadingConversations ? 'Carregando...' : syncProgress ? `Sincronizando... (${syncProgress.current}/${syncProgress.total})` : 'Sincronizando...'}
                       </>
                     ) : (
                       <>
                         <MessageSquare className="h-4 w-4 mr-2" />
-                        Buscar Conversas
+                        Buscar e Sincronizar Conversas
                       </>
                     )}
                   </Button>
