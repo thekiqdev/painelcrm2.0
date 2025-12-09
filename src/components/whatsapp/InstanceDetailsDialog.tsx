@@ -599,24 +599,44 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                     size="sm"
                     className="w-full"
                   >
-                    {loadingConversations || syncingMessages ? (
+                    {loadingConversations ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        {loadingConversations ? 'Carregando...' : syncProgress ? `Sincronizando... (${syncProgress.current}/${syncProgress.total})` : 'Sincronizando...'}
+                        Carregando...
+                      </>
+                    ) : syncingMessages ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        {syncProgress ? `Sincronizando... ${syncProgress.current}/${syncProgress.total}` : "Sincronizando..."}
                       </>
                     ) : (
                       <>
                         <MessageSquare className="h-4 w-4 mr-2" />
-                        Buscar e Sincronizar Conversas
+                        Buscar Conversas
                       </>
                     )}
                   </Button>
+                  
+                  {/* Indicador de progresso da sincronização */}
+                  {syncingMessages && syncProgress && (
+                    <div className="w-full bg-secondary rounded-full h-2">
+                      <div
+                        className="bg-primary h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${(syncProgress.current / syncProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Lista de Conversas */}
-                {loadingConversations ? (
-                  <div className="flex items-center justify-center py-8">
+                {loadingConversations || syncingMessages ? (
+                  <div className="flex flex-col items-center justify-center py-8 gap-2">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    {syncingMessages && syncProgress && (
+                      <p className="text-sm text-muted-foreground">
+                        Sincronizando mensagens: {syncProgress.current} de {syncProgress.total} conversas
+                      </p>
+                    )}
                   </div>
                 ) : conversations.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground text-sm">
