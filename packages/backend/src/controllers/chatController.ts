@@ -466,13 +466,22 @@ async function saveMessage(
     const unreadShouldReset = payload.resetUnread === true;
     const skipUnread = payload.skipUnreadUpdate === true;
     const effectiveSentAt = payload.sentAt || new Date();
+    const messagePreview = payload.body || null;
 
+    // Sempre atualizar last_message_at e last_message_preview com os valores mais recentes
+    // Usar GREATEST para garantir que sempre use a data mais recente
     const conversationResult = await pool.query(
       `
       UPDATE chat_conversations
       SET
-        last_message_preview = COALESCE($2, last_message_preview),
-        last_message_at = COALESCE($3, last_message_at),
+        last_message_preview = CASE 
+          WHEN $2 IS NOT NULL THEN $2
+          ELSE last_message_preview
+        END,
+        last_message_at = CASE
+          WHEN $3 IS NOT NULL THEN GREATEST(COALESCE(last_message_at, '1970-01-01'::timestamp), $3)
+          ELSE last_message_at
+        END,
         unread_count = CASE
           WHEN $4 THEN unread_count
           WHEN $5 = 'incoming' THEN unread_count + 1
@@ -481,11 +490,11 @@ async function saveMessage(
         END,
         updated_at = now()
       WHERE id = $1
-      RETURNING id, unread_count, last_message_at, updated_at
+      RETURNING id, unread_count, last_message_at, last_message_preview, updated_at
     `,
       [
         conversationId,
-        payload.body || null,
+        messagePreview,
         effectiveSentAt,
         skipUnread,
         direction,
