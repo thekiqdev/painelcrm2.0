@@ -1021,8 +1021,17 @@ export async function connectInstance(req: AuthRequest, res: Response) {
           return;
         }
       } else {
-        // Se não for erro de token inválido, propagar o erro original
-        throw connectError;
+        // Se não for erro de token inválido nem 409/429, retornar erro HTTP
+        console.error('[ConnectInstance] Erro desconhecido ao conectar:', {
+          instanceId: instance.id,
+          errorStatus,
+          errorMessage,
+        });
+        res.status(errorStatus || 500).json({ 
+          error: 'Erro ao conectar instância',
+          details: errorMessage,
+        });
+        return;
       }
     }
 
