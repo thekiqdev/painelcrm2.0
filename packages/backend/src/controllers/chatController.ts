@@ -733,6 +733,8 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       instanceData?.profile_pic_url ||
       (response?.instance && typeof response.instance === 'object' ? (response.instance as any).profilePicUrl : null) ||
       (instanceData?.instance && typeof instanceData.instance === 'object' ? (instanceData.instance as any).profilePicUrl : null) ||
+      (response?.instance && typeof response.instance === 'object' ? (response.instance as any).profile_pic_url : null) ||
+      (instanceData?.instance && typeof instanceData.instance === 'object' ? (instanceData.instance as any).profile_pic_url : null) ||
       null;
     
     console.log('[ConnectInstance] Profile info extraction:', {
@@ -1108,6 +1110,9 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       instanceData?.name ||
       null;
 
+    const resultInstance = result?.instance && typeof result.instance === 'object' ? result.instance as any : null;
+    const instanceDataInstance = instanceData?.instance && typeof instanceData.instance === 'object' ? instanceData.instance as any : null;
+    
     const profilePicUrl = 
       result?.profilePicUrl ||
       instanceData?.profilePicUrl ||
@@ -1117,6 +1122,10 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       instanceData?.pictureUrl ||
       result?.profile_pic_url ||
       instanceData?.profile_pic_url ||
+      resultInstance?.profilePicUrl ||
+      instanceDataInstance?.profilePicUrl ||
+      resultInstance?.profile_pic_url ||
+      instanceDataInstance?.profile_pic_url ||
       null;
     
     console.log('[GetInstanceStatus] Profile info extraction:', {
@@ -1124,18 +1133,12 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       hasInstanceData: !!instanceData,
       resultKeys: result ? Object.keys(result) : [],
       instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
-      resultInstance: result?.instance ? {
-        keys: Object.keys(result.instance),
-        profilePicUrl: result.instance.profilePicUrl,
-        profile_pic_url: result.instance.profile_pic_url,
-        profileName: result.instance.profileName,
-      } : null,
-      instanceDataInstance: instanceData?.instance ? {
-        keys: Object.keys(instanceData.instance),
-        profilePicUrl: instanceData.instance.profilePicUrl,
-        profile_pic_url: instanceData.instance.profile_pic_url,
-        profileName: instanceData.instance.profileName,
-      } : null,
+      resultInstanceKeys: resultInstance ? Object.keys(resultInstance) : null,
+      instanceDataInstanceKeys: instanceDataInstance ? Object.keys(instanceDataInstance) : null,
+      resultInstanceProfilePicUrl: resultInstance?.profilePicUrl,
+      instanceDataInstanceProfilePicUrl: instanceDataInstance?.profilePicUrl,
+      resultInstanceProfile_pic_url: resultInstance?.profile_pic_url,
+      instanceDataInstanceProfile_pic_url: instanceDataInstance?.profile_pic_url,
       profilePicUrl,
       profileName,
       connectedPhone,
