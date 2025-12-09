@@ -446,12 +446,17 @@ const Chat = () => {
 
     // Escutar atualizações de conversa
     socket.on('conversation_updated', (raw: any) => {
-      console.log('[Chat] Conversation updated via WebSocket (raw):', {
+      console.log('[Chat] Conversation updated via WebSocket (raw):', raw);
+      console.log('[Chat] Conversation updated - parsed fields:', {
         id: raw?.id,
         lastMessagePreview: raw?.last_message_preview,
         lastMessageAt: raw?.last_message_at,
         updatedAt: raw?.updated_at,
-        fullData: raw,
+        contactName: raw?.contact_name,
+        phoneNumber: raw?.phone_number,
+        unreadCount: raw?.unread_count,
+        hasLastMessagePreview: !!raw?.last_message_preview,
+        hasLastMessageAt: !!raw?.last_message_at,
       });
 
       // Normalizar payload do backend usando a mesma lógica do chatService

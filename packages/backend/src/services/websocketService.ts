@@ -253,7 +253,14 @@ export function emitConversationUpdate(userId: string, conversation: any): void 
   console.log(`[WebSocket] Emitting conversation update to user ${userId}:`, {
     conversationId: conversation.id,
     externalChatId: conversation.external_chat_id,
+    lastMessagePreview: conversation.last_message_preview,
+    lastMessageAt: conversation.last_message_at,
+    updatedAt: conversation.updated_at,
+    hasAllFields: !!(conversation.id && conversation.last_message_preview && conversation.last_message_at),
   });
+
+  // Log objeto completo para debug
+  console.log(`[WebSocket] Full conversation object being emitted:`, JSON.stringify(conversation, null, 2));
 
   io.to(`user:${userId}`).emit('conversation_updated', conversation);
 }
