@@ -689,8 +689,9 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     }
 
     // Verificar se webhook já está configurado
+    // NOTA: Não pular se a instância foi recriada (token mudou), pois o webhook precisa ser reconfigurado
     const existingWebhook = instance.metadata?.webhook;
-    if (existingWebhook?.url === resolvedUrl) {
+    if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure) {
       console.log('[Auto-Webhook] Already configured, skipping', {
         instance: instance.external_instance_name,
         url: resolvedUrl,
