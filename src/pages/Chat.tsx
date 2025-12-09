@@ -342,9 +342,9 @@ const Chat = () => {
       const xhrError = (error as any).xhr || (error as any).req;
       const errorDetails: any = {
         message: error.message,
-        type: error.type,
-        description: error.description,
-        context: error.context,
+        type: (error as any).type,
+        description: (error as any).description,
+        context: (error as any).context,
         transport: socket.io.engine?.transport?.name || 'unknown',
         url: socketUrl,
         errorString: String(error),
