@@ -202,42 +202,55 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     const name = metadata?.connectedProfileName || null;
     
     // Foto do perfil - verificar múltiplos campos possíveis
+    // Função auxiliar para verificar se uma string é válida (não vazia)
+    const isValidUrl = (url: any): url is string => {
+      return typeof url === 'string' && url.trim().length > 0;
+    };
+    
     let pictureUrl: string | null = null;
     
     // Prioridade 1: Campo salvo diretamente
-    if (metadata?.connectedProfilePicUrl) {
+    if (isValidUrl(metadata?.connectedProfilePicUrl)) {
       pictureUrl = metadata.connectedProfilePicUrl;
     } 
     // Prioridade 2: Campos diretos no metadata
-    else if (metadata?.profilePicUrl) {
+    else if (isValidUrl(metadata?.profilePicUrl)) {
       pictureUrl = metadata.profilePicUrl;
-    } else if (metadata?.profilePicture) {
+    } else if (isValidUrl(metadata?.profilePicture)) {
       pictureUrl = metadata.profilePicture;
-    } else if (metadata?.pictureUrl) {
+    } else if (isValidUrl(metadata?.pictureUrl)) {
       pictureUrl = metadata.pictureUrl;
     } 
     // Prioridade 3: Dentro de lastConnect.instance (mais comum)
-    else if (metadata?.lastConnect?.instance?.profilePicUrl) {
+    else if (isValidUrl(metadata?.lastConnect?.instance?.profilePicUrl)) {
       pictureUrl = metadata.lastConnect.instance.profilePicUrl;
-    } else if (metadata?.lastConnect?.instance?.profilePicture) {
+    } else if (isValidUrl(metadata?.lastConnect?.instance?.profilePicture)) {
       pictureUrl = metadata.lastConnect.instance.profilePicture;
-    } else if (metadata?.lastConnect?.instance?.pictureUrl) {
+    } else if (isValidUrl(metadata?.lastConnect?.instance?.pictureUrl)) {
       pictureUrl = metadata.lastConnect.instance.pictureUrl;
-    } else if (metadata?.lastConnect?.instance?.profile_pic_url) {
+    } else if (isValidUrl(metadata?.lastConnect?.instance?.profile_pic_url)) {
       pictureUrl = metadata.lastConnect.instance.profile_pic_url;
-    } else if (metadata?.lastConnect?.profilePicUrl) {
+    } else if (isValidUrl(metadata?.lastConnect?.instance?.avatar)) {
+      pictureUrl = metadata.lastConnect.instance.avatar;
+    } else if (isValidUrl(metadata?.lastConnect?.instance?.image)) {
+      pictureUrl = metadata.lastConnect.instance.image;
+    } else if (isValidUrl(metadata?.lastConnect?.profilePicUrl)) {
       pictureUrl = metadata.lastConnect.profilePicUrl;
     }
     // Prioridade 4: Dentro de lastStatusCheck.instance
-    else if (metadata?.lastStatusCheck?.instance?.profilePicUrl) {
+    else if (isValidUrl(metadata?.lastStatusCheck?.instance?.profilePicUrl)) {
       pictureUrl = metadata.lastStatusCheck.instance.profilePicUrl;
-    } else if (metadata?.lastStatusCheck?.instance?.profilePicture) {
+    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.profilePicture)) {
       pictureUrl = metadata.lastStatusCheck.instance.profilePicture;
-    } else if (metadata?.lastStatusCheck?.instance?.pictureUrl) {
+    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.pictureUrl)) {
       pictureUrl = metadata.lastStatusCheck.instance.pictureUrl;
-    } else if (metadata?.lastStatusCheck?.instance?.profile_pic_url) {
+    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.profile_pic_url)) {
       pictureUrl = metadata.lastStatusCheck.instance.profile_pic_url;
-    } else if (metadata?.lastStatusCheck?.profilePicUrl) {
+    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.avatar)) {
+      pictureUrl = metadata.lastStatusCheck.instance.avatar;
+    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.image)) {
+      pictureUrl = metadata.lastStatusCheck.instance.image;
+    } else if (isValidUrl(metadata?.lastStatusCheck?.profilePicUrl)) {
       pictureUrl = metadata.lastStatusCheck.profilePicUrl;
     }
     
@@ -279,7 +292,20 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
       );
       console.log('[InstanceDetailsDialog] Campos relacionados a imagem em lastStatusCheck.instance:', picFields);
       picFields.forEach(field => {
-        console.log(`[InstanceDetailsDialog] ${field}:`, lastStatusCheckInstance[field]);
+        const value = lastStatusCheckInstance[field];
+        console.log(`[InstanceDetailsDialog] ${field}:`, value, `(tipo: ${typeof value}, vazio: ${value === ''}, válido: ${typeof value === 'string' && value.trim().length > 0})`);
+      });
+      
+      // Procurar também em todos os campos que possam conter URL
+      const urlFields = Object.keys(lastStatusCheckInstance).filter(key => 
+        /url|link|src|href/i.test(key)
+      );
+      console.log('[InstanceDetailsDialog] Campos relacionados a URL em lastStatusCheck.instance:', urlFields);
+      urlFields.forEach(field => {
+        const value = lastStatusCheckInstance[field];
+        if (typeof value === 'string' && value.trim().length > 0) {
+          console.log(`[InstanceDetailsDialog] ${field}:`, value);
+        }
       });
     }
     
