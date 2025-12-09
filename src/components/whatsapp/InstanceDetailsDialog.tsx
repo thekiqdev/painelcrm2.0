@@ -245,33 +245,46 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     const lastConnectInstance = metadata?.lastConnect?.instance;
     const lastStatusCheckInstance = metadata?.lastStatusCheck?.instance;
     
-    // Log completo para debug
-    console.log('[InstanceDetailsDialog] Profile info - FULL DEBUG:', {
-      hasMetadata: !!metadata,
-      connectedProfilePicUrl: metadata?.connectedProfilePicUrl,
-      profilePicUrl: metadata?.profilePicUrl,
-      lastConnectKeys: metadata?.lastConnect ? Object.keys(metadata.lastConnect) : null,
-      lastConnectFull: metadata?.lastConnect, // Objeto completo
-      lastConnectInstance: lastConnectInstance ? {
-        keys: Object.keys(lastConnectInstance),
-        fullObject: JSON.stringify(lastConnectInstance, null, 2), // Stringify para ver tudo
-        profilePicUrl: lastConnectInstance.profilePicUrl,
-        profilePicture: lastConnectInstance.profilePicture,
-        pictureUrl: lastConnectInstance.pictureUrl,
-        profile_pic_url: lastConnectInstance.profile_pic_url,
-      } : null,
-      lastStatusCheckKeys: metadata?.lastStatusCheck ? Object.keys(metadata.lastStatusCheck) : null,
-      lastStatusCheckFull: metadata?.lastStatusCheck, // Objeto completo
-      lastStatusCheckInstance: lastStatusCheckInstance ? {
-        keys: Object.keys(lastStatusCheckInstance),
-        fullObject: JSON.stringify(lastStatusCheckInstance, null, 2), // Stringify para ver tudo
-        profilePicUrl: lastStatusCheckInstance.profilePicUrl,
-        profilePicture: lastStatusCheckInstance.profilePicture,
-        pictureUrl: lastStatusCheckInstance.pictureUrl,
-        profile_pic_url: lastStatusCheckInstance.profile_pic_url,
-      } : null,
-      foundPictureUrl: pictureUrl,
-    });
+    // Log completo para debug - mostrar JSON completo em logs separados
+    console.log('[InstanceDetailsDialog] ===== PROFILE DEBUG START =====');
+    console.log('[InstanceDetailsDialog] Metadata completo:', JSON.stringify(metadata, null, 2));
+    
+    if (metadata?.lastConnect) {
+      console.log('[InstanceDetailsDialog] lastConnect completo:', JSON.stringify(metadata.lastConnect, null, 2));
+    }
+    
+    if (lastConnectInstance) {
+      console.log('[InstanceDetailsDialog] lastConnect.instance completo:', JSON.stringify(lastConnectInstance, null, 2));
+      console.log('[InstanceDetailsDialog] lastConnect.instance.keys:', Object.keys(lastConnectInstance));
+      // Procurar qualquer campo que contenha "pic", "picture", "image", "photo", "avatar"
+      const picFields = Object.keys(lastConnectInstance).filter(key => 
+        /pic|picture|image|photo|avatar/i.test(key)
+      );
+      console.log('[InstanceDetailsDialog] Campos relacionados a imagem em lastConnect.instance:', picFields);
+      picFields.forEach(field => {
+        console.log(`[InstanceDetailsDialog] ${field}:`, lastConnectInstance[field]);
+      });
+    }
+    
+    if (metadata?.lastStatusCheck) {
+      console.log('[InstanceDetailsDialog] lastStatusCheck completo:', JSON.stringify(metadata.lastStatusCheck, null, 2));
+    }
+    
+    if (lastStatusCheckInstance) {
+      console.log('[InstanceDetailsDialog] lastStatusCheck.instance completo:', JSON.stringify(lastStatusCheckInstance, null, 2));
+      console.log('[InstanceDetailsDialog] lastStatusCheck.instance.keys:', Object.keys(lastStatusCheckInstance));
+      // Procurar qualquer campo que contenha "pic", "picture", "image", "photo", "avatar"
+      const picFields = Object.keys(lastStatusCheckInstance).filter(key => 
+        /pic|picture|image|photo|avatar/i.test(key)
+      );
+      console.log('[InstanceDetailsDialog] Campos relacionados a imagem em lastStatusCheck.instance:', picFields);
+      picFields.forEach(field => {
+        console.log(`[InstanceDetailsDialog] ${field}:`, lastStatusCheckInstance[field]);
+      });
+    }
+    
+    console.log('[InstanceDetailsDialog] Foto encontrada:', pictureUrl);
+    console.log('[InstanceDetailsDialog] ===== PROFILE DEBUG END =====');
     
     return { phone, name, pictureUrl };
   };
