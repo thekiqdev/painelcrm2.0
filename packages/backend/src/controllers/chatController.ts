@@ -697,13 +697,25 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
 
     // Verificar se webhook já está configurado
     // NOTA: Não pular se a instância foi recriada (token mudou), pois o webhook precisa ser reconfigurado
+    // NOTA: Sempre reconfigurar se o token mudou (instância foi recriada)
     const existingWebhook = instance.metadata?.webhook;
-    if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure) {
+    const tokenChanged = instance.metadata?.tokenChanged || false;
+    
+    if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure && !tokenChanged) {
       console.log('[Auto-Webhook] Already configured, skipping', {
         instance: instance.external_instance_name,
         url: resolvedUrl,
+        tokenChanged,
       });
       return;
+    }
+    
+    // Se o token mudou, forçar reconfiguração
+    if (tokenChanged) {
+      console.log('[Auto-Webhook] Token changed, forcing webhook reconfiguration', {
+        instance: instance.external_instance_name,
+        instanceId: instance.id,
+      });
     }
 
     console.log('[Auto-Webhook] Configuring webhook...', {
@@ -745,10 +757,11 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     });
 
     // Salvar no banco
+    // Remover flag tokenChanged após configurar webhook com sucesso
     await pool.query(
       `
       UPDATE chat_instances
-      SET metadata = metadata || $1::jsonb,
+      SET metadata = (COALESCE(metadata, '{}'::jsonb) || $1::jsonb) - 'tokenChanged',
           updated_at = now()
       WHERE id = $2
     `,
