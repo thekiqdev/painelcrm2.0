@@ -79,6 +79,23 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     try {
       setLoadingConversations(true);
       
+      // PRIMEIRO: Sincronizar conversas do WhatsApp com o banco de dados
+      console.log('[InstanceDetailsDialog] Sincronizando conversas do WhatsApp...');
+      try {
+        const syncResult = await chatService.syncConversations(instance.id, { limit: 200 });
+        console.log('[InstanceDetailsDialog] Conversas sincronizadas:', {
+          total: syncResult?.total || 0,
+          upserted: syncResult?.upserted || 0,
+        });
+      } catch (syncError) {
+        console.error('[InstanceDetailsDialog] Erro ao sincronizar conversas:', syncError);
+        // Continuar mesmo se a sincronização falhar, para mostrar o que já está no banco
+        toast.warning("Aviso: Não foi possível sincronizar todas as conversas do WhatsApp", {
+          description: syncError instanceof Error ? syncError.message : "Algumas conversas podem estar desatualizadas",
+        });
+      }
+      
+      // SEGUNDO: Buscar conversas do banco de dados (agora atualizadas)
       let filters: { instanceId: string; startDate?: string; endDate?: string } = {
         instanceId: instance.id,
       };
@@ -109,7 +126,7 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
       const data = await chatService.getConversations(filters);
       setConversations(data || []);
       
-      // Após buscar conversas, sincronizar mensagens de cada uma
+      // TERCEIRO: Após buscar conversas, sincronizar mensagens de cada uma
       if (data && data.length > 0) {
         await syncAllConversationMessages(data);
       }
