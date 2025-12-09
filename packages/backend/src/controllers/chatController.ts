@@ -2244,12 +2244,23 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     if (updatedConversationResult.rows.length > 0) {
       const updatedConversation = updatedConversationResult.rows[0];
       
+      // Log detalhado para debug
+      console.log('[SendMessage] Updated conversation data:', {
+        conversationId: updatedConversation.id,
+        lastMessagePreview: updatedConversation.last_message_preview,
+        lastMessageAt: updatedConversation.last_message_at,
+        updatedAt: updatedConversation.updated_at,
+        userId,
+      });
+      
       // Emitir atualização de conversa via WebSocket
       try {
         emitConversationUpdate(userId, updatedConversation);
         console.log('[SendMessage] Conversation update emitted via WebSocket', {
           conversationId: updatedConversation.id,
           userId,
+          lastMessagePreview: updatedConversation.last_message_preview,
+          lastMessageAt: updatedConversation.last_message_at,
         });
       } catch (wsError: any) {
         console.warn('[SendMessage] Failed to emit conversation update:', wsError.message);

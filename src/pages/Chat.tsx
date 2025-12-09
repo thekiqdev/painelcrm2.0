@@ -446,7 +446,13 @@ const Chat = () => {
 
     // Escutar atualizações de conversa
     socket.on('conversation_updated', (raw: any) => {
-      console.log('[Chat] Conversation updated via WebSocket (raw):', raw?.id);
+      console.log('[Chat] Conversation updated via WebSocket (raw):', {
+        id: raw?.id,
+        lastMessagePreview: raw?.last_message_preview,
+        lastMessageAt: raw?.last_message_at,
+        updatedAt: raw?.updated_at,
+        fullData: raw,
+      });
 
       // Normalizar payload do backend usando a mesma lógica do chatService
       const metadata = raw.metadata || {};
@@ -479,8 +485,20 @@ const Chat = () => {
         updated_at: raw.updated_at,
       };
       
+      console.log('[Chat] Normalized conversation:', {
+        id: updatedConversation.id,
+        lastMessagePreview: updatedConversation.lastMessagePreview,
+        lastMessageAt: updatedConversation.lastMessageAt,
+      });
+      
       setConversations((prev) => {
         const existingIndex = prev.findIndex(c => c.id === updatedConversation.id);
+        console.log('[Chat] Updating conversations list:', {
+          conversationId: updatedConversation.id,
+          existingIndex,
+          currentListSize: prev.length,
+        });
+        
         if (existingIndex >= 0) {
           // Atualizar conversa existente
           const updated = [...prev];
@@ -494,18 +512,25 @@ const Chat = () => {
           console.log('[Chat] Conversation updated and sorted', {
             conversationId: updatedConversation.id,
             lastMessageAt: updatedConversation.lastMessageAt,
+            lastMessagePreview: updatedConversation.lastMessagePreview,
             position: sorted.findIndex(c => c.id === updatedConversation.id),
+            newListSize: sorted.length,
           });
           return sorted;
         }
         // Adicionar nova conversa no topo
         const newList = [updatedConversation, ...prev];
         // Ordenar por lastMessageAt
-        return newList.sort((a, b) => {
+        const sorted = newList.sort((a, b) => {
           const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
           const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
           return dateB - dateA; // Mais recente primeiro
         });
+        console.log('[Chat] New conversation added and sorted', {
+          conversationId: updatedConversation.id,
+          newListSize: sorted.length,
+        });
+        return sorted;
       });
 
       // Se a conversa atualizada é a selecionada, recarregar mensagens
