@@ -701,6 +701,8 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
 
     console.log('[Auto-Webhook] Configuring webhook...', {
       instance: instance.external_instance_name,
+      instanceId: instance.id,
+      instanceToken: '***' + instance.instance_token.slice(-4),
       url: resolvedUrl,
     });
 
@@ -721,7 +723,19 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       webhookBody.secret = secret;
     }
 
-    await uazapiService.configureWebhook(instance.instance_token, webhookBody);
+    console.log('[Auto-Webhook] Sending webhook configuration to UazAPI:', {
+      instanceId: instance.id,
+      webhookUrl: resolvedUrl,
+      events: defaultEvents,
+      hasSecret: !!secret,
+    });
+
+    const webhookResponse = await uazapiService.configureWebhook(instance.instance_token, webhookBody);
+    
+    console.log('[Auto-Webhook] UazAPI webhook configuration response:', {
+      instanceId: instance.id,
+      response: JSON.stringify(webhookResponse).substring(0, 500),
+    });
 
     // Salvar no banco
     await pool.query(
@@ -926,12 +940,31 @@ export async function connectInstance(req: AuthRequest, res: Response) {
           // Configurar webhook imediatamente após recriar instância
           // Isso é crítico para que novas mensagens sejam recebidas
           try {
-            console.log('[ConnectInstance] Configurando webhook para nova instância...');
+            console.log('[ConnectInstance] Configurando webhook para nova instância...', {
+              instanceId: instanceToUse.id,
+              instanceToken: '***' + instanceToUse.instance_token.slice(-4),
+            });
             await autoConfigureWebhook(instanceToUse);
-            console.log('[ConnectInstance] Webhook configurado com sucesso para nova instância');
+            console.log('[ConnectInstance] Webhook configurado com sucesso para nova instância', {
+              instanceId: instanceToUse.id,
+            });
+            
+            // Verificar se webhook foi configurado corretamente
+            try {
+              const webhookCheck = await uazapiService.getWebhook(instanceToUse.instance_token);
+              console.log('[ConnectInstance] Webhook verification:', {
+                instanceId: instanceToUse.id,
+                webhookConfigured: !!webhookCheck,
+                webhookUrl: webhookCheck?.url || 'not found',
+              });
+            } catch (checkError: any) {
+              console.warn('[ConnectInstance] Não foi possível verificar webhook:', checkError.message);
+            }
           } catch (webhookError: any) {
-            console.error('[ConnectInstance] Erro ao configurar webhook após recriar instância (não crítico):', {
+            console.error('[ConnectInstance] Erro ao configurar webhook após recriar instância:', {
               error: webhookError.message,
+              stack: webhookError.stack,
+              instanceId: instanceToUse.id,
             });
             // Não falhar o processo se webhook falhar, mas logar o erro
           }
@@ -1076,8 +1109,25 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         [instanceToUse.id]
       );
       if (updatedInstance.rows[0]) {
+        console.log('[ConnectInstance] Configurando webhook após conectar/gerar QR code...', {
+          instanceId: updatedInstance.rows[0].id,
+          status: response?.status,
+        });
         // Configurar webhook mesmo se estiver connecting (será útil quando conectar)
         await autoConfigureWebhook(updatedInstance.rows[0]);
+        
+        // Verificar se webhook foi configurado
+        try {
+          const webhookCheck = await uazapiService.getWebhook(updatedInstance.rows[0].instance_token);
+          console.log('[ConnectInstance] Webhook verification after connect:', {
+            instanceId: updatedInstance.rows[0].id,
+            webhookConfigured: !!webhookCheck,
+            webhookUrl: webhookCheck?.url || 'not found',
+            webhookEnabled: webhookCheck?.enabled,
+          });
+        } catch (checkError: any) {
+          console.warn('[ConnectInstance] Não foi possível verificar webhook após conectar:', checkError.message);
+        }
       }
     }
 
