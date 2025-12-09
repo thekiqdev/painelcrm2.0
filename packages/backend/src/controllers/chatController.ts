@@ -58,6 +58,8 @@ type ChatInstanceRow = {
   instance_token: string;
   status: string;
   metadata: any;
+  connected_phone?: string | null;
+  phone_key?: string | null;
 };
 
 type AnyObject = Record<string, any>;
@@ -834,7 +836,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
           // Se houver phone_key, herdar conversas
           const currentMetadata = instance.metadata || {};
-          const phoneKey = instance.phone_key || 
+          const phoneKey = (instance as any).phone_key || 
             (currentMetadata?.connectedPhone 
               ? `${instance.user_id}:${normalizePhoneNumber(currentMetadata.connectedPhone)}`
               : null);
@@ -968,7 +970,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       }
     } else {
       // Se não houver connectedPhone, tentar preservar phone_key existente
-      phoneKey = instanceToUse.phone_key || null;
+      phoneKey = (instanceToUse as any).phone_key || null;
     }
 
     // Atualizar instância com status, metadata, connected_phone e phone_key
