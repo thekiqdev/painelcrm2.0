@@ -951,7 +951,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
             
             // Verificar se webhook foi configurado corretamente
             try {
-              const webhookCheck = await uazapiService.getWebhook(instanceToUse.instance_token);
+              const webhookCheck = await uazapiService.getWebhook(instanceToUse.instance_token) as any;
               console.log('[ConnectInstance] Webhook verification:', {
                 instanceId: instanceToUse.id,
                 webhookConfigured: !!webhookCheck,
@@ -1118,7 +1118,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         
         // Verificar se webhook foi configurado
         try {
-          const webhookCheck = await uazapiService.getWebhook(updatedInstance.rows[0].instance_token);
+          const webhookCheck = (await uazapiService.getWebhook(updatedInstance.rows[0].instance_token)) as any;
           console.log('[ConnectInstance] Webhook verification after connect:', {
             instanceId: updatedInstance.rows[0].id,
             webhookConfigured: !!webhookCheck,
