@@ -84,6 +84,56 @@ function normalizePhoneNumber(phone: string | null | undefined): string | null {
   return normalized.length >= 10 ? normalized : null;
 }
 
+/**
+ * Herda conversas de outras instâncias com o mesmo phone_key
+ * Quando uma nova instância é conectada com o mesmo número, ela herda as conversas antigas
+ */
+async function inheritConversationsFromPhoneKey(
+  userId: string,
+  newInstanceId: string,
+  phoneKey: string
+) {
+  if (!phoneKey) {
+    console.log('[InheritConversations] phone_key is empty, skipping inheritance');
+    return 0;
+  }
+
+  try {
+    console.log(`[InheritConversations] Herdando conversas para instância ${newInstanceId} com phone_key ${phoneKey}`);
+
+    // Buscar todas as conversas do mesmo user_id e phone_key, mas de outras instâncias
+    const result = await pool.query(
+      `UPDATE chat_conversations 
+       SET instance_id = $1, updated_at = now()
+       WHERE user_id = $2 
+         AND phone_key = $3
+         AND instance_id != $1
+       RETURNING id, phone_number, external_chat_id`,
+      [newInstanceId, userId, phoneKey]
+    );
+
+    if (result.rows.length > 0) {
+      console.log(`[InheritConversations] ${result.rows.length} conversas herdadas para instância ${newInstanceId}`, {
+        conversations: result.rows.map(r => ({ id: r.id, phone: r.phone_number, externalChatId: r.external_chat_id })),
+      });
+    } else {
+      console.log(`[InheritConversations] Nenhuma conversa encontrada para herdar com phone_key ${phoneKey}`);
+    }
+
+    return result.rows.length;
+  } catch (error: any) {
+    console.error('[InheritConversations] Erro ao herdar conversas:', {
+      error: error.message,
+      code: error.code,
+      userId,
+      newInstanceId,
+      phoneKey,
+    });
+    // Não lançar erro - herança é opcional e não deve quebrar o fluxo
+    return 0;
+  }
+}
+
 function normalizeChatPayload(raw: any) {
   if (!raw || typeof raw !== 'object') {
     return null;
@@ -219,6 +269,24 @@ async function upsertConversation(
     }
   }
 
+  // Buscar phone_key da instância para vincular conversa ao número conectado
+  let phoneKey: string | null = null;
+  try {
+    const instanceResult = await pool.query(
+      'SELECT phone_key FROM chat_instances WHERE id = $1',
+      [instance.id]
+    );
+    if (instanceResult.rows.length > 0) {
+      phoneKey = instanceResult.rows[0].phone_key;
+      console.log(`[UpsertConversation ${upsertId}] Found phone_key from instance:`, phoneKey);
+    }
+  } catch (keyError: any) {
+    console.error(`[UpsertConversation ${upsertId}] Error fetching phone_key:`, {
+      error: keyError.message,
+    });
+    // Não falha o upsert se houver erro ao buscar phone_key
+  }
+
   try {
   // Verificar se a conversa já existe
   const existingResult = await pool.query(
@@ -247,8 +315,9 @@ async function upsertConversation(
         unread_count = COALESCE($8, unread_count),
         metadata = $9::jsonb,
         client_id = COALESCE($10, client_id),
+        phone_key = COALESCE($11, phone_key),
         updated_at = now()
-      WHERE id = $11
+      WHERE id = $12
       RETURNING *
       `,
       [
@@ -262,6 +331,7 @@ async function upsertConversation(
         chatData.unreadCount || 0,
         JSON.stringify(chatData.metadata || {}),
         clientId,
+        phoneKey,
         conversationId,
       ]
     );
@@ -273,9 +343,9 @@ async function upsertConversation(
         user_id, instance_id, external_chat_id, external_fast_id,
         contact_name, profile_name, phone_number, status,
         last_message_preview, last_message_at, unread_count, metadata,
-        client_id
+        client_id, phone_key
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14)
       RETURNING *
       `,
       [
@@ -292,6 +362,7 @@ async function upsertConversation(
         chatData.unreadCount,
         JSON.stringify(chatData.metadata || {}),
         clientId,
+        phoneKey,
       ]
     );
   }
@@ -779,15 +850,36 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       });
     }
 
+    // Normalizar número e gerar phone_key
+    let normalizedPhone: string | null = null;
+    let phoneKey: string | null = null;
+    if (connectedPhone) {
+      normalizedPhone = normalizePhoneNumber(connectedPhone);
+      if (normalizedPhone) {
+        // Gerar chave única: user_id + ':' + normalized_phone
+        phoneKey = `${instance.user_id}:${normalizedPhone}`;
+        console.log('[ConnectInstance] Generated phone_key:', phoneKey);
+      }
+    }
+
+    // Atualizar instância com status, metadata, connected_phone e phone_key
     await pool.query(
       `
       UPDATE chat_instances
       SET status = $1,
           metadata = metadata || $2::jsonb,
+          connected_phone = COALESCE($3, connected_phone),
+          phone_key = COALESCE($4, phone_key),
           updated_at = now()
-      WHERE id = $3
+      WHERE id = $5
     `,
-      [response?.status || 'connecting', JSON.stringify(updatedMetadata), instance.id]
+      [
+        response?.status || 'connecting',
+        JSON.stringify(updatedMetadata),
+        normalizedPhone,
+        phoneKey,
+        instance.id
+      ]
     );
 
     // Se conectado com sucesso, configurar webhook automaticamente
@@ -802,6 +894,19 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         // Configurar webhook mesmo se estiver connecting (será útil quando conectar)
         await autoConfigureWebhook(updatedInstance.rows[0]);
       }
+    }
+
+    // Se phone_key foi gerado, herdar conversas de outras instâncias com mesmo número (em background)
+    if (phoneKey) {
+      inheritConversationsFromPhoneKey(instance.user_id, instance.id, phoneKey)
+        .then(count => {
+          if (count > 0) {
+            console.log(`[ConnectInstance] ${count} conversas herdadas automaticamente`);
+          }
+        })
+        .catch(err => {
+          console.error('[ConnectInstance] Erro ao herdar conversas (não crítico):', err);
+        });
     }
 
     res.json(response);
@@ -1193,11 +1298,31 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       });
     }
     
+    // Normalizar número e gerar phone_key
+    let normalizedPhone: string | null = null;
+    let phoneKey: string | null = null;
+    if (connectedPhone) {
+      normalizedPhone = normalizePhoneNumber(connectedPhone);
+      if (normalizedPhone) {
+        // Gerar chave única: user_id + ':' + normalized_phone
+        phoneKey = `${instance.user_id}:${normalizedPhone}`;
+        console.log('[GetInstanceStatus] Generated phone_key:', phoneKey);
+      }
+    }
+    
     // Atualizar no banco se mudou status ou número conectado
     if (finalStatus !== instance.status || (connectedPhone && currentMetadata?.connectedPhone !== connectedPhone)) {
       await pool.query(
-        'UPDATE chat_instances SET status = $1, metadata = $2::jsonb, updated_at = now() WHERE id = $3',
-        [finalStatus, JSON.stringify(updatedMetadata), instance.id]
+        `
+        UPDATE chat_instances 
+        SET status = $1, 
+            metadata = $2::jsonb, 
+            connected_phone = COALESCE($3, connected_phone),
+            phone_key = COALESCE($4, phone_key),
+            updated_at = now() 
+        WHERE id = $5
+        `,
+        [finalStatus, JSON.stringify(updatedMetadata), normalizedPhone, phoneKey, instance.id]
       );
       
       // Se mudou para connected, configurar webhook automaticamente
@@ -1210,6 +1335,19 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
           console.log('Instance status changed to connected, auto-configuring webhook...');
           await autoConfigureWebhook(updatedInstance.rows[0]);
         }
+      }
+
+      // Se phone_key foi gerado, herdar conversas de outras instâncias com mesmo número (em background)
+      if (phoneKey) {
+        inheritConversationsFromPhoneKey(instance.user_id, instance.id, phoneKey)
+          .then(count => {
+            if (count > 0) {
+              console.log(`[GetInstanceStatus] ${count} conversas herdadas automaticamente`);
+            }
+          })
+          .catch(err => {
+            console.error('[GetInstanceStatus] Erro ao herdar conversas (não crítico):', err);
+          });
       }
     }
     
