@@ -764,11 +764,117 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     const instance = await loadInstance(userId, id, res);
     if (!instance) return;
 
-    // Se phone não foi fornecido, não passar para gerar QR code
-    const response = (await uazapiService.connectInstance(
-      instance.instance_token,
-      data.phone || undefined
-    )) as AnyObject;
+    let response: AnyObject;
+    let instanceToUse = instance;
+
+    try {
+      // Tentar conectar com o token atual
+      response = (await uazapiService.connectInstance(
+        instance.instance_token,
+        data.phone || undefined
+      )) as AnyObject;
+    } catch (connectError: any) {
+      // Se o erro for "Invalid token", criar nova instância
+      const errorMessage = connectError?.message || '';
+      const isInvalidToken = 
+        errorMessage.toLowerCase().includes('invalid token') ||
+        errorMessage.toLowerCase().includes('token inválido') ||
+        connectError?.status === 401 ||
+        connectError?.status === 403;
+
+      if (isInvalidToken) {
+        console.log('[ConnectInstance] Token inválido detectado, criando nova instância...', {
+          instanceId: instance.id,
+          instanceName: instance.name,
+          oldToken: instance.instance_token ? '***' + instance.instance_token.slice(-4) : 'MISSING',
+        });
+
+        try {
+          // Criar nova instância na UazAPI com o mesmo nome
+          const newRemoteInstance = (await uazapiService.createInstance(
+            instance.name,
+            instance.metadata || {}
+          )) as AnyObject;
+
+          const newInstanceInfo = newRemoteInstance?.instance || newRemoteInstance;
+          const newInstanceToken = newInstanceInfo?.token || newRemoteInstance?.token;
+
+          if (!newInstanceToken) {
+            throw new Error('Token da nova instância não foi retornado pela UazAPI');
+          }
+
+          console.log('[ConnectInstance] Nova instância criada na UazAPI', {
+            instanceId: instance.id,
+            newToken: '***' + newInstanceToken.slice(-4),
+          });
+
+          // Atualizar registro no banco com novo token
+          await pool.query(
+            `
+            UPDATE chat_instances
+            SET instance_token = $1,
+                status = 'disconnected',
+                updated_at = now()
+            WHERE id = $2
+            `,
+            [newInstanceToken, instance.id]
+          );
+
+          // Buscar instância atualizada
+          const updatedInstanceResult = await pool.query<ChatInstanceRow>(
+            'SELECT * FROM chat_instances WHERE id = $1',
+            [instance.id]
+          );
+          
+          if (updatedInstanceResult.rows.length === 0) {
+            throw new Error('Instância não encontrada após atualização');
+          }
+
+          instanceToUse = updatedInstanceResult.rows[0];
+
+          // Se houver phone_key, herdar conversas
+          const currentMetadata = instance.metadata || {};
+          const phoneKey = instance.phone_key || 
+            (currentMetadata?.connectedPhone 
+              ? `${instance.user_id}:${normalizePhoneNumber(currentMetadata.connectedPhone)}`
+              : null);
+
+          if (phoneKey) {
+            console.log('[ConnectInstance] Herdando conversas para nova instância...', { phoneKey });
+            await inheritConversationsFromPhoneKey(userId, instance.id, phoneKey)
+              .then(count => {
+                if (count > 0) {
+                  console.log(`[ConnectInstance] ${count} conversas herdadas após recriar instância`);
+                }
+              })
+              .catch(err => {
+                console.error('[ConnectInstance] Erro ao herdar conversas (não crítico):', err);
+              });
+          }
+
+          // Tentar conectar novamente com o novo token
+          response = (await uazapiService.connectInstance(
+            newInstanceToken,
+            data.phone || undefined
+          )) as AnyObject;
+
+          console.log('[ConnectInstance] Reconexão bem-sucedida com novo token');
+        } catch (recreateError: any) {
+          console.error('[ConnectInstance] Erro ao recriar instância:', {
+            error: recreateError.message,
+            stack: recreateError.stack,
+          });
+          res.status(500).json({ 
+            error: 'Falha ao recriar instância',
+            details: recreateError.message || 'Token inválido e não foi possível criar nova instância',
+          });
+          return;
+        }
+      } else {
+        // Se não for erro de token inválido, propagar o erro original
+        throw connectError;
+      }
+    }
 
     console.log('UazAPI connectInstance response:', JSON.stringify(response, null, 2));
 
@@ -857,9 +963,12 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       normalizedPhone = normalizePhoneNumber(connectedPhone);
       if (normalizedPhone) {
         // Gerar chave única: user_id + ':' + normalized_phone
-        phoneKey = `${instance.user_id}:${normalizedPhone}`;
+        phoneKey = `${instanceToUse.user_id}:${normalizedPhone}`;
         console.log('[ConnectInstance] Generated phone_key:', phoneKey);
       }
+    } else {
+      // Se não houver connectedPhone, tentar preservar phone_key existente
+      phoneKey = instanceToUse.phone_key || null;
     }
 
     // Atualizar instância com status, metadata, connected_phone e phone_key
@@ -878,7 +987,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         JSON.stringify(updatedMetadata),
         normalizedPhone,
         phoneKey,
-        instance.id
+        instanceToUse.id
       ]
     );
 
@@ -888,7 +997,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       // Buscar instância atualizada
       const updatedInstance = await pool.query<ChatInstanceRow>(
         'SELECT * FROM chat_instances WHERE id = $1',
-        [instance.id]
+        [instanceToUse.id]
       );
       if (updatedInstance.rows[0]) {
         // Configurar webhook mesmo se estiver connecting (será útil quando conectar)
@@ -897,8 +1006,9 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     }
 
     // Se phone_key foi gerado, herdar conversas de outras instâncias com mesmo número (em background)
+    // NOTA: Se a instância foi recriada, a herança já foi feita acima, mas não faz mal fazer novamente
     if (phoneKey) {
-      inheritConversationsFromPhoneKey(instance.user_id, instance.id, phoneKey)
+      inheritConversationsFromPhoneKey(instanceToUse.user_id, instanceToUse.id, phoneKey)
         .then(count => {
           if (count > 0) {
             console.log(`[ConnectInstance] ${count} conversas herdadas automaticamente`);
