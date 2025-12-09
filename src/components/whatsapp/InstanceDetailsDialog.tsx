@@ -269,13 +269,39 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     if (lastConnectInstance) {
       console.log('[InstanceDetailsDialog] lastConnect.instance completo:', JSON.stringify(lastConnectInstance, null, 2));
       console.log('[InstanceDetailsDialog] lastConnect.instance.keys:', Object.keys(lastConnectInstance));
+      
+      // MOSTRAR TODOS OS CAMPOS E VALORES PARA DEBUG
+      console.log('[InstanceDetailsDialog] ===== TODOS OS CAMPOS DE lastConnect.instance =====');
+      Object.keys(lastConnectInstance).forEach(key => {
+        const value = lastConnectInstance[key];
+        if (typeof value === 'string' && value.length > 0 && value.length < 500) {
+          console.log(`[InstanceDetailsDialog] ${key}:`, value);
+        } else if (typeof value === 'string' && value.length >= 500) {
+          console.log(`[InstanceDetailsDialog] ${key}:`, value.substring(0, 200) + '... (truncado, tamanho: ' + value.length + ')');
+        }
+      });
+      console.log('[InstanceDetailsDialog] ===== FIM DOS CAMPOS =====');
+      
       // Procurar qualquer campo que contenha "pic", "picture", "image", "photo", "avatar"
       const picFields = Object.keys(lastConnectInstance).filter(key => 
         /pic|picture|image|photo|avatar/i.test(key)
       );
       console.log('[InstanceDetailsDialog] Campos relacionados a imagem em lastConnect.instance:', picFields);
       picFields.forEach(field => {
-        console.log(`[InstanceDetailsDialog] ${field}:`, lastConnectInstance[field]);
+        const value = lastConnectInstance[field];
+        console.log(`[InstanceDetailsDialog] ${field}:`, value, `(tipo: ${typeof value}, vazio: ${value === ''}, válido: ${typeof value === 'string' && value.trim().length > 0})`);
+      });
+      
+      // Procurar também em todos os campos que possam conter URL
+      const urlFields = Object.keys(lastConnectInstance).filter(key => 
+        /url|link|src|href/i.test(key)
+      );
+      console.log('[InstanceDetailsDialog] Campos relacionados a URL em lastConnect.instance:', urlFields);
+      urlFields.forEach(field => {
+        const value = lastConnectInstance[field];
+        if (typeof value === 'string' && value.trim().length > 0) {
+          console.log(`[InstanceDetailsDialog] ${field}:`, value);
+        }
       });
     }
     
