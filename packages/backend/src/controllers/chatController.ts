@@ -2210,7 +2210,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
 
       // Emitir nova mensagem via WebSocket
       if (savedMessageResult.rows.length > 0) {
-        const savedMessage = savedMessageResult.rows[0];
+        const savedMessage: any = savedMessageResult.rows[0];
         try {
           emitNewMessage(userId, {
             id: savedMessage.id,
