@@ -767,7 +767,16 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     }
     if (profilePicUrl) {
       updatedMetadata.connectedProfilePicUrl = profilePicUrl;
-      console.log('[ConnectInstance] Profile picture URL found:', profilePicUrl);
+      console.log('[ConnectInstance] Profile picture URL found and saved:', profilePicUrl);
+    } else {
+      console.log('[ConnectInstance] Profile picture URL NOT found. Response structure:', {
+        hasResponse: !!response,
+        hasInstanceData: !!instanceData,
+        responseKeys: response ? Object.keys(response) : [],
+        instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
+        responseInstance: response?.instance ? Object.keys(response.instance) : null,
+        instanceDataInstance: instanceData?.instance ? Object.keys(instanceData.instance) : null,
+      });
     }
 
     await pool.query(
@@ -1172,7 +1181,16 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
     }
     if (profilePicUrl) {
       updatedMetadata.connectedProfilePicUrl = profilePicUrl;
-      console.log('[GetInstanceStatus] Profile picture URL found:', profilePicUrl);
+      console.log('[GetInstanceStatus] Profile picture URL found and saved:', profilePicUrl);
+    } else {
+      console.log('[GetInstanceStatus] Profile picture URL NOT found. Result structure:', {
+        hasResult: !!result,
+        hasInstanceData: !!instanceData,
+        resultKeys: result ? Object.keys(result) : [],
+        instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
+        resultInstance: result?.instance ? Object.keys(result.instance) : null,
+        instanceDataInstance: instanceData?.instance ? Object.keys(instanceData.instance) : null,
+      });
     }
     
     // Atualizar no banco se mudou status ou número conectado

@@ -242,29 +242,33 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     }
     
     // Debug: log detalhado para verificar o que está sendo encontrado
-    console.log('[InstanceDetailsDialog] Profile info:', {
+    const lastConnectInstance = metadata?.lastConnect?.instance;
+    const lastStatusCheckInstance = metadata?.lastStatusCheck?.instance;
+    
+    // Log completo para debug
+    console.log('[InstanceDetailsDialog] Profile info - FULL DEBUG:', {
       hasMetadata: !!metadata,
       connectedProfilePicUrl: metadata?.connectedProfilePicUrl,
       profilePicUrl: metadata?.profilePicUrl,
-      lastConnect: metadata?.lastConnect ? {
-        keys: Object.keys(metadata.lastConnect),
-        instance: metadata.lastConnect.instance ? {
-          keys: Object.keys(metadata.lastConnect.instance),
-          profilePicUrl: metadata.lastConnect.instance.profilePicUrl,
-          profile_pic_url: metadata.lastConnect.instance.profile_pic_url,
-          profileName: metadata.lastConnect.instance.profileName,
-        } : null,
-        profilePicUrl: metadata.lastConnect.profilePicUrl,
+      lastConnectKeys: metadata?.lastConnect ? Object.keys(metadata.lastConnect) : null,
+      lastConnectFull: metadata?.lastConnect, // Objeto completo
+      lastConnectInstance: lastConnectInstance ? {
+        keys: Object.keys(lastConnectInstance),
+        fullObject: JSON.stringify(lastConnectInstance, null, 2), // Stringify para ver tudo
+        profilePicUrl: lastConnectInstance.profilePicUrl,
+        profilePicture: lastConnectInstance.profilePicture,
+        pictureUrl: lastConnectInstance.pictureUrl,
+        profile_pic_url: lastConnectInstance.profile_pic_url,
       } : null,
-      lastStatusCheck: metadata?.lastStatusCheck ? {
-        keys: Object.keys(metadata.lastStatusCheck),
-        instance: metadata.lastStatusCheck.instance ? {
-          keys: Object.keys(metadata.lastStatusCheck.instance),
-          profilePicUrl: metadata.lastStatusCheck.instance.profilePicUrl,
-          profile_pic_url: metadata.lastStatusCheck.instance.profile_pic_url,
-          profileName: metadata.lastStatusCheck.instance.profileName,
-        } : null,
-        profilePicUrl: metadata.lastStatusCheck.profilePicUrl,
+      lastStatusCheckKeys: metadata?.lastStatusCheck ? Object.keys(metadata.lastStatusCheck) : null,
+      lastStatusCheckFull: metadata?.lastStatusCheck, // Objeto completo
+      lastStatusCheckInstance: lastStatusCheckInstance ? {
+        keys: Object.keys(lastStatusCheckInstance),
+        fullObject: JSON.stringify(lastStatusCheckInstance, null, 2), // Stringify para ver tudo
+        profilePicUrl: lastStatusCheckInstance.profilePicUrl,
+        profilePicture: lastStatusCheckInstance.profilePicture,
+        pictureUrl: lastStatusCheckInstance.pictureUrl,
+        profile_pic_url: lastStatusCheckInstance.profile_pic_url,
       } : null,
       foundPictureUrl: pictureUrl,
     });
