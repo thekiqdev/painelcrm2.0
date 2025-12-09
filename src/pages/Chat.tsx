@@ -448,22 +448,34 @@ const Chat = () => {
     socket.on('conversation_updated', (raw: any) => {
       console.log('[Chat] Conversation updated via WebSocket (raw):', raw?.id);
 
-      // Normalizar payload do backend (snake_case -> camelCase)
+      // Normalizar payload do backend usando a mesma lógica do chatService
+      const metadata = raw.metadata || {};
+      const avatarUrl =
+        raw.image ||
+        raw.image_preview ||
+        raw.imagePreview ||
+        metadata.image ||
+        metadata.image_preview ||
+        metadata.imagePreview ||
+        null;
+
       const updatedConversation: ChatConversation = {
         id: raw.id,
         user_id: raw.user_id,
         instance_id: raw.instance_id,
         instance_name: raw.instance_name,
         client_id: raw.client_id ?? null,
+        leadId: raw.lead_id ?? null,
         external_chat_id: raw.external_chat_id,
         contactName: raw.contact_name ?? null,
         profileName: raw.profile_name ?? null,
         phoneNumber: raw.phone_number ?? null,
+        avatarUrl,
         status: raw.status ?? null,
         lastMessagePreview: raw.last_message_preview ?? null,
         lastMessageAt: raw.last_message_at ?? null,
         unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
-        metadata: raw.metadata ?? null,
+        metadata: metadata ?? null,
         updated_at: raw.updated_at,
       };
       
