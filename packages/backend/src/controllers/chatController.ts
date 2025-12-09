@@ -701,17 +701,34 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
     console.log('UazAPI connectInstance response:', JSON.stringify(response, null, 2));
 
-    // Extrair número conectado da resposta
+    // Extrair informações do perfil conectado da resposta
+    const instanceData = response?.instance || response;
     const connectedPhone = 
       response?.owner || 
       response?.phone || 
       response?.number || 
-      response?.instance?.owner || 
-      response?.instance?.phone || 
-      response?.instance?.number ||
+      instanceData?.owner || 
+      instanceData?.phone || 
+      instanceData?.number ||
       response?.data?.owner ||
       response?.data?.phone ||
       response?.data?.number ||
+      null;
+
+    const profileName = 
+      response?.profileName ||
+      instanceData?.profileName ||
+      response?.name ||
+      instanceData?.name ||
+      null;
+
+    const profilePicUrl = 
+      response?.profilePicUrl ||
+      instanceData?.profilePicUrl ||
+      response?.profilePicture ||
+      instanceData?.profilePicture ||
+      response?.pictureUrl ||
+      instanceData?.pictureUrl ||
       null;
 
     // Preparar metadata atualizado
@@ -719,10 +736,18 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       lastConnect: response,
     };
 
-    // Se encontrou número conectado, salvar
+    // Se encontrou informações do perfil, salvar
     if (connectedPhone) {
       updatedMetadata.connectedPhone = connectedPhone;
       console.log('[ConnectInstance] Connected phone found:', connectedPhone);
+    }
+    if (profileName) {
+      updatedMetadata.connectedProfileName = profileName;
+      console.log('[ConnectInstance] Profile name found:', profileName);
+    }
+    if (profilePicUrl) {
+      updatedMetadata.connectedProfilePicUrl = profilePicUrl;
+      console.log('[ConnectInstance] Profile picture URL found:', profilePicUrl);
     }
 
     await pool.query(
@@ -1045,7 +1070,7 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
     const connected = result?.connected || instanceData?.connected;
     const loggedIn = result?.loggedIn || instanceData?.loggedIn;
     
-    // Extrair número conectado da resposta
+    // Extrair informações do perfil conectado da resposta
     const connectedPhone = 
       result?.owner || 
       result?.phone || 
@@ -1056,6 +1081,22 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       result?.data?.owner ||
       result?.data?.phone ||
       result?.data?.number ||
+      null;
+
+    const profileName = 
+      result?.profileName ||
+      instanceData?.profileName ||
+      result?.name ||
+      instanceData?.name ||
+      null;
+
+    const profilePicUrl = 
+      result?.profilePicUrl ||
+      instanceData?.profilePicUrl ||
+      result?.profilePicture ||
+      instanceData?.profilePicture ||
+      result?.pictureUrl ||
+      instanceData?.pictureUrl ||
       null;
     
     // Determinar status final
@@ -1075,10 +1116,18 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       lastStatusCheck: result,
     };
 
-    // Se encontrou número conectado, salvar
+    // Se encontrou informações do perfil, salvar
     if (connectedPhone) {
       updatedMetadata.connectedPhone = connectedPhone;
       console.log('[GetInstanceStatus] Connected phone found:', connectedPhone);
+    }
+    if (profileName) {
+      updatedMetadata.connectedProfileName = profileName;
+      console.log('[GetInstanceStatus] Profile name found:', profileName);
+    }
+    if (profilePicUrl) {
+      updatedMetadata.connectedProfilePicUrl = profilePicUrl;
+      console.log('[GetInstanceStatus] Profile picture URL found:', profilePicUrl);
     }
     
     // Atualizar no banco se mudou status ou número conectado

@@ -29,7 +29,9 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  User,
 } from "lucide-react";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { chatService, ChatInstance, ChatConversation } from "@/services/chat";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -175,38 +177,39 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     }
   };
 
-  // Extrair número do telefone conectado do metadata
-  const getPhoneNumber = () => {
-    if (!instance) return null;
+  // Extrair informações do perfil conectado do metadata
+  const getProfileInfo = () => {
+    if (!instance) return { phone: null, name: null, pictureUrl: null };
     
-    // Prioridade 1: Número conectado salvo no metadata (quando leu o QR code)
-    if (instance.metadata && typeof instance.metadata === 'object') {
-      const metadata = instance.metadata as any;
-      if (metadata.connectedPhone) {
-        return metadata.connectedPhone;
-      }
-    }
+    const metadata = instance.metadata && typeof instance.metadata === 'object' 
+      ? (instance.metadata as any) 
+      : null;
     
-    // Prioridade 2: Tentar extrair do external_instance_name (formato: nome_numero)
-    if (instance.external_instance_name) {
+    // Número conectado
+    let phone: string | null = null;
+    if (metadata?.connectedPhone) {
+      phone = metadata.connectedPhone;
+    } else if (instance.external_instance_name) {
       const match = instance.external_instance_name.match(/(\d+)$/);
       if (match) {
-        return match[1];
+        phone = match[1];
       }
+    } else if (metadata) {
+      phone = metadata.phone || metadata.phoneNumber || metadata.number || null;
     }
     
-    // Prioridade 3: Outros campos do metadata
-    if (instance.metadata && typeof instance.metadata === 'object') {
-      const metadata = instance.metadata as any;
-      return metadata.phone || metadata.phoneNumber || metadata.number || null;
-    }
+    // Nome do perfil
+    const name = metadata?.connectedProfileName || null;
     
-    return null;
+    // Foto do perfil
+    const pictureUrl = metadata?.connectedProfilePicUrl || null;
+    
+    return { phone, name, pictureUrl };
   };
 
   if (!instance) return null;
 
-  const phoneNumber = getPhoneNumber();
+  const { phone: phoneNumber, name: profileName, pictureUrl: profilePictureUrl } = getProfileInfo();
 
   return (
     <>
@@ -223,6 +226,49 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
           </DialogHeader>
 
           <div className="space-y-6">
+            {/* Perfil do Número Conectado */}
+            {(phoneNumber || profileName || profilePictureUrl) && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <User className="h-5 w-5" />
+                    Perfil do Número Conectado
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-start gap-4">
+                    <Avatar className="h-20 w-20">
+                      <AvatarImage src={profilePictureUrl || undefined} alt={profileName || phoneNumber || "Perfil"} />
+                      <AvatarFallback className="text-lg">
+                        {profileName 
+                          ? profileName.substring(0, 2).toUpperCase()
+                          : phoneNumber 
+                          ? phoneNumber.substring(phoneNumber.length - 2)
+                          : "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 space-y-2">
+                      {profileName && (
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Nome do Perfil</Label>
+                          <p className="text-base font-semibold">{profileName}</p>
+                        </div>
+                      )}
+                      {phoneNumber && (
+                        <div>
+                          <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Phone className="h-3 w-3" />
+                            Número do WhatsApp
+                          </Label>
+                          <p className="text-sm font-medium">{phoneNumber}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Informações da Instância */}
             <Card>
               <CardHeader>
@@ -244,15 +290,6 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                     <div>
                       <Label className="text-xs text-muted-foreground">Nome Externo</Label>
                       <p className="text-sm font-medium">{instance.external_instance_name}</p>
-                    </div>
-                  )}
-                  {phoneNumber && (
-                    <div>
-                      <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Phone className="h-3 w-3" />
-                        Número Conectado
-                      </Label>
-                      <p className="text-sm font-medium">{phoneNumber}</p>
                     </div>
                   )}
                   {instance.created_at && (
