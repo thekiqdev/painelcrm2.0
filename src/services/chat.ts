@@ -19,6 +19,7 @@ export interface ChatConversation {
   instance_name?: string;
   client_id?: string | null;
   leadId?: string | null;
+  lead_status?: string | null;
   external_chat_id: string;
   contactName?: string | null;
   profileName?: string | null;
@@ -73,6 +74,7 @@ const normalizeConversation = (raw: any): ChatConversation => {
   instance_name: raw.instance_name,
   client_id: raw.client_id ?? null,
     leadId: raw.lead_id ?? null,
+    lead_status: raw.lead_status ?? null,
   external_chat_id: raw.external_chat_id,
   contactName: raw.contact_name ?? null,
   profileName: raw.profile_name ?? null,

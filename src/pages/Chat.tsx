@@ -122,7 +122,7 @@ const Chat = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
   const [newInstanceName, setNewInstanceName] = useState('');
-  const [activeTab, setActiveTab] = useState<'unread' | 'read' | 'leads' | 'clients'>('unread');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'read' | 'leads' | 'clients'>('unread');
 
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(false);
@@ -778,23 +778,45 @@ const Chat = () => {
     [filteredConversations],
   );
 
+  // Filtros de leads e clientes
+  const leadConversations = useMemo(() => {
+    return filteredConversations.filter((conversation) => {
+      // Deve ter lead_id
+      if (!conversation.leadId) return false;
+      // Não deve ter client_id
+      if (conversation.client_id) return false;
+      // O lead não deve estar convertido
+      if (conversation.lead_status === 'Convertido') return false;
+      return true;
+    });
+  }, [filteredConversations]);
+
+  const clientConversations = useMemo(() => {
+    return filteredConversations.filter((conversation) => {
+      // Deve ter client_id OU ser um lead convertido
+      if (conversation.client_id) return true;
+      if (conversation.leadId && conversation.lead_status === 'Convertido') return true;
+      return false;
+    });
+  }, [filteredConversations]);
+
   // Determinar quais conversas mostrar baseado na aba ativa
   const conversationsToShow = useMemo(() => {
     switch (activeTab) {
+      case 'all':
+        return filteredConversations;
       case 'unread':
         return unreadConversations;
       case 'read':
         return readConversations;
       case 'leads':
-        // Não aplicar filtro - mostrar todas
-        return filteredConversations;
+        return leadConversations;
       case 'clients':
-        // Não aplicar filtro - mostrar todas
-        return filteredConversations;
+        return clientConversations;
       default:
         return filteredConversations;
     }
-  }, [activeTab, unreadConversations, readConversations, filteredConversations]);
+  }, [activeTab, unreadConversations, readConversations, filteredConversations, leadConversations, clientConversations]);
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
@@ -1442,8 +1464,9 @@ const Chat = () => {
           {/* Filtros (Tabs) */}
           {enabledInstanceIds.size > 0 && (
             <div className="flex-1 flex items-center">
-              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'unread' | 'read' | 'leads' | 'clients')} className="w-full">
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'all' | 'unread' | 'read' | 'leads' | 'clients')} className="w-full">
                 <TabsList className="h-9">
+                  <TabsTrigger value="all" className="text-sm">Todos</TabsTrigger>
                   <TabsTrigger value="unread" className="text-sm">
                     Não lidos
                     {unreadConversations.length > 0 && (

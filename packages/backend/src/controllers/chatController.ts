@@ -1685,7 +1685,22 @@ export async function getConversations(req: AuthRequest, res: Response) {
               AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
             LIMIT 1
           )
-        END as lead_id
+        END as lead_id,
+        -- Status do lead (para identificar leads convertidos)
+        CASE 
+          WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
+          ELSE (
+            SELECT l2.status 
+            FROM leads l2
+            WHERE l2.user_id = c.user_id
+              AND l2.phone IS NOT NULL
+              AND l2.phone <> ''
+              AND c.phone_number IS NOT NULL
+              AND c.phone_number <> ''
+              AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+            LIMIT 1
+          )
+        END as lead_status
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
       LEFT JOIN clients cl
@@ -2258,7 +2273,22 @@ export async function sendMessage(req: AuthRequest, res: Response) {
                   AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
                 LIMIT 1
               )
-            END as lead_id
+            END as lead_id,
+            -- Status do lead (para identificar leads convertidos)
+            CASE 
+              WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
+              ELSE (
+                SELECT l2.status 
+                FROM leads l2
+                WHERE l2.user_id = c.user_id
+                  AND l2.phone IS NOT NULL
+                  AND l2.phone <> ''
+                  AND c.phone_number IS NOT NULL
+                  AND c.phone_number <> ''
+                  AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
+                LIMIT 1
+              )
+            END as lead_status
           FROM chat_conversations c
           INNER JOIN chat_instances i ON i.id = c.instance_id
           LEFT JOIN clients cl
