@@ -838,8 +838,49 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       const errorMessage = connectError?.message || '';
       const errorStatus = connectError?.status;
       
+      // Erro 409: Conflict (instância já conectada)
+      if (errorStatus === 409 || errorMessage.toLowerCase().includes('conflict') || errorMessage.toLowerCase().includes('already connected')) {
+        console.log('[ConnectInstance] Instância já conectada (409), desconectando e tentando novamente...', {
+          instanceId: instance.id,
+          message: errorMessage,
+        });
+
+        try {
+          // Desconectar a instância
+          await uazapiService.disconnectInstance(instance.instance_token);
+          console.log('[ConnectInstance] Instância desconectada após erro 409');
+          
+          // Aguardar um pouco para garantir que a desconexão foi processada
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Atualizar status no banco
+          await pool.query(
+            'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
+            ['disconnected', instance.id]
+          );
+
+          // Tentar conectar novamente
+          response = (await uazapiService.connectInstance(
+            instance.instance_token,
+            data.phone || undefined
+          )) as AnyObject;
+          
+          console.log('[ConnectInstance] Reconexão bem-sucedida após desconexão (409)');
+        } catch (retryError: any) {
+          console.error('[ConnectInstance] Erro ao tentar reconectar após 409:', {
+            error: retryError.message,
+            status: retryError.status,
+          });
+          // Se ainda falhar, propagar o erro
+          res.status(500).json({ 
+            error: 'Não foi possível gerar QR code. A instância pode estar em uso.',
+            details: retryError.message || errorMessage,
+          });
+          return;
+        }
+      }
       // Erro 429: Too Many Requests (rate limiting)
-      if (errorStatus === 429) {
+      else if (errorStatus === 429) {
         console.error('[ConnectInstance] Rate limit atingido (429)', {
           instanceId: instance.id,
           message: errorMessage,
