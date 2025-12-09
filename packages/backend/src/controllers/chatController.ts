@@ -861,6 +861,19 @@ export async function connectInstance(req: AuthRequest, res: Response) {
           )) as AnyObject;
 
           console.log('[ConnectInstance] Reconexão bem-sucedida com novo token');
+
+          // Configurar webhook imediatamente após recriar instância
+          // Isso é crítico para que novas mensagens sejam recebidas
+          try {
+            console.log('[ConnectInstance] Configurando webhook para nova instância...');
+            await autoConfigureWebhook(instanceToUse);
+            console.log('[ConnectInstance] Webhook configurado com sucesso para nova instância');
+          } catch (webhookError: any) {
+            console.error('[ConnectInstance] Erro ao configurar webhook após recriar instância (não crítico):', {
+              error: webhookError.message,
+            });
+            // Não falhar o processo se webhook falhar, mas logar o erro
+          }
         } catch (recreateError: any) {
           console.error('[ConnectInstance] Erro ao recriar instância:', {
             error: recreateError.message,
