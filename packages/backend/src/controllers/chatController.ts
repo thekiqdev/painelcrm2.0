@@ -505,11 +505,15 @@ async function saveMessage(
     if (conversationResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] Conversation not found for update`, { conversationId });
     } else {
+      const updated = conversationResult.rows[0];
       console.log(`[SaveMessage ${saveId}] Conversation updated successfully`, {
-        conversationId: conversationResult.rows[0]?.id,
-        unreadCount: conversationResult.rows[0]?.unread_count,
-        lastMessageAt: conversationResult.rows[0]?.last_message_at,
-        updatedAt: conversationResult.rows[0]?.updated_at,
+        conversationId: updated?.id,
+        unreadCount: updated?.unread_count,
+        lastMessageAt: updated?.last_message_at,
+        lastMessagePreview: updated?.last_message_preview,
+        updatedAt: updated?.updated_at,
+        newMessageSentAt: effectiveSentAt,
+        newMessagePreview: messagePreview?.substring(0, 50),
       });
     }
   } catch (error: any) {
