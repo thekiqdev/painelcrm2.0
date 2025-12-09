@@ -215,19 +215,41 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
       pictureUrl = metadata.lastConnect.profilePicUrl;
     } else if (metadata?.lastConnect?.instance?.profilePicUrl) {
       pictureUrl = metadata.lastConnect.instance.profilePicUrl;
+    } else if (metadata?.lastConnect?.instance?.profile_pic_url) {
+      pictureUrl = metadata.lastConnect.instance.profile_pic_url;
     } else if (metadata?.lastStatusCheck?.profilePicUrl) {
       pictureUrl = metadata.lastStatusCheck.profilePicUrl;
     } else if (metadata?.lastStatusCheck?.instance?.profilePicUrl) {
       pictureUrl = metadata.lastStatusCheck.instance.profilePicUrl;
+    } else if (metadata?.lastStatusCheck?.instance?.profile_pic_url) {
+      pictureUrl = metadata.lastStatusCheck.instance.profile_pic_url;
     }
     
-    // Debug: log para verificar o que está sendo encontrado
+    // Debug: log detalhado para verificar o que está sendo encontrado
     console.log('[InstanceDetailsDialog] Profile info:', {
       hasMetadata: !!metadata,
       connectedProfilePicUrl: metadata?.connectedProfilePicUrl,
       profilePicUrl: metadata?.profilePicUrl,
-      lastConnect: metadata?.lastConnect ? Object.keys(metadata.lastConnect) : null,
-      lastStatusCheck: metadata?.lastStatusCheck ? Object.keys(metadata.lastStatusCheck) : null,
+      lastConnect: metadata?.lastConnect ? {
+        keys: Object.keys(metadata.lastConnect),
+        instance: metadata.lastConnect.instance ? {
+          keys: Object.keys(metadata.lastConnect.instance),
+          profilePicUrl: metadata.lastConnect.instance.profilePicUrl,
+          profile_pic_url: metadata.lastConnect.instance.profile_pic_url,
+          profileName: metadata.lastConnect.instance.profileName,
+        } : null,
+        profilePicUrl: metadata.lastConnect.profilePicUrl,
+      } : null,
+      lastStatusCheck: metadata?.lastStatusCheck ? {
+        keys: Object.keys(metadata.lastStatusCheck),
+        instance: metadata.lastStatusCheck.instance ? {
+          keys: Object.keys(metadata.lastStatusCheck.instance),
+          profilePicUrl: metadata.lastStatusCheck.instance.profilePicUrl,
+          profile_pic_url: metadata.lastStatusCheck.instance.profile_pic_url,
+          profileName: metadata.lastStatusCheck.instance.profileName,
+        } : null,
+        profilePicUrl: metadata.lastStatusCheck.profilePicUrl,
+      } : null,
       foundPictureUrl: pictureUrl,
     });
     

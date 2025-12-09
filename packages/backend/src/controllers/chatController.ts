@@ -731,6 +731,8 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       instanceData?.pictureUrl ||
       response?.profile_pic_url ||
       instanceData?.profile_pic_url ||
+      (response?.instance && typeof response.instance === 'object' ? (response.instance as any).profilePicUrl : null) ||
+      (instanceData?.instance && typeof instanceData.instance === 'object' ? (instanceData.instance as any).profilePicUrl : null) ||
       null;
     
     console.log('[ConnectInstance] Profile info extraction:', {
@@ -738,6 +740,10 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       hasInstanceData: !!instanceData,
       responseKeys: response ? Object.keys(response) : [],
       instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
+      responseInstanceKeys: response?.instance && typeof response.instance === 'object' ? Object.keys(response.instance) : null,
+      instanceDataInstanceKeys: instanceData?.instance && typeof instanceData.instance === 'object' ? Object.keys(instanceData.instance) : null,
+      responseInstanceProfilePicUrl: response?.instance && typeof response.instance === 'object' ? (response.instance as any).profilePicUrl : null,
+      instanceDataInstanceProfilePicUrl: instanceData?.instance && typeof instanceData.instance === 'object' ? (instanceData.instance as any).profilePicUrl : null,
       profilePicUrl,
       profileName,
       connectedPhone,
@@ -1118,6 +1124,18 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
       hasInstanceData: !!instanceData,
       resultKeys: result ? Object.keys(result) : [],
       instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
+      resultInstance: result?.instance ? {
+        keys: Object.keys(result.instance),
+        profilePicUrl: result.instance.profilePicUrl,
+        profile_pic_url: result.instance.profile_pic_url,
+        profileName: result.instance.profileName,
+      } : null,
+      instanceDataInstance: instanceData?.instance ? {
+        keys: Object.keys(instanceData.instance),
+        profilePicUrl: instanceData.instance.profilePicUrl,
+        profile_pic_url: instanceData.instance.profile_pic_url,
+        profileName: instanceData.instance.profileName,
+      } : null,
       profilePicUrl,
       profileName,
       connectedPhone,
