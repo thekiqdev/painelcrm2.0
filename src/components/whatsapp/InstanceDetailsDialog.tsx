@@ -265,7 +265,19 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                 <CardContent>
                   <div className="flex items-start gap-4">
                     <Avatar className="h-20 w-20">
-                      <AvatarImage src={profilePictureUrl || undefined} alt={profileName || phoneNumber || "Perfil"} />
+                      <AvatarImage 
+                        src={profilePictureUrl || undefined} 
+                        alt={profileName || phoneNumber || "Perfil"}
+                        onError={(e) => {
+                          console.log('[InstanceDetailsDialog] Avatar image error:', {
+                            src: profilePictureUrl,
+                            error: e,
+                          });
+                        }}
+                        onLoad={() => {
+                          console.log('[InstanceDetailsDialog] Avatar image loaded:', profilePictureUrl);
+                        }}
+                      />
                       <AvatarFallback className="text-lg">
                         {profileName 
                           ? profileName.substring(0, 2).toUpperCase()
