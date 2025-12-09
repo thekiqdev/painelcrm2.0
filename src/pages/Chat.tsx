@@ -303,7 +303,7 @@ const Chat = () => {
 
     // Configuração: usar apenas WebSocket para evitar o caminho de XHR/polling do engine.io,
     // que depende de polyfills de URL e pode quebrar em alguns ambientes.
-    const socketOptions = {
+    const socketOptions: any = {
       auth: { token: session.token },
       transports: ['websocket'], // Forçar apenas WebSocket
       reconnection: true,
@@ -320,7 +320,7 @@ const Chat = () => {
       // Com apenas 'websocket' como transporte, o upgrade é desnecessário
       upgrade: false,
       // Remover transportOptions que podem causar problemas de parse
-    } as const;
+    };
 
     const socket: Socket = io(socketUrl, socketOptions);
     socketRef.current = socket;
