@@ -165,7 +165,7 @@ const Chat = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
   const [newInstanceName, setNewInstanceName] = useState('');
-  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'read' | 'leads' | 'clients'>('unread');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'read' | 'leads' | 'clients'>('all');
 
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(false);

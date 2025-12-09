@@ -1813,7 +1813,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
       paramIndex++;
     }
 
-    query += ' ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC LIMIT 200';
+    query += ' ORDER BY COALESCE(c.last_message_at, c.created_at) DESC, c.updated_at DESC LIMIT 200';
 
     console.log('[GetConversations] Querying conversations', {
       userId,
