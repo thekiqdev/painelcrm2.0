@@ -576,23 +576,52 @@ const Chat = () => {
         });
       }
 
-      // Atualizar preview da conversa na lista
+      // Atualizar preview da conversa na lista quando recebe nova mensagem
       setConversations((prev) => {
         const index = prev.findIndex(c => c.id === data.conversationId);
+        console.log('[Chat] Updating conversation from new_message event:', {
+          conversationId: data.conversationId,
+          foundIndex: index,
+          messageBody: normalizedMessage.body,
+          sentAt: normalizedMessage.sentAt,
+          isSelected: currentSelectedId === data.conversationId,
+        });
+        
         if (index >= 0) {
           const updated = [...prev];
           const conv = updated[index];
-          updated[index] = {
+          const updatedConv = {
             ...conv,
-            lastMessagePreview: normalizedMessage.body,
+            lastMessagePreview: normalizedMessage.body || conv.lastMessagePreview,
             lastMessageAt: normalizedMessage.sentAt || conv.lastMessageAt || conv.updated_at || null,
             unreadCount: currentSelectedId === data.conversationId 
               ? conv.unreadCount 
               : (conv.unreadCount || 0) + 1,
+            updated_at: normalizedMessage.sentAt || conv.updated_at || new Date().toISOString(),
           };
-          // Mover para o topo
-          updated.unshift(updated.splice(index, 1)[0]);
-          return updated;
+          
+          updated[index] = updatedConv;
+          
+          // Ordenar por lastMessageAt (mais recente primeiro)
+          const sorted = updated.sort((a, b) => {
+            const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            return dateB - dateA;
+          });
+          
+          console.log('[Chat] Conversation updated from new_message, sorted list:', {
+            conversationId: data.conversationId,
+            newPosition: sorted.findIndex(c => c.id === data.conversationId),
+            lastMessagePreview: updatedConv.lastMessagePreview,
+            lastMessageAt: updatedConv.lastMessageAt,
+          });
+          
+          return sorted;
+        } else {
+          console.warn('[Chat] Conversation not found in list for new_message:', {
+            conversationId: data.conversationId,
+            currentListSize: prev.length,
+          });
         }
         return prev;
       });
