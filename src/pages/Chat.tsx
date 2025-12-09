@@ -86,18 +86,61 @@ const formatRelativeDate = (value?: string | null) => {
   if (!value) return 'Sem data';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Sem data';
-  const now = Date.now();
-  const diff = now - date.getTime();
+  
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diff = now.getTime() - date.getTime();
+  const daysDiff = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
 
+  // Menos de 1 minuto
   if (diff < 60_000) return 'Agora mesmo';
+  
+  // Menos de 1 hora
   if (diff < 3_600_000) {
     const minutes = Math.floor(diff / 60_000);
     return `${minutes} min atrás`;
   }
-  if (diff < 86_400_000) {
+  
+  // Hoje
+  if (daysDiff === 0) {
     return `Hoje ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
   }
-  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  
+  // Ontem
+  if (daysDiff === 1) {
+    return `Ontem ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  
+  // Esta semana (últimos 7 dias)
+  if (daysDiff < 7) {
+    return date.toLocaleDateString('pt-BR', { 
+      weekday: 'short', 
+      day: '2-digit', 
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+  
+  // Este ano
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString('pt-BR', { 
+      day: '2-digit', 
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+  
+  // Outro ano
+  return date.toLocaleDateString('pt-BR', { 
+    day: '2-digit', 
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 };
 
 const statusBadgeClass = (status?: string | null) => {
@@ -778,9 +821,32 @@ const Chat = () => {
     [filteredConversations],
   );
 
+  // Função auxiliar para ordenar conversas por última mensagem (mais recente primeiro)
+  const sortConversationsByLastMessage = (convs: ChatConversation[]) => {
+    return [...convs].sort((a, b) => {
+      // Priorizar lastMessageAt, depois updated_at, depois created_at
+      const dateA = a.lastMessageAt 
+        ? new Date(a.lastMessageAt).getTime() 
+        : (a.updated_at ? new Date(a.updated_at).getTime() : 0);
+      const dateB = b.lastMessageAt 
+        ? new Date(b.lastMessageAt).getTime() 
+        : (b.updated_at ? new Date(b.updated_at).getTime() : 0);
+      
+      // Se ambas têm data, ordenar por mais recente primeiro
+      if (dateA > 0 && dateB > 0) {
+        return dateB - dateA;
+      }
+      // Se apenas uma tem data, ela vem primeiro
+      if (dateA > 0) return -1;
+      if (dateB > 0) return 1;
+      // Se nenhuma tem data, manter ordem original
+      return 0;
+    });
+  };
+
   // Filtros de leads e clientes
   const leadConversations = useMemo(() => {
-    return filteredConversations.filter((conversation) => {
+    const filtered = filteredConversations.filter((conversation) => {
       // Deve ter lead_id
       if (!conversation.leadId) return false;
       // Não deve ter client_id
@@ -789,33 +855,43 @@ const Chat = () => {
       if (conversation.lead_status === 'Convertido') return false;
       return true;
     });
+    return sortConversationsByLastMessage(filtered);
   }, [filteredConversations]);
 
   const clientConversations = useMemo(() => {
-    return filteredConversations.filter((conversation) => {
+    const filtered = filteredConversations.filter((conversation) => {
       // Deve ter client_id OU ser um lead convertido
       if (conversation.client_id) return true;
       if (conversation.leadId && conversation.lead_status === 'Convertido') return true;
       return false;
     });
+    return sortConversationsByLastMessage(filtered);
   }, [filteredConversations]);
 
   // Determinar quais conversas mostrar baseado na aba ativa
   const conversationsToShow = useMemo(() => {
+    let result: ChatConversation[];
     switch (activeTab) {
       case 'all':
-        return filteredConversations;
+        result = filteredConversations;
+        break;
       case 'unread':
-        return unreadConversations;
+        result = unreadConversations;
+        break;
       case 'read':
-        return readConversations;
+        result = readConversations;
+        break;
       case 'leads':
-        return leadConversations;
+        result = leadConversations;
+        break;
       case 'clients':
-        return clientConversations;
+        result = clientConversations;
+        break;
       default:
-        return filteredConversations;
+        result = filteredConversations;
     }
+    // Garantir que está ordenado por última mensagem (mais recente primeiro)
+    return sortConversationsByLastMessage(result);
   }, [activeTab, unreadConversations, readConversations, filteredConversations, leadConversations, clientConversations]);
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
