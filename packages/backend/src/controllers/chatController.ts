@@ -2164,6 +2164,74 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       metadata: messageResponse,
     });
 
+    // Buscar conversa atualizada e mensagem salva para emitir via WebSocket
+    const [updatedConversationResult, savedMessageResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT c.*, i.name as instance_name
+          FROM chat_conversations c
+          INNER JOIN chat_instances i ON i.id = c.instance_id
+          WHERE c.id = $1
+        `,
+        [data.conversationId]
+      ),
+      pool.query(
+        `
+          SELECT id, sent_at, external_message_id
+          FROM chat_messages
+          WHERE conversation_id = $1
+            AND external_message_id = $2
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        [
+          conversation.id,
+          messageResponse?.id ||
+          messageResponse?.messageId ||
+          messageResponse?.key?.id ||
+          null,
+        ]
+      ),
+    ]);
+
+    if (updatedConversationResult.rows.length > 0) {
+      const updatedConversation = updatedConversationResult.rows[0];
+      
+      // Emitir atualização de conversa via WebSocket
+      try {
+        emitConversationUpdate(userId, updatedConversation);
+        console.log('[SendMessage] Conversation update emitted via WebSocket', {
+          conversationId: updatedConversation.id,
+          userId,
+        });
+      } catch (wsError: any) {
+        console.warn('[SendMessage] Failed to emit conversation update:', wsError.message);
+      }
+
+      // Emitir nova mensagem via WebSocket
+      if (savedMessageResult.rows.length > 0) {
+        const savedMessage = savedMessageResult.rows[0];
+        try {
+          emitNewMessage(userId, {
+            id: savedMessage.id,
+            conversation_id: conversation.id,
+            direction: 'outgoing',
+            body: data.text,
+            sent_at: savedMessage.sent_at || new Date(),
+            status: 'sent',
+            external_message_id: savedMessage.external_message_id,
+          }, conversation.id);
+          console.log('[SendMessage] New message emitted via WebSocket', {
+            messageId: savedMessage.id,
+            conversationId: conversation.id,
+            userId,
+          });
+        } catch (wsError: any) {
+          console.warn('[SendMessage] Failed to emit new message:', wsError.message);
+        }
+      }
+    }
+
     res.status(201).json({
       response: messageResponse,
     });
