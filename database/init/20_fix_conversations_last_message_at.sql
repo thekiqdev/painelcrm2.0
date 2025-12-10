@@ -1,41 +1,48 @@
 -- Script para corrigir last_message_at e last_message_preview nas conversas existentes
 -- Atualiza com base na última mensagem real de cada conversa
 
--- Primeiro, criar índice para melhorar performance
-CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_sent_at 
-  ON chat_messages(conversation_id, sent_at DESC NULLS LAST);
-
--- Atualizar last_message_at e last_message_preview com base na última mensagem real
+-- Primeiro, atualizar last_message_at com a data da última mensagem
 UPDATE chat_conversations c
-SET
-  last_message_at = latest_msg.max_sent_at,
-  last_message_preview = latest_msg.last_body,
+SET 
+  last_message_at = (
+    SELECT MAX(sent_at)
+    FROM chat_messages m
+    WHERE m.conversation_id = c.id
+      AND m.sent_at IS NOT NULL
+  ),
+  last_message_preview = (
+    SELECT body
+    FROM chat_messages m
+    WHERE m.conversation_id = c.id
+      AND m.sent_at IS NOT NULL
+      AND m.body IS NOT NULL
+      AND m.body <> ''
+    ORDER BY m.sent_at DESC, m.created_at DESC
+    LIMIT 1
+  ),
   updated_at = now()
-FROM (
-  SELECT 
-    m.conversation_id,
-    MAX(m.sent_at) as max_sent_at,
-    (
-      SELECT m2.body 
-      FROM chat_messages m2 
-      WHERE m2.conversation_id = m.conversation_id 
-        AND m2.sent_at = MAX(m.sent_at)
-        AND m2.body IS NOT NULL
-        AND m2.body <> ''
-      ORDER BY m2.created_at DESC
-      LIMIT 1
-    ) as last_body
+WHERE EXISTS (
+  SELECT 1
   FROM chat_messages m
-  WHERE m.sent_at IS NOT NULL
-  GROUP BY m.conversation_id
-) AS latest_msg
-WHERE c.id = latest_msg.conversation_id
-  AND latest_msg.max_sent_at IS NOT NULL
-  AND (
-    -- Atualizar apenas se a última mensagem real for mais recente que o last_message_at atual
-    c.last_message_at IS NULL 
-    OR latest_msg.max_sent_at > c.last_message_at
-    -- Ou se o preview estiver desatualizado
-    OR (c.last_message_preview IS NULL AND latest_msg.last_body IS NOT NULL)
-  );
+  WHERE m.conversation_id = c.id
+    AND m.sent_at IS NOT NULL
+)
+AND (
+  -- Atualizar apenas se last_message_at estiver NULL ou mais antigo que a última mensagem
+  c.last_message_at IS NULL
+  OR c.last_message_at < (
+    SELECT MAX(sent_at)
+    FROM chat_messages m
+    WHERE m.conversation_id = c.id
+      AND m.sent_at IS NOT NULL
+  )
+);
 
+-- Log de quantas conversas foram atualizadas
+DO $$
+DECLARE
+  updated_count INTEGER;
+BEGIN
+  GET DIAGNOSTICS updated_count = ROW_COUNT;
+  RAISE NOTICE 'Conversas atualizadas: %', updated_count;
+END $$;

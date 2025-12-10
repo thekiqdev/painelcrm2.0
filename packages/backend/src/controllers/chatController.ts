@@ -701,21 +701,22 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     const existingWebhook = instance.metadata?.webhook;
     const tokenChanged = instance.metadata?.tokenChanged || false;
     
-    if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure && !tokenChanged) {
+    // Se o token mudou, SEMPRE reconfigurar (instância foi recriada)
+    if (tokenChanged) {
+      console.log('[Auto-Webhook] Token changed, forcing webhook reconfiguration', {
+        instance: instance.external_instance_name,
+        instanceId: instance.id,
+        oldWebhookUrl: existingWebhook?.url,
+        newWebhookUrl: resolvedUrl,
+      });
+      // Continuar para reconfigurar
+    } else if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure) {
       console.log('[Auto-Webhook] Already configured, skipping', {
         instance: instance.external_instance_name,
         url: resolvedUrl,
         tokenChanged,
       });
       return;
-    }
-    
-    // Se o token mudou, forçar reconfiguração
-    if (tokenChanged) {
-      console.log('[Auto-Webhook] Token changed, forcing webhook reconfiguration', {
-        instance: instance.external_instance_name,
-        instanceId: instance.id,
-      });
     }
 
     console.log('[Auto-Webhook] Configuring webhook...', {
@@ -947,11 +948,13 @@ export async function connectInstance(req: AuthRequest, res: Response) {
           });
 
           // Atualizar registro no banco com novo token
+          // Marcar que o token mudou para forçar reconfiguração do webhook
           await pool.query(
             `
             UPDATE chat_instances
             SET instance_token = $1,
                 status = 'disconnected',
+                metadata = COALESCE(metadata, '{}'::jsonb) || '{"tokenChanged": true}'::jsonb,
                 updated_at = now()
             WHERE id = $2
             `,
