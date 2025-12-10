@@ -13,6 +13,7 @@ import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
 import { DomainSection } from "@/components/settings/DomainSection";
 import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
 import { UserManagementSection } from "@/components/settings/UserManagementSection";
+import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesSection";
 import { toast } from "sonner";
 
 type SettingSection = 
@@ -27,7 +28,8 @@ type SettingSection =
   | "clientGroups" 
   | "collaborators" 
   | "whatsapp" 
-  | "domain";
+  | "domain"
+  | "messageTemplates";
 
 const Settings = () => {
   const [activeSection, setActiveSection] = useState<SettingSection>("companyData");
@@ -65,6 +67,8 @@ const Settings = () => {
         return <WhatsAppSection />;
       case "domain":
         return <DomainSection handleSave={handleSave} />;
+      case "messageTemplates":
+        return <MessageTemplatesSection handleSave={handleSave} />;
       default:
         return <CompanyDataSection handleSave={handleSave} />;
     }

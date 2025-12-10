@@ -39,6 +39,7 @@ import dashboardRoutes from './routes/dashboardRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
+import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
 import { pool } from './utils/db.js';
 import { initializeWebSocket } from './services/websocketService.js';
 
@@ -167,6 +168,7 @@ app.use('/api/members', membersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/message-templates', messageTemplatesRoutes);
 app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 
 // 404 handler

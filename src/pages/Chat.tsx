@@ -937,7 +937,7 @@ const Chat = () => {
         setCurrentClient(null);
         setCurrentLead(null);
       }
-    } catch (error) {
+      } catch (error) {
       console.error('Erro ao carregar perfil da conversa:', error);
       setCurrentClient(null);
       setCurrentLead(null);
@@ -1384,7 +1384,7 @@ const Chat = () => {
               />
             ) : (
               <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
-                {(identifier || '?').charAt(0)}
+              {(identifier || '?').charAt(0)}
               </AvatarFallback>
             )}
         </Avatar>
@@ -1624,11 +1624,11 @@ const Chat = () => {
                                 />
                               ) : (
                                 <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
-                                  {(selectedConversation.contactName ||
-                                    selectedConversation.profileName ||
-                                    selectedConversation.phoneNumber ||
-                                    selectedConversation.external_chat_id
-                                  ).charAt(0)}
+                                {(selectedConversation.contactName ||
+                                  selectedConversation.profileName ||
+                                  selectedConversation.phoneNumber ||
+                                  selectedConversation.external_chat_id
+                                ).charAt(0)}
                                 </AvatarFallback>
                               )}
                             </Avatar>
@@ -1643,12 +1643,12 @@ const Chat = () => {
                               }}
                             >
                               <div className="flex items-center gap-2">
-                                <h3 className="font-semibold">
-                                  {selectedConversation.contactName ||
-                                    selectedConversation.profileName ||
-                                    selectedConversation.phoneNumber ||
-                                    selectedConversation.external_chat_id}
-                                </h3>
+                              <h3 className="font-semibold">
+                                {selectedConversation.contactName ||
+                                  selectedConversation.profileName ||
+                                  selectedConversation.phoneNumber ||
+                                  selectedConversation.external_chat_id}
+                              </h3>
                                 {selectedConversation.client_id && (
                                   <Badge variant="default" className="text-xs">
                                     Cliente

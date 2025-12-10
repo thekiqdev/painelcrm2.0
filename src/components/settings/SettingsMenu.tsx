@@ -14,7 +14,8 @@ import {
   UserCog,
   Users2, 
   MessageSquare, 
-  Globe 
+  Globe,
+  FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +31,8 @@ type SettingSection =
   | "clientGroups" 
   | "collaborators" 
   | "whatsapp" 
-  | "domain";
+  | "domain"
+  | "messageTemplates";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -65,7 +67,8 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
     
     // Categoria Integrações
     { id: "whatsapp", label: "WhatsApp", icon: <MessageSquare className="h-4 w-4" />, category: "Integrações" },
-    { id: "domain", label: "Domínio", icon: <Globe className="h-4 w-4" />, category: "Integrações" }
+    { id: "domain", label: "Domínio", icon: <Globe className="h-4 w-4" />, category: "Integrações" },
+    { id: "messageTemplates", label: "Modelos de Mensagens", icon: <FileText className="h-4 w-4" />, category: "Integrações" }
   ];
 
   // Agrupar itens por categoria

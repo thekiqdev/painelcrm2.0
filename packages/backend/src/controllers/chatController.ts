@@ -244,7 +244,7 @@ async function upsertConversation(
   const normalizedPhone = normalizePhoneNumber(chatData.phoneNumber);
 
   if (normalizedPhone) {
-    try {
+  try {
       // Buscar cliente pelo telefone
       const clientResult = await pool.query(
         `
@@ -340,33 +340,33 @@ async function upsertConversation(
   } else {
     // Inserir nova conversa
     result = await pool.query(
-      `
-      INSERT INTO chat_conversations (
-        user_id, instance_id, external_chat_id, external_fast_id,
-        contact_name, profile_name, phone_number, status,
+    `
+    INSERT INTO chat_conversations (
+      user_id, instance_id, external_chat_id, external_fast_id,
+      contact_name, profile_name, phone_number, status,
         last_message_preview, last_message_at, unread_count, metadata,
         client_id, phone_key
-      )
+    )
       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14)
-      RETURNING *
-      `,
-      [
-        instance.user_id,
-        instance.id,
-        chatData.externalChatId,
-        chatData.externalFastId,
-        chatData.contactName,
-        chatData.profileName,
-        chatData.phoneNumber,
-        chatData.status,
-        chatData.lastMessagePreview,
-        chatData.lastMessageAt,
+    RETURNING *
+  `,
+    [
+      instance.user_id,
+      instance.id,
+      chatData.externalChatId,
+      chatData.externalFastId,
+      chatData.contactName,
+      chatData.profileName,
+      chatData.phoneNumber,
+      chatData.status,
+      chatData.lastMessagePreview,
+      chatData.lastMessageAt,
         chatData.unreadCount,
-        JSON.stringify(chatData.metadata || {}),
+      JSON.stringify(chatData.metadata || {}),
         clientId,
         phoneKey,
-      ]
-    );
+    ]
+  );
   }
 
     if (result.rowCount === 0 || !result.rows[0]) {
@@ -851,9 +851,9 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     try {
       // Tentar conectar com o token atual
       response = (await uazapiService.connectInstance(
-        instance.instance_token,
-        data.phone || undefined
-      )) as AnyObject;
+      instance.instance_token,
+      data.phone || undefined
+    )) as AnyObject;
     } catch (connectError: any) {
       // Tratar diferentes tipos de erro
       const errorMessage = connectError?.message || '';
