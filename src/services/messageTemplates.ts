@@ -106,4 +106,15 @@ export const messageTemplatesService = {
     }
     return response.data!;
   },
+
+  async test(id: string, phoneNumber: string, variables?: Record<string, string>): Promise<{ success: boolean; message?: string; error?: string; preview?: string; phoneNumber?: string }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; error?: string; preview?: string; phoneNumber?: string }>(
+      `/api/message-templates/${id}/test`,
+      { phoneNumber, variables }
+    );
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data!;
+  },
 };

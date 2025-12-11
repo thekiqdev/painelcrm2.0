@@ -40,6 +40,7 @@ import chatRoutes from './routes/chatRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
+import messagesRoutes from './routes/messagesRoutes.js';
 import { pool } from './utils/db.js';
 import { initializeWebSocket } from './services/websocketService.js';
 
@@ -84,12 +85,30 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting para APIs
+// Rate limiting mais generoso para endpoints de teste
+const testLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 20, // 20 testes por minuto (suficiente para testes)
+  message: 'Muitos testes enviados. Aguarde um momento antes de tentar novamente.',
+  skip: (req) => {
+    // Não aplicar rate limit em desenvolvimento
+    return process.env.NODE_ENV === 'development';
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Rate limiting para APIs (geral)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
+  skip: (req) => {
+    // Pular rate limit para endpoints de teste, webhooks e autenticação
+    return req.path.includes('/test') || 
+           req.path.startsWith('/webhooks/') ||
+           req.path.startsWith('/api/auth/');
+  },
 });
-app.use('/api/', limiter);
 
 // Rate limiting mais generoso para webhooks (podem receber muitos eventos)
 const webhookLimiter = rateLimit({
@@ -97,7 +116,14 @@ const webhookLimiter = rateLimit({
   max: 200, // limit each IP to 200 requests per minute (webhooks podem ser frequentes)
   message: 'Too many webhook requests, please try again later.',
 });
+
+// Aplicar rate limiting - IMPORTANTE: ordem importa!
+// 1. Webhooks primeiro (mais específico)
 app.use('/webhooks/', webhookLimiter);
+// 2. Testes (específico)
+app.use('/api/message-templates/:id/test', testLimiter);
+// 3. API geral por último (mais genérico)
+app.use('/api/', limiter);
 
 // Health check - endpoint simples e rápido
 app.get('/health', async (req, res) => {
@@ -133,7 +159,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Routes
+// Routes - IMPORTANTE: Rotas específicas devem vir ANTES do rate limiter geral
+// Mas como o rate limiter já foi aplicado acima, vamos garantir que testes tenham tratamento especial
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/store-profile', storeProfileRoutes);
@@ -169,6 +196,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/message-templates', messageTemplatesRoutes);
+app.use('/api/messages', messagesRoutes);
 app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 
 // 404 handler

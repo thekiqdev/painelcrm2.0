@@ -71,68 +71,61 @@ export const InstancesList: React.FC<InstancesListProps> = ({
     loadInstances();
   }, []);
 
-  // Polling automático para atualizar status das instâncias (apenas para instâncias conectando)
+  // Polling otimizado - apenas para instâncias que realmente precisam (conectando ou com QR code aberto)
   useEffect(() => {
-    const connectingInstances = instances.filter(inst => 
-      inst.status === 'connecting' || inst.status === 'disconnected'
+    const needsPolling = instances.filter(inst => 
+      inst.status === 'connecting' || qrCodeInstanceId === inst.id
     );
     
-    if (connectingInstances.length === 0) return;
+    if (needsPolling.length === 0) return;
     
+    // Intervalo maior para reduzir requisições
     const statusInterval = setInterval(async () => {
-      // Atualizar status apenas das instâncias que estão conectando
-      const updatedInstances = await Promise.all(
-        instances.map(async (instance) => {
-          // Pular instâncias já conectadas
-          if (instance.status === 'connected' || instance.status === 'open') {
-            return instance;
-          }
-          
-          try {
-            const status = await chatService.getInstanceStatus(instance.id);
-            const instanceData = status?.instance || status;
-            const state = instanceData?.state || instanceData?.status || status?.status;
-            const connected = status?.connected || instanceData?.connected;
-            const loggedIn = status?.loggedIn || instanceData?.loggedIn;
-            
-            let newStatus = instance.status;
-            if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
-              newStatus = 'connected';
-            } else if (state === 'connecting') {
-              newStatus = 'connecting';
-            } else if (state) {
-              newStatus = state;
+      try {
+        // Atualizar apenas instâncias que precisam
+        const updates = await Promise.all(
+          needsPolling.map(async (instance) => {
+            try {
+              const status = await chatService.getInstanceStatus(instance.id);
+              const instanceData = status?.instance || status;
+              const state = instanceData?.state || instanceData?.status || status?.status;
+              const connected = status?.connected || instanceData?.connected;
+              const loggedIn = status?.loggedIn || instanceData?.loggedIn;
+              
+              if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
+                return { id: instance.id, status: 'connected' };
+              }
+            } catch (error) {
+              // Silenciar erros
             }
-            
-            return newStatus !== instance.status 
-              ? { ...instance, status: newStatus }
-              : instance;
-          } catch (error) {
-            // Silenciar erros no polling automático
-            return instance;
+            return null;
+          })
+        );
+        
+        // Aplicar atualizações apenas se houver mudanças
+        const validUpdates = updates.filter(u => u !== null);
+        if (validUpdates.length > 0) {
+          setInstances(prev => prev.map(inst => {
+            const update = validUpdates.find(u => u?.id === inst.id);
+            return update ? { ...inst, status: update.status } : inst;
+          }));
+          // Recarregar se alguma instância conectou
+          if (validUpdates.some(u => u?.status === 'connected')) {
+            loadInstances();
           }
-        })
-      );
-      
-      // Atualizar apenas se houver mudanças
-      const hasChanges = updatedInstances.some((inst, idx) => 
-        inst.status !== instancesRef.current[idx]?.status
-      );
-      if (hasChanges) {
-        setInstances(updatedInstances);
-        instancesRef.current = updatedInstances;
+        }
+      } catch (error) {
+        // Silenciar erros no polling
       }
-    }, 10000); // A cada 10 segundos
+    }, 15000); // A cada 15 segundos (reduzido de 10s)
     
     return () => clearInterval(statusInterval);
-  }, [instances.length]); // Re-executar quando o número de instâncias mudar
+  }, [instances.length, qrCodeInstanceId]); // Incluir qrCodeInstanceId nas dependências
 
   const handleGenerateQRCode = async (instance: ChatInstance) => {
     setGeneratingQR(instance.id);
     try {
       const connectResponse = await chatService.connectInstance(instance.id);
-      
-      console.log('Resposta do connect:', connectResponse);
       
       const instanceData = connectResponse?.instance || {};
       const qrData = instanceData?.qrcode || connectResponse?.qrcode || connectResponse?.code;
@@ -152,15 +145,29 @@ export const InstancesList: React.FC<InstancesListProps> = ({
         });
       } else if (connectResponse?.connected || connectResponse?.loggedIn || instanceData?.status === 'open') {
         toast.success("Instância já está conectada!");
-        await loadInstances(); // Recarregar para atualizar status
+        await loadInstances();
       } else {
         throw new Error("QR Code não disponível na resposta");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro ao gerar QR code:", error);
-      toast.error("Erro ao gerar QR Code", {
-        description: error instanceof Error ? error.message : "Ocorreu um erro"
-      });
+      
+      // Tratar erro 409 de forma mais clara
+      const errorMessage = error?.message || '';
+      if (errorMessage.includes('409') || errorMessage.includes('Conflict') || errorMessage.includes('já está conectada')) {
+        toast.error("Instância já conectada", {
+          description: "A instância já está conectada. O sistema tentará desconectar automaticamente. Aguarde alguns segundos e tente novamente.",
+          duration: 5000,
+        });
+        // Recarregar instâncias após 2 segundos para verificar se desconectou
+        setTimeout(() => {
+          loadInstances();
+        }, 2000);
+      } else {
+        toast.error("Erro ao gerar QR Code", {
+          description: errorMessage || "Ocorreu um erro. Tente novamente.",
+        });
+      }
     } finally {
       setGeneratingQR(null);
     }

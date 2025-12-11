@@ -17,12 +17,17 @@ import {
   FileSignature,
   User,
   ExternalLink,
+  Trash2,
+  Users,
+  DollarSign,
+  CalendarIcon,
 } from 'lucide-react';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -68,9 +73,9 @@ import { tasksService } from '@/services/tasks';
 import { ticketsService } from '@/services/tickets';
 import { contractsService } from '@/services/contracts';
 import { clientsService } from '@/services/clients';
+import { messagesService } from '@/services/messages';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { CalendarIcon } from 'lucide-react';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -195,6 +200,20 @@ const Chat = () => {
   const [clients, setClients] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [ticketCategories, setTicketCategories] = useState<any[]>([]);
+  
+  // Estados para formulário de contrato
+  const [contractTitle, setContractTitle] = useState('');
+  const [contractContent, setContractContent] = useState('');
+  const [contractStartDate, setContractStartDate] = useState<string>('');
+  const [contractEndDate, setContractEndDate] = useState<string>('');
+  const [contractTotalValue, setContractTotalValue] = useState('');
+  const [contractCurrency, setContractCurrency] = useState('BRL');
+  const [contractAutoRenew, setContractAutoRenew] = useState(false);
+  const [contractRenewalPeriod, setContractRenewalPeriod] = useState('12');
+  const [contractSigners, setContractSigners] = useState<Array<{ name: string; email: string; role: 'CLIENT' | 'INTERNAL' }>>([]);
+  const [contractInvitationMessage, setContractInvitationMessage] = useState('Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.');
+  const [contractRequireOtp, setContractRequireOtp] = useState(false);
+  const [contractRequireTerms, setContractRequireTerms] = useState(false);
 
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
@@ -1104,13 +1123,51 @@ const Chat = () => {
     setProposalDialogOpen(true);
   };
 
+  // Função auxiliar para enviar notificação
+  const sendNotification = async (
+    resourceType: string,
+    action: string,
+    variables: Record<string, string>,
+    resourceId?: string
+  ) => {
+    try {
+      const client = currentClient || currentLead;
+      if (!client) return;
+
+      const phone = client.phone || selectedConversation?.phoneNumber;
+      const email = client.email;
+
+      if (!phone && !email) {
+        console.warn('Cliente sem telefone ou email para enviar notificação');
+        return;
+      }
+
+      await messagesService.send({
+        resourceType,
+        action,
+        recipientPhone: phone || undefined,
+        recipientEmail: email || undefined,
+        channel: phone ? 'whatsapp' : 'email',
+        variables,
+        metadata: {
+          resource_id: resourceId,
+          client_id: client.id,
+          created_from: 'chat_quick_action',
+        },
+      });
+    } catch (error) {
+      console.error('Erro ao enviar notificação:', error);
+      // Não mostrar erro ao usuário, apenas logar
+    }
+  };
+
   const handleSaveProposal = async (formData: FormData) => {
     try {
       const title = formData.get('title') as string;
       const description = formData.get('description') as string;
       const amount = parseFloat(formData.get('amount') as string);
 
-      await proposalsService.createProposal({
+      const proposal = await proposalsService.createProposal({
         title,
         description: description || null,
         amount,
@@ -1121,6 +1178,17 @@ const Chat = () => {
 
       toast.success('Proposta criada com sucesso!');
       setProposalDialogOpen(false);
+
+      // Enviar notificação
+      const client = currentClient || currentLead;
+      if (client) {
+        await sendNotification('proposals', 'created', {
+          client_name: client.name || 'Cliente',
+          proposal_title: title,
+          proposal_amount: amount.toFixed(2),
+          proposal_link: `${window.location.origin}/proposals/${proposal.id}`,
+        }, proposal.id);
+      }
     } catch (error) {
       console.error('Erro ao criar proposta:', error);
       toast.error('Não foi possível criar a proposta', {
@@ -1141,7 +1209,7 @@ const Chat = () => {
       const time = formData.get('time') as string;
       const priority = formData.get('priority') as string;
 
-      await tasksService.createTask({
+      const task = await tasksService.createTask({
         title,
         description: description || null,
         date: date || null,
@@ -1155,6 +1223,19 @@ const Chat = () => {
 
       toast.success('Tarefa criada com sucesso!');
       setTaskDialogOpen(false);
+
+      // Enviar notificação
+      const client = currentClient || currentLead;
+      if (client) {
+        const dueDate = date ? format(new Date(date), 'dd/MM/yyyy', { locale: ptBR }) : 'Não definido';
+        await sendNotification('tasks', 'created', {
+          client_name: client.name || 'Cliente',
+          task_title: title,
+          task_description: description || '',
+          task_due_date: dueDate,
+          task_link: `${window.location.origin}/tasks/${task.id}`,
+        }, task.id);
+      }
     } catch (error) {
       console.error('Erro ao criar tarefa:', error);
       toast.error('Não foi possível criar a tarefa', {
@@ -1178,7 +1259,7 @@ const Chat = () => {
       const contactEmail = currentClient?.email || currentLead?.email || '';
       const contactPhone = currentClient?.phone || currentLead?.phone || selectedConversation?.phoneNumber || '';
 
-      await ticketsService.createTicket({
+      const ticket = await ticketsService.createTicket({
         contact_name: contactName,
         contact_email: contactEmail,
         contact_phone: contactPhone || undefined,
@@ -1193,6 +1274,16 @@ const Chat = () => {
 
       toast.success('Ticket criado com sucesso!');
       setTicketDialogOpen(false);
+
+      // Enviar notificação
+      if (contactPhone || contactEmail) {
+        await sendNotification('tickets', 'created', {
+          contact_name: contactName,
+          ticket_number: ticket.id.substring(0, 8).toUpperCase(),
+          ticket_subject: subject,
+          ticket_link: `${window.location.origin}/tickets/${ticket.id}`,
+        }, ticket.id);
+      }
     } catch (error) {
       console.error('Erro ao criar ticket:', error);
       toast.error('Não foi possível criar o ticket', {
@@ -1217,7 +1308,7 @@ const Chat = () => {
       const total = parseFloat(formData.get('total') as string);
       const projectId = formData.get('projectId') as string;
 
-      await financeService.createInvoice({
+      const invoice = await financeService.createInvoice({
         client_id: currentClient?.id || null,
         project_id: projectId || null,
         invoice_number: invoiceNumber,
@@ -1236,6 +1327,18 @@ const Chat = () => {
 
       toast.success('Fatura criada com sucesso!');
       setInvoiceDialogOpen(false);
+
+      // Enviar notificação
+      if (currentClient) {
+        const dueDateFormatted = format(new Date(dueDate), 'dd/MM/yyyy', { locale: ptBR });
+        await sendNotification('invoices', 'created', {
+          client_name: clientName || currentClient.name || 'Cliente',
+          invoice_number: invoiceNumber,
+          invoice_total: total.toFixed(2),
+          due_date: dueDateFormatted,
+          invoice_link: `${window.location.origin}/finance/invoices/${invoice.id}`,
+        }, invoice.id);
+      }
     } catch (error) {
       console.error('Erro ao criar fatura:', error);
       toast.error('Não foi possível criar a fatura', {
@@ -1245,43 +1348,120 @@ const Chat = () => {
   };
 
   const handleCreateContract = () => {
-    if (!currentClient) return;
+    if (!currentClient && !currentLead) return;
+    // Preencher assinante com dados do cliente/lead
+    const defaultSigner = {
+      name: currentClient?.name || currentLead?.name || '',
+      email: currentClient?.email || currentLead?.email || '',
+      role: 'CLIENT' as const,
+    };
+    setContractSigners([defaultSigner]);
     setContractDialogOpen(true);
   };
 
-  const handleSaveContract = async (formData: FormData) => {
+  const handleSaveContract = async () => {
     try {
-      const title = formData.get('title') as string;
-      const content = formData.get('content') as string;
-      const startDate = formData.get('startDate') as string;
-      const endDate = formData.get('endDate') as string;
-      const totalValue = formData.get('totalValue') as string;
+      if (!contractTitle) {
+        toast.error('O título do contrato é obrigatório');
+        return;
+      }
 
-      await contractsService.createContract({
-        title,
-        client_id: currentClient?.id || '',
-        content_html: content,
-        start_date: startDate || null,
-        end_date: endDate || null,
-        total_value: totalValue ? parseFloat(totalValue) : undefined,
-        currency: 'BRL',
-        auto_renew: false,
-        renewal_period: 12,
+      if (contractSigners.length === 0) {
+        toast.error('Adicione pelo menos um assinante');
+        return;
+      }
+
+      // Validar assinantes
+      for (const signer of contractSigners) {
+        if (!signer.name || !signer.email) {
+          toast.error('Todos os assinantes devem ter nome e e-mail');
+          return;
+        }
+      }
+
+      const contract = await contractsService.createContract({
+        title: contractTitle,
+        client_id: currentClient?.id || currentLead?.id || '',
+        content_html: contractContent,
+        start_date: contractStartDate || null,
+        end_date: contractEndDate || null,
+        total_value: contractTotalValue ? parseFloat(contractTotalValue) : undefined,
+        currency: contractCurrency,
+        auto_renew: contractAutoRenew,
+        renewal_period: contractAutoRenew ? parseInt(contractRenewalPeriod) : 12,
         signature_settings: {
-          require_otp: false,
-          require_terms: false,
-          invitation_message: 'Você foi convidado para assinar um contrato.',
+          require_otp: contractRequireOtp,
+          require_terms: contractRequireTerms,
+          invitation_message: contractInvitationMessage,
         },
+        status: 'DRAFT',
+      });
+
+      // Criar assinantes
+      for (const signer of contractSigners) {
+        await contractsService.createContractSigner(contract.id, {
+          name: signer.name,
+          email: signer.email,
+          role: signer.role,
+        });
+      }
+
+      // Criar evento
+      await contractsService.createContractEvent(contract.id, {
+        event_type: 'CREATED',
+        description: 'Contrato criado como rascunho',
       });
 
       toast.success('Contrato criado com sucesso!');
       setContractDialogOpen(false);
+      
+      // Reset form
+      setContractTitle('');
+      setContractContent('');
+      setContractStartDate('');
+      setContractEndDate('');
+      setContractTotalValue('');
+      setContractCurrency('BRL');
+      setContractAutoRenew(false);
+      setContractRenewalPeriod('12');
+      setContractSigners([]);
+      setContractInvitationMessage('Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.');
+      setContractRequireOtp(false);
+      setContractRequireTerms(false);
+
+      // Enviar notificação
+      const client = currentClient || currentLead;
+      if (client) {
+        await sendNotification('contracts', 'created', {
+          client_name: client.name || 'Cliente',
+          contract_title: contractTitle,
+          contract_number: contract.id.substring(0, 8).toUpperCase(),
+          contract_link: `${window.location.origin}/contracts/${contract.id}`,
+        }, contract.id);
+      }
     } catch (error) {
       console.error('Erro ao criar contrato:', error);
       toast.error('Não foi possível criar o contrato', {
         description: error instanceof Error ? error.message : undefined,
       });
     }
+  };
+
+  const handleAddContractSigner = () => {
+    setContractSigners([
+      ...contractSigners,
+      { name: '', email: '', role: 'CLIENT' },
+    ]);
+  };
+
+  const handleRemoveContractSigner = (index: number) => {
+    setContractSigners(contractSigners.filter((_, i) => i !== index));
+  };
+
+  const handleContractSignerChange = (index: number, field: 'name' | 'email' | 'role', value: string) => {
+    const updated = [...contractSigners];
+    updated[index] = { ...updated[index], [field]: value };
+    setContractSigners(updated);
   };
 
   const handleCreateInstance = async () => {
@@ -1852,53 +2032,239 @@ const Chat = () => {
         onOpenChange={setInvoiceDialogOpen}
         onSave={handleSaveInvoice}
         availableProjects={projects}
+        defaultClientName={currentClient?.name || currentLead?.name || ''}
       />
 
       {/* Dialog de Contrato */}
       <Dialog open={contractDialogOpen} onOpenChange={setContractDialogOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Criar Contrato</DialogTitle>
             <DialogDescription>
-              Crie um novo contrato para o cliente {currentClient?.name || currentLead?.name}
+              Crie um novo contrato para {currentClient?.name || currentLead?.name || 'o cliente'}
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
-            handleSaveContract(formData);
-          }}>
-            <div className="grid gap-4 py-4">
+          
+          <Tabs defaultValue="editor" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="editor">
+                <FileText className="mr-2 h-4 w-4" />
+                Editor
+              </TabsTrigger>
+              <TabsTrigger value="signers">
+                <Users className="mr-2 h-4 w-4" />
+                Assinantes
+              </TabsTrigger>
+              <TabsTrigger value="financial">
+                <DollarSign className="mr-2 h-4 w-4" />
+                Datas & Financeiro
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="editor" className="space-y-4 mt-4">
               <div className="space-y-2">
-                <Label htmlFor="contractTitle">Título do Contrato</Label>
-                <Input id="contractTitle" name="title" placeholder="Ex: Contrato de Prestação de Serviços" required />
-                                </div>
+                <Label htmlFor="contractTitle">Título do Contrato *</Label>
+                <Input 
+                  id="contractTitle" 
+                  value={contractTitle}
+                  onChange={(e) => setContractTitle(e.target.value)}
+                  placeholder="Ex: Contrato de Prestação de Serviços" 
+                  required 
+                />
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="contractContent">Conteúdo</Label>
-                <Textarea id="contractContent" name="content" placeholder="Conteúdo do contrato..." className="min-h-[200px]" />
-                            </div>
+                <Label htmlFor="contractContent">Conteúdo do Contrato</Label>
+                <RichTextEditor
+                  value={contractContent}
+                  onChange={setContractContent}
+                  placeholder="Digite o conteúdo do contrato..."
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="signers" className="space-y-4 mt-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Assinantes</Label>
+                    <p className="text-sm text-muted-foreground">Adicione as partes que devem assinar o contrato</p>
+                  </div>
+                  <Button type="button" onClick={handleAddContractSigner} size="sm">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Adicionar
+                  </Button>
+                </div>
+                
+                {contractSigners.map((signer, index) => (
+                  <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
+                    <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <Label>Nome *</Label>
+                        <Input
+                          value={signer.name}
+                          onChange={(e) => handleContractSignerChange(index, 'name', e.target.value)}
+                          placeholder="Nome completo"
+                        />
+                      </div>
+                      <div>
+                        <Label>E-mail *</Label>
+                        <Input
+                          type="email"
+                          value={signer.email}
+                          onChange={(e) => handleContractSignerChange(index, 'email', e.target.value)}
+                          placeholder="email@exemplo.com"
+                        />
+                      </div>
+                      <div>
+                        <Label>Tipo</Label>
+                        <Select
+                          value={signer.role}
+                          onValueChange={(value) => handleContractSignerChange(index, 'role', value as 'CLIENT' | 'INTERNAL')}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CLIENT">Cliente</SelectItem>
+                            <SelectItem value="INTERNAL">Interno</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveContractSigner(index)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+
+                {contractSigners.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    Nenhum assinante adicionado. Clique em "Adicionar" para começar.
+                  </div>
+                )}
+
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <Label>Mensagem de Convite</Label>
+                    <Textarea
+                      value={contractInvitationMessage}
+                      onChange={(e) => setContractInvitationMessage(e.target.value)}
+                      rows={3}
+                      placeholder="Mensagem enviada aos assinantes..."
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="require_otp"
+                      checked={contractRequireOtp}
+                      onCheckedChange={(checked) => setContractRequireOtp(checked as boolean)}
+                    />
+                    <Label htmlFor="require_otp" className="font-normal">
+                      Exigir OTP por e-mail
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="require_terms"
+                      checked={contractRequireTerms}
+                      onCheckedChange={(checked) => setContractRequireTerms(checked as boolean)}
+                    />
+                    <Label htmlFor="require_terms" className="font-normal">
+                      Exigir aceite de termos
+                    </Label>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="financial" className="space-y-4 mt-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="contractStartDate">Data de Início</Label>
-                  <Input id="contractStartDate" type="date" name="startDate" />
-                          </div>
+                  <Input 
+                    id="contractStartDate" 
+                    type="date" 
+                    value={contractStartDate}
+                    onChange={(e) => setContractStartDate(e.target.value)}
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="contractEndDate">Data de Término</Label>
-                  <Input id="contractEndDate" type="date" name="endDate" />
+                  <Input 
+                    id="contractEndDate" 
+                    type="date" 
+                    value={contractEndDate}
+                    onChange={(e) => setContractEndDate(e.target.value)}
+                  />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="contractValue">Valor Total</Label>
-                <Input id="contractValue" name="totalValue" type="number" step="0.01" placeholder="0.00" />
+              
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="auto_renew"
+                  checked={contractAutoRenew}
+                  onCheckedChange={(checked) => setContractAutoRenew(checked as boolean)}
+                />
+                <Label htmlFor="auto_renew" className="font-normal">
+                  Renovação automática
+                </Label>
               </div>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setContractDialogOpen(false)}>
-                Cancelar
-                            </Button>
-              <Button type="submit">Criar Contrato</Button>
-            </DialogFooter>
-          </form>
+
+              {contractAutoRenew && (
+                <div className="space-y-2">
+                  <Label htmlFor="renewalPeriod">Período de Renovação (meses)</Label>
+                  <Input
+                    id="renewalPeriod"
+                    type="number"
+                    value={contractRenewalPeriod}
+                    onChange={(e) => setContractRenewalPeriod(e.target.value)}
+                    placeholder="12"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="contractValue">Valor Total</Label>
+                  <Input 
+                    id="contractValue" 
+                    type="number" 
+                    step="0.01" 
+                    value={contractTotalValue}
+                    onChange={(e) => setContractTotalValue(e.target.value)}
+                    placeholder="0.00" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="contractCurrency">Moeda</Label>
+                  <Select value={contractCurrency} onValueChange={setContractCurrency}>
+                    <SelectTrigger id="contractCurrency">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="BRL">BRL (R$)</SelectItem>
+                      <SelectItem value="USD">USD ($)</SelectItem>
+                      <SelectItem value="EUR">EUR (€)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter className="mt-6">
+            <Button type="button" variant="outline" onClick={() => setContractDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={handleSaveContract}>
+              Criar Contrato
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

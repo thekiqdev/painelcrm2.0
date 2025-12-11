@@ -34,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, FileText, Sparkles } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, Sparkles, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
@@ -136,8 +136,14 @@ export const MessageTemplatesSection: React.FC<SettingsSectionProps> = ({ handle
   const [resourceTypes, setResourceTypes] = useState<ResourceTypesResponse | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isTestDialogOpen, setIsTestDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [editingTemplate, setEditingTemplate] = useState<MessageTemplate | null>(null);
+  const [testingTemplate, setTestingTemplate] = useState<MessageTemplate | null>(null);
+  const [testPhoneNumber, setTestPhoneNumber] = useState('');
+  const [testVariables, setTestVariables] = useState<Record<string, string>>({});
+  const [testPreview, setTestPreview] = useState('');
+  const [isSendingTest, setIsSendingTest] = useState(false);
   const [formData, setFormData] = useState<CreateMessageTemplateParams>({
     name: '',
     resource_type: 'invoices',
@@ -314,6 +320,89 @@ export const MessageTemplatesSection: React.FC<SettingsSectionProps> = ({ handle
 
   const getActionLabel = (action: string) => {
     return ACTION_LABELS[action] || action;
+  };
+
+  const handleOpenTestDialog = (template: MessageTemplate) => {
+    setTestingTemplate(template);
+    setTestPhoneNumber('');
+    setTestVariables({});
+    setTestPreview('');
+    setIsTestDialogOpen(true);
+    updateTestPreview(template, {});
+  };
+
+  const updateTestPreview = (template: MessageTemplate, variables: Record<string, string>) => {
+    let preview = template.body;
+    Object.keys(variables).forEach(key => {
+      const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+      preview = preview.replace(regex, variables[key] || `{{${key}}}`);
+    });
+    setTestPreview(preview);
+  };
+
+  const handleTestVariablesChange = (key: string, value: string) => {
+    const newVariables = { ...testVariables, [key]: value };
+    setTestVariables(newVariables);
+    if (testingTemplate) {
+      updateTestPreview(testingTemplate, newVariables);
+    }
+  };
+
+  const handleSendTest = async () => {
+    if (!testingTemplate) return;
+
+    if (!testPhoneNumber.trim()) {
+      toast.error('Número de telefone é obrigatório');
+      return;
+    }
+
+    // Validar formato básico do número
+    const cleanPhone = testPhoneNumber.replace(/\D/g, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      toast.error('Número de telefone inválido. Use o formato: 5511999999999');
+      return;
+    }
+
+    setIsSendingTest(true);
+    try {
+      const result = await messageTemplatesService.test(
+        testingTemplate.id,
+        cleanPhone,
+        Object.keys(testVariables).length > 0 ? testVariables : undefined
+      );
+
+      if (result.success) {
+        toast.success(result.message || 'Mensagem de teste enviada com sucesso!');
+        setIsTestDialogOpen(false);
+      } else {
+        toast.error(result.error || 'Erro ao enviar mensagem de teste');
+      }
+    } catch (error: any) {
+      console.error('Erro ao enviar teste:', error);
+      toast.error(error.message || 'Erro ao enviar mensagem de teste');
+    } finally {
+      setIsSendingTest(false);
+    }
+  };
+
+  // Extrair variáveis do template
+  const extractVariables = (template: MessageTemplate): string[] => {
+    const variables: string[] = [];
+    const regex = /\{\{(\w+)\}\}/g;
+    let match;
+    while ((match = regex.exec(template.body)) !== null) {
+      if (!variables.includes(match[1])) {
+        variables.push(match[1]);
+      }
+    }
+    if (template.subject) {
+      while ((match = regex.exec(template.subject)) !== null) {
+        if (!variables.includes(match[1])) {
+          variables.push(match[1]);
+        }
+      }
+    }
+    return variables;
   };
 
   const predefinedTemplates = templates.filter(t => t.is_predefined);
@@ -502,6 +591,14 @@ export const MessageTemplatesSection: React.FC<SettingsSectionProps> = ({ handle
                             <Button
                               variant="outline"
                               size="icon"
+                              onClick={() => handleOpenTestDialog(template)}
+                              title="Testar modelo"
+                            >
+                              <Send className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
                               onClick={() => startEditTemplate(template)}
                             >
                               <Pencil className="h-4 w-4" />
@@ -561,6 +658,14 @@ export const MessageTemplatesSection: React.FC<SettingsSectionProps> = ({ handle
                             </div>
                           </TableCell>
                           <TableCell className="flex justify-end space-x-2">
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => handleOpenTestDialog(template)}
+                              title="Testar modelo"
+                            >
+                              <Send className="h-4 w-4" />
+                            </Button>
                             <Button
                               variant="outline"
                               size="icon"
@@ -681,6 +786,83 @@ export const MessageTemplatesSection: React.FC<SettingsSectionProps> = ({ handle
                     <Button type="submit">Salvar</Button>
                   </DialogFooter>
                 </form>
+              )}
+            </DialogContent>
+          </Dialog>
+
+          {/* Dialog para testar modelo */}
+          <Dialog open={isTestDialogOpen} onOpenChange={setIsTestDialogOpen}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Testar Modelo de Mensagem</DialogTitle>
+                <DialogDescription>
+                  Envie uma mensagem de teste via WhatsApp para validar o modelo
+                </DialogDescription>
+              </DialogHeader>
+              {testingTemplate && (
+                <div className="space-y-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="testPhone">Número de Telefone *</Label>
+                    <Input
+                      id="testPhone"
+                      value={testPhoneNumber}
+                      onChange={(e) => setTestPhoneNumber(e.target.value)}
+                      placeholder="5511999999999"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Formato: código do país + DDD + número (ex: 5511999999999)
+                    </p>
+                  </div>
+
+                  {extractVariables(testingTemplate).length > 0 && (
+                    <div className="grid gap-2">
+                      <Label>Variáveis (opcional)</Label>
+                      <div className="space-y-2 border rounded-md p-4">
+                        {extractVariables(testingTemplate).map((variable) => (
+                          <div key={variable} className="grid gap-2">
+                            <Label htmlFor={`var-${variable}`} className="text-sm">
+                              {variable}
+                            </Label>
+                            <Input
+                              id={`var-${variable}`}
+                              value={testVariables[variable] || ''}
+                              onChange={(e) => handleTestVariablesChange(variable, e.target.value)}
+                              placeholder={`Valor para {{${variable}}}`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {testPreview && (
+                    <div className="grid gap-2">
+                      <Label>Preview da Mensagem</Label>
+                      <div className="border rounded-md p-4 bg-muted">
+                        <p className="text-sm whitespace-pre-wrap">{testPreview}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setIsTestDialogOpen(false)}
+                      disabled={isSendingTest}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={handleSendTest}
+                      disabled={isSendingTest || !testPhoneNumber.trim()}
+                    >
+                      {isSendingTest ? 'Enviando...' : 'Enviar Teste'}
+                    </Button>
+                  </DialogFooter>
+                </div>
               )}
             </DialogContent>
           </Dialog>

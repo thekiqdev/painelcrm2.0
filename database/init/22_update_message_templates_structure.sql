@@ -34,6 +34,10 @@ WHERE resource_type IS NULL OR action IS NULL;
 ALTER TABLE public.message_templates 
   DROP CONSTRAINT IF EXISTS message_templates_type_check;
 
+-- Tornar a coluna type nullable (deprecated, mas mantida para compatibilidade)
+ALTER TABLE public.message_templates 
+  ALTER COLUMN type DROP NOT NULL;
+
 -- Adicionar novas constraints
 ALTER TABLE public.message_templates
   ADD CONSTRAINT message_templates_resource_type_check 

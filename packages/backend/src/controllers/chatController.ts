@@ -805,96 +805,41 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     let response: AnyObject;
     let instanceToUse = instance;
 
-    // Verificar status da instância antes de tentar conectar
-    let currentStatus: AnyObject | null = null;
+    // Tentar conectar diretamente - simplificado
     try {
-      currentStatus = (await uazapiService.getInstanceStatus(instance.instance_token)) as AnyObject;
-      const instanceData = currentStatus?.instance || currentStatus;
-      const status = instanceData?.status || currentStatus?.status || instance.status;
-      const connected = currentStatus?.connected || instanceData?.connected || false;
-      const loggedIn = currentStatus?.loggedIn || instanceData?.loggedIn || false;
-
-      // Se a instância já está conectada, desconectar primeiro para gerar novo QR code
-      if ((status === 'connected' || connected || loggedIn) && !data.phone) {
-        console.log('[ConnectInstance] Instância já conectada, desconectando para gerar novo QR code...', {
-          instanceId: instance.id,
-          status,
-          connected,
-          loggedIn,
-        });
-
-        try {
-          await uazapiService.disconnectInstance(instance.instance_token);
-          console.log('[ConnectInstance] Instância desconectada com sucesso');
-          
-          // Atualizar status no banco
-          await pool.query(
-            'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
-            ['disconnected', instance.id]
-          );
-        } catch (disconnectError: any) {
-          console.warn('[ConnectInstance] Erro ao desconectar instância (pode não ser crítico):', {
-            error: disconnectError.message,
-            status: disconnectError.status,
-          });
-          // Continuar mesmo se desconexão falhar
-        }
-      }
-    } catch (statusError: any) {
-      // Se não conseguir verificar status, continuar normalmente
-      console.log('[ConnectInstance] Não foi possível verificar status da instância, continuando...', {
-        error: statusError.message,
-        status: statusError.status,
-      });
-    }
-
-    try {
-      // Tentar conectar com o token atual
       response = (await uazapiService.connectInstance(
-      instance.instance_token,
-      data.phone || undefined
-    )) as AnyObject;
+        instance.instance_token,
+        data.phone || undefined
+      )) as AnyObject;
     } catch (connectError: any) {
-      // Tratar diferentes tipos de erro
       const errorMessage = connectError?.message || '';
       const errorStatus = connectError?.status;
       
-      // Erro 409: Conflict (instância já conectada)
+      // Erro 409: Conflict (instância já conectada) - simplificado
       if (errorStatus === 409 || errorMessage.toLowerCase().includes('conflict') || errorMessage.toLowerCase().includes('already connected')) {
-        console.log('[ConnectInstance] Instância já conectada (409), desconectando e tentando novamente...', {
+        console.log('[ConnectInstance] Erro 409 detectado, desconectando e reconectando...', {
           instanceId: instance.id,
-          message: errorMessage,
         });
 
         try {
-          // Desconectar a instância
+          // Desconectar e reconectar imediatamente (sem delay)
           await uazapiService.disconnectInstance(instance.instance_token);
-          console.log('[ConnectInstance] Instância desconectada após erro 409');
-          
-          // Aguardar um pouco para garantir que a desconexão foi processada
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // Atualizar status no banco
           await pool.query(
             'UPDATE chat_instances SET status = $1, updated_at = now() WHERE id = $2',
             ['disconnected', instance.id]
           );
 
-          // Tentar conectar novamente
+          // Reconectar imediatamente
           response = (await uazapiService.connectInstance(
             instance.instance_token,
             data.phone || undefined
           )) as AnyObject;
           
-          console.log('[ConnectInstance] Reconexão bem-sucedida após desconexão (409)');
+          console.log('[ConnectInstance] Reconexão bem-sucedida após 409');
         } catch (retryError: any) {
-          console.error('[ConnectInstance] Erro ao tentar reconectar após 409:', {
-            error: retryError.message,
-            status: retryError.status,
-          });
-          // Se ainda falhar, propagar o erro
-          res.status(500).json({ 
-            error: 'Não foi possível gerar QR code. A instância pode estar em uso.',
+          console.error('[ConnectInstance] Erro ao reconectar após 409:', retryError.message);
+          res.status(409).json({ 
+            error: 'Instância já está conectada. Desconecte primeiro para gerar novo QR code.',
             details: retryError.message || errorMessage,
           });
           return;
@@ -1698,11 +1643,30 @@ export async function syncConversations(req: AuthRequest, res: Response) {
       (Array.isArray(remoteChats) ? remoteChats : []);
 
     let upserted = 0;
-    for (const item of chatsArray) {
-      const normalized = normalizeChatPayload(item);
-      if (!normalized) continue;
-      await upsertConversation(instance, normalized);
-      upserted += 1;
+    const batchSize = 10; // Processar em lotes para evitar sobrecarga
+    
+    // Processar em lotes para evitar sobrecarga de memória e conexões
+    for (let i = 0; i < chatsArray.length; i += batchSize) {
+      const batch = chatsArray.slice(i, i + batchSize);
+      const promises = batch.map(async (item) => {
+        const normalized = normalizeChatPayload(item);
+        if (!normalized) return null;
+        try {
+          await upsertConversation(instance, normalized);
+          return true;
+        } catch (error) {
+          console.error(`Error upserting conversation:`, error);
+          return false;
+        }
+      });
+      
+      const results = await Promise.all(promises);
+      upserted += results.filter(r => r === true).length;
+      
+      // Pequeno delay entre lotes para evitar sobrecarga
+      if (i + batchSize < chatsArray.length) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
     }
 
     res.json({

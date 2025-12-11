@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -33,16 +33,31 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    // Limpar polling anterior
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    
     if (isOpen && qrCodeProp) {
       setQrCode(qrCodeProp);
       // Iniciar polling para verificar conexão
-      startConnectionPolling();
+      pollIntervalRef.current = startConnectionPolling();
     } else if (isOpen && connectionId && !qrCodeProp) {
       // Se não tem QR code mas tem connectionId, tentar gerar
       generateQRCode();
     }
+    
+    // Cleanup: parar polling quando fechar ou mudar
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
   }, [isOpen, connectionId, qrCodeProp]);
 
   // Função para processar o base64 do QR Code
@@ -195,7 +210,10 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           });
           
           // Iniciar verificação de conexão
-        startConnectionPolling();
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+          }
+          pollIntervalRef.current = startConnectionPolling();
       } else {
         throw new Error("QR Code não foi retornado pela API");
       }
@@ -213,13 +231,28 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     }
   };
 
-  const startConnectionPolling = async () => {
-    if (!connectionId) return;
+  const startConnectionPolling = (): NodeJS.Timeout | null => {
+    if (!connectionId) return null;
+    
+    let pollCount = 0;
+    const maxPolls = 120; // Máximo de 6 minutos (120 * 3s)
     
     const pollInterval = setInterval(async () => {
+      pollCount++;
+      
+      // Parar após máximo de tentativas
+      if (pollCount > maxPolls) {
+        clearInterval(pollInterval);
+        if (!isConnected) {
+          setErrorMessage("QR Code expirou. Tente gerar novamente.");
+          toast.error("QR Code expirado", {
+            description: "O QR Code expirou após 6 minutos. Gere um novo."
+          });
+        }
+        return;
+      }
+      
       try {
-        console.log("Verificando status da conexão para instância:", connectionId);
-        
         const statusResponse = await chatService.getInstanceStatus(connectionId);
         const instanceData = statusResponse?.instance || statusResponse;
         const state = instanceData?.state || instanceData?.status || statusResponse?.status;
@@ -228,7 +261,6 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         
         // Verificar se está conectado
         if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
-          console.log("Conexão estabelecida!");
           setIsConnected(true);
           clearInterval(pollInterval);
           
@@ -236,26 +268,17 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
             description: "WhatsApp foi conectado com sucesso",
           });
           
-          // Auto-fechar e chamar callback após 2 segundos (tempo para ver a mensagem de sucesso)
+          // Auto-fechar após 1 segundo
           setTimeout(() => {
             onConnect();
-          }, 2000);
+          }, 1000);
         }
       } catch (error) {
-        console.error("Erro ao verificar conexão:", error);
+        // Silenciar erros - não logar para reduzir spam
       }
-    }, 3000);
+    }, 3000); // Manter 3s para QR code (mais crítico)
     
-    // Timeout após 5 minutos
-    setTimeout(() => {
-      clearInterval(pollInterval);
-      if (!isConnected) {
-        setErrorMessage("QR Code expirou. Tente gerar novamente.");
-        toast.error("QR Code expirado", {
-          description: "O QR Code expirou após 5 minutos. Gere um novo."
-        });
-      }
-    }, 300000);
+    return pollInterval;
   };
 
   const handleRetry = () => {

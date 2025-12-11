@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
+import { uazapiService } from '../services/uazapi.js';
 
 // Definir recursos e ações válidas
 const RESOURCE_TYPES = [
@@ -124,6 +125,33 @@ export async function getMessageTemplateById(req: AuthRequest, res: Response): P
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error fetching message template:', error);
+    res.status(500).json({ error: 'Erro ao buscar modelo de mensagem' });
+  }
+}
+
+// GET /api/message-templates/by-resource/:resource_type/:action
+export async function getMessageTemplateByResource(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const { resource_type, action } = req.params;
+
+    // Buscar template ativo para o resource_type e action
+    const result = await pool.query(
+      `SELECT * FROM message_templates 
+       WHERE user_id = $1 AND resource_type = $2 AND action = $3 AND is_active = true
+       ORDER BY is_predefined DESC, created_at DESC
+       LIMIT 1`,
+      [userId, resource_type, action]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Modelo de mensagem não encontrado para este recurso e ação' });
+      return;
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching message template by resource:', error);
     res.status(500).json({ error: 'Erro ao buscar modelo de mensagem' });
   }
 }
@@ -332,10 +360,152 @@ export async function deleteMessageTemplate(req: AuthRequest, res: Response): Pr
   }
 }
 
+// POST /api/message-templates/:id/test
+export async function testMessageTemplate(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+    const { phoneNumber, variables } = req.body;
+
+    // Validar número de telefone
+    if (!phoneNumber || typeof phoneNumber !== 'string') {
+      res.status(400).json({ error: 'Número de telefone é obrigatório' });
+      return;
+    }
+
+    // Validar formato do número (deve conter apenas dígitos e começar com código do país)
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      res.status(400).json({ error: 'Número de telefone inválido. Use o formato: 5511999999999' });
+      return;
+    }
+
+    // Buscar template
+    const templateResult = await pool.query(
+      'SELECT * FROM message_templates WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+
+    if (templateResult.rows.length === 0) {
+      res.status(404).json({ error: 'Modelo de mensagem não encontrado' });
+      return;
+    }
+
+    const template = templateResult.rows[0];
+
+    // Substituir variáveis
+    let finalBody = template.body;
+    let finalSubject = template.subject || '';
+    
+    if (variables && typeof variables === 'object') {
+      Object.keys(variables).forEach(key => {
+        const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+        finalBody = finalBody.replace(regex, variables[key] || `{{${key}}}`);
+        finalSubject = finalSubject.replace(regex, variables[key] || `{{${key}}}`);
+      });
+    }
+
+    // Verificar se há instância WhatsApp conectada
+    const instanceResult = await pool.query(
+      `SELECT i.instance_token, i.external_instance_name
+       FROM chat_instances i
+       WHERE i.user_id = $1 AND i.status = 'connected'
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (instanceResult.rows.length === 0) {
+      res.status(400).json({ 
+        error: 'Nenhuma instância WhatsApp conectada encontrada',
+        preview: finalBody,
+      });
+      return;
+    }
+
+    const instance = instanceResult.rows[0];
+
+    // Enviar mensagem de teste via UazAPI
+    try {
+      console.log('[TestMessageTemplate] Enviando mensagem de teste via UazAPI:', {
+        instanceToken: instance.instance_token ? '***' + instance.instance_token.slice(-4) : 'MISSING',
+        phoneNumber: cleanPhone,
+        messageLength: finalBody.length,
+      });
+
+      const uazapiResponse = await uazapiService.sendTextMessage(instance.instance_token, {
+        number: cleanPhone,
+        text: finalBody,
+        readchat: false,
+        readmessages: false,
+        delay: 0,
+        track_source: 'painelcrm-test',
+      });
+
+      console.log('[TestMessageTemplate] Mensagem enviada com sucesso:', {
+        response: typeof uazapiResponse === 'object' ? Object.keys(uazapiResponse) : 'string',
+      });
+
+      res.json({
+        success: true,
+        message: 'Mensagem de teste enviada com sucesso!',
+        preview: finalBody,
+        phoneNumber: cleanPhone,
+        uazapiResponse: uazapiResponse,
+      });
+    } catch (error: any) {
+      console.error('Error sending test message via UazAPI:', error);
+      
+      // Tratar diferentes tipos de erro da UazAPI
+      const errorStatus = error?.status;
+      const errorMessage = error?.message || '';
+      const errorPayload = error?.payload || error?.responseText || {};
+      
+      // Erro 429 da UazAPI (rate limit da própria API)
+      if (errorStatus === 429) {
+        res.status(429).json({
+          success: false,
+          error: 'Limite de requisições da UazAPI atingido. Aguarde alguns instantes e tente novamente.',
+          preview: finalBody,
+          details: errorPayload,
+        });
+        return;
+      }
+      
+      // Erro de instância não encontrada ou desconectada
+      if (errorMessage.toLowerCase().includes('no session') || 
+          errorMessage.toLowerCase().includes('instance not found') ||
+          errorStatus === 404) {
+        res.status(400).json({
+          success: false,
+          error: 'Instância WhatsApp não encontrada ou desconectada. Verifique se a instância está conectada.',
+          preview: finalBody,
+        });
+        return;
+      }
+      
+      // Outros erros
+      res.status(500).json({
+        success: false,
+        error: errorMessage || 'Erro ao enviar mensagem via UazAPI',
+        preview: finalBody,
+        details: errorPayload,
+        status: errorStatus,
+      });
+    }
+  } catch (error: any) {
+    console.error('Error testing message template:', error);
+    res.status(500).json({ 
+      error: 'Erro ao testar modelo de mensagem',
+      details: error.message,
+    });
+  }
+}
+
 // POST /api/message-templates/initialize-predefined
 export async function initializePredefinedTemplates(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    console.log(`[InitializePredefined] Iniciando para usuário: ${userId}`);
 
     const predefinedTemplates = [
       {
@@ -379,6 +549,14 @@ export async function initializePredefinedTemplates(req: AuthRequest, res: Respo
         variables: ['client_name', 'project_name', 'project_description', 'project_link'],
       },
       {
+        name: 'Nova Tarefa Criada',
+        resource_type: 'tasks' as const,
+        action: 'created' as const,
+        subject: 'Nova Tarefa Criada',
+        body: 'Olá {{client_name}},\n\nUma nova tarefa foi criada para você.\n\nTítulo: {{task_title}}\nDescrição: {{task_description}}\nPrazo: {{task_due_date}}\n\nAcesse: {{task_link}}',
+        variables: ['client_name', 'task_title', 'task_description', 'task_due_date', 'task_link'],
+      },
+      {
         name: 'Nova Tarefa Atribuída',
         resource_type: 'tasks' as const,
         action: 'assigned' as const,
@@ -393,6 +571,14 @@ export async function initializePredefinedTemplates(req: AuthRequest, res: Respo
         subject: 'Tarefa Concluída',
         body: 'Olá {{assignee_name}},\n\nA tarefa "{{task_title}}" foi concluída.\n\nParabéns pelo trabalho!\n\nAcesse: {{task_link}}',
         variables: ['assignee_name', 'task_title', 'task_link'],
+      },
+      {
+        name: 'Novo Contrato Criado',
+        resource_type: 'contracts' as const,
+        action: 'created' as const,
+        subject: 'Novo Contrato Criado',
+        body: 'Olá {{client_name}},\n\nUm novo contrato foi criado para você.\n\nContrato: {{contract_title}}\nNúmero: {{contract_number}}\n\nAcesse: {{contract_link}}',
+        variables: ['client_name', 'contract_title', 'contract_number', 'contract_link'],
       },
       {
         name: 'Contrato Enviado para Assinatura',
@@ -410,47 +596,163 @@ export async function initializePredefinedTemplates(req: AuthRequest, res: Respo
         body: 'Olá {{client_name}},\n\nO contrato {{contract_number}} foi totalmente assinado e está ativo.\n\nContrato: {{contract_title}}\n\nAcesse: {{contract_link}}',
         variables: ['client_name', 'contract_number', 'contract_title', 'contract_link'],
       },
+      {
+        name: 'Nova Proposta Criada',
+        resource_type: 'proposals' as const,
+        action: 'created' as const,
+        subject: 'Nova Proposta Criada',
+        body: 'Olá {{client_name}},\n\nUma nova proposta foi criada para você.\n\nTítulo: {{proposal_title}}\nValor: R$ {{proposal_amount}}\n\nAcesse: {{proposal_link}}',
+        variables: ['client_name', 'proposal_title', 'proposal_amount', 'proposal_link'],
+      },
     ];
 
+    console.log(`[InitializePredefined] Total de templates para processar: ${predefinedTemplates.length}`);
     const createdTemplates = [];
 
     for (const template of predefinedTemplates) {
-      // Verificar se já existe
-      const existingResult = await pool.query(
-        'SELECT id FROM message_templates WHERE user_id = $1 AND name = $2 AND resource_type = $3 AND action = $4',
-        [userId, template.name, template.resource_type, template.action]
-      );
+      console.log(`[InitializePredefined] Processando: "${template.name}" (${template.resource_type}/${template.action})`);
+      try {
+        // Validar se a ação é válida para o resource_type
+        const validActions = RESOURCE_ACTIONS[template.resource_type] || [];
+        if (!validActions.includes(template.action)) {
+          console.warn(`Ação "${template.action}" não é válida para o recurso "${template.resource_type}". Pulando template "${template.name}".`);
+          continue;
+        }
 
-      if (existingResult.rows.length === 0) {
-        const result = await pool.query(
-          `INSERT INTO message_templates (
-            user_id, name, resource_type, action, subject, body, is_predefined, is_active, variables
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-          RETURNING *`,
-          [
-            userId,
-            template.name,
-            template.resource_type,
-            template.action,
-            template.subject,
-            template.body,
-            true,
-            true,
-            JSON.stringify(template.variables),
-          ]
+        // Verificar se já existe um template pré-definido com o mesmo resource_type e action
+        // (independente do nome, pois podemos ter atualizado o nome)
+        // Primeiro tentar com is_predefined = true
+        let existingResult = await pool.query(
+          `SELECT id, name, subject, body, variables FROM message_templates 
+           WHERE user_id = $1 AND resource_type = $2 AND action = $3 AND is_predefined = true`,
+          [userId, template.resource_type, template.action]
         );
-        createdTemplates.push(result.rows[0]);
+
+        // Se não encontrou, tentar sem o filtro is_predefined (pode ter sido criado manualmente)
+        if (existingResult.rows.length === 0) {
+          existingResult = await pool.query(
+            `SELECT id, name, subject, body, variables FROM message_templates 
+             WHERE user_id = $1 AND resource_type = $2 AND action = $3`,
+            [userId, template.resource_type, template.action]
+          );
+        }
+
+        console.log(`[InitializePredefined] Verificação para "${template.name}" (${template.resource_type}/${template.action}): ${existingResult.rows.length} template(s) encontrado(s)`);
+
+        if (existingResult.rows.length === 0) {
+          // Não existe, criar novo
+          const result = await pool.query(
+            `INSERT INTO message_templates (
+              user_id, name, resource_type, action, subject, body, is_predefined, is_active, variables
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            RETURNING *`,
+            [
+              userId,
+              template.name,
+              template.resource_type,
+              template.action,
+              template.subject,
+              template.body,
+              true,
+              true,
+              JSON.stringify(template.variables),
+            ]
+          );
+          createdTemplates.push(result.rows[0]);
+          console.log(`Template criado: "${template.name}" (${template.resource_type}/${template.action})`);
+        } else {
+          // Já existe, atualizar se o nome ou conteúdo for diferente
+          const existing = existingResult.rows[0];
+          // Normalizar valores para comparação
+          const existingSubject = existing.subject || null;
+          const templateSubject = template.subject || null;
+          const existingBody = existing.body || '';
+          const templateBody = template.body || '';
+          
+          // Processar variables
+          let existingVariables: string[] = [];
+          try {
+            if (Array.isArray(existing.variables)) {
+              existingVariables = existing.variables;
+            } else if (typeof existing.variables === 'string') {
+              existingVariables = JSON.parse(existing.variables);
+            } else if (existing.variables) {
+              existingVariables = Object.values(existing.variables);
+            }
+          } catch (e) {
+            console.warn(`[InitializePredefined] Erro ao processar variables do template existente:`, e);
+          }
+          
+          const templateVariables = template.variables || [];
+          
+          // Comparar
+          const nameDiff = existing.name !== template.name;
+          const subjectDiff = existingSubject !== templateSubject;
+          const bodyDiff = existingBody !== templateBody;
+          const variablesDiff = JSON.stringify(existingVariables.sort()) !== JSON.stringify(templateVariables.sort());
+          
+          const needsUpdate = nameDiff || subjectDiff || bodyDiff || variablesDiff;
+          
+          console.log(`[InitializePredefined] Template existente: "${existing.name}"`);
+          console.log(`[InitializePredefined] Novo template: "${template.name}"`);
+          console.log(`[InitializePredefined] Diferenças detectadas - Nome: ${nameDiff}, Subject: ${subjectDiff}, Body: ${bodyDiff}, Variables: ${variablesDiff}`);
+          console.log(`[InitializePredefined] Precisa atualizar: ${needsUpdate}`);
+          
+          if (needsUpdate) {
+            const updateResult = await pool.query(
+              `UPDATE message_templates 
+               SET name = $1, subject = $2, body = $3, variables = $4::jsonb, updated_at = now()
+               WHERE id = $5
+               RETURNING *`,
+              [
+                template.name,
+                template.subject,
+                template.body,
+                JSON.stringify(template.variables),
+                existing.id,
+              ]
+            );
+            createdTemplates.push(updateResult.rows[0]);
+            console.log(`Template atualizado: "${template.name}" (${template.resource_type}/${template.action}) - nome anterior: "${existing.name}"`);
+          } else {
+            console.log(`Template "${template.name}" (${template.resource_type}/${template.action}) já existe e está atualizado. Pulando.`);
+          }
+        }
+      } catch (templateError: any) {
+        console.error(`Erro ao processar template "${template.name}":`, templateError);
+        console.error('Detalhes do erro:', {
+          message: templateError.message,
+          code: templateError.code,
+          detail: templateError.detail,
+          hint: templateError.hint,
+        });
+        // Continuar com os próximos templates mesmo se um falhar
+        continue;
       }
     }
 
+    console.log(`[InitializePredefined] Finalizado. Total criado/atualizado: ${createdTemplates.length}`);
+    
     res.json({ 
       message: 'Modelos pré-definidos inicializados',
       created: createdTemplates.length,
       templates: createdTemplates 
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error initializing predefined templates:', error);
-    res.status(500).json({ error: 'Erro ao inicializar modelos pré-definidos' });
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
+      stack: error.stack,
+    });
+    res.status(500).json({ 
+      error: 'Erro ao inicializar modelos pré-definidos',
+      details: error.message,
+      code: error.code,
+      hint: error.hint,
+    });
   }
 }

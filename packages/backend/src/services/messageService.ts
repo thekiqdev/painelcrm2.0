@@ -4,12 +4,13 @@ import { uazapiService } from './uazapi.js';
 export interface SendMessageParams {
   userId: string;
   templateId?: string;
-  templateType?: 'new_invoice' | 'new_ticket' | 'new_project' | 'new_task' | 'contract_send' | 'contract_link';
+  resourceType?: string;
+  action?: string;
   recipientEmail?: string;
   recipientPhone?: string;
   channel: 'email' | 'whatsapp' | 'both';
   subject?: string;
-  body: string;
+  body?: string;
   variables?: Record<string, string>;
   metadata?: Record<string, any>;
 }
@@ -104,10 +105,28 @@ export async function sendMessage(params: SendMessageParams): Promise<{
 }> {
   try {
     let finalSubject = params.subject || '';
-    let finalBody = params.body;
+    let finalBody = params.body || '';
+
+    // Se resourceType e action foram fornecidos, buscar o template
+    if (params.resourceType && params.action && !params.templateId) {
+      const templateResult = await pool.query(
+        `SELECT * FROM message_templates 
+         WHERE user_id = $1 AND resource_type = $2 AND action = $3 AND is_active = true
+         ORDER BY is_predefined DESC, created_at DESC
+         LIMIT 1`,
+        [params.userId, params.resourceType, params.action]
+      );
+
+      if (templateResult.rows.length > 0) {
+        const template = templateResult.rows[0];
+        finalSubject = template.subject || '';
+        finalBody = template.body;
+        params.templateId = template.id;
+      }
+    }
 
     // Se templateId foi fornecido, buscar o template
-    if (params.templateId) {
+    if (params.templateId && !finalBody) {
       const templateResult = await pool.query(
         'SELECT * FROM message_templates WHERE id = $1 AND user_id = $2',
         [params.templateId, params.userId]
@@ -120,6 +139,11 @@ export async function sendMessage(params: SendMessageParams): Promise<{
       const template = templateResult.rows[0];
       finalSubject = template.subject || '';
       finalBody = template.body;
+    }
+
+    // Se não há corpo da mensagem, retornar erro
+    if (!finalBody) {
+      return { success: false, error: 'Corpo da mensagem é obrigatório' };
     }
 
     // Substituir variáveis
