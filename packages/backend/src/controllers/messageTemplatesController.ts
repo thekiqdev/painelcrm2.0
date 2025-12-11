@@ -442,7 +442,7 @@ export async function testMessageTemplate(req: AuthRequest, res: Response): Prom
       });
 
       console.log('[TestMessageTemplate] Mensagem enviada com sucesso:', {
-        response: typeof uazapiResponse === 'object' ? Object.keys(uazapiResponse) : 'string',
+        response: typeof uazapiResponse === 'object' && uazapiResponse !== null ? Object.keys(uazapiResponse) : 'string',
       });
 
       res.json({

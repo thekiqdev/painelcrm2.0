@@ -1648,7 +1648,7 @@ export async function syncConversations(req: AuthRequest, res: Response) {
     // Processar em lotes para evitar sobrecarga de memória e conexões
     for (let i = 0; i < chatsArray.length; i += batchSize) {
       const batch = chatsArray.slice(i, i + batchSize);
-      const promises = batch.map(async (item) => {
+      const promises = batch.map(async (item: any) => {
         const normalized = normalizeChatPayload(item);
         if (!normalized) return null;
         try {
