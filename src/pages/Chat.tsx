@@ -922,6 +922,13 @@ const Chat = () => {
   const connectionStatus = activeInstance?.status || 'disconnected';
 
   const handleSelectConversation = async (conversationId: string) => {
+    // Sincronizar mensagens automaticamente ao selecionar conversa
+    try {
+      await chatService.syncConversationMessages(conversationId, { limit: 100 });
+    } catch (error) {
+      console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
+      // Continuar mesmo se a sincronização falhar
+    }
     setSelectedConversationId(conversationId);
     await loadMessages(conversationId);
 
@@ -1142,7 +1149,7 @@ const Chat = () => {
         return;
       }
 
-      await messagesService.send({
+      const result = await messagesService.send({
         resourceType,
         action,
         recipientPhone: phone || undefined,
@@ -1155,6 +1162,29 @@ const Chat = () => {
           created_from: 'chat_quick_action',
         },
       });
+
+      // Se a mensagem foi enviada via WhatsApp, sincronizar a conversa
+      if (result && result.conversationId && phone) {
+        try {
+          // Pequeno delay para garantir que a mensagem foi salva no backend
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Sincronizar mensagens da conversa
+          await chatService.syncConversationMessages(result.conversationId, { limit: 100 });
+          
+          // Se esta é a conversa selecionada, recarregar mensagens
+          if (selectedConversationId === result.conversationId) {
+            await loadMessages(result.conversationId);
+          } else {
+            // Se não é a conversa selecionada, atualizar a lista de conversas
+            if (enabledInstanceIds.size > 0) {
+              loadConversations(Array.from(enabledInstanceIds));
+            }
+          }
+        } catch (error) {
+          console.error('Erro ao sincronizar mensagens após enviar notificação:', error);
+        }
+      }
     } catch (error) {
       console.error('Erro ao enviar notificação:', error);
       // Não mostrar erro ao usuário, apenas logar
@@ -2071,7 +2101,7 @@ const Chat = () => {
                   placeholder="Ex: Contrato de Prestação de Serviços" 
                   required 
                 />
-              </div>
+                                </div>
               <div className="space-y-2">
                 <Label htmlFor="contractContent">Conteúdo do Contrato</Label>
                 <RichTextEditor
@@ -2079,7 +2109,7 @@ const Chat = () => {
                   onChange={setContractContent}
                   placeholder="Digite o conteúdo do contrato..."
                 />
-              </div>
+                            </div>
             </TabsContent>
 
             <TabsContent value="signers" className="space-y-4 mt-4">
@@ -2192,7 +2222,7 @@ const Chat = () => {
                     value={contractStartDate}
                     onChange={(e) => setContractStartDate(e.target.value)}
                   />
-                </div>
+                          </div>
                 <div className="space-y-2">
                   <Label htmlFor="contractEndDate">Data de Término</Label>
                   <Input 
@@ -2229,8 +2259,8 @@ const Chat = () => {
               )}
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="contractValue">Valor Total</Label>
+              <div className="space-y-2">
+                <Label htmlFor="contractValue">Valor Total</Label>
                   <Input 
                     id="contractValue" 
                     type="number" 
@@ -2239,7 +2269,7 @@ const Chat = () => {
                     onChange={(e) => setContractTotalValue(e.target.value)}
                     placeholder="0.00" 
                   />
-                </div>
+              </div>
                 <div className="space-y-2">
                   <Label htmlFor="contractCurrency">Moeda</Label>
                   <Select value={contractCurrency} onValueChange={setContractCurrency}>
@@ -2252,19 +2282,19 @@ const Chat = () => {
                       <SelectItem value="EUR">EUR (€)</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+            </div>
               </div>
             </TabsContent>
           </Tabs>
 
           <DialogFooter className="mt-6">
-            <Button type="button" variant="outline" onClick={() => setContractDialogOpen(false)}>
-              Cancelar
-            </Button>
+              <Button type="button" variant="outline" onClick={() => setContractDialogOpen(false)}>
+                Cancelar
+                            </Button>
             <Button type="button" onClick={handleSaveContract}>
               Criar Contrato
             </Button>
-          </DialogFooter>
+            </DialogFooter>
         </DialogContent>
       </Dialog>
 

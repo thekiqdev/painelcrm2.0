@@ -16,6 +16,7 @@ export interface SendMessageParams {
 export interface SendMessageResponse {
   success: boolean;
   messageLogId?: string;
+  conversationId?: string;
   message?: string;
   error?: string;
 }

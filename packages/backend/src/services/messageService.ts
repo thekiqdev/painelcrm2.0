@@ -1,5 +1,6 @@
 import { pool } from '../utils/db.js';
 import { uazapiService } from './uazapi.js';
+import { randomUUID } from 'crypto';
 
 export interface SendMessageParams {
   userId: string;
@@ -28,17 +29,142 @@ function replaceVariables(template: string, variables: Record<string, string> = 
 }
 
 /**
- * Envia mensagem via WhatsApp usando UazAPI
+ * Salva mensagem na conversa (versão simplificada para uso no messageService)
+ */
+async function saveMessageToConversation(
+  conversationId: string,
+  direction: 'incoming' | 'outgoing',
+  payload: {
+    externalMessageId?: string | null;
+    body?: string | null;
+    status?: string | null;
+    sentAt?: Date | null;
+    metadata?: any;
+  }
+) {
+  try {
+    // Inserir mensagem na conversa
+    const messageResult = await pool.query(
+      `
+      INSERT INTO chat_messages (
+        conversation_id, direction, external_message_id, body,
+        status, sent_at, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      ON CONFLICT (conversation_id, external_message_id)
+      DO UPDATE SET
+        status = COALESCE(EXCLUDED.status, chat_messages.status),
+        metadata = EXCLUDED.metadata,
+        sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
+        body = COALESCE(EXCLUDED.body, chat_messages.body)
+      RETURNING id, created_at
+    `,
+      [
+        conversationId,
+        direction,
+        payload.externalMessageId,
+        payload.body,
+        payload.status,
+        payload.sentAt,
+        JSON.stringify(payload.metadata || {}),
+      ]
+    );
+
+    // Atualizar conversa com última mensagem
+    const effectiveSentAt = payload.sentAt || new Date();
+    const messagePreview = payload.body || null;
+
+    await pool.query(
+      `
+      UPDATE chat_conversations
+      SET
+        last_message_preview = COALESCE($2, last_message_preview),
+        last_message_at = COALESCE($3, last_message_at),
+        unread_count = CASE
+          WHEN $4 = 'incoming' THEN unread_count + 1
+          ELSE unread_count
+        END,
+        updated_at = now()
+      WHERE id = $1
+      RETURNING id, unread_count, last_message_at, last_message_preview, updated_at
+    `,
+      [
+        conversationId,
+        messagePreview,
+        effectiveSentAt,
+        direction,
+      ]
+    );
+
+    return messageResult.rows[0];
+  } catch (error: any) {
+    console.error('Error saving message to conversation:', error);
+    throw error;
+  }
+}
+
+/**
+ * Busca ou cria conversa para um número de telefone
+ */
+async function findOrCreateConversation(
+  userId: string,
+  instanceId: string,
+  phoneNumber: string
+): Promise<string> {
+  try {
+    // Normalizar número de telefone (remover caracteres não numéricos)
+    const normalizedPhone = phoneNumber.replace(/\D/g, '');
+
+    // Buscar conversa existente
+    const existingResult = await pool.query(
+      `
+      SELECT id FROM chat_conversations
+      WHERE user_id = $1 AND instance_id = $2
+        AND (
+          phone_number = $3
+          OR regexp_replace(phone_number, '\\D', '', 'g') = $4
+          OR external_chat_id = $3
+        )
+      LIMIT 1
+      `,
+      [userId, instanceId, phoneNumber, normalizedPhone]
+    );
+
+    if (existingResult.rows.length > 0) {
+      return existingResult.rows[0].id;
+    }
+
+    // Criar nova conversa
+    const newConversationResult = await pool.query(
+      `
+      INSERT INTO chat_conversations (
+        user_id, instance_id, external_chat_id, phone_number, status
+      )
+      VALUES ($1, $2, $3, $4, 'open')
+      RETURNING id
+      `,
+      [userId, instanceId, phoneNumber, phoneNumber]
+    );
+
+    return newConversationResult.rows[0].id;
+  } catch (error: any) {
+    console.error('Error finding or creating conversation:', error);
+    throw error;
+  }
+}
+
+/**
+ * Envia mensagem via WhatsApp usando UazAPI e salva na conversa
  */
 async function sendWhatsAppMessage(
   userId: string,
   phoneNumber: string,
   message: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; conversationId?: string; messageId?: string }> {
   try {
     // Buscar instância conectada do WhatsApp para o usuário
     const instanceResult = await pool.query(
-      `SELECT i.instance_token, i.external_instance_name
+      `SELECT i.id, i.instance_token, i.external_instance_name
        FROM chat_instances i
        WHERE i.user_id = $1 AND i.status = 'connected'
        LIMIT 1`,
@@ -52,16 +178,41 @@ async function sendWhatsAppMessage(
     const instance = instanceResult.rows[0];
     
     // Enviar mensagem via UazAPI
-    await uazapiService.sendTextMessage(instance.instance_token, {
+    const messageResponse = await uazapiService.sendTextMessage(instance.instance_token, {
       number: phoneNumber,
       text: message,
       readchat: false,
       readmessages: false,
       delay: 0,
       track_source: 'painelcrm',
+    }) as any;
+
+    // Buscar ou criar conversa
+    const conversationId = await findOrCreateConversation(
+      userId,
+      instance.id,
+      phoneNumber
+    );
+
+    // Salvar mensagem na conversa
+    const externalMessageId = messageResponse?.id || 
+                              messageResponse?.messageId || 
+                              messageResponse?.key?.id || 
+                              randomUUID();
+
+    await saveMessageToConversation(conversationId, 'outgoing', {
+      externalMessageId,
+      body: message,
+      status: 'sent',
+      sentAt: new Date(),
+      metadata: messageResponse,
     });
 
-    return { success: true };
+    return { 
+      success: true, 
+      conversationId,
+      messageId: externalMessageId
+    };
   } catch (error: any) {
     console.error('Error sending WhatsApp message:', error);
     return { success: false, error: error.message || 'Erro ao enviar mensagem WhatsApp' };
@@ -101,6 +252,7 @@ async function sendEmailMessage(
 export async function sendMessage(params: SendMessageParams): Promise<{
   success: boolean;
   messageLogId?: string;
+  conversationId?: string;
   error?: string;
 }> {
   try {
@@ -193,6 +345,7 @@ export async function sendMessage(params: SendMessageParams): Promise<{
     }
 
     // Enviar por WhatsApp se necessário
+    let conversationId: string | undefined;
     if ((params.channel === 'whatsapp' || params.channel === 'both') && params.recipientPhone) {
       const whatsappResult = await sendWhatsAppMessage(
         params.userId,
@@ -200,6 +353,7 @@ export async function sendMessage(params: SendMessageParams): Promise<{
         finalBody
       );
       whatsappSuccess = whatsappResult.success;
+      conversationId = whatsappResult.conversationId;
       if (!whatsappSuccess && whatsappResult.error) {
         errorMessages.push(`WhatsApp: ${whatsappResult.error}`);
       }
@@ -218,9 +372,9 @@ export async function sendMessage(params: SendMessageParams): Promise<{
     );
 
     if (overallSuccess) {
-      return { success: true, messageLogId };
+      return { success: true, messageLogId, conversationId };
     } else {
-      return { success: false, messageLogId, error: errorMessage || 'Erro ao enviar mensagem' };
+      return { success: false, messageLogId, conversationId, error: errorMessage || 'Erro ao enviar mensagem' };
     }
   } catch (error: any) {
     console.error('Error in sendMessage:', error);

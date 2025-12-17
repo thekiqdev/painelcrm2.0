@@ -85,23 +85,23 @@ export const InstancesList: React.FC<InstancesListProps> = ({
         // Atualizar apenas instâncias que precisam
         const updates = await Promise.all(
           needsPolling.map(async (instance) => {
-            try {
-              const status = await chatService.getInstanceStatus(instance.id);
-              const instanceData = status?.instance || status;
-              const state = instanceData?.state || instanceData?.status || status?.status;
-              const connected = status?.connected || instanceData?.connected;
-              const loggedIn = status?.loggedIn || instanceData?.loggedIn;
-              
-              if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
+          try {
+            const status = await chatService.getInstanceStatus(instance.id);
+            const instanceData = status?.instance || status;
+            const state = instanceData?.state || instanceData?.status || status?.status;
+            const connected = status?.connected || instanceData?.connected;
+            const loggedIn = status?.loggedIn || instanceData?.loggedIn;
+            
+            if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
                 return { id: instance.id, status: 'connected' };
               }
-            } catch (error) {
+          } catch (error) {
               // Silenciar erros
             }
             return null;
-          })
-        );
-        
+        })
+      );
+      
         // Aplicar atualizações apenas se houver mudanças
         const validUpdates = updates.filter(u => u !== null);
         if (validUpdates.length > 0) {
@@ -164,9 +164,9 @@ export const InstancesList: React.FC<InstancesListProps> = ({
           loadInstances();
         }, 2000);
       } else {
-        toast.error("Erro ao gerar QR Code", {
+      toast.error("Erro ao gerar QR Code", {
           description: errorMessage || "Ocorreu um erro. Tente novamente.",
-        });
+      });
       }
     } finally {
       setGeneratingQR(null);

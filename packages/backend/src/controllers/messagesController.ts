@@ -54,12 +54,15 @@ export async function sendNotificationMessage(req: AuthRequest, res: Response): 
       res.json({
         success: true,
         messageLogId: result.messageLogId,
+        conversationId: result.conversationId,
         message: 'Mensagem enviada com sucesso',
       });
     } else {
       res.status(400).json({
         success: false,
         error: result.error || 'Erro ao enviar mensagem',
+        messageLogId: result.messageLogId,
+        conversationId: result.conversationId,
       });
     }
   } catch (error: any) {

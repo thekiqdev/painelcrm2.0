@@ -1,7 +1,7 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal, Edit, Trash2, Plus, Check, ClipboardList, Calendar, User } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, Plus, Check, ClipboardList, Calendar, User, ChevronDown, ChevronUp } from "lucide-react";
 import { ProjectList, Task, Project } from "./types";
 import { TaskCard } from "./TaskCard";
 import {
@@ -54,6 +54,8 @@ export function BoardView({
   // Task drag and drop props
   onMoveTask
 }: BoardViewProps) {
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
+  
   // Calculate project progress
   const calculateProgress = (project: Project): number => {
     if (!project.lists || project.lists.length === 0) return 0;
@@ -138,11 +140,39 @@ export function BoardView({
               )}
             </div>
             
-            <p className="text-xs text-muted-foreground mb-2">
-              {project.description.length > 60 
-                ? project.description.substring(0, 60) + "..." 
-                : project.description}
-            </p>
+            {project.description && (
+              <div className="mb-2">
+                <p className={`text-xs text-muted-foreground ${expandedDescriptions[project.id] ? '' : 'line-clamp-2'}`}>
+                  {project.description}
+                </p>
+                {project.description.length > 100 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-1 h-auto p-0 text-[10px] text-primary hover:text-primary/80"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedDescriptions(prev => ({
+                        ...prev,
+                        [project.id]: !prev[project.id]
+                      }));
+                    }}
+                  >
+                    {expandedDescriptions[project.id] ? (
+                      <>
+                        <ChevronUp className="h-3 w-3 mr-1" />
+                        Ler menos
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="h-3 w-3 mr-1" />
+                        Ler mais
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            )}
             
             <div className="flex items-center text-xs text-muted-foreground mb-2">
               <Calendar className="h-3 w-3 mr-1" />

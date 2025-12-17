@@ -808,9 +808,9 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     // Tentar conectar diretamente - simplificado
     try {
       response = (await uazapiService.connectInstance(
-        instance.instance_token,
-        data.phone || undefined
-      )) as AnyObject;
+      instance.instance_token,
+      data.phone || undefined
+    )) as AnyObject;
     } catch (connectError: any) {
       const errorMessage = connectError?.message || '';
       const errorStatus = connectError?.status;
@@ -1649,10 +1649,10 @@ export async function syncConversations(req: AuthRequest, res: Response) {
     for (let i = 0; i < chatsArray.length; i += batchSize) {
       const batch = chatsArray.slice(i, i + batchSize);
       const promises = batch.map(async (item: any) => {
-        const normalized = normalizeChatPayload(item);
+      const normalized = normalizeChatPayload(item);
         if (!normalized) return null;
         try {
-          await upsertConversation(instance, normalized);
+      await upsertConversation(instance, normalized);
           return true;
         } catch (error) {
           console.error(`Error upserting conversation:`, error);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical } from "lucide-react";
+import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -47,6 +47,7 @@ const Projects = () => {
     { id: "done", name: "Concluído", tasks: [], order: 3 },
   ]);
   const [hideCompletedTasks, setHideCompletedTasks] = useState(false);
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
 
   // Estados de diálogos
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
@@ -914,6 +915,14 @@ const Projects = () => {
     }));
   };
 
+  // Função auxiliar para verificar se o texto precisa ser truncado
+  const needsTruncation = (text: string): boolean => {
+    if (!text) return false;
+    // Remove HTML tags para contar caracteres reais
+    const textWithoutHtml = text.replace(/<[^>]*>/g, '');
+    return textWithoutHtml.length > 100;
+  };
+
   // Renderização condicional da interface principal
   const renderProjectDetail = () => {
     if (!selectedProject) {
@@ -953,7 +962,55 @@ const Projects = () => {
                   </span>
                 ))}
               </div>
-              <div className="mt-2" dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedProject.description) }} />
+              {selectedProject.description && (
+                <div className="mt-2">
+                  <div 
+                    className={`text-sm text-muted-foreground ${
+                      expandedDescriptions[selectedProject.id] 
+                        ? '' 
+                        : 'line-clamp-2'
+                    }`}
+                    style={!expandedDescriptions[selectedProject.id] ? {
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      wordBreak: 'break-word',
+                    } : {
+                      wordBreak: 'break-word',
+                    }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedProject.description) }} 
+                  />
+                  {selectedProject.description && needsTruncation(selectedProject.description) && (
+                    <button
+                      type="button"
+                      className="mt-1 inline-flex items-center text-xs text-primary hover:text-primary/80 transition-colors cursor-pointer bg-transparent border-0 p-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const newState = !expandedDescriptions[selectedProject.id];
+                        setExpandedDescriptions(prev => ({
+                          ...prev,
+                          [selectedProject.id]: newState
+                        }));
+                      }}
+                    >
+                      {expandedDescriptions[selectedProject.id] ? (
+                        <>
+                          <ChevronUp className="h-3 w-3 mr-1" />
+                          Ler menos
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="h-3 w-3 mr-1" />
+                          Ler mais
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <DropdownMenu>
