@@ -63,6 +63,10 @@ const SuperAdminReports = lazy(() => import("./pages/superadmin/SuperAdminReport
 const SuperAdminUsers = lazy(() => import("./pages/superadmin/SuperAdminUsers"));
 const SuperAdminNotifications = lazy(() => import("./pages/superadmin/SuperAdminNotifications"));
 
+const MeuPlano = lazy(() => import("./pages/MeuPlano"));
+
+const LandingPage = lazy(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
+
 // Loading fallback simples
 const LoadingFallback = () => (
   <div className="flex items-center justify-center min-h-screen">
@@ -84,7 +88,8 @@ const App = () => (
           <Sonner />
           <Suspense fallback={<LoadingFallback />}>
           <Routes>
-            <Route path="/" element={<AuthWhatsApp />} />
+            <Route path="/" element={<Suspense fallback={<LoadingFallback />}><LandingPage /></Suspense>} />
+            <Route path="/landingpage" element={<Navigate to="/" replace />} />
             
             {/* Alterado: a página de registro não precisa de AuthGuard */}
             <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
@@ -342,6 +347,15 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Settings />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/meu-plano" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <MeuPlano />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>

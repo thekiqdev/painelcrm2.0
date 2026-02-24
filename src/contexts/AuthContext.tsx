@@ -17,6 +17,10 @@ interface User {
   created_at?: string;
   default_profile_id?: string | null;
   is_super_admin?: boolean;
+  /** Se true, o usuário é o administrador da conta (primary user do tenant) e pode acessar a tela de planos. */
+  can_manage_plan?: boolean;
+  /** Se true, o plano grátis expirou e o usuário deve ser direcionado para contratação. */
+  plan_expired?: boolean;
 }
 
 interface SignUpParams {
@@ -71,6 +75,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (user?.plan_expired && window.location.pathname !== '/meu-plano') {
+      navigate('/meu-plano', { replace: true });
+    }
+  }, [user?.plan_expired, navigate]);
 
   const fetchCurrentUser = async () => {
     try {
@@ -156,6 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(response.data.user);
         setRegistrationComplete(response.data.user.registration_complete || false);
         await fetchMeFeatures();
+        await fetchCurrentUser();
         toast.success('Login realizado com sucesso!');
       }
     } catch (error: any) {
@@ -207,6 +218,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(false);
+        await fetchCurrentUser();
         toast.success('Cadastro realizado com sucesso!');
       }
     } catch (error: any) {

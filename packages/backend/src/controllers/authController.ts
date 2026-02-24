@@ -145,6 +145,16 @@ export async function register(req: Request, res: Response): Promise<void> {
     }
     if (planRow.rows.length > 0) {
       const planId = planRow.rows[0].id;
+      const planDetail = await client.query(
+        'SELECT is_free, free_access_days FROM plans WHERE id = $1',
+        [planId]
+      );
+      const isFree = planDetail.rows[0]?.is_free === true;
+      const freeDays = planDetail.rows[0]?.free_access_days;
+      const trialEndsAt =
+        isFree && freeDays != null && freeDays >= 1
+          ? `now() + (${Number(freeDays)} || ' days')::interval`
+          : null;
       let baseSlug = inferredCompanyName
         .toLowerCase()
         .normalize('NFD')
@@ -159,12 +169,19 @@ export async function register(req: Request, res: Response): Promise<void> {
         suffix += 1;
         slug = `${baseSlug}-${suffix}`;
       }
-      const tenantResult = await client.query(
-        `INSERT INTO tenants (name, slug, plan_id, status, created_via)
-         VALUES ($1, $2, $3, 'trial', 'registration')
-         RETURNING id`,
-        [inferredCompanyName, slug, planId]
-      );
+      const tenantResult = trialEndsAt
+        ? await client.query(
+            `INSERT INTO tenants (name, slug, plan_id, status, created_via, trial_ends_at)
+             VALUES ($1, $2, $3, 'trial', 'registration', now() + ($4::int || ' days')::interval)
+             RETURNING id`,
+            [inferredCompanyName, slug, planId, freeDays]
+          )
+        : await client.query(
+            `INSERT INTO tenants (name, slug, plan_id, status, created_via)
+             VALUES ($1, $2, $3, 'trial', 'registration')
+             RETURNING id`,
+            [inferredCompanyName, slug, planId]
+          );
       const tenantId = tenantResult.rows[0].id;
       await client.query('UPDATE users SET tenant_id = $1 WHERE id = $2', [tenantId, user.id]);
       await client.query(
@@ -360,6 +377,38 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     const user = userResult.rows[0];
     const defaultProfileId = await findDefaultProfileId(user.id);
 
+    let canManagePlan = false;
+    let planExpired = false;
+    const tenantCheck = await pool.query(
+      `SELECT u.tenant_id,
+        (SELECT u2.id FROM users u2 WHERE u2.tenant_id = u.tenant_id ORDER BY u2.created_at ASC LIMIT 1) AS primary_user_id
+       FROM users u WHERE u.id = $1 AND u.tenant_id IS NOT NULL`,
+      [userId]
+    );
+    if (tenantCheck.rows.length > 0) {
+      const primaryUserId = tenantCheck.rows[0].primary_user_id;
+      const isPrimaryUser = primaryUserId === userId;
+      const hasAdminProfile = await pool.query(
+        'SELECT 1 FROM user_profiles WHERE owner_id = $1 AND is_admin = true LIMIT 1',
+        [userId]
+      );
+      canManagePlan = isPrimaryUser || hasAdminProfile.rows.length > 0;
+      const tid = tenantCheck.rows[0].tenant_id;
+      const expCheck = await pool.query(
+        `SELECT t.trial_ends_at, p.is_free
+         FROM tenants t
+         JOIN plans p ON p.id = t.plan_id
+         WHERE t.id = $1`,
+        [tid]
+      );
+      if (expCheck.rows.length > 0 && expCheck.rows[0].is_free === true && expCheck.rows[0].trial_ends_at) {
+        const endsAt = new Date(expCheck.rows[0].trial_ends_at);
+        if (endsAt.getTime() < Date.now()) {
+          planExpired = true;
+        }
+      }
+    }
+
     res.json({
       id: user.id,
       email: user.email,
@@ -372,6 +421,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       created_at: user.created_at,
       default_profile_id: defaultProfileId,
       is_super_admin: user.is_super_admin === true,
+      can_manage_plan: canManagePlan,
+      plan_expired: planExpired,
     });
   } catch (error) {
     console.error('Get me error:', error);

@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { FEATURE_KEYS, FEATURE_LABELS, isValidFeatureKey } from '../constants/features.js';
@@ -8,6 +8,11 @@ const BILLING_INTERVALS = ['monthly', 'quarterly', 'semi_annual', 'yearly'] as c
 const intervalPriceSchema = z.object({
   billing_interval: z.enum(BILLING_INTERVALS),
   price_per_user_cents: z.number().int().min(0),
+});
+
+const benefitSchema = z.object({
+  icon: z.string().optional().default('Check'),
+  label: z.string().min(1, 'Texto do benefício é obrigatório'),
 });
 
 const createPlanSchemaBase = z.object({
@@ -21,27 +26,46 @@ const createPlanSchemaBase = z.object({
   max_whatsapp_instances: z.number().int().min(0).optional().nullable(),
   plan_type: z.enum(['standard', 'custom']).optional().default('standard'),
   is_default: z.boolean().optional().default(false),
+  is_free: z.boolean().optional().default(false),
+  free_access_days: z.number().int().min(1).optional().nullable(),
   interval_prices: z.array(intervalPriceSchema).optional(),
   is_active: z.boolean().optional().default(true),
   sort_order: z.number().int().optional().default(0),
+  benefits: z.array(benefitSchema).optional().default([]),
 });
 
-const createPlanSchema = createPlanSchemaBase.refine(
-  (data) => {
-    if (data.plan_type !== 'custom') return true;
-    return data.interval_prices && data.interval_prices.length > 0;
-  },
-  { message: 'Plano personalizado exige pelo menos um preço por intervalo em interval_prices', path: ['interval_prices'] }
-);
+const createPlanSchema = createPlanSchemaBase
+  .refine(
+    (data) => {
+      if (data.plan_type !== 'custom') return true;
+      return data.interval_prices && data.interval_prices.length > 0;
+    },
+    { message: 'Plano personalizado exige pelo menos um preço por intervalo em interval_prices', path: ['interval_prices'] }
+  )
+  .refine(
+    (data) => {
+      if (!data.is_free) return true;
+      return data.free_access_days != null && data.free_access_days >= 1;
+    },
+    { message: 'Plano grátis exige dias de acesso (free_access_days) >= 1', path: ['free_access_days'] }
+  );
 
 const updatePlanSchema = createPlanSchemaBase.partial().extend({
   interval_prices: z.array(intervalPriceSchema).optional(),
+  benefits: z.array(benefitSchema).optional(),
 }).refine(
   (data) => {
     if (data.plan_type !== 'custom' || !data.interval_prices) return true;
     return data.interval_prices.length > 0;
   },
   { message: 'Plano personalizado exige pelo menos um preço por intervalo', path: ['interval_prices'] }
+).refine(
+  (data) => {
+    if (data.is_free !== true) return true;
+    const days = data.free_access_days;
+    return days != null && days >= 1;
+  },
+  { message: 'Plano grátis exige free_access_days >= 1', path: ['free_access_days'] }
 );
 
 export async function listPlans(_req: AuthRequest, res: Response): Promise<void> {
@@ -54,6 +78,7 @@ export async function listPlans(_req: AuthRequest, res: Response): Promise<void>
     );
     const plans = result.rows;
     for (const plan of plans) {
+      if (!Array.isArray(plan.benefits)) plan.benefits = [];
       if (plan.plan_type === 'custom') {
         const pricesRows = await pool.query(
           'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
@@ -65,6 +90,33 @@ export async function listPlans(_req: AuthRequest, res: Response): Promise<void>
     res.json(plans);
   } catch (error: any) {
     console.error('listPlans error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+/** GET /api/plans - listagem pública: apenas planos ativos (para landing/home). Sem autenticação. */
+export async function listPublicPlans(_req: Request, res: Response): Promise<void> {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, slug, description, price_cents, billing_interval, max_users, max_profiles, max_whatsapp_instances, plan_type, is_default, is_free, free_access_days, benefits, sort_order
+       FROM plans
+       WHERE is_active = true
+       ORDER BY sort_order ASC, name ASC`
+    );
+    const plans = result.rows;
+    for (const plan of plans) {
+      if (!Array.isArray(plan.benefits)) plan.benefits = [];
+      if (plan.plan_type === 'custom') {
+        const pricesRows = await pool.query(
+          'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
+          [plan.id]
+        );
+        plan.interval_prices = pricesRows.rows;
+      }
+    }
+    res.json(plans);
+  } catch (error: any) {
+    console.error('listPublicPlans error:', error);
     res.status(500).json({ error: error.message || 'Internal server error' });
   }
 }
@@ -83,6 +135,7 @@ export async function getPlan(req: AuthRequest, res: Response): Promise<void> {
       [id]
     );
     plan.features = featuresResult.rows;
+    if (!Array.isArray(plan.benefits)) plan.benefits = [];
     if (plan.plan_type === 'custom') {
       const pricesRows = await pool.query(
         'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
@@ -112,8 +165,8 @@ export async function createPlan(req: AuthRequest, res: Response): Promise<void>
       await pool.query("UPDATE plans SET is_default = false WHERE is_default = true");
     }
     const result = await pool.query(
-      `INSERT INTO plans (name, slug, description, price_cents, billing_interval, max_users, max_profiles, max_whatsapp_instances, plan_type, is_default, is_active, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO plans (name, slug, description, price_cents, billing_interval, max_users, max_profiles, max_whatsapp_instances, plan_type, is_default, is_free, free_access_days, is_active, sort_order, benefits)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         body.name.trim(),
@@ -126,8 +179,11 @@ export async function createPlan(req: AuthRequest, res: Response): Promise<void>
         body.max_whatsapp_instances ?? null,
         planType,
         isDefault,
+        body.is_free ?? false,
+        body.is_free ? (body.free_access_days ?? null) : null,
         body.is_active,
         body.sort_order ?? 0,
+        JSON.stringify(Array.isArray(body.benefits) ? body.benefits : []),
       ]
     );
     const plan = result.rows[0];
@@ -197,7 +253,10 @@ export async function updatePlan(req: AuthRequest, res: Response): Promise<void>
     if (body.is_default === true) {
       await pool.query("UPDATE plans SET is_default = false WHERE id != $1", [id]);
     }
-    const fields: (keyof typeof body)[] = ['name', 'slug', 'description', 'price_cents', 'billing_interval', 'max_users', 'max_profiles', 'max_whatsapp_instances', 'plan_type', 'is_default', 'is_active', 'sort_order'];
+    if (body.is_free === false && body.free_access_days === undefined) {
+      body.free_access_days = null;
+    }
+    const fields: (keyof typeof body)[] = ['name', 'slug', 'description', 'price_cents', 'billing_interval', 'max_users', 'max_profiles', 'max_whatsapp_instances', 'plan_type', 'is_default', 'is_free', 'free_access_days', 'is_active', 'sort_order'];
     for (const key of fields) {
       if (body[key] !== undefined) {
         if (key === 'slug') {
@@ -209,6 +268,11 @@ export async function updatePlan(req: AuthRequest, res: Response): Promise<void>
         }
         i++;
       }
+    }
+    if (body.benefits !== undefined) {
+      updates.push(`benefits = $${i}`);
+      values.push(JSON.stringify(Array.isArray(body.benefits) ? body.benefits : []));
+      i++;
     }
     if (updates.length > 0) {
       values.push(id);

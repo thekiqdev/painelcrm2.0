@@ -55,6 +55,8 @@ const order = [
   '39_plan_interval_prices.sql',
   '40_tenant_billing_interval_extend.sql',
   '41_seed_default_plan.sql',
+  '42_plans_benefits.sql',
+  '43_plans_free.sql',
   'create-admin-user.sql',
 ];
 

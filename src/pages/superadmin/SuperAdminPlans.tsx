@@ -29,9 +29,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Pencil, Trash2, Flag } from 'lucide-react';
+import { Plus, Pencil, Trash2, Flag, ChevronDown, ChevronRight, Check, Users, MessageCircle, Mail, Headphones, Star, Zap, Shield, FileText, BarChart3, Settings, Smartphone, Globe, Lock, Gift, CreditCard, Building2, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/integrations/api/client';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 
 const BILLING_INTERVALS = [
   { key: 'monthly', label: 'Mensal' },
@@ -43,6 +49,11 @@ const BILLING_INTERVALS = [
 interface IntervalPrice {
   billing_interval: string;
   price_per_user_cents: number;
+}
+
+interface PlanBenefit {
+  icon: string;
+  label: string;
 }
 
 interface Plan {
@@ -57,10 +68,18 @@ interface Plan {
   max_whatsapp_instances?: number | null;
   plan_type?: 'standard' | 'custom';
   is_default?: boolean;
+  is_free?: boolean;
+  free_access_days?: number | null;
   interval_prices?: IntervalPrice[];
+  benefits?: PlanBenefit[];
   is_active: boolean;
   sort_order: number;
   enabled_features_count?: number;
+}
+
+interface FeatureKeyItem {
+  key: string;
+  label: string;
 }
 
 const defaultPlan: Partial<Plan> = {
@@ -74,10 +93,38 @@ const defaultPlan: Partial<Plan> = {
   max_whatsapp_instances: null,
   plan_type: 'standard',
   is_default: false,
+  is_free: false,
+  free_access_days: null,
   interval_prices: BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })),
   is_active: true,
   sort_order: 0,
+  features: {} as Record<string, boolean>,
+  benefits: [],
 };
+
+const BENEFIT_ICONS: { value: string; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: 'Check', label: 'Check', Icon: Check },
+  { value: 'Users', label: 'Usuários', Icon: Users },
+  { value: 'MessageCircle', label: 'WhatsApp / Chat', Icon: MessageCircle },
+  { value: 'Mail', label: 'E-mail', Icon: Mail },
+  { value: 'Headphones', label: 'Suporte', Icon: Headphones },
+  { value: 'Star', label: 'Estrela', Icon: Star },
+  { value: 'Zap', label: 'Energia', Icon: Zap },
+  { value: 'Shield', label: 'Segurança', Icon: Shield },
+  { value: 'FileText', label: 'Documento', Icon: FileText },
+  { value: 'BarChart3', label: 'Relatórios', Icon: BarChart3 },
+  { value: 'Settings', label: 'Configurações', Icon: Settings },
+  { value: 'Smartphone', label: 'Celular', Icon: Smartphone },
+  { value: 'Globe', label: 'Globo', Icon: Globe },
+  { value: 'Lock', label: 'Cadeado', Icon: Lock },
+  { value: 'Gift', label: 'Benefício / Presente', Icon: Gift },
+  { value: 'CreditCard', label: 'Pagamento', Icon: CreditCard },
+  { value: 'Building2', label: 'Empresa', Icon: Building2 },
+  { value: 'Calendar', label: 'Agendamento', Icon: Calendar },
+];
+const BENEFIT_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = Object.fromEntries(
+  BENEFIT_ICONS.map(({ value, Icon }) => [value, Icon])
+);
 
 export default function SuperAdminPlans() {
   const navigate = useNavigate();
@@ -85,8 +132,10 @@ export default function SuperAdminPlans() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<Partial<Plan>>(defaultPlan);
+  const [form, setForm] = useState<Partial<Plan> & { features?: Record<string, boolean> }>(defaultPlan);
   const [saving, setSaving] = useState(false);
+  const [featureKeys, setFeatureKeys] = useState<FeatureKeyItem[]>([]);
+  const [featuresOpen, setFeaturesOpen] = useState(true);
 
   const loadPlans = async () => {
     setLoading(true);
@@ -102,17 +151,20 @@ export default function SuperAdminPlans() {
 
   useEffect(() => {
     loadPlans();
+    apiClient.get<FeatureKeyItem[]>('/api/superadmin/plans/feature-keys').then((r) => r.data && setFeatureKeys(r.data));
   }, []);
 
   const openCreate = () => {
     setEditingId(null);
-    setForm(defaultPlan);
+    setForm({ ...defaultPlan, features: {}, benefits: [] });
     setDialogOpen(true);
   };
 
-  const openEdit = (plan: Plan) => {
+  const openEdit = async (plan: Plan) => {
     setEditingId(plan.id);
     const intervalPrices = plan.interval_prices ?? [];
+    const featuresRes = await apiClient.get<{ features: Record<string, boolean> }>(`/api/superadmin/plans/${plan.id}/features`);
+    const features = featuresRes.data?.features ?? {};
     setForm({
       name: plan.name,
       slug: plan.slug,
@@ -124,11 +176,15 @@ export default function SuperAdminPlans() {
       max_whatsapp_instances: plan.max_whatsapp_instances ?? null,
       plan_type: plan.plan_type ?? 'standard',
       is_default: plan.is_default ?? false,
+      is_free: plan.is_free ?? false,
+      free_access_days: plan.free_access_days ?? null,
       interval_prices: intervalPrices.length
         ? intervalPrices
         : BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })),
       is_active: plan.is_active,
       sort_order: plan.sort_order,
+      features,
+      benefits: Array.isArray(plan.benefits) ? plan.benefits : [],
     });
     setDialogOpen(true);
   };
@@ -160,14 +216,25 @@ export default function SuperAdminPlans() {
         return;
       }
     }
+    if (form.is_free && (!form.free_access_days || form.free_access_days < 1)) {
+      toast.error('Plano grátis exige dias de acesso >= 1');
+      return;
+    }
     setSaving(true);
     const payload = {
       ...form,
+      is_free: form.is_free ?? false,
+      free_access_days: form.is_free ? (form.free_access_days ?? null) : null,
       interval_prices:
         form.plan_type === 'custom' && form.interval_prices
           ? form.interval_prices.filter((ip) => ip.price_per_user_cents > 0)
           : undefined,
+      benefits: (form.benefits ?? [])
+        .filter((b) => (b.label || '').trim())
+        .map((b) => ({ icon: b.icon || 'Check', label: (b.label || '').trim() })),
     };
+    delete (payload as Record<string, unknown>).features;
+    let planId: string;
     if (editingId) {
       const res = await apiClient.put<Plan>(`/api/superadmin/plans/${editingId}`, payload);
       if (res.error) {
@@ -175,6 +242,7 @@ export default function SuperAdminPlans() {
         setSaving(false);
         return;
       }
+      planId = editingId;
       toast.success('Plano atualizado');
     } else {
       const res = await apiClient.post<Plan>('/api/superadmin/plans', payload);
@@ -183,7 +251,16 @@ export default function SuperAdminPlans() {
         setSaving(false);
         return;
       }
+      planId = res.data!.id;
       toast.success('Plano criado');
+    }
+    if (form.features && featureKeys.length > 0) {
+      const featuresPayload: Record<string, boolean> = {};
+      featureKeys.forEach(({ key }) => {
+        featuresPayload[key] = form.features![key] === true;
+      });
+      const featRes = await apiClient.put(`/api/superadmin/plans/${planId}/features`, { features: featuresPayload });
+      if (featRes.error) toast.error('Plano salvo, mas falha ao salvar recursos: ' + featRes.error);
     }
     setDialogOpen(false);
     setSaving(false);
@@ -247,6 +324,7 @@ export default function SuperAdminPlans() {
                   <TableHead>Slug</TableHead>
                   <TableHead>Preço</TableHead>
                   <TableHead>Limites</TableHead>
+                  <TableHead>Benefícios</TableHead>
                   <TableHead>Features</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
@@ -292,6 +370,26 @@ export default function SuperAdminPlans() {
                       {plan.max_profiles != null ? ` · ${plan.max_profiles} perfis` : ''}
                       {plan.max_whatsapp_instances != null ? ` · ${plan.max_whatsapp_instances} WhatsApp` : ''}
                     </TableCell>
+                    <TableCell className="max-w-[200px]">
+                      {Array.isArray(plan.benefits) && plan.benefits.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 text-sm text-muted-foreground">
+                          {(plan.benefits as PlanBenefit[]).slice(0, 3).map((b, i) => {
+                            const IconC = BENEFIT_ICON_MAP[b.icon || 'Check'] ?? Check;
+                            return (
+                              <span key={i} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5">
+                                <IconC className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{b.label}</span>
+                              </span>
+                            );
+                          })}
+                          {(plan.benefits as PlanBenefit[]).length > 3 && (
+                            <span className="text-muted-foreground">+{(plan.benefits as PlanBenefit[]).length - 3}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Button
                         variant="outline"
@@ -303,11 +401,16 @@ export default function SuperAdminPlans() {
                       </Button>
                     </TableCell>
                     <TableCell>
-                      {plan.is_active ? (
-                        <Badge variant="default">Ativo</Badge>
-                      ) : (
-                        <Badge variant="secondary">Inativo</Badge>
-                      )}
+                      <div className="flex flex-wrap gap-1 items-center">
+                        {plan.is_free && (
+                          <Badge variant="outline" className="text-green-600 border-green-600">Grátis</Badge>
+                        )}
+                        {plan.is_active ? (
+                          <Badge variant="default">Ativo</Badge>
+                        ) : (
+                          <Badge variant="secondary">Inativo</Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" onClick={() => openEdit(plan)}>
@@ -494,6 +597,26 @@ export default function SuperAdminPlans() {
               />
             </div>
             <div className="flex items-center justify-between">
+              <Label htmlFor="plan-free">Plano grátis (acesso limitado por dias)</Label>
+              <Switch
+                id="plan-free"
+                checked={form.is_free ?? false}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, is_free: v, free_access_days: v ? (f.free_access_days ?? 30) : null }))}
+              />
+            </div>
+            {(form.is_free ?? false) && (
+              <div className="grid gap-2">
+                <Label htmlFor="free-access-days">Dias de acesso (após o período o usuário é direcionado à contratação)</Label>
+                <Input
+                  id="free-access-days"
+                  type="number"
+                  min={1}
+                  value={form.free_access_days ?? 30}
+                  onChange={(e) => setForm((f) => ({ ...f, free_access_days: parseInt(e.target.value, 10) || 1 }))}
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between">
               <Label>Ativo</Label>
               <Switch
                 checked={form.is_active ?? true}
@@ -508,6 +631,129 @@ export default function SuperAdminPlans() {
                 value={form.sort_order ?? 0}
                 onChange={(e) => setForm((f) => ({ ...f, sort_order: parseInt(e.target.value, 10) || 0 }))}
               />
+            </div>
+
+            <Collapsible open={featuresOpen} onOpenChange={setFeaturesOpen} className="space-y-2">
+              <CollapsibleTrigger asChild>
+                <button type="button" className="flex w-full items-center justify-between rounded-lg border border-border/50 bg-card/50 px-4 py-3 text-left font-medium hover:bg-card">
+                  <span className="flex items-center gap-2">
+                    <Flag className="h-4 w-4" />
+                    Recursos do plano (features)
+                  </span>
+                  {featuresOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="grid gap-2 rounded-lg border border-border/50 bg-muted/20 p-4 sm:grid-cols-2">
+                  {featureKeys.map(({ key: featureKey, label }) => (
+                    <div key={featureKey} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`feat-${featureKey}`}
+                        checked={form.features?.[featureKey] === true}
+                        onCheckedChange={(checked) =>
+                          setForm((f) => ({
+                            ...f,
+                            features: { ...(f.features ?? {}), [featureKey]: checked === true },
+                          }))
+                        }
+                      />
+                      <label htmlFor={`feat-${featureKey}`} className="cursor-pointer text-sm font-medium leading-none">
+                        {label}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                {featureKeys.length === 0 && (
+                  <p className="text-sm text-muted-foreground py-2">Carregando lista de recursos...</p>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-base">O que este plano oferece (benefícios)</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      benefits: [...(f.benefits ?? []), { icon: 'Check', label: '' }],
+                    }))
+                  }
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  Adicionar benefício
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Escolha um ícone e descreva o benefício. Apenas itens com texto são salvos (ex.: &quot;10 usuários&quot;, &quot;WhatsApp integrado&quot;).
+              </p>
+              <div className="space-y-2 rounded-lg border border-border/50 bg-muted/20 p-3">
+                {(form.benefits ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-2">Nenhum benefício. Clique em &quot;Adicionar benefício&quot; para incluir ícone + texto.</p>
+                ) : (
+                  (form.benefits ?? []).map((benefit, idx) => {
+                    const IconComponent = BENEFIT_ICON_MAP[benefit.icon] ?? Check;
+                    return (
+                      <div key={idx} className="flex items-center gap-2">
+                        <Select
+                          value={benefit.icon}
+                          onValueChange={(v) =>
+                            setForm((f) => ({
+                              ...f,
+                              benefits: (f.benefits ?? []).map((b, i) => (i === idx ? { ...b, icon: v } : b)),
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="w-[140px] shrink-0">
+                            <span className="flex items-center gap-2">
+                              <IconComponent className="h-4 w-4" />
+                              <SelectValue />
+                            </span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {BENEFIT_ICONS.map(({ value, label: iconLabel, Icon }) => (
+                              <SelectItem key={value} value={value}>
+                                <span className="flex items-center gap-2">
+                                  <Icon className="h-4 w-4" />
+                                  {iconLabel}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          placeholder="Ex: 10 usuários"
+                          value={benefit.label}
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              benefits: (f.benefits ?? []).map((b, i) => (i === idx ? { ...b, label: e.target.value } : b)),
+                            }))
+                          }
+                          className="min-w-0 flex-1"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0 text-destructive hover:text-destructive"
+                          onClick={() =>
+                            setForm((f) => ({
+                              ...f,
+                              benefits: (f.benefits ?? []).filter((_, i) => i !== idx),
+                            }))
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
           <DialogFooter className="px-6 py-4 border-t shrink-0">

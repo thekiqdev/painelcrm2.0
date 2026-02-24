@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -489,6 +489,12 @@ const Header = () => {
               <Settings className="mr-2 h-4 w-4" />
               <span>Configurações</span>
             </DropdownMenuItem>
+            {user?.can_manage_plan && (
+              <DropdownMenuItem onClick={() => navigate('/meu-plano')}>
+                <CreditCard className="mr-2 h-4 w-4" />
+                <span>Planos</span>
+              </DropdownMenuItem>
+            )}
             {user?.is_super_admin && (
               <DropdownMenuItem onClick={() => navigate('/superadmin')}>
                 <ShieldCheck className="mr-2 h-4 w-4" />
