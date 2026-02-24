@@ -7,6 +7,7 @@ const router = Router();
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 router.get('/me', authenticateToken, authController.getMe);
+router.get('/me/features', authenticateToken, authController.getMeFeatures);
 router.post('/logout', authenticateToken, authController.logout);
 
 // Endpoint temporário para atualizar senha (REMOVER EM PRODUÇÃO)

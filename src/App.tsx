@@ -3,14 +3,16 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import AuthLayout from "./layouts/AuthLayout";
 import AuthWhatsApp from "./pages/AuthWhatsApp";
 import Register from "./pages/Register";
 import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
+import SuperAdminGuard from "./components/SuperAdminGuard";
 import AppLayout from "./layouts/AppLayout";
+import SuperAdminLayout from "./layouts/SuperAdminLayout";
 import NotFound from "./pages/NotFound";
 
 // Lazy load todas as rotas protegidas para otimizar carregamento inicial
@@ -39,6 +41,27 @@ const ProductForm = lazy(() => import("./pages/ProductForm"));
 const Orders = lazy(() => import("./pages/Orders"));
 const Tickets = lazy(() => import("./pages/Tickets"));
 const NewTicket = lazy(() => import("./pages/NewTicket"));
+const SuperAdminDashboard = lazy(() => import("./pages/superadmin/SuperAdminDashboard"));
+const SuperAdminPlans = lazy(() => import("./pages/superadmin/SuperAdminPlans"));
+const SuperAdminClients = lazy(() => import("./pages/superadmin/SuperAdminClients"));
+const SuperAdminClientLayout = lazy(() => import("./pages/superadmin/SuperAdminClientLayout"));
+const SuperAdminClientResumo = lazy(() => import("./pages/superadmin/SuperAdminClientResumo"));
+const SuperAdminClientConfiguracoes = lazy(() => import("./pages/superadmin/SuperAdminClientConfiguracoes"));
+const SuperAdminClientFaturamento = lazy(() => import("./pages/superadmin/SuperAdminClientFaturamento"));
+const SuperAdminClientUsuarios = lazy(() => import("./pages/superadmin/SuperAdminClientUsuarios"));
+const SuperAdminClientPlaceholder = lazy(() => import("./pages/superadmin/SuperAdminClientPlaceholder"));
+const SuperAdminClientRecursos = lazy(() => import("./pages/superadmin/SuperAdminClientRecursos"));
+const SuperAdminClientLimites = lazy(() => import("./pages/superadmin/SuperAdminClientLimites"));
+const SuperAdminClientObservacoes = lazy(() => import("./pages/superadmin/SuperAdminClientObservacoes"));
+const SuperAdminClientLogs = lazy(() => import("./pages/superadmin/SuperAdminClientLogs"));
+const SuperAdminClientNew = lazy(() => import("./pages/superadmin/SuperAdminClientNew"));
+const SuperAdminFeatures = lazy(() => import("./pages/superadmin/SuperAdminFeatures"));
+const SuperAdminPlanFeatures = lazy(() => import("./pages/superadmin/SuperAdminPlanFeatures"));
+const SuperAdminTenantFeatures = lazy(() => import("./pages/superadmin/SuperAdminTenantFeatures"));
+const SuperAdminAudit = lazy(() => import("./pages/superadmin/SuperAdminAudit"));
+const SuperAdminReports = lazy(() => import("./pages/superadmin/SuperAdminReports"));
+const SuperAdminUsers = lazy(() => import("./pages/superadmin/SuperAdminUsers"));
+const SuperAdminNotifications = lazy(() => import("./pages/superadmin/SuperAdminNotifications"));
 
 // Loading fallback simples
 const LoadingFallback = () => (
@@ -341,6 +364,34 @@ const App = () => (
                   </AppLayout>
               </AuthGuard>
             } />
+            
+            {/* Super Admin - apenas para usuários com is_super_admin */}
+            <Route path="/superadmin" element={<AuthGuard requireAuth={true} redirectTo="/"><SuperAdminGuard /></AuthGuard>}>
+              <Route element={<SuperAdminLayout />}>
+                <Route index element={<Suspense fallback={<LoadingFallback />}><SuperAdminDashboard /></Suspense>} />
+                <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
+                <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />
+                <Route path="clients" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClients /></Suspense>} />
+                <Route path="clients/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientNew /></Suspense>} />
+                <Route path="clients/:id" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientLayout /></Suspense>}>
+                  <Route index element={<Navigate to="resumo" replace />} />
+                  <Route path="resumo" element={<SuperAdminClientResumo />} />
+                  <Route path="configuracoes" element={<SuperAdminClientConfiguracoes />} />
+                  <Route path="faturamento" element={<SuperAdminClientFaturamento />} />
+                  <Route path="usuarios" element={<SuperAdminClientUsuarios />} />
+                  <Route path="recursos" element={<SuperAdminClientRecursos />} />
+                  <Route path="limites" element={<SuperAdminClientLimites />} />
+                  <Route path="observacoes" element={<SuperAdminClientObservacoes />} />
+                  <Route path="logs" element={<SuperAdminClientLogs />} />
+                </Route>
+                <Route path="tenants/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminTenantFeatures /></Suspense>} />
+                <Route path="features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminFeatures /></Suspense>} />
+                <Route path="audit" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAudit /></Suspense>} />
+                <Route path="reports" element={<Suspense fallback={<LoadingFallback />}><SuperAdminReports /></Suspense>} />
+                <Route path="users" element={<Suspense fallback={<LoadingFallback />}><SuperAdminUsers /></Suspense>} />
+                <Route path="notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotifications /></Suspense>} />
+              </Route>
+            </Route>
             
             {/* Public store routes */}
               <Route path="/:storeSlug/loja" element={

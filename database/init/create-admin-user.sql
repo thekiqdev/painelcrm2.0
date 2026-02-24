@@ -6,22 +6,24 @@
 -- Hash bcrypt da senha "admin123" (10 rounds)
 -- Gerado com: bcrypt.hash('admin123', 10)
 
--- Inserir usuário
-INSERT INTO users (id, email, password_hash, whatsapp_number, email_verified, created_at, updated_at)
+-- Inserir usuário (só cria se não existir; se já existir, NÃO sobrescreve a senha)
+INSERT INTO users (id, email, password_hash, whatsapp_number, email_verified, is_super_admin, created_at, updated_at)
 VALUES (
   gen_random_uuid(),
   'admin@painelcrm.com',
   '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- hash de "admin123"
   '11981199950',
   true,
+  true,
   NOW(),
   NOW()
 )
 ON CONFLICT (email) DO UPDATE
 SET 
-  password_hash = EXCLUDED.password_hash,
   whatsapp_number = EXCLUDED.whatsapp_number,
+  is_super_admin = true,
   updated_at = NOW();
+-- Nota: password_hash NÃO é atualizado no UPDATE para não sobrescrever a senha definida via create-superadmin.mjs
 
 -- Criar perfil associado
 INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, whatsapp_connected, registration_complete, created_at, updated_at)

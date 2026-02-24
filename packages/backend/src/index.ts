@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import authRoutes from './routes/authRoutes.js';
 import productsRoutes from './routes/productsRoutes.js';
@@ -41,9 +43,15 @@ import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
 import messagesRoutes from './routes/messagesRoutes.js';
+import superadminRoutes from './routes/superadminRoutes.js';
+import plansRoutes from './routes/plansRoutes.js';
+import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
 import { initializeWebSocket } from './services/websocketService.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootEnv = path.resolve(__dirname, '../../../.env');
+dotenv.config({ path: rootEnv });
 dotenv.config();
 
 const app = express();
@@ -103,8 +111,10 @@ const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
   skip: (req) => {
+    // Em desenvolvimento, não limitar (evita 429 no dashboard com várias requisições paralelas)
+    if (process.env.NODE_ENV === 'development') return true;
     // Pular rate limit para endpoints de teste, webhooks e autenticação
-    return req.path.includes('/test') || 
+    return req.path.includes('/test') ||
            req.path.startsWith('/webhooks/') ||
            req.path.startsWith('/api/auth/');
   },
@@ -197,6 +207,9 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/message-templates', messageTemplatesRoutes);
 app.use('/api/messages', messagesRoutes);
+app.use('/api/superadmin', superadminRoutes);
+app.use('/api/superadmin/plans', plansRoutes);
+app.use('/api/superadmin/tenants', tenantsRoutes);
 app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 
 // 404 handler
@@ -224,12 +237,37 @@ pool.query('SELECT NOW()')
 // Inicializar WebSocket
 initializeWebSocket(httpServer);
 
+// Encerramento graceful: libera a porta antes de sair (nodemon envia SIGTERM e aguarda --delay 2)
+function shutdown(signal: string) {
+  console.log(`\n[${signal}] Encerrando servidor...`);
+  if (typeof (httpServer as any).closeIdleConnections === 'function') {
+    (httpServer as any).closeIdleConnections();
+  }
+  httpServer.close(() => {
+    console.log('Porta liberada. Até logo.');
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 1500);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
 // Start server - escutar em 0.0.0.0 para ser acessível em containers
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Listening on 0.0.0.0:${PORT}`);
   console.log(`📡 WebSocket server initialized`);
+});
+
+httpServer.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ Porta ${PORT} já está em uso. Outra instância do backend pode estar rodando.`);
+    console.error('   Soluções: feche a outra janela do backend ou execute na raiz do projeto: kill-port-3001.bat\n');
+  } else {
+    console.error('Server error:', err);
+  }
+  process.exitCode = 1;
 });
 
 

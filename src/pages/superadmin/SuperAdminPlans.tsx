@@ -1,0 +1,525 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Plus, Pencil, Trash2, Flag } from 'lucide-react';
+import { toast } from 'sonner';
+import { apiClient } from '@/integrations/api/client';
+
+const BILLING_INTERVALS = [
+  { key: 'monthly', label: 'Mensal' },
+  { key: 'quarterly', label: 'Trimestral' },
+  { key: 'semi_annual', label: 'Semestral' },
+  { key: 'yearly', label: 'Anual' },
+] as const;
+
+interface IntervalPrice {
+  billing_interval: string;
+  price_per_user_cents: number;
+}
+
+interface Plan {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  price_cents: number;
+  billing_interval: string;
+  max_users: number | null;
+  max_profiles: number | null;
+  max_whatsapp_instances?: number | null;
+  plan_type?: 'standard' | 'custom';
+  is_default?: boolean;
+  interval_prices?: IntervalPrice[];
+  is_active: boolean;
+  sort_order: number;
+  enabled_features_count?: number;
+}
+
+const defaultPlan: Partial<Plan> = {
+  name: '',
+  slug: '',
+  description: '',
+  price_cents: 0,
+  billing_interval: 'monthly',
+  max_users: null,
+  max_profiles: null,
+  max_whatsapp_instances: null,
+  plan_type: 'standard',
+  is_default: false,
+  interval_prices: BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })),
+  is_active: true,
+  sort_order: 0,
+};
+
+export default function SuperAdminPlans() {
+  const navigate = useNavigate();
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<Partial<Plan>>(defaultPlan);
+  const [saving, setSaving] = useState(false);
+
+  const loadPlans = async () => {
+    setLoading(true);
+    const res = await apiClient.get<Plan[]>('/api/superadmin/plans');
+    if (res.error) {
+      toast.error(res.error);
+      setPlans([]);
+    } else if (res.data) {
+      setPlans(res.data);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadPlans();
+  }, []);
+
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(defaultPlan);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (plan: Plan) => {
+    setEditingId(plan.id);
+    const intervalPrices = plan.interval_prices ?? [];
+    setForm({
+      name: plan.name,
+      slug: plan.slug,
+      description: plan.description || '',
+      price_cents: plan.price_cents,
+      billing_interval: plan.billing_interval,
+      max_users: plan.max_users,
+      max_profiles: plan.max_profiles,
+      max_whatsapp_instances: plan.max_whatsapp_instances ?? null,
+      plan_type: plan.plan_type ?? 'standard',
+      is_default: plan.is_default ?? false,
+      interval_prices: intervalPrices.length
+        ? intervalPrices
+        : BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })),
+      is_active: plan.is_active,
+      sort_order: plan.sort_order,
+    });
+    setDialogOpen(true);
+  };
+
+  const handleSlugFromName = () => {
+    const name = form.name || '';
+    const slug = name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    setForm((f) => ({ ...f, slug }));
+  };
+
+  const savePlan = async () => {
+    if (!form.name?.trim()) {
+      toast.error('Nome é obrigatório');
+      return;
+    }
+    if (!form.slug?.trim()) {
+      toast.error('Slug é obrigatório');
+      return;
+    }
+    if (form.plan_type === 'custom') {
+      const hasPrice = form.interval_prices?.some((ip) => ip.price_per_user_cents > 0);
+      if (!hasPrice) {
+        toast.error('Plano personalizado exige pelo menos um preço por usuário (por periodicidade)');
+        return;
+      }
+    }
+    setSaving(true);
+    const payload = {
+      ...form,
+      interval_prices:
+        form.plan_type === 'custom' && form.interval_prices
+          ? form.interval_prices.filter((ip) => ip.price_per_user_cents > 0)
+          : undefined,
+    };
+    if (editingId) {
+      const res = await apiClient.put<Plan>(`/api/superadmin/plans/${editingId}`, payload);
+      if (res.error) {
+        toast.error(res.error);
+        setSaving(false);
+        return;
+      }
+      toast.success('Plano atualizado');
+    } else {
+      const res = await apiClient.post<Plan>('/api/superadmin/plans', payload);
+      if (res.error) {
+        toast.error(res.error);
+        setSaving(false);
+        return;
+      }
+      toast.success('Plano criado');
+    }
+    setDialogOpen(false);
+    setSaving(false);
+    loadPlans();
+  };
+
+  const deletePlan = async (plan: Plan) => {
+    if (!confirm(`Excluir o plano "${plan.name}"?`)) return;
+    const res = await apiClient.delete(`/api/superadmin/plans/${plan.id}`);
+    if (res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success('Plano excluído');
+    loadPlans();
+  };
+
+  const formatPrice = (cents: number) => {
+    if (cents === 0) return 'Grátis';
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(cents / 100);
+  };
+
+  /** Converte centavos para string em reais (ex.: 9950 → "99,50") para exibir no input */
+  const centsToReaisInput = (cents: number) => {
+    if (cents === 0) return '';
+    const reais = cents / 100;
+    return reais.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Planos</h1>
+          <p className="text-muted-foreground">Gerencie planos e features por plano.</p>
+        </div>
+        <Button onClick={openCreate}>
+          <Plus className="mr-2 h-4 w-4" />
+          Novo plano
+        </Button>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Lista de planos</CardTitle>
+          <CardDescription>Clique em Features para configurar recursos do plano.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <p className="text-muted-foreground">Carregando...</p>
+          ) : plans.length === 0 ? (
+            <p className="text-muted-foreground">Nenhum plano cadastrado. Execute o seed ou crie um plano.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Slug</TableHead>
+                  <TableHead>Preço</TableHead>
+                  <TableHead>Limites</TableHead>
+                  <TableHead>Features</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {plans.map((plan) => (
+                  <TableRow key={plan.id}>
+                    <TableCell className="font-medium">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span>{plan.name}</span>
+                        {plan.plan_type === 'custom' && (
+                          <Badge variant="outline" className="text-xs">Personalizado</Badge>
+                        )}
+                        {plan.is_default && (
+                          <Badge variant="secondary" className="text-xs">Padrão</Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{plan.slug}</TableCell>
+                    <TableCell>
+                      {plan.plan_type === 'custom' ? (
+                        plan.interval_prices?.length ? (
+                          <span className="text-sm">
+                            {plan.interval_prices.map((ip) => {
+                              const label = BILLING_INTERVALS.find((i) => i.key === ip.billing_interval)?.label ?? ip.billing_interval;
+                              return (
+                                <span key={ip.billing_interval} className="block">
+                                  {formatPrice(ip.price_per_user_cents)}/usuário ({label.toLowerCase()})
+                                </span>
+                              );
+                            })}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Por usuário</span>
+                        )
+                      ) : (
+                        `${formatPrice(plan.price_cents)}/${plan.billing_interval === 'yearly' ? 'ano' : 'mês'}`
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {plan.max_users != null ? `${plan.max_users} usuários` : '—'}
+                      {plan.max_profiles != null ? ` · ${plan.max_profiles} perfis` : ''}
+                      {plan.max_whatsapp_instances != null ? ` · ${plan.max_whatsapp_instances} WhatsApp` : ''}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate(`/superadmin/plans/${plan.id}/features`)}
+                      >
+                        <Flag className="mr-1 h-4 w-4" />
+                        {plan.enabled_features_count ?? 0} ativas
+                      </Button>
+                    </TableCell>
+                    <TableCell>
+                      {plan.is_active ? (
+                        <Badge variant="default">Ativo</Badge>
+                      ) : (
+                        <Badge variant="secondary">Inativo</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(plan)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => deletePlan(plan)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
+            <DialogTitle>{editingId ? 'Editar plano' : 'Novo plano'}</DialogTitle>
+            <DialogDescription>Preencha os dados do plano.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 px-6 py-4 overflow-y-auto min-h-0">
+            <div className="grid gap-2">
+              <Label>Nome</Label>
+              <Input
+                value={form.name ?? ''}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                onBlur={!editingId ? handleSlugFromName : undefined}
+                placeholder="Ex: Pro"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Slug (identificador único)</Label>
+              <Input
+                value={form.slug ?? ''}
+                onChange={(e) => setForm((f) => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))}
+                placeholder="Ex: pro"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Descrição (opcional)</Label>
+              <Input
+                value={form.description ?? ''}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Breve descrição"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Tipo de plano</Label>
+              <Select
+                value={form.plan_type ?? 'standard'}
+                onValueChange={(v: 'standard' | 'custom') =>
+                  setForm((f) => ({
+                    ...f,
+                    plan_type: v,
+                    interval_prices:
+                      v === 'custom'
+                        ? (f.interval_prices?.length ? f.interval_prices : BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })))
+                        : undefined,
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="standard">Standard (preço fixo)</SelectItem>
+                  <SelectItem value="custom">Personalizado (preço por usuário)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {form.plan_type === 'standard' && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label>Preço (R$)</Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={form.price_cents != null && form.price_cents > 0 ? `R$ ${centsToReaisInput(form.price_cents)}` : ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/\D/g, '');
+                        const cents = raw === '' ? 0 : parseInt(raw, 10);
+                        setForm((f) => ({ ...f, price_cents: isNaN(cents) ? 0 : cents }));
+                      }}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Cobrança</Label>
+                    <Select
+                      value={form.billing_interval ?? 'monthly'}
+                      onValueChange={(v) => setForm((f) => ({ ...f, billing_interval: v }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {BILLING_INTERVALS.map(({ key, label }) => (
+                          <SelectItem key={key} value={key}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="grid gap-2">
+                    <Label>Máx. usuários (vazio = ilimitado)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={form.max_users ?? ''}
+                      onChange={(e) => setForm((f) => ({ ...f, max_users: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Máx. perfis (vazio = ilimitado)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={form.max_profiles ?? ''}
+                      onChange={(e) => setForm((f) => ({ ...f, max_profiles: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Máx. inst. WhatsApp (vazio = ilimitado)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={form.max_whatsapp_instances ?? ''}
+                      onChange={(e) => setForm((f) => ({ ...f, max_whatsapp_instances: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            {form.plan_type === 'custom' && (
+              <div className="grid gap-2">
+                <Label>Preço por usuário por periodicidade (R$)</Label>
+                <p className="text-sm text-muted-foreground">Preencha pelo menos um intervalo. Cobrança será: usuários × preço do intervalo.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {BILLING_INTERVALS.map(({ key, label }) => {
+                    const current = form.interval_prices?.find((ip) => ip.billing_interval === key);
+                    const cents = current?.price_per_user_cents ?? 0;
+                    return (
+                      <div key={key} className="grid gap-1">
+                        <Label className="text-xs">{label}</Label>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0,00"
+                          value={cents > 0 ? `R$ ${centsToReaisInput(cents)}` : ''}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/\D/g, '');
+                            const next = raw === '' ? 0 : parseInt(raw, 10);
+                            const nextCents = isNaN(next) ? 0 : next;
+                            setForm((f) => {
+                              const list = f.interval_prices ?? BILLING_INTERVALS.map(({ key: ikey }) => ({ billing_interval: ikey, price_per_user_cents: 0 }));
+                              const base = BILLING_INTERVALS.map(({ key: ikey }) => ({
+                                billing_interval: ikey,
+                                price_per_user_cents: list.find((ip) => ip.billing_interval === ikey)?.price_per_user_cents ?? 0,
+                              }));
+                              const updated = base.map((ip) => (ip.billing_interval === key ? { ...ip, price_per_user_cents: nextCents } : ip));
+                              return { ...f, interval_prices: updated };
+                            });
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <Label htmlFor="plan-default">Plano padrão (atribuído em novos cadastros no site)</Label>
+              <Switch
+                id="plan-default"
+                checked={form.is_default ?? false}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, is_default: v }))}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <Label>Ativo</Label>
+              <Switch
+                checked={form.is_active ?? true}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, is_active: v }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Ordem de exibição</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.sort_order ?? 0}
+                onChange={(e) => setForm((f) => ({ ...f, sort_order: parseInt(e.target.value, 10) || 0 }))}
+              />
+            </div>
+          </div>
+          <DialogFooter className="px-6 py-4 border-t shrink-0">
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={savePlan} disabled={saving}>
+              {saving ? 'Salvando...' : editingId ? 'Salvar' : 'Criar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

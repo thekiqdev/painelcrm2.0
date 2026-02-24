@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +20,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import {
   Command,
   CommandDialog,
@@ -41,6 +42,20 @@ const Nav = () => {
   const location = useLocation();
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
+  const hasDashboard = useFeatureFlag('dashboard');
+  const hasClients = useFeatureFlag('clients');
+  const hasLeads = useFeatureFlag('leads');
+  const hasFunnels = useFeatureFlag('funnels');
+  const hasProducts = useFeatureFlag('products');
+  const hasProjects = useFeatureFlag('projects');
+  const hasTasks = useFeatureFlag('tasks');
+  const hasChat = useFeatureFlag('chat');
+  const hasTickets = useFeatureFlag('tickets');
+  const hasProposals = useFeatureFlag('proposals');
+  const hasContracts = useFeatureFlag('contracts');
+  const hasInvoices = useFeatureFlag('invoices');
+  const hasExpenses = useFeatureFlag('expenses');
+  const hasSettings = useFeatureFlag('settings');
   
   const getNavClass = ({ isActive }: { isActive: boolean }) => 
     isActive ? "bg-crm-primary/10 text-crm-primary font-medium" : "hover:bg-muted/50";
@@ -63,14 +78,16 @@ const Nav = () => {
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <NavLink to="/dashboard" className={getNavClass}>
-                  <LayoutDashboard className="mr-2 h-5 w-5" />
-                  {!collapsed && <span>Dashboard</span>}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {hasDashboard && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink to="/dashboard" className={getNavClass}>
+                    <LayoutDashboard className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>Dashboard</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
         </SidebarGroup>
         
@@ -78,38 +95,46 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Vendas</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/clients" className={getNavClass}>
-                    <Users className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Clientes</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/leads" className={getNavClass}>
-                    <UserPlus className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Leads</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/funnel" className={getNavClass}>
-                    <List className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Funil de Vendas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/products" className={getNavClass}>
-                    <Briefcase className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Produtos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {hasClients && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/clients" className={getNavClass}>
+                      <Users className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Clientes</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasLeads && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/leads" className={getNavClass}>
+                      <UserPlus className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Leads</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasFunnels && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/funnel" className={getNavClass}>
+                      <List className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Funil de Vendas</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasProducts && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/products" className={getNavClass}>
+                      <Briefcase className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Produtos</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -118,30 +143,36 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Projetos</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/projects" className={getNavClass}>
-                    <Calendar className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Projetos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/tasks" className={getNavClass}>
-                    <ClipboardCheck className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Tarefas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/project-templates" className={getNavClass}>
-                    <LayoutTemplate className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Templates</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {hasProjects && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/projects" className={getNavClass}>
+                      <Calendar className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Projetos</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasTasks && (
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/tasks" className={getNavClass}>
+                        <ClipboardCheck className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Tarefas</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/project-templates" className={getNavClass}>
+                        <LayoutTemplate className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Templates</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -150,22 +181,26 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/chat" className={getNavClass}>
-                    <MessageSquare className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Chat</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/support/tickets" className={getNavClass}>
-                    <Ticket className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Tickets</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {hasChat && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/chat" className={getNavClass}>
+                      <MessageSquare className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Chat</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasTickets && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/support/tickets" className={getNavClass}>
+                      <Ticket className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Tickets</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -174,22 +209,26 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Documentação</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/proposals" className={getNavClass}>
-                    <FileText className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Propostas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/contracts" className={getNavClass}>
-                    <FileSearch className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Contratos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {hasProposals && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/proposals" className={getNavClass}>
+                      <FileText className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Propostas</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasContracts && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/contracts" className={getNavClass}>
+                      <FileSearch className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Contratos</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -198,36 +237,42 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Financeiro</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/billing" className={getNavClass}>
-                    <DollarSign className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Faturamento</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/finance" className={getNavClass}>
-                    <DollarSign className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Financeiro</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {hasInvoices && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/billing" className={getNavClass}>
+                      <DollarSign className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Faturamento</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {hasExpenses && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/finance" className={getNavClass}>
+                      <DollarSign className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Financeiro</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         
         <SidebarGroup>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <NavLink to="/settings" className={getNavClass}>
-                  <Settings className="mr-2 h-5 w-5" />
-                  {!collapsed && <span>Configurações</span>}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {hasSettings && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink to="/settings" className={getNavClass}>
+                    <Settings className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>Configurações</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
@@ -444,6 +489,12 @@ const Header = () => {
               <Settings className="mr-2 h-4 w-4" />
               <span>Configurações</span>
             </DropdownMenuItem>
+            {user?.is_super_admin && (
+              <DropdownMenuItem onClick={() => navigate('/superadmin')}>
+                <ShieldCheck className="mr-2 h-4 w-4" />
+                <span>Super Admin</span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={signOut}>
               <LogOut className="mr-2 h-4 w-4" />

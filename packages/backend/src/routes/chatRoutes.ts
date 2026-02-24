@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireFeature } from '../middleware/auth.js';
 import {
   createInstance,
   listInstances,
@@ -22,6 +22,7 @@ import {
 const router = Router();
 
 router.use(authenticateToken);
+router.use(requireFeature('chat'));
 
 router.get('/instances', listInstances);
 router.post('/instances', createInstance);

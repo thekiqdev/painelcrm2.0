@@ -16,6 +16,7 @@ interface User {
   registration_complete?: boolean;
   created_at?: string;
   default_profile_id?: string | null;
+  is_super_admin?: boolean;
 }
 
 interface SignUpParams {
@@ -33,11 +34,15 @@ type AuthContextType = {
   loading: boolean;
   profile: any | null;
   registrationComplete: boolean;
+  /** Lista de feature keys habilitadas para o usuário (plano/tenant). Super admin tem todas. */
+  features: string[];
   signIn: (identifier: string, password: string) => Promise<void>;
   signUp: (params: SignUpParams) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: any) => Promise<void>;
   updateRegistrationStep: (step: string, completed: boolean) => Promise<void>;
+  /** Recarrega as features do usuário (ex.: após troca de tenant/plano). */
+  refreshFeatures: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -48,13 +53,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<any | null>(null);
   const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [features, setFeatures] = useState<string[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Check for existing token
+    // Suporte a "Acessar como" (impersonation): token na URL aplicado antes de carregar
+    const params = new URLSearchParams(window.location.search);
+    const impToken = params.get('impersonation_token');
+    if (impToken) {
+      apiClient.setToken(impToken);
+      window.history.replaceState({}, '', (window.location.pathname || '/') + (window.location.hash || ''));
+    }
     const token = apiClient.getToken();
     if (token) {
-      // Verify token by fetching user
       fetchCurrentUser();
     } else {
       setLoading(false);
@@ -70,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession(null);
         setUser(null);
         setProfile(null);
+        setFeatures([]);
         setRegistrationComplete(false);
         setLoading(false);
         return;
@@ -80,11 +92,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession({ token: apiClient.getToken() || '' });
         setProfile(response.data);
         setRegistrationComplete(response.data.registration_complete || false);
+        await fetchMeFeatures();
       }
       setLoading(false);
     } catch (error) {
       console.error('Error fetching user:', error);
       setLoading(false);
+    }
+  };
+
+  const fetchMeFeatures = async () => {
+    try {
+      const res = await apiClient.get<{ features: string[] }>('/api/auth/me/features');
+      if (res.data?.features) {
+        setFeatures(res.data.features);
+      } else {
+        setFeatures([]);
+      }
+    } catch {
+      setFeatures([]);
     }
   };
 
@@ -129,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(response.data.user.registration_complete || false);
+        await fetchMeFeatures();
         toast.success('Login realizado com sucesso!');
       }
     } catch (error: any) {
@@ -202,6 +229,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setRegistrationComplete(false);
       setUser(null);
       setSession(null);
+      setFeatures([]);
       
       // Limpar armazenamento local relacionado à autenticação
       await clearAuthState();
@@ -215,6 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setRegistrationComplete(false);
       setUser(null);
       setSession(null);
+      setFeatures([]);
       await clearAuthState();
       apiClient.setToken(null);
       toast.success('Logout realizado com sucesso!');
@@ -281,11 +310,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loading,
     profile,
     registrationComplete,
+    features,
     signIn,
     signUp,
     signOut,
     updateProfile,
-    updateRegistrationStep
+    updateRegistrationStep,
+    refreshFeatures: fetchMeFeatures,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

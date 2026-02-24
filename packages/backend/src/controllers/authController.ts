@@ -1,7 +1,10 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
+import { insertTenantPlanHistory } from '../services/auditLogService.js';
 import { hashPassword, comparePassword } from '../utils/bcrypt.js';
 import { generateToken } from '../utils/jwt.js';
+import { getEnabledFeaturesForUser } from '../services/featureFlagService.js';
+import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
 import { z } from 'zod';
 
 const registerSchema = z.object({
@@ -131,6 +134,46 @@ export async function register(req: Request, res: Response): Promise<void> {
       [user.id, companyProfileId]
     );
 
+    // Criar tenant (empresa) e vincular usuário — usa plano padrão (is_default) ou primeiro ativo
+    let planRow = await client.query(
+      `SELECT id FROM plans WHERE is_active = true AND is_default = true LIMIT 1`
+    );
+    if (planRow.rows.length === 0) {
+      planRow = await client.query(
+        `SELECT id FROM plans WHERE is_active = true ORDER BY sort_order ASC, name ASC LIMIT 1`
+      );
+    }
+    if (planRow.rows.length > 0) {
+      const planId = planRow.rows[0].id;
+      let baseSlug = inferredCompanyName
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'empresa';
+      let slug = baseSlug;
+      let suffix = 0;
+      while (true) {
+        const exists = await client.query('SELECT id FROM tenants WHERE slug = $1', [slug]);
+        if (exists.rows.length === 0) break;
+        suffix += 1;
+        slug = `${baseSlug}-${suffix}`;
+      }
+      const tenantResult = await client.query(
+        `INSERT INTO tenants (name, slug, plan_id, status, created_via)
+         VALUES ($1, $2, $3, 'trial', 'registration')
+         RETURNING id`,
+        [inferredCompanyName, slug, planId]
+      );
+      const tenantId = tenantResult.rows[0].id;
+      await client.query('UPDATE users SET tenant_id = $1 WHERE id = $2', [tenantId, user.id]);
+      await client.query(
+        'INSERT INTO tenant_plan (tenant_id, plan_id, starts_at) VALUES ($1, $2, now())',
+        [tenantId, planId]
+      );
+      setImmediate(() => notifySuperAdminsNewTenant(inferredCompanyName, tenantId).catch(() => {}));
+    }
+
     await client.query('COMMIT');
 
     const token = generateToken({
@@ -180,17 +223,14 @@ export async function login(req: Request, res: Response): Promise<void> {
     
     let userResult;
     if (isEmail) {
-      // Search by email
       userResult = await pool.query(
-        'SELECT id, email, password_hash, whatsapp_number FROM users WHERE email = $1',
+        'SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin FROM users WHERE email = $1',
         [identifier.toLowerCase().trim()]
       );
     } else {
-      // Search by WhatsApp number (normalize phone number)
-      // Remove common phone formatting characters
       const normalizedPhone = identifier.replace(/[\s\-\(\)\+]/g, '');
       userResult = await pool.query(
-        'SELECT id, email, password_hash, whatsapp_number FROM users WHERE whatsapp_number = $1 OR whatsapp_number = $2',
+        'SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin FROM users WHERE whatsapp_number = $1 OR whatsapp_number = $2',
         [identifier, normalizedPhone]
       );
     }
@@ -269,6 +309,7 @@ export async function login(req: Request, res: Response): Promise<void> {
         last_name: profile.last_name,
         company_name: profile.company_name,
         default_profile_id: defaultProfileId,
+        is_super_admin: user.is_super_admin === true,
       },
       token,
     });
@@ -300,9 +341,9 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Get user with profile
+    // Get user with profile and is_super_admin
     const userResult = await pool.query(
-      `SELECT u.id, u.email, u.whatsapp_number, u.created_at,
+      `SELECT u.id, u.email, u.whatsapp_number, u.created_at, COALESCE(u.is_super_admin, false) AS is_super_admin,
               p.first_name, p.last_name, p.company_name, 
               p.whatsapp_connected, p.registration_complete
        FROM users u
@@ -330,9 +371,30 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       registration_complete: user.registration_complete,
       created_at: user.created_at,
       default_profile_id: defaultProfileId,
+      is_super_admin: user.is_super_admin === true,
     });
   } catch (error) {
     console.error('Get me error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * GET /api/auth/me/features
+ * Lista de feature_key habilitadas para o usuário logado (para frontend/mobile em lote).
+ */
+export async function getMeFeatures(req: Request, res: Response): Promise<void> {
+  try {
+    const authReq = req as any;
+    const userId = authReq.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const features = await getEnabledFeaturesForUser(userId);
+    res.json({ features });
+  } catch (error) {
+    console.error('Get me features error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

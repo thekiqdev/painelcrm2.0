@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { checkTenantProfilesLimit } from '../services/tenantLimitService.js';
 import { z } from 'zod';
 
 const userProfileSchema = z.object({
@@ -65,6 +66,17 @@ export const createUserProfile = async (req: Request, res: Response) => {
     }
 
     const validated = userProfileSchema.parse(req.body);
+
+    const userRow = await pool.query('SELECT tenant_id FROM users WHERE id = $1', [userId]);
+    const tenantId = userRow.rows[0]?.tenant_id;
+    if (tenantId) {
+      const limitCheck = await checkTenantProfilesLimit(tenantId);
+      if (!limitCheck.allowed) {
+        return res.status(403).json({
+          error: `Limite de perfis do plano atingido (${limitCheck.current}/${limitCheck.limit}).`,
+        });
+      }
+    }
 
     const result = await pool.query(
       `INSERT INTO user_profiles (owner_id, name, description, is_admin)
