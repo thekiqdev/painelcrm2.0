@@ -101,25 +101,36 @@ const testLimiter = rateLimit({
   max: 20, // 20 testes por minuto (suficiente para testes)
   message: 'Muitos testes enviados. Aguarde um momento antes de tentar novamente.',
   skip: (req) => {
-    // Não aplicar rate limit em desenvolvimento
     return process.env.NODE_ENV === 'development';
   },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Rate limiting para APIs (geral)
+// Limite só para login/registro (anti brute-force). Resto da API não conta aqui.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: parseInt(process.env.RATE_LIMIT_AUTH_MAX || '30', 10), // 30 tentativas de login/registro por 15 min por IP
+  message: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
+
+// Rate limiting para APIs (geral) - alto para não bloquear uso normal (dashboard faz muitas req paralelas)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: parseInt(process.env.RATE_LIMIT_MAX || '2000', 10), // 2000 req/15min por IP (configurável)
+  message: 'Muitas requisições. Aguarde um momento antes de tentar novamente.',
   skip: (req) => {
-    // Em desenvolvimento, não limitar (evita 429 no dashboard com várias requisições paralelas)
     if (process.env.NODE_ENV === 'development') return true;
-    // Pular rate limit para endpoints de teste, webhooks e autenticação
-    return req.path.includes('/test') ||
-           req.path.startsWith('/webhooks/') ||
-           req.path.startsWith('/api/auth/');
+    const p = req.path || req.originalUrl || '';
+    // Não contar rotas de auth no limite geral (têm seu próprio authLimiter)
+    return p.startsWith('/api/auth/') || p.startsWith('auth/') ||
+           p.includes('/test') || p.startsWith('/webhooks/') || p.startsWith('webhooks/');
   },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Rate limiting mais generoso para webhooks (podem receber muitos eventos)
@@ -132,9 +143,12 @@ const webhookLimiter = rateLimit({
 // Aplicar rate limiting - IMPORTANTE: ordem importa!
 // 1. Webhooks primeiro (mais específico)
 app.use('/webhooks/', webhookLimiter);
-// 2. Testes (específico)
+// 2. Limite anti brute-force só em login/registro
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+// 3. Testes (específico)
 app.use('/api/message-templates/:id/test', testLimiter);
-// 3. API geral por último (mais genérico)
+// 4. API geral por último (mais genérico)
 app.use('/api/', limiter);
 
 // Health check - endpoint simples e rápido

@@ -31,6 +31,17 @@ Valores comuns:
 - No **backend**, defina a variável **JWT_SECRET** com um valor forte (não use `<gere-um-secret-forte>` em produção). Para gerar: `openssl rand -base64 48` ou use um gerador seguro.
 - O primeiro acesso pode ser pelo **cadastro** na aplicação; se existir `create-admin-user.sql` na migração, o usuário admin pode ter sido criado por ele (ex.: admin@painelcrm.com depende do seed).
 
+### Rate limit (429 Too Many Requests)
+
+O backend usa rate limit para evitar abuso. Em produção, o limite geral é **alto** (2000 requisições por 15 min por IP) para não bloquear uso normal; login/registro têm limite próprio (30 tentativas por 15 min por IP) contra brute-force.
+
+Se aparecer 429 em uso legítimo, no serviço **backend** no Easypanel você pode aumentar:
+
+- **RATE_LIMIT_MAX** — requisições gerais por IP a cada 15 min (padrão: 2000). Ex.: `5000`.
+- **RATE_LIMIT_AUTH_MAX** — tentativas de login/registro por IP a cada 15 min (padrão: 30). Só aumente se precisar (ex.: muitos usuários atrás do mesmo IP).
+
+Em **desenvolvimento** (`NODE_ENV=development`) o rate limit da API e de auth fica desativado.
+
 ---
 
 ## Migração do banco
