@@ -45,6 +45,26 @@ node dist/migrate.js
 
 ---
 
+## Criar Super Admin
+
+Dentro do **container do backend** (após a migração), o script está em `scripts/create-superadmin.mjs`. Use uma destas formas:
+
+**Com email e senha na linha de comando:**
+
+```bash
+node scripts/create-superadmin.mjs seu@email.com SuaSenhaSegura
+```
+
+**Com variáveis de ambiente** (defina `SUPERADMIN_EMAIL` e `SUPERADMIN_PASSWORD` no Easypanel no serviço do backend, ou ao executar o comando):
+
+```bash
+node scripts/create-superadmin.mjs
+```
+
+O script usa as mesmas variáveis de banco do backend (`POSTGRES_HOST`, `POSTGRES_DB`, etc.). Se rodar em um one-off container, passe as variáveis ou use o mesmo env do serviço.
+
+---
+
 ## Imagem hero-dashboard.jpg (404)
 
 Se aparecer 404 em `/landingpage/hero-dashboard.jpg`, é um asset que não está no build atual (ou veio de cache). Pode ser ignorado ou adicionar a imagem em `public/landingpage/` e dar novo build do frontend.

@@ -26,6 +26,9 @@ COPY --from=builder /app/dist ./dist
 # Copy migrations (SQL files) so "npm run migrate" works in container
 COPY database ./database
 
+# Script para criar super admin (executar no container: node scripts/create-superadmin.mjs <email> <senha>)
+COPY packages/backend/scripts ./scripts
+
 EXPOSE 3001
 
 CMD ["node", "dist/index.js"]
