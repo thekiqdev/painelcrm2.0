@@ -156,7 +156,12 @@ export default function SuperAdminPlans() {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm({ ...defaultPlan, features: {}, benefits: [] });
+    setForm({
+      ...defaultPlan,
+      features: {},
+      benefits: [],
+      interval_prices: [],
+    });
     setDialogOpen(true);
   };
 
@@ -180,7 +185,7 @@ export default function SuperAdminPlans() {
       free_access_days: plan.free_access_days ?? null,
       interval_prices: intervalPrices.length
         ? intervalPrices
-        : BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })),
+        : [],
       is_active: plan.is_active,
       sort_order: plan.sort_order,
       features,
@@ -227,7 +232,7 @@ export default function SuperAdminPlans() {
       free_access_days: form.is_free ? (form.free_access_days ?? null) : null,
       interval_prices:
         form.plan_type === 'custom' && form.interval_prices
-          ? form.interval_prices.filter((ip) => ip.price_per_user_cents > 0)
+          ? form.interval_prices.filter((ip) => ip.billing_interval && ip.price_per_user_cents > 0)
           : undefined,
       benefits: (form.benefits ?? [])
         .filter((b) => (b.label || '').trim())
@@ -470,7 +475,7 @@ export default function SuperAdminPlans() {
                     plan_type: v,
                     interval_prices:
                       v === 'custom'
-                        ? (f.interval_prices?.length ? f.interval_prices : BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })))
+                        ? (f.interval_prices?.length ? f.interval_prices : [])
                         : undefined,
                   }))
                 }
@@ -552,40 +557,102 @@ export default function SuperAdminPlans() {
               </>
             )}
             {form.plan_type === 'custom' && (
-              <div className="grid gap-2">
-                <Label>Preço por usuário por periodicidade (R$)</Label>
-                <p className="text-sm text-muted-foreground">Preencha pelo menos um intervalo. Cobrança será: usuários × preço do intervalo.</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {BILLING_INTERVALS.map(({ key, label }) => {
-                    const current = form.interval_prices?.find((ip) => ip.billing_interval === key);
-                    const cents = current?.price_per_user_cents ?? 0;
+              <div className="space-y-3">
+                <div>
+                  <Label>Preço por usuário por periodicidade</Label>
+                  <p className="text-sm text-muted-foreground mt-0.5">Adicione valor e período. Cada periodicidade só pode ser usada uma vez.</p>
+                </div>
+                <div className="space-y-2">
+                  {(form.interval_prices ?? []).map((ip, index) => {
+                    const usedByOthers = new Set(
+                      (form.interval_prices ?? [])
+                        .map((x, i) => (i !== index ? x.billing_interval : null))
+                        .filter(Boolean)
+                    );
+                    const periodOptions = BILLING_INTERVALS.filter(
+                      (i) => ip.billing_interval === i.key || !usedByOthers.has(i.key)
+                    );
+                    const cents = ip.price_per_user_cents ?? 0;
                     return (
-                      <div key={key} className="grid gap-1">
-                        <Label className="text-xs">{label}</Label>
+                      <div key={`${index}-${ip.billing_interval || 'new'}`} className="flex items-center gap-2">
                         <Input
                           type="text"
                           inputMode="decimal"
-                          placeholder="0,00"
+                          placeholder="Valor (R$)"
+                          className="w-[120px] shrink-0"
                           value={cents > 0 ? `R$ ${centsToReaisInput(cents)}` : ''}
                           onChange={(e) => {
                             const raw = e.target.value.replace(/\D/g, '');
                             const next = raw === '' ? 0 : parseInt(raw, 10);
                             const nextCents = isNaN(next) ? 0 : next;
                             setForm((f) => {
-                              const list = f.interval_prices ?? BILLING_INTERVALS.map(({ key: ikey }) => ({ billing_interval: ikey, price_per_user_cents: 0 }));
-                              const base = BILLING_INTERVALS.map(({ key: ikey }) => ({
-                                billing_interval: ikey,
-                                price_per_user_cents: list.find((ip) => ip.billing_interval === ikey)?.price_per_user_cents ?? 0,
-                              }));
-                              const updated = base.map((ip) => (ip.billing_interval === key ? { ...ip, price_per_user_cents: nextCents } : ip));
-                              return { ...f, interval_prices: updated };
+                              const list = [...(f.interval_prices ?? [])];
+                              list[index] = { ...list[index], price_per_user_cents: nextCents };
+                              return { ...f, interval_prices: list };
                             });
                           }}
                         />
+                        <Select
+                          value={ip.billing_interval || '__none__'}
+                          onValueChange={(v) => {
+                            if (v === '__none__') return;
+                            setForm((f) => {
+                              const list = [...(f.interval_prices ?? [])];
+                              list[index] = { ...list[index], billing_interval: v };
+                              return { ...f, interval_prices: list };
+                            });
+                          }}
+                        >
+                          <SelectTrigger className="min-w-[140px]">
+                            <SelectValue placeholder="Período" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {!ip.billing_interval && (
+                              <SelectItem value="__none__" disabled>
+                                Selecione o período
+                              </SelectItem>
+                            )}
+                            {periodOptions.map(({ key, label: l }) => (
+                              <SelectItem key={key} value={key}>
+                                {l}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() =>
+                            setForm((f) => ({
+                              ...f,
+                              interval_prices: (f.interval_prices ?? []).filter((_, i) => i !== index),
+                            }))
+                          }
+                          aria-label="Remover"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     );
                   })}
                 </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      interval_prices: [...(f.interval_prices ?? []), { billing_interval: '', price_per_user_cents: 0 }],
+                    }))
+                  }
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Adicionar valor
+                </Button>
               </div>
             )}
             <div className="flex items-center justify-between">
