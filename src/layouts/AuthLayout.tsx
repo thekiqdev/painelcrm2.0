@@ -11,7 +11,7 @@ const AuthLayout = ({ children }: AuthLayoutProps) => {
       <div className="hidden lg:block lg:w-1/2 bg-gradient-to-r from-crm-primary to-crm-accent">
         <div className="flex items-center justify-center h-full p-12">
           <div className="text-white">
-            <h1 className="text-4xl font-bold mb-6">MultiCRM</h1>
+            <h1 className="text-4xl font-bold mb-6">PainelCRM</h1>
             <p className="text-xl opacity-80 mb-8">Sistema completo de gestão para vendas e relacionamento com clientes.</p>
             <div className="grid grid-cols-2 gap-6">
               <div className="flex flex-col items-center p-6 bg-white bg-opacity-10 rounded-lg">

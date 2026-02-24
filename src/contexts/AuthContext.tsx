@@ -192,7 +192,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : undefined;
       const email = isEmail ? trimmedIdentifier.toLowerCase() : null;
       
-      const registerEmail = email || `${normalizedWhatsapp}@multicrm.app`;
+      const registerEmail = email || `${normalizedWhatsapp}@painelcrm.app`;
       
       const payload = {
         email: registerEmail,

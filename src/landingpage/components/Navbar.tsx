@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthModal from "./AuthModal";
+import { Logo } from "@/components/Logo";
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
@@ -54,10 +55,8 @@ const Navbar = () => {
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
         <div className="container mx-auto flex h-16 items-center justify-between px-4 lg:px-8">
           <Link to="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-              <span className="text-sm font-bold text-primary-foreground">M</span>
-            </div>
-            <span className="font-display text-lg font-bold text-foreground">MultiCRM</span>
+            <Logo size="sm" />
+            <span className="font-display text-lg font-bold text-foreground">PainelCRM</span>
           </Link>
 
           <div className="hidden items-center gap-8 md:flex">

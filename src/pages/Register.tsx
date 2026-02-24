@@ -78,7 +78,7 @@ const Register = () => {
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl">Criar uma conta</CardTitle>
         <CardDescription>
-          Preencha os dados abaixo para criar sua conta MultiCRM
+          Preencha os dados abaixo para criar sua conta PainelCRM
         </CardDescription>
       </CardHeader>
       <CardContent>

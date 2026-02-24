@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { Logo } from "@/components/Logo";
 
 const Footer = () => {
   return (
@@ -6,10 +7,8 @@ const Footer = () => {
       <div className="container mx-auto px-4 lg:px-8">
         <div className="flex flex-col items-center justify-between gap-8 md:flex-row">
           <Link to="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-              <span className="text-sm font-bold text-primary-foreground">M</span>
-            </div>
-            <span className="font-display text-lg font-bold text-foreground">MultiCRM</span>
+            <Logo size="sm" />
+            <span className="font-display text-lg font-bold text-foreground">PainelCRM</span>
           </Link>
 
           <nav className="flex flex-wrap items-center justify-center gap-6 text-sm text-muted-foreground">
@@ -22,7 +21,7 @@ const Footer = () => {
         </div>
 
         <div className="mt-8 border-t border-border/50 pt-6 text-center text-sm text-muted-foreground">
-          © {new Date().getFullYear()} MultiCRM. Todos os direitos reservados.
+          © {new Date().getFullYear()} PainelCRM. Todos os direitos reservados.
         </div>
       </div>
     </footer>

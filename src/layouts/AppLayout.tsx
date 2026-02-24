@@ -33,6 +33,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { searchService } from '@/services/search';
+import { Logo } from '@/components/Logo';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -66,11 +67,11 @@ const Nav = () => {
       
       <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-start px-4'} pb-2 mb-6`}>
         {collapsed ? (
-          <div className="w-8 h-8 rounded-md bg-crm-primary text-white flex items-center justify-center font-bold">M</div>
+          <Logo size="sm" variant="crm" />
         ) : (
           <div className="flex items-center">
-            <div className="w-8 h-8 rounded-md bg-crm-primary text-white flex items-center justify-center font-bold mr-3">M</div>
-            <h1 className="text-lg font-bold">MultiCRM</h1>
+            <Logo size="sm" variant="crm" className="mr-3" />
+            <h1 className="text-lg font-bold">PainelCRM</h1>
           </div>
         )}
       </div>

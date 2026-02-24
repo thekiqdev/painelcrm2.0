@@ -70,7 +70,7 @@ async function main() {
 
     await pool.query(
       `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete, created_at, updated_at)
-       VALUES ($1, 'Super', 'Admin', 'Painel CRM', '', true, now(), now())
+       VALUES ($1, 'Super', 'Admin', 'PainelCRM', '', true, now(), now())
        ON CONFLICT (id) DO NOTHING`,
       [userId]
     );

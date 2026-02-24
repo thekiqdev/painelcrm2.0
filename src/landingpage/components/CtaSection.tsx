@@ -10,7 +10,7 @@ const CtaSection = () => {
           Pronto para centralizar vendas e atendimento?
         </h2>
         <p className="mx-auto mt-4 max-w-xl text-lg text-muted-foreground">
-          Crie sua conta grátis em minutos e descubra como o MultiCRM pode simplificar toda a sua operação comercial.
+          Crie sua conta grátis em minutos e descubra como o PainelCRM pode simplificar toda a sua operação comercial.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
           <Button size="lg" className="gap-2 px-8 text-base font-semibold" asChild>

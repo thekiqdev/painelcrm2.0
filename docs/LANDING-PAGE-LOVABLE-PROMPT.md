@@ -6,7 +6,7 @@ Use este documento como **brief completo** para criar uma landing page chamativa
 
 ## Nome e posicionamento
 
-- **Nome do produto:** MultiCRM (ou Painel CRM)
+- **Nome do produto:** PainelCRM
 - **Tagline sugerida:** *"O CRM que une vendas, projetos e WhatsApp em uma só plataforma"* ou *"Gestão completa do lead ao contrato — com o cliente no centro"*
 - **Proposta de valor em uma linha:** Plataforma B2B de CRM e gestão comercial com funil de vendas, projetos, tickets, integração WhatsApp e faturamento — pensada para empresas que querem centralizar clientes, equipe e comunicação.
 
@@ -142,7 +142,7 @@ Sugestão de ordem e conteúdo para uma landing **chamativa e tecnológica**:
 - [ ] CTA final + footer com links legais e produto.
 - [ ] Estilo moderno e tech: gradientes, boa tipografia, espaçamento e sensação B2B.
 - [ ] Conteúdo alinhado ao público: PMEs, equipes comerciais, agências e consultorias.
-- [ ] Nome do produto: MultiCRM (ou Painel CRM) e tagline consistente em toda a página.
+- [ ] Nome do produto: PainelCRM e tagline consistente em toda a página.
 
 ---
 
