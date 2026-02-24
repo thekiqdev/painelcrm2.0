@@ -9,12 +9,14 @@ import { fileURLToPath } from 'url';
 import pg from 'pg';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(__dirname, '../../..');
+// No Docker: /app/dist -> root = /app. No repo: packages/backend/dist -> root = projeto (../../..)
+const initDirDocker = path.resolve(__dirname, '..', 'database', 'init');
+const initDirRepo = path.resolve(__dirname, '../../..', 'database', 'init');
+const initDir = fs.existsSync(initDirDocker) ? initDirDocker : initDirRepo;
+const rootDir = path.resolve(initDir, '..', '..');
 const rootEnv = path.resolve(rootDir, '.env');
 dotenv.config({ path: rootEnv });
 dotenv.config();
-
-const initDir = path.resolve(rootDir, 'database', 'init');
 const order = [
   '01_create_users_and_auth.sql',
   '02_create_enums.sql',
