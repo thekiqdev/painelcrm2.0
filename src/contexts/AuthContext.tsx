@@ -248,7 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       apiClient.setToken(null);
       
       toast.success('Logout realizado com sucesso!');
-      navigate('/');
+      navigate('/login');
     } catch (error: any) {
       // Se algo der errado, garantir que o estado local seja limpo
       setProfile(null);
@@ -259,7 +259,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await clearAuthState();
       apiClient.setToken(null);
       toast.success('Logout realizado com sucesso!');
-      navigate('/');
+      navigate('/login');
     }
   };
 

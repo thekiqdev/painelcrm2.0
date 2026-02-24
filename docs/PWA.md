@@ -27,6 +27,16 @@ O app abre em janela própria, sem barra de endereço do navegador.
 2. No Chrome: **F12** → aba **Application** → **Manifest**. Conferir se o manifest aparece e se os ícones carregam.
 3. O botão “Instalar” só aparece se o Chrome considerar o app instalável (HTTPS + manifest válido + ícones).
 
+## Ícone não atualizou no Windows?
+
+O Windows guarda cache do ícone do atalho. Para ver o novo ícone (logo PainelCRM em grid):
+
+1. **Desinstale o app**: clique com o botão direito no atalho “PainelCRM” → Desinstalar (ou em Configurações → Aplicativos → PainelCRM → Desinstalar).
+2. Abra de novo o site no Edge/Chrome e clique em **Instalar**.
+3. O novo atalho deve aparecer com o ícone azul em grid.
+
+Se ainda aparecer só a letra “P”, confira se os arquivos `/icons/icon-192.png` e `/icons/icon-512.png` estão acessíveis no seu domínio (abrir no navegador e ver se a imagem carrega).
+
 ## Service Worker (opcional)
 
 Para cache e uso offline, é possível adicionar depois um Service Worker (ex.: Workbox). Não é obrigatório para o “Instalar no Windows” funcionar.

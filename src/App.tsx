@@ -14,6 +14,7 @@ import SuperAdminGuard from "./components/SuperAdminGuard";
 import AppLayout from "./layouts/AppLayout";
 import SuperAdminLayout from "./layouts/SuperAdminLayout";
 import NotFound from "./pages/NotFound";
+import HomeOrRedirect from "./components/HomeOrRedirect";
 
 // Lazy load todas as rotas protegidas para otimizar carregamento inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -88,7 +89,8 @@ const App = () => (
           <Sonner />
           <Suspense fallback={<LoadingFallback />}>
           <Routes>
-            <Route path="/" element={<Suspense fallback={<LoadingFallback />}><LandingPage /></Suspense>} />
+            <Route path="/" element={<HomeOrRedirect />} />
+            <Route path="/landing" element={<Suspense fallback={<LoadingFallback />}><LandingPage /></Suspense>} />
             <Route path="/landingpage" element={<Navigate to="/" replace />} />
             
             {/* Alterado: a página de registro não precisa de AuthGuard */}
