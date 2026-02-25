@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical, ChevronDown, ChevronUp } from "lucide-react";
@@ -17,22 +18,30 @@ import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
 import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
 import { NewListDialog } from "@/components/projects/NewListDialog";
 import { EditListDialog } from "@/components/projects/EditListDialog";
-import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProjectDialog";
 
 // Importações de tipos e dados
 import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
 import { Member } from "@/components/shared/types";
 import { projectsService, Project as ApiProject, ProjectList as ApiProjectList, ProjectTask as ApiProjectTask } from "@/services/projects";
 import { membersService } from "@/services/members";
+import { teamsService, type Team } from "@/services/teams";
 
 // Add import for ProjectFinance
 import { ProjectFinance } from "@/components/projects/ProjectFinance";
 import { ProjectSettingsDialog } from "@/components/projects/ProjectSettingsDialog";
 import { SaveAsTemplateDialog } from "@/components/projects/SaveAsTemplateDialog";
+import { ProjectAreasSection, AreaProgress } from "@/components/projects/ProjectAreasSection";
+import { hasAreas } from "@/lib/projectFeatures";
+import { useAuth } from "@/contexts/AuthContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const Projects = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+
   // Estados principais
   const [viewMode, setViewMode] = useState<"list" | "detail">("list");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -50,7 +59,6 @@ const Projects = () => {
   const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
 
   // Estados de diálogos
-  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   const [newTaskDialogOpen, setNewTaskDialogOpen] = useState(false);
   const [newListDialogOpen, setNewListDialogOpen] = useState(false);
   const [editListDialogOpen, setEditListDialogOpen] = useState(false);
@@ -65,6 +73,9 @@ const Projects = () => {
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [areaProgress, setAreaProgress] = useState<Record<string, AreaProgress>>({});
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [teamFilter, setTeamFilter] = useState<string | null>(null);
 
   // Carregar membros do backend
   useEffect(() => {
@@ -82,28 +93,34 @@ const Projects = () => {
     loadMembers();
   }, []);
 
-  // Carregar projetos do backend
+  useEffect(() => {
+    teamsService.getTeams().then(setTeams).catch(() => setTeams([]));
+  }, []);
+
+  // Carregar projetos do backend (com filtro por equipe)
   useEffect(() => {
     const loadProjects = async () => {
       try {
         setLoading(true);
-        const apiProjects = await projectsService.getProjects();
-        
-        // Converter projetos da API para o formato do frontend
+        const apiProjects = await projectsService.getProjects(teamFilter ?? undefined);
+        const teamMap = new Map(teams.map(t => [t.id, t.name]));
         const convertedProjects: Project[] = apiProjects.map(apiProject => ({
           id: apiProject.id,
           name: apiProject.name,
           description: apiProject.description || "",
           status: apiProject.status,
           dueDate: apiProject.due_date || undefined,
-          members: [], // Será carregado separadamente se necessário
+          members: [],
           tags: apiProject.tags || [],
-          lists: [], // Será carregado quando o projeto for selecionado
+          lists: [],
           files: [],
           financeItems: [],
-          kanbanStage: apiProject.kanban_stage || "backlog"
+          kanbanStage: apiProject.kanban_stage || "backlog",
+          project_type: (apiProject.project_type as Project["project_type"]) || "simple",
+          areas: [],
+          team_id: apiProject.team_id ?? null,
+          teamName: apiProject.team_id ? (teamMap.get(apiProject.team_id) ?? null) : null,
         }));
-        
         setProjects(convertedProjects);
       } catch (error) {
         console.error('Erro ao carregar projetos:', error);
@@ -114,28 +131,93 @@ const Projects = () => {
     };
 
     loadProjects();
-  }, []);
+  }, [teamFilter, teams]);
 
-  // Carregar listas e tarefas quando um projeto é selecionado
+  // Abrir home do projeto quando voltar da página de uma área (state.openProjectId)
+  useEffect(() => {
+    const openProjectId = (location.state as { openProjectId?: string } | null)?.openProjectId;
+    if (!openProjectId) return;
+    const openProject = async () => {
+      const fromList = projects.find((p) => p.id === openProjectId);
+      if (fromList) {
+        setSelectedProject(fromList);
+        setViewMode("detail");
+      } else {
+        try {
+          const project = await projectsService.getProjectById(openProjectId);
+          const teamName = project.team_id && teams.length ? teams.find(t => t.id === project.team_id)?.name ?? null : null;
+          setSelectedProject({
+            id: project.id,
+            name: project.name,
+            description: project.description || "",
+            status: project.status,
+            dueDate: project.due_date || undefined,
+            members: [],
+            tags: project.tags || [],
+            lists: [],
+            files: [],
+            financeItems: [],
+            kanbanStage: project.kanban_stage || "backlog",
+            project_type: (project.project_type as Project["project_type"]) || "simple",
+            areas: project.areas || [],
+            team_id: project.team_id ?? null,
+            teamName: teamName ?? null,
+          });
+          setViewMode("detail");
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      navigate("/projects", { replace: true, state: {} });
+    };
+    openProject();
+  }, [location.state, navigate, projects]);
+
+  // Carregar listas, tarefas, project_type e áreas quando um projeto é selecionado
   useEffect(() => {
     const loadProjectDetails = async () => {
       if (!selectedProject) return;
-      
-      // Verificar se já tem listas carregadas (evitar recarregar desnecessariamente)
-      const projectFromState = projects.find(p => p.id === selectedProject.id);
-      if (projectFromState && projectFromState.lists.length > 0) {
-        // Se o projeto já tem listas no estado, usar essas
-        if (selectedProject.lists.length === 0) {
-          setSelectedProject(projectFromState);
-        }
-        return;
-      }
 
       try {
-        // Carregar listas do projeto
+        const apiProjectFull = await projectsService.getProjectById(selectedProject.id);
+        const projectType = (apiProjectFull.project_type as Project["project_type"]) || "simple";
+
+        // Projetos com áreas: não carregar listas/tarefas na tela principal (só na página da área)
+        if (hasAreas(projectType)) {
+          const areasList = apiProjectFull.areas || [];
+          const teamName = apiProjectFull.team_id && teams.length ? teams.find(t => t.id === apiProjectFull.team_id)?.name ?? null : null;
+          setSelectedProject({
+            ...selectedProject,
+            project_type: projectType,
+            areas: areasList,
+            lists: [],
+            team_id: apiProjectFull.team_id ?? null,
+            teamName: teamName ?? null,
+          });
+          // Carregar progresso de tarefas por área para os cards
+          if (areasList.length > 0) {
+            const progressMap: Record<string, AreaProgress> = {};
+            await Promise.all(
+              areasList.map(async (a: { id: string }) => {
+                try {
+                  const tasks = await projectsService.getProjectTasksByArea(selectedProject.id, a.id);
+                  const completed = tasks.filter((t: { status: string }) => t.status === "completed").length;
+                  progressMap[a.id] = { total: tasks.length, completed };
+                } catch {
+                  progressMap[a.id] = { total: 0, completed: 0 };
+                }
+              })
+            );
+            setAreaProgress(progressMap);
+          } else {
+            setAreaProgress({});
+          }
+          return;
+        }
+        setAreaProgress({});
+
         const apiLists = await projectsService.getProjectLists(selectedProject.id);
-        
-        // Carregar tarefas para cada lista
+
         const listsWithTasks = await Promise.all(
           apiLists.map(async (apiList) => {
             const apiTasks = await projectsService.getProjectTasks(apiList.id);
@@ -166,10 +248,14 @@ const Projects = () => {
           })
         );
 
-        // Atualizar projeto selecionado com listas e tarefas
+        const teamName = apiProjectFull.team_id && teams.length ? teams.find(t => t.id === apiProjectFull.team_id)?.name ?? null : null;
         setSelectedProject({
           ...selectedProject,
-          lists: listsWithTasks
+          project_type: (apiProjectFull.project_type as Project["project_type"]) || "simple",
+          areas: apiProjectFull.areas || [],
+          lists: listsWithTasks,
+          team_id: apiProjectFull.team_id ?? null,
+          teamName: teamName ?? null,
         });
       } catch (error) {
         console.error('Erro ao carregar detalhes do projeto:', error);
@@ -178,75 +264,7 @@ const Projects = () => {
     };
 
     loadProjectDetails();
-  }, [selectedProject?.id]);
-
-  // Funções para gestão de projetos
-  const handleCreateProject = async (event: React.FormEvent, data: ProjectFormData) => {
-    event.preventDefault();
-    
-    try {
-      // Criar projeto no backend
-      const apiProject = await projectsService.createProject({
-        name: data.name,
-        description: data.description || null,
-        status: "active",
-        due_date: data.dueDate ? format(data.dueDate, 'yyyy-MM-dd') : null,
-        tags: data.tags || [],
-        kanban_stage: 'backlog'
-      });
-
-      // Criar listas padrão
-      const defaultLists = [
-        { name: "A Fazer", order_position: 0 },
-        { name: "Em Andamento", order_position: 1 },
-        { name: "Revisão", order_position: 2 },
-        { name: "Concluídos", order_position: 3 },
-      ];
-
-      const createdLists = await Promise.all(
-        defaultLists.map(list => 
-          projectsService.createProjectList(apiProject.id, list)
-        )
-      );
-
-      // Converter para formato do frontend
-      const newProject: Project = {
-        id: apiProject.id,
-        name: apiProject.name,
-        description: apiProject.description || "",
-        status: apiProject.status,
-        dueDate: apiProject.due_date || undefined,
-        members: data.members,
-        tags: apiProject.tags || [],
-        lists: createdLists.map(list => ({
-          id: list.id,
-          name: list.name,
-          tasks: [],
-          order: list.order_position
-        })),
-        files: data.files.map((file, index) => ({
-          id: `f-${Date.now()}-${index}`,
-          name: file.name,
-          type: file.type,
-          size: `${(file.size / 1024).toFixed(1)} KB`,
-          uploadedBy: members[0] || undefined,
-          uploadedAt: new Date().toISOString(),
-          url: URL.createObjectURL(file)
-        })),
-        financeItems: [],
-        kanbanStage: apiProject.kanban_stage || 'backlog'
-      };
-
-      setProjects([...projects, newProject]);
-      setSelectedProject(newProject);
-      setViewMode("detail");
-      setNewProjectDialogOpen(false);
-      toast.success("Projeto criado com sucesso!");
-    } catch (error) {
-      console.error('Erro ao criar projeto:', error);
-      toast.error('Erro ao criar projeto');
-    }
-  };
+  }, [selectedProject?.id, teams]);
 
   // Funções para gestão de listas e etapas do kanban
   const handleCreateList = async (event: React.FormEvent) => {
@@ -382,6 +400,39 @@ const Projects = () => {
       setKanbanStages(kanbanStages.filter(stage => stage.id !== listId));
       toast.success("Etapa removida com sucesso!");
     }
+  };
+
+  // Áreas do projeto (tipos areas e advanced)
+  const handleCreateArea = async (name: string) => {
+    if (!selectedProject) throw new Error("Projeto não selecionado");
+    const area = await projectsService.createProjectArea(selectedProject.id, { name });
+    toast.success("Área criada com sucesso!");
+    return area;
+  };
+  const handleUpdateArea = async (
+    areaId: string,
+    data: { name: string; responsible_ids?: string[] }
+  ) => {
+    const area = await projectsService.updateProjectArea(areaId, data);
+    toast.success("Área atualizada!");
+    return area;
+  };
+  const handleDeleteArea = async (areaId: string) => {
+    await projectsService.deleteProjectArea(areaId);
+    toast.success("Área excluída.");
+  };
+  const handleAreasChange = (areas: Project["areas"]) => {
+    if (!selectedProject) return;
+    const updated = { ...selectedProject, areas: areas ?? [] };
+    setSelectedProject(updated);
+    setProjects(projects.map((p) => (p.id === selectedProject.id ? updated : p)));
+    setAreaProgress((prev) => {
+      const next = { ...prev };
+      (areas ?? []).forEach((a) => {
+        if (!next[a.id]) next[a.id] = { total: 0, completed: 0 };
+      });
+      return next;
+    });
   };
 
   // Mover projeto entre etapas no kanban
@@ -929,9 +980,11 @@ const Projects = () => {
       return (
         <div className="flex flex-col items-center justify-center h-64">
           <p className="text-lg mb-4 text-muted-foreground">Selecione um projeto ou crie um novo</p>
-          <Button onClick={() => setNewProjectDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Criar Projeto
+          <Button asChild>
+            <Link to="/projects/new">
+              <Plus className="mr-2 h-4 w-4" />
+              Criar Projeto
+            </Link>
           </Button>
         </div>
       );
@@ -1033,17 +1086,36 @@ const Projects = () => {
             </div>
           </div>
         
-          <div className="mb-4 flex items-center">
-            <div className="flex items-center space-x-2">
-              <Switch 
-                id="hide-completed" 
-                checked={hideCompletedTasks}
-                onCheckedChange={setHideCompletedTasks}
-              />
-              <Label htmlFor="hide-completed">Ocultar tarefas concluídas</Label>
+          {!hasAreas(selectedProject.project_type) && (
+            <div className="mb-4 flex items-center">
+              <div className="flex items-center space-x-2">
+                <Switch 
+                  id="hide-completed" 
+                  checked={hideCompletedTasks}
+                  onCheckedChange={setHideCompletedTasks}
+                />
+                <Label htmlFor="hide-completed">Ocultar tarefas concluídas</Label>
+              </div>
             </div>
-          </div>
+          )}
 
+          <ProjectAreasSection
+            projectType={selectedProject.project_type}
+            projectId={selectedProject.id}
+            areas={selectedProject.areas ?? []}
+            areaProgress={areaProgress}
+            members={members}
+            onAreasChange={handleAreasChange}
+            onCreateArea={handleCreateArea}
+            onUpdateArea={handleUpdateArea}
+            onDeleteArea={handleDeleteArea}
+          />
+
+          {hasAreas(selectedProject.project_type) ? (
+            <p className="text-sm text-muted-foreground mt-4">
+              Clique em <strong>Abrir</strong> em uma área para ver e gerenciar as tarefas dessa área.
+            </p>
+          ) : (
           <div className="mb-6">
             <Tabs 
               defaultValue="board" 
@@ -1145,6 +1217,7 @@ const Projects = () => {
               </TabsContent>
             </Tabs>
           </div>
+          )}
         </div>
       </div>
     );
@@ -1155,7 +1228,18 @@ const Projects = () => {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Gerenciamento de Projetos</h1>
         {viewMode === "list" && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Select value={teamFilter ?? "all"} onValueChange={(v) => setTeamFilter(v === "all" ? null : v)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Equipe" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as equipes</SelectItem>
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="border rounded-md p-0.5 flex">
               <Button 
                 variant={projectsViewType === "grid" ? "default" : "ghost"} 
@@ -1176,9 +1260,11 @@ const Projects = () => {
                 Kanban
               </Button>
             </div>
-            <Button onClick={() => setNewProjectDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Novo Projeto
+            <Button asChild>
+              <Link to="/projects/new">
+                <Plus className="mr-2 h-4 w-4" />
+                Novo Projeto
+              </Link>
             </Button>
           </div>
         )}
@@ -1197,7 +1283,7 @@ const Projects = () => {
               setSelectedProject(project);
               setViewMode("detail");
             }}
-            onNewProject={() => setNewProjectDialogOpen(true)}
+            onNewProject={() => navigate("/projects/new")}
           />
         ) : (
           <BoardView 
@@ -1217,7 +1303,7 @@ const Projects = () => {
               setSelectedProject(project);
               setViewMode("detail");
             }}
-            onAddProject={() => setNewProjectDialogOpen(true)}
+            onAddProject={() => navigate("/projects/new")}
             onMoveProject={moveProject}
           />
         )
@@ -1226,13 +1312,6 @@ const Projects = () => {
       )}
       
       {/* Diálogos */}
-      <NewProjectDialog 
-        open={newProjectDialogOpen}
-        onOpenChange={setNewProjectDialogOpen}
-        onSave={handleCreateProject}
-        availableMembers={members}
-      />
-      
       <NewListDialog
         open={newListDialogOpen}
         onOpenChange={setNewListDialogOpen}
@@ -1250,6 +1329,7 @@ const Projects = () => {
         open={newTaskDialogOpen}
         onOpenChange={setNewTaskDialogOpen}
         members={members}
+        teams={teams}
         onAddTask={handleCreateTask}
         tagsInput={tagsInput}
         setTagsInput={setTagsInput}
@@ -1281,13 +1361,34 @@ const Projects = () => {
             onOpenChange={setProjectSettingsOpen}
             project={selectedProject}
             members={members}
-            onSave={(updatedProject) => {
+            canDeleteProject={user?.can_manage_plan === true || user?.is_super_admin === true}
+            onDeleteProject={async () => {
+              await projectsService.deleteProject(selectedProject.id);
+              setProjects(projects.filter((p) => p.id !== selectedProject.id));
+              setSelectedProject(null);
+              setViewMode("list");
+              toast.success("Projeto excluído.");
+            }}
+            teams={teams}
+            onSave={async (updatedProject) => {
               setProjects(projects.map(p => 
                 p.id === selectedProject.id 
                   ? { ...p, ...updatedProject }
                   : p
               ));
               setSelectedProject({ ...selectedProject, ...updatedProject } as Project);
+              try {
+                await projectsService.updateProject(selectedProject.id, {
+                  name: updatedProject.name,
+                  description: updatedProject.description ?? null,
+                  status: updatedProject.status,
+                  due_date: updatedProject.dueDate ?? null,
+                  team_id: updatedProject.team_id ?? null,
+                });
+              } catch (e) {
+                console.error(e);
+                toast.error("Erro ao salvar configurações no servidor.");
+              }
             }}
           />
           

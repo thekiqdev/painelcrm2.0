@@ -1,13 +1,18 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const devPort = parseInt(env.VITE_DEV_PORT || "8080", 10);
+
+  return {
   server: {
     host: "::",
-    port: 8080,
+    // Porta do frontend em dev; use VITE_DEV_PORT no .env para evitar conflito com outro projeto (ex.: 8081)
+    port: devPort,
   },
   plugins: [
     react(),
@@ -78,4 +83,5 @@ export default defineConfig(({ mode }) => ({
       env: {}
     }),
   },
-}));
+};
+});

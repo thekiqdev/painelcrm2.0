@@ -13,12 +13,14 @@ import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
 import { DomainSection } from "@/components/settings/DomainSection";
 import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
 import { UserManagementSection } from "@/components/settings/UserManagementSection";
+import { TeamsSection } from "@/components/settings/TeamsSection";
 import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesSection";
 import { toast } from "sonner";
 
 type SettingSection = 
   | "companyData" 
   | "users" 
+  | "teams" 
   | "userManagement"
   | "billing" 
   | "notifications" 
@@ -28,7 +30,7 @@ type SettingSection =
   | "clientGroups" 
   | "collaborators" 
   | "whatsapp" 
-  | "domain"
+  | "domain" 
   | "messageTemplates";
 
 const Settings = () => {
@@ -47,6 +49,8 @@ const Settings = () => {
         return <CompanyDataSection handleSave={handleSave} />;
       case "users":
         return <UsersSection />;
+      case "teams":
+        return <TeamsSection />;
       case "userManagement":
         return <UserManagementSection />;
       case "billing":

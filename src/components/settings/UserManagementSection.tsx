@@ -8,12 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { FileEdit, Plus, Trash2, UserPlus, Users } from "lucide-react";
+import { FileEdit, Plus, Trash2, UserPlus, Users, Users2, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { settingsService } from "@/services/settings";
+import { getTenantLimits, getTenantRoles, type TenantRole } from "@/services/tenantLimits";
 import { useAuth } from "@/contexts/AuthContext";
 import { SettingsSectionProps } from "./types";
+import { UserTeamsDialog } from "./UserTeamsDialog";
 
 interface User {
   id: string;
@@ -67,7 +69,11 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   const [newProfileDescription, setNewProfileDescription] = useState("");
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [selectedPermissions, setSelectedPermissions] = useState<PermissionType[]>([]);
-  
+  const [usersLimit, setUsersLimit] = useState<{ current: number; limit: number | null } | null>(null);
+  const [teamsDialogOpen, setTeamsDialogOpen] = useState(false);
+  const [editingUserForTeams, setEditingUserForTeams] = useState<{ id: string; name: string } | null>(null);
+  const [roles, setRoles] = useState<TenantRole[]>([]);
+
   // Lista de permissões disponíveis
   const availablePermissions: { value: PermissionType; label: string }[] = [
     { value: "all_access", label: "Acesso Total" },
@@ -85,6 +91,16 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   // Load data
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    getTenantLimits().then((limits) => {
+      if (limits?.users) setUsersLimit({ current: limits.users.current, limit: limits.users.limit });
+    });
+  }, []);
+
+  useEffect(() => {
+    getTenantRoles().then(setRoles).catch(() => setRoles([]));
   }, []);
   
   // Effect para carregar dados do perfil selecionado
@@ -269,28 +285,77 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
   const getInitials = (email: string) => {
     return email.substring(0, 2).toUpperCase();
   };
+
+  const permissionLabels: Record<string, string> = {
+    all_access: "Acesso Total",
+    manage_clients: "Gerenciar Clientes",
+    view_clients: "Visualizar Clientes",
+    manage_leads: "Gerenciar Leads",
+    view_leads: "Visualizar Leads",
+    manage_funnels: "Gerenciar Funis",
+    view_funnels: "Visualizar Funis",
+    manage_settings: "Gerenciar Configurações",
+    view_reports: "Visualizar Relatórios",
+    manage_users: "Gerenciar Usuários",
+  };
   
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Gerenciamento de Usuários</CardTitle>
+          <CardTitle>Perfis de acesso</CardTitle>
           <CardDescription>
-            Gerencie usuários e suas permissões nos diferentes perfis
+            Perfis (roles) e suas permissões; gerencie também perfis e membros por workspace
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="profiles">
+          <Tabs defaultValue="roles">
             <TabsList className="mb-4">
+              <TabsTrigger value="roles">
+                <Shield className="h-4 w-4 mr-2" />
+                Perfis de acesso
+              </TabsTrigger>
               <TabsTrigger value="profiles">
                 <Users className="h-4 w-4 mr-2" />
-                Perfis
+                Perfis e membros
               </TabsTrigger>
               <TabsTrigger value="users">
                 <UserPlus className="h-4 w-4 mr-2" />
                 Usuários
               </TabsTrigger>
             </TabsList>
+
+            <TabsContent value="roles">
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Cada perfil de acesso (Administrador, Gestor, Operacional, Visualizador) define um conjunto fixo de permissões. Para alterar o perfil de um usuário, use a seção <strong>Usuários</strong> e o campo &quot;Perfil de acesso&quot; na linha do usuário.
+                </p>
+                {roles.length === 0 ? (
+                  <p className="text-sm text-muted-foreground" role="status">Carregando perfis de acesso...</p>
+                ) : (
+                  <div className="space-y-4">
+                    {roles.map((r) => (
+                      <div key={r.role} className="border rounded-lg p-4">
+                        <h4 className="font-medium mb-2">{r.name}</h4>
+                        <div className="flex flex-wrap gap-1">
+                          {r.permissions.map((perm) => (
+                            <span
+                              key={perm}
+                              className="px-2 py-1 bg-muted rounded-md text-xs"
+                            >
+                              {permissionLabels[perm] ?? perm}
+                            </span>
+                          ))}
+                          {r.permissions.length === 0 && (
+                            <span className="text-muted-foreground text-sm">Nenhuma permissão explícita</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
             
             <TabsContent value="profiles">
               <div className="space-y-4">
@@ -367,7 +432,21 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
                                 )}
                               </div>
                               <div className="col-span-2 flex items-center gap-1">
-                                <Button variant="ghost" size="icon">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  title="Editar equipes"
+                                  onClick={() => {
+                                    setEditingUserForTeams({
+                                      id: member.user_id,
+                                      name: member.email ?? "Usuário",
+                                    });
+                                    setTeamsDialogOpen(true);
+                                  }}
+                                >
+                                  <Users2 className="h-4 w-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" title="Editar permissões">
                                   <FileEdit className="h-4 w-4" />
                                 </Button>
                                 <Button
@@ -406,18 +485,39 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
             
             <TabsContent value="users">
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
+                {(() => {
+                  const atLimit = usersLimit?.limit != null && usersLimit.current >= usersLimit.limit;
+                  const limitLabel =
+                    usersLimit?.limit != null
+                      ? `${usersLimit.current} de ${usersLimit.limit} usuários`
+                      : usersLimit != null
+                        ? `${usersLimit.current} usuários`
+                        : null;
+                  return (
+                <div className="flex justify-between items-center flex-wrap gap-2">
                   <div>
-                    <h3 className="text-lg font-medium">Usuários</h3>
+                    <h3 className="text-lg font-medium flex items-center gap-2">
+                      Usuários
+                      {limitLabel && (
+                        <span className="text-sm font-normal text-muted-foreground">({limitLabel})</span>
+                      )}
+                    </h3>
                     <p className="text-sm text-muted-foreground">
                       Gerencie os usuários do sistema
                     </p>
                   </div>
-                  <Button size="sm" onClick={() => setUserDialogOpen(true)}>
+                  <Button
+                    size="sm"
+                    onClick={() => setUserDialogOpen(true)}
+                    disabled={atLimit}
+                    title={atLimit ? "Limite de usuários do plano atingido" : undefined}
+                  >
                     <UserPlus className="mr-2 h-4 w-4" />
                     Novo Usuário
                   </Button>
                 </div>
+                  );
+                })()}
                 
                 <div className="border rounded-md">
                   <div className="grid grid-cols-12 gap-4 p-4 border-b font-medium text-sm">
@@ -589,6 +689,13 @@ export const UserManagementSection: React.FC<SettingsSectionProps> = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <UserTeamsDialog
+        open={teamsDialogOpen}
+        onOpenChange={setTeamsDialogOpen}
+        userId={editingUserForTeams?.id ?? null}
+        userDisplayName={editingUserForTeams?.name}
+      />
     </>
   );
 };

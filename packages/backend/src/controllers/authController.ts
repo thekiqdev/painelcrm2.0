@@ -5,6 +5,7 @@ import { hashPassword, comparePassword } from '../utils/bcrypt.js';
 import { generateToken } from '../utils/jwt.js';
 import { getEnabledFeaturesForUser } from '../services/featureFlagService.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
+import { checkTenantUsersLimitForAddOne } from '../services/tenantLimitService.js';
 import { z } from 'zod';
 
 const registerSchema = z.object({
@@ -183,6 +184,16 @@ export async function register(req: Request, res: Response): Promise<void> {
             [inferredCompanyName, slug, planId]
           );
       const tenantId = tenantResult.rows[0].id;
+      const usersLimit = await checkTenantUsersLimitForAddOne(tenantId);
+      if (!usersLimit.allowed) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        const msg = usersLimit.limit != null
+          ? `Limite de usuários do plano atingido (${usersLimit.current} de ${usersLimit.limit}).`
+          : 'Limite de usuários atingido.';
+        res.status(403).json({ error: msg });
+        return;
+      }
       await client.query('UPDATE users SET tenant_id = $1 WHERE id = $2', [tenantId, user.id]);
       await client.query(
         'INSERT INTO tenant_plan (tenant_id, plan_id, starts_at) VALUES ($1, $2, now())',

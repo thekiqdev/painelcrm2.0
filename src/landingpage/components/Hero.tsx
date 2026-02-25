@@ -45,11 +45,12 @@ const Hero = () => {
 
           <div className="relative mt-12 w-full max-w-5xl animate-fade-up" style={{ animationDelay: "0.5s" }}>
             <div className="rounded-xl border border-border/60 bg-card p-1.5 glow-primary">
-              <img
-                src="/landingpage/hero-dashboard.jpg"
-                alt="Dashboard MultiCRM mostrando funil de vendas, clientes e WhatsApp integrado"
-                className="w-full rounded-lg"
-              />
+              <div
+                className="w-full rounded-lg aspect-video bg-muted/50 flex items-center justify-center text-muted-foreground"
+                aria-hidden
+              >
+                <span className="text-sm">Dashboard integrado</span>
+              </div>
             </div>
             <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent" />
           </div>

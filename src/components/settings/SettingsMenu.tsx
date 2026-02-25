@@ -15,13 +15,15 @@ import {
   Users2, 
   MessageSquare, 
   Globe,
-  FileText
+  FileText,
+  Shield
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type SettingSection = 
   | "companyData" 
   | "users" 
+  | "teams"
   | "userManagement"
   | "billing" 
   | "notifications" 
@@ -31,7 +33,7 @@ type SettingSection =
   | "clientGroups" 
   | "collaborators" 
   | "whatsapp" 
-  | "domain"
+  | "domain" 
   | "messageTemplates";
 
 interface SettingsMenuProps {
@@ -49,10 +51,12 @@ interface MenuItem {
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSelect }) => {
   // Definir itens do menu agrupados por categoria
   const menuItems: MenuItem[] = [
+    // Usuários e Acesso
+    { id: "users", label: "Usuários", icon: <Users className="h-4 w-4" />, category: "Usuários e Acesso" },
+    { id: "teams", label: "Equipes", icon: <Users2 className="h-4 w-4" />, category: "Usuários e Acesso" },
+    { id: "userManagement", label: "Perfis de acesso", icon: <Shield className="h-4 w-4" />, category: "Usuários e Acesso" },
     // Categoria Geral
     { id: "companyData", label: "Dados da Empresa", icon: <Building className="h-4 w-4" />, category: "Geral" },
-    { id: "users", label: "Usuários", icon: <Users className="h-4 w-4" />, category: "Geral" },
-    { id: "userManagement", label: "Gerenciar Perfis", icon: <UserCog className="h-4 w-4" />, category: "Geral" },
     { id: "billing", label: "Cobrança", icon: <CreditCard className="h-4 w-4" />, category: "Geral" },
     
     // Categoria Preferências
@@ -82,7 +86,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
   }, {});
 
   // Ordem das categorias
-  const categoryOrder = ["Geral", "Preferências", "CRM", "Integrações", "Outros"];
+  const categoryOrder = ["Usuários e Acesso", "Geral", "Preferências", "CRM", "Integrações", "Outros"];
 
   return (
     <div className="w-full h-full border rounded-md">

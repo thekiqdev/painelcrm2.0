@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,12 +16,19 @@ import { format } from "date-fns";
 import { Member } from "@/components/shared/types";
 import { RichTextEditor } from "@/components/shared/RichTextEditor";
 import { useToast } from "@/hooks/use-toast";
+import { teamsService } from "@/services/teams";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+interface TeamOption {
+  id: string;
+  name: string;
+}
 
 interface NewTaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   members: Member[];
+  teams?: TeamOption[];
   onAddTask: (formData: FormData) => void;
   tagsInput: string[];
   setTagsInput: React.Dispatch<React.SetStateAction<string[]>>;
@@ -46,6 +53,7 @@ export function NewTaskDialog({
   open,
   onOpenChange,
   members,
+  teams = [],
   onAddTask,
   tagsInput,
   setTagsInput,
@@ -53,7 +61,23 @@ export function NewTaskDialog({
   setNewTagText
 }: NewTaskDialogProps) {
   const { toast } = useToast();
-  
+  const [assigneeTeamFilter, setAssigneeTeamFilter] = useState<string | null>(null);
+  const [teamMembers, setTeamMembers] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    if (!assigneeTeamFilter) {
+      setTeamMembers([]);
+      return;
+    }
+    teamsService.getTeamMembers(assigneeTeamFilter).then((list) => {
+      setTeamMembers(list.map((m) => ({ id: m.user_id, name: m.name || m.email || m.user_id })));
+    }).catch(() => setTeamMembers([]));
+  }, [assigneeTeamFilter]);
+
+  const assigneeOptions = assigneeTeamFilter && teamMembers.length > 0
+    ? teamMembers
+    : members.map((m) => ({ id: m.id, name: m.name }));
+
   // Basic fields
   const [dueDate, setDueDate] = useState<Date>();
   const [startDate, setStartDate] = useState<Date>();
@@ -222,6 +246,22 @@ export function NewTaskDialog({
                 </div>
               </div>
 
+              {teams.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Filtrar responsáveis por equipe</Label>
+                  <Select value={assigneeTeamFilter ?? "all"} onValueChange={(v) => setAssigneeTeamFilter(v === "all" ? null : v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas</SelectItem>
+                      {teams.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="assignee">Responsável</Label>
                 <Select name="assignee">
@@ -229,7 +269,7 @@ export function NewTaskDialog({
                     <SelectValue placeholder="Selecionar responsável" />
                   </SelectTrigger>
                   <SelectContent>
-                    {members.map(member => (
+                    {assigneeOptions.map((member) => (
                       <SelectItem key={member.id} value={member.id}>
                         {member.name}
                       </SelectItem>

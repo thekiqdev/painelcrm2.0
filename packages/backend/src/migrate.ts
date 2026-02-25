@@ -59,6 +59,13 @@ const order = [
   '41_seed_default_plan.sql',
   '42_plans_benefits.sql',
   '43_plans_free.sql',
+  '44_projects_wizard_foundation.sql',
+  '45_projects_wizard_phase2.sql',
+  '46_project_areas_and_versions.sql',
+  '47_project_tasks_area_id.sql',
+  '48_project_areas_responsible_ids.sql',
+  '49_teams_and_team_members.sql',
+  '50_projects_team_id.sql',
   'create-admin-user.sql',
 ];
 

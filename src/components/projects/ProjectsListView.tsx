@@ -106,11 +106,17 @@ export function ProjectsListView({ projects, onViewDetails, onNewProject }: Proj
           </Card>
         ))}
         
-        <Card className="flex items-center justify-center p-6 border-dashed border-2">
-          <Button variant="ghost" onClick={onNewProject}>
+        <Card
+          className="flex items-center justify-center p-6 border-dashed border-2 cursor-pointer transition-colors hover:bg-muted/50"
+          onClick={onNewProject}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onNewProject(); } }}
+        >
+          <span className="flex items-center text-muted-foreground hover:text-foreground">
             <Plus className="h-6 w-6 mr-2" />
             Novo Projeto
-          </Button>
+          </span>
         </Card>
       </div>
     </div>

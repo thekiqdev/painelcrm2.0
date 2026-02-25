@@ -56,6 +56,18 @@ export interface ProjectFinanceItem {
 // Interface Project
 import { Member } from "@/components/shared/types";
 
+export interface ProjectArea {
+  id: string;
+  project_id: string;
+  name: string;
+  sort_order: number;
+  responsible_ids?: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type ProjectType = "simple" | "areas" | "advanced" | "template";
+
 export interface Project {
   id: string;
   name: string;
@@ -68,4 +80,9 @@ export interface Project {
   files?: ProjectFile[];
   financeItems: ProjectFinanceItem[];
   kanbanStage?: string;
+  project_type?: ProjectType;
+  areas?: ProjectArea[];
+  /** Equipe responsável (opcional). */
+  team_id?: string | null;
+  teamName?: string | null;
 }

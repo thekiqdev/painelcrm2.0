@@ -114,3 +114,18 @@
     display: inline;
   }
 }
+
+/* SystemRichEditor: placeholder e conteúdo */
+.system-rich-editor-content .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+  height: 0;
+}
+.system-rich-editor-content .tiptap pre {
+  @apply rounded-md bg-muted px-3 py-2 text-sm;
+}
+.system-rich-editor-content .tiptap blockquote {
+  @apply border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground;
+}

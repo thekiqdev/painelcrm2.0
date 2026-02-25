@@ -40,6 +40,26 @@ export async function checkTenantUsersLimit(tenantId: string): Promise<{
 }
 
 /**
+ * Verifica se o tenant pode adicionar mais um usuário (ex.: no registro ou em convite).
+ * Retorna allowed quando (current + 1) <= limit ou limit é null.
+ */
+export async function checkTenantUsersLimitForAddOne(tenantId: string): Promise<{
+  allowed: boolean;
+  current: number;
+  limit: number | null;
+}> {
+  const limit = await getTenantLimit(tenantId, 'max_users', 'max_users_override');
+  const countRow = await pool.query(
+    'SELECT COUNT(*)::int AS c FROM users WHERE tenant_id = $1',
+    [tenantId]
+  );
+  const current = countRow.rows[0]?.c ?? 0;
+  if (limit == null) return { allowed: true, current, limit: null };
+  const allowed = current + 1 <= limit;
+  return { allowed, current, limit };
+}
+
+/**
  * Verifica se o tenant pode adicionar mais perfis (respeita override e depois max_profiles do plano).
  */
 export async function checkTenantProfilesLimit(tenantId: string): Promise<{

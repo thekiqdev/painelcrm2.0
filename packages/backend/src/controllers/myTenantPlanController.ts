@@ -5,6 +5,8 @@
 import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { checkTenantUsersLimit } from '../services/tenantLimitService.js';
+import { ROLE_DISPLAY_NAMES, getPermissionsForRole, type AppRole } from '../services/rolePermissionsService.js';
 import { z } from 'zod';
 
 async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
@@ -21,6 +23,176 @@ async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: stri
   if (r.rows.length === 0) return null;
   const row = r.rows[0];
   return { tenantId: row.tenant_id, primaryUserId: row.primary_user_id };
+}
+
+async function getMyTenantId(req: AuthRequest): Promise<string | null> {
+  const userId = req.userId;
+  if (!userId) return null;
+  const r = await pool.query('SELECT tenant_id FROM users WHERE id = $1', [userId]);
+  return r.rows[0]?.tenant_id ?? null;
+}
+
+/** GET /api/me/tenant/users - lista usuários do tenant do usuário logado (nome, email, role, último acesso). */
+export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const result = await pool.query(
+      `SELECT u.id, u.email, u.is_super_admin,
+        TRIM(COALESCE(p.first_name, '') || ' ' || COALESCE(p.last_name, '')) AS full_name,
+        (SELECT MAX(s.last_used_at) FROM sessions s WHERE s.user_id = u.id) AS last_used_at,
+        (SELECT ur.role::text FROM user_roles ur
+         JOIN user_profiles up ON up.id = ur.profile_id
+         JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
+         WHERE ur.user_id = u.id LIMIT 1) AS role
+       FROM users u
+       LEFT JOIN profiles p ON p.id = u.id
+       WHERE u.tenant_id = $1
+       ORDER BY u.created_at ASC`,
+      [tenantId]
+    );
+    const rows = result.rows.map((r: Record<string, unknown>) => ({
+      id: r.id,
+      email: r.email,
+      full_name: (r.full_name as string)?.trim() || null,
+      last_used_at: r.last_used_at,
+      role: r.role || null,
+      is_super_admin: r.is_super_admin === true,
+    }));
+    res.json(rows);
+  } catch (error: any) {
+    console.error('getMyTenantUsers error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+/** GET /api/me/tenant/roles - lista perfis de acesso (roles) com suas permissões padrão. */
+export async function getMyTenantRoles(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const roles = (['admin', 'manager', 'member', 'viewer'] as AppRole[]).map((role) => ({
+      role,
+      name: ROLE_DISPLAY_NAMES[role],
+      permissions: getPermissionsForRole(role),
+    }));
+    res.json(roles);
+  } catch (error: any) {
+    console.error('getMyTenantRoles error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+const putUserRoleSchema = z.object({ role: z.enum(['admin', 'manager', 'member', 'viewer']) });
+
+/** PUT /api/me/tenant/users/:userId/role - atribui perfil de acesso (role) ao usuário no tenant. */
+export async function putMyTenantUserRole(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const requesterId = req.userId!;
+    const { userId: targetUserId } = req.params;
+    const body = putUserRoleSchema.parse(req.body);
+    const role = body.role as AppRole;
+
+    if (!targetUserId) {
+      res.status(400).json({ error: 'userId é obrigatório' });
+      return;
+    }
+
+    const targetUser = await pool.query(
+      'SELECT id FROM users WHERE id = $1 AND tenant_id = $2',
+      [targetUserId, tenantId]
+    );
+    if (targetUser.rows.length === 0) {
+      res.status(404).json({ error: 'Usuário não encontrado no tenant' });
+      return;
+    }
+
+    const profileResult = await pool.query(
+      `SELECT up.id FROM user_profiles up
+       JOIN users o ON o.id = up.owner_id AND o.tenant_id = $1
+       ORDER BY up.created_at ASC LIMIT 1`,
+      [tenantId]
+    );
+    if (profileResult.rows.length === 0) {
+      res.status(400).json({ error: 'Nenhum perfil encontrado no tenant' });
+      return;
+    }
+    const profileId = profileResult.rows[0].id;
+
+    const isMember = await pool.query(
+      'SELECT 1 FROM profile_members WHERE profile_id = $1 AND user_id = $2',
+      [profileId, targetUserId]
+    );
+    if (isMember.rows.length === 0) {
+      await pool.query(
+        'INSERT INTO profile_members (profile_id, user_id, created_by) VALUES ($1, $2, $3)',
+        [profileId, targetUserId, requesterId]
+      );
+    }
+
+    await pool.query(
+      'DELETE FROM user_roles WHERE user_id = $1 AND profile_id = $2',
+      [targetUserId, profileId]
+    );
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role, profile_id, created_by) VALUES ($1, $2, $3, $4)`,
+      [targetUserId, role, profileId, requesterId]
+    );
+
+    const permissions = getPermissionsForRole(role);
+    await pool.query(
+      'DELETE FROM user_permissions WHERE user_id = $1 AND profile_id = $2',
+      [targetUserId, profileId]
+    );
+    for (const permission of permissions) {
+      await pool.query(
+        `INSERT INTO user_permissions (user_id, profile_id, permission, created_by) VALUES ($1, $2, $3, $4)`,
+        [targetUserId, profileId, permission, requesterId]
+      );
+    }
+
+    res.json({ role, profile_id: profileId });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('putMyTenantUserRole error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** GET /api/me/tenant/limits - limites de uso do tenant (usuários, etc.). Qualquer usuário do tenant pode acessar. */
+export async function getMyTenantLimits(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const usersLimit = await checkTenantUsersLimit(tenantId);
+    res.json({
+      users: {
+        current: usersLimit.current,
+        limit: usersLimit.limit,
+        allowed: usersLimit.allowed,
+      },
+    });
+  } catch (error: any) {
+    console.error('getMyTenantLimits error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
 }
 
 /** GET /api/me/tenant/plan - plano atual do tenant do usuário (apenas primary user). */

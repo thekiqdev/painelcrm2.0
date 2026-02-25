@@ -33,15 +33,43 @@ const taskSchema = z.object({
   task_type: z.string().default('task'),
   meeting_location: z.string().optional().nullable(),
   meeting_link: z.string().optional().nullable(),
+  area_id: z.string().uuid().optional().nullable(),
+  list_id: z.string().uuid().optional().nullable(),
 });
 
-// GET /api/projects/lists/:listId/tasks
+const TASK_SELECT = `id, list_id, project_id, area_id, title, description, status, priority, due_date, assignee_id,
+  tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
+  checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
+  milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
+  budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
+  created_at, updated_at`;
+
+function mapTaskRow(row: any) {
+  return {
+    ...row,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    checklist: Array.isArray(row.checklist) ? row.checklist : [],
+    attachments: Array.isArray(row.attachments) ? row.attachments : [],
+    dependencies: Array.isArray(row.dependencies) ? row.dependencies : [],
+    watchers: Array.isArray(row.watchers) ? row.watchers : [],
+    reminders: Array.isArray(row.reminders) ? row.reminders : [],
+    custom_fields: row.custom_fields || {},
+    due_date: row.due_date ? new Date(row.due_date).toISOString() : null,
+    start_date: row.start_date ? new Date(row.start_date).toISOString() : null,
+    estimated_effort_hours: row.estimated_effort_hours != null ? parseFloat(row.estimated_effort_hours) : null,
+    estimated_story_points: row.estimated_story_points != null ? parseFloat(row.estimated_story_points) : null,
+    hourly_rate: row.hourly_rate != null ? parseFloat(row.hourly_rate) : null,
+    budget_cap: row.budget_cap != null ? parseFloat(row.budget_cap) : null,
+  };
+}
+
+// GET /api/projects/lists/:listId/tasks?areaId=uuid (areaId opcional: filtra por área)
 export const getProjectTasks = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { listId } = req.params;
+    const areaId = (req.query.areaId as string) || null;
 
-    // Verificar se a lista pertence a um projeto do usuário
     const listCheck = await pool.query(
       `SELECT pl.id, pl.project_id
        FROM project_lists pl
@@ -54,37 +82,26 @@ export const getProjectTasks = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Lista não encontrada' });
     }
 
-    const result = await pool.query(
-      `SELECT id, list_id, project_id, title, description, status, priority, due_date, assignee_id,
-              tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
-              checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
-              milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
-              budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
-              created_at, updated_at
-       FROM project_tasks
-       WHERE list_id = $1
-       ORDER BY created_at ASC`,
-      [listId]
-    );
+    let result;
+    if (areaId) {
+      result = await pool.query(
+        `SELECT ${TASK_SELECT}
+         FROM project_tasks
+         WHERE list_id = $1 AND area_id = $2
+         ORDER BY created_at ASC`,
+        [listId, areaId]
+      );
+    } else {
+      result = await pool.query(
+        `SELECT ${TASK_SELECT}
+         FROM project_tasks
+         WHERE list_id = $1
+         ORDER BY created_at ASC`,
+        [listId]
+      );
+    }
 
-    const tasks = result.rows.map(task => ({
-      ...task,
-      tags: Array.isArray(task.tags) ? task.tags : [],
-      checklist: Array.isArray(task.checklist) ? task.checklist : [],
-      attachments: Array.isArray(task.attachments) ? task.attachments : [],
-      dependencies: Array.isArray(task.dependencies) ? task.dependencies : [],
-      watchers: Array.isArray(task.watchers) ? task.watchers : [],
-      reminders: Array.isArray(task.reminders) ? task.reminders : [],
-      custom_fields: task.custom_fields || {},
-      due_date: task.due_date ? new Date(task.due_date).toISOString() : null,
-      start_date: task.start_date ? new Date(task.start_date).toISOString() : null,
-      estimated_effort_hours: task.estimated_effort_hours ? parseFloat(task.estimated_effort_hours) : null,
-      estimated_story_points: task.estimated_story_points ? parseFloat(task.estimated_story_points) : null,
-      hourly_rate: task.hourly_rate ? parseFloat(task.hourly_rate) : null,
-      budget_cap: task.budget_cap ? parseFloat(task.budget_cap) : null,
-    }));
-
-    res.json(tasks);
+    res.json(result.rows.map(mapTaskRow));
   } catch (error) {
     console.error('Error fetching project tasks:', error);
     res.status(500).json({ error: 'Erro ao buscar tarefas' });
@@ -111,12 +128,7 @@ export const getProjectTaskById = async (req: Request, res: Response) => {
     }
 
     const result = await pool.query(
-      `SELECT id, list_id, project_id, title, description, status, priority, due_date, assignee_id,
-              tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
-              checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
-              milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
-              budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
-              created_at, updated_at
+      `SELECT ${TASK_SELECT}
        FROM project_tasks
        WHERE id = $1`,
       [taskId]
@@ -126,24 +138,7 @@ export const getProjectTaskById = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Tarefa não encontrada' });
     }
 
-    const task = {
-      ...result.rows[0],
-      tags: Array.isArray(result.rows[0].tags) ? result.rows[0].tags : [],
-      checklist: Array.isArray(result.rows[0].checklist) ? result.rows[0].checklist : [],
-      attachments: Array.isArray(result.rows[0].attachments) ? result.rows[0].attachments : [],
-      dependencies: Array.isArray(result.rows[0].dependencies) ? result.rows[0].dependencies : [],
-      watchers: Array.isArray(result.rows[0].watchers) ? result.rows[0].watchers : [],
-      reminders: Array.isArray(result.rows[0].reminders) ? result.rows[0].reminders : [],
-      custom_fields: result.rows[0].custom_fields || {},
-      due_date: result.rows[0].due_date ? new Date(result.rows[0].due_date).toISOString() : null,
-      start_date: result.rows[0].start_date ? new Date(result.rows[0].start_date).toISOString() : null,
-      estimated_effort_hours: result.rows[0].estimated_effort_hours ? parseFloat(result.rows[0].estimated_effort_hours) : null,
-      estimated_story_points: result.rows[0].estimated_story_points ? parseFloat(result.rows[0].estimated_story_points) : null,
-      hourly_rate: result.rows[0].hourly_rate ? parseFloat(result.rows[0].hourly_rate) : null,
-      budget_cap: result.rows[0].budget_cap ? parseFloat(result.rows[0].budget_cap) : null,
-    };
-
-    res.json(task);
+    res.json(mapTaskRow(result.rows[0]));
   } catch (error) {
     console.error('Error fetching project task:', error);
     res.status(500).json({ error: 'Erro ao buscar tarefa' });
@@ -171,30 +166,27 @@ export const createProjectTask = async (req: Request, res: Response) => {
 
     const projectId = listCheck.rows[0].project_id;
     const validated = taskSchema.parse(req.body);
+    const areaId = validated.area_id ?? null;
 
     const result = await pool.query(
       `INSERT INTO project_tasks (
-        list_id, project_id, user_id, title, description, status, priority, due_date, assignee_id,
+        list_id, project_id, user_id, area_id, title, description, status, priority, due_date, assignee_id,
         tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
         checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
         milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
         budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15,
-        $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb,
-        $22, $23, $24, $25, $26, $27, $28, $29::jsonb, $30, $31, $32, $33
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16,
+        $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22::jsonb,
+        $23, $24, $25, $26, $27, $28, $29, $30, $31::jsonb, $32, $33, $34, $35
       )
-      RETURNING id, list_id, project_id, title, description, status, priority, due_date, assignee_id,
-                tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
-                checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
-                milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
-                budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
-                created_at, updated_at`,
+      RETURNING ${TASK_SELECT}`,
       [
         listId,
         projectId,
         userId,
+        areaId,
         validated.title,
         validated.description || null,
         validated.status,
@@ -228,24 +220,7 @@ export const createProjectTask = async (req: Request, res: Response) => {
       ]
     );
 
-    const task = {
-      ...result.rows[0],
-      tags: Array.isArray(result.rows[0].tags) ? result.rows[0].tags : [],
-      checklist: Array.isArray(result.rows[0].checklist) ? result.rows[0].checklist : [],
-      attachments: Array.isArray(result.rows[0].attachments) ? result.rows[0].attachments : [],
-      dependencies: Array.isArray(result.rows[0].dependencies) ? result.rows[0].dependencies : [],
-      watchers: Array.isArray(result.rows[0].watchers) ? result.rows[0].watchers : [],
-      reminders: Array.isArray(result.rows[0].reminders) ? result.rows[0].reminders : [],
-      custom_fields: result.rows[0].custom_fields || {},
-      due_date: result.rows[0].due_date ? new Date(result.rows[0].due_date).toISOString() : null,
-      start_date: result.rows[0].start_date ? new Date(result.rows[0].start_date).toISOString() : null,
-      estimated_effort_hours: result.rows[0].estimated_effort_hours ? parseFloat(result.rows[0].estimated_effort_hours) : null,
-      estimated_story_points: result.rows[0].estimated_story_points ? parseFloat(result.rows[0].estimated_story_points) : null,
-      hourly_rate: result.rows[0].hourly_rate ? parseFloat(result.rows[0].hourly_rate) : null,
-      budget_cap: result.rows[0].budget_cap ? parseFloat(result.rows[0].budget_cap) : null,
-    };
-
-    res.status(201).json(task);
+    res.status(201).json(mapTaskRow(result.rows[0]));
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
@@ -269,6 +244,7 @@ export const updateProjectTask = async (req: Request, res: Response) => {
 
     // Construir updates dinamicamente
     const fieldMappings: Record<string, any> = {
+      list_id: validated.list_id,
       title: validated.title,
       description: validated.description,
       status: validated.status,
@@ -318,7 +294,7 @@ export const updateProjectTask = async (req: Request, res: Response) => {
 
     // Verificar se a tarefa pertence a um projeto do usuário
     const taskCheck = await pool.query(
-      `SELECT t.id
+      `SELECT t.id, t.project_id
        FROM project_tasks t
        INNER JOIN projects p ON t.project_id = p.id
        WHERE t.id = $1 AND p.user_id = $2`,
@@ -329,38 +305,26 @@ export const updateProjectTask = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Tarefa não encontrada' });
     }
 
+    if (validated.list_id) {
+      const listCheck = await pool.query(
+        `SELECT id FROM project_lists WHERE id = $1 AND project_id = $2`,
+        [validated.list_id, taskCheck.rows[0].project_id]
+      );
+      if (listCheck.rows.length === 0) {
+        return res.status(400).json({ error: 'Lista não pertence ao projeto da tarefa' });
+      }
+    }
+
     values.push(taskId);
     const result = await pool.query(
       `UPDATE project_tasks
        SET ${updates.join(', ')}, updated_at = now()
        WHERE id = $${paramCount}
-       RETURNING id, list_id, project_id, title, description, status, priority, due_date, assignee_id,
-                tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
-                checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
-                milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
-                budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
-                created_at, updated_at`,
+       RETURNING ${TASK_SELECT}`,
       values
     );
 
-    const task = {
-      ...result.rows[0],
-      tags: Array.isArray(result.rows[0].tags) ? result.rows[0].tags : [],
-      checklist: Array.isArray(result.rows[0].checklist) ? result.rows[0].checklist : [],
-      attachments: Array.isArray(result.rows[0].attachments) ? result.rows[0].attachments : [],
-      dependencies: Array.isArray(result.rows[0].dependencies) ? result.rows[0].dependencies : [],
-      watchers: Array.isArray(result.rows[0].watchers) ? result.rows[0].watchers : [],
-      reminders: Array.isArray(result.rows[0].reminders) ? result.rows[0].reminders : [],
-      custom_fields: result.rows[0].custom_fields || {},
-      due_date: result.rows[0].due_date ? new Date(result.rows[0].due_date).toISOString() : null,
-      start_date: result.rows[0].start_date ? new Date(result.rows[0].start_date).toISOString() : null,
-      estimated_effort_hours: result.rows[0].estimated_effort_hours ? parseFloat(result.rows[0].estimated_effort_hours) : null,
-      estimated_story_points: result.rows[0].estimated_story_points ? parseFloat(result.rows[0].estimated_story_points) : null,
-      hourly_rate: result.rows[0].hourly_rate ? parseFloat(result.rows[0].hourly_rate) : null,
-      budget_cap: result.rows[0].budget_cap ? parseFloat(result.rows[0].budget_cap) : null,
-    };
-
-    res.json(task);
+    res.json(mapTaskRow(result.rows[0]));
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
@@ -398,6 +362,37 @@ export const deleteProjectTask = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error deleting project task:', error);
     res.status(500).json({ error: 'Erro ao deletar tarefa' });
+  }
+};
+
+// GET /api/projects/:projectId/areas/:areaId/tasks — tarefas da área (para painel contextual)
+export const getTasksByArea = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { projectId, areaId } = req.params;
+
+    const areaCheck = await pool.query(
+      `SELECT pa.id FROM project_areas pa
+       INNER JOIN projects p ON pa.project_id = p.id
+       WHERE pa.id = $1 AND pa.project_id = $2 AND p.user_id = $3`,
+      [areaId, projectId, userId]
+    );
+    if (areaCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Área não encontrada' });
+    }
+
+    const result = await pool.query(
+      `SELECT ${TASK_SELECT}
+       FROM project_tasks
+       WHERE project_id = $1 AND area_id = $2
+       ORDER BY list_id, created_at ASC`,
+      [projectId, areaId]
+    );
+
+    res.json(result.rows.map(mapTaskRow));
+  } catch (error) {
+    console.error('Error fetching tasks by area:', error);
+    res.status(500).json({ error: 'Erro ao buscar tarefas da área' });
   }
 };
 

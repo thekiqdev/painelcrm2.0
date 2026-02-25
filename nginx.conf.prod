@@ -18,10 +18,9 @@ server {
     gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
 
     # WebSocket/Socket.IO proxy - DEVE VIR ANTES DE / PARA NÃO SER CAPTURADO
-    # IMPORTANTE: Socket.IO precisa de Upgrade headers e timeouts longos
-    # Captura tanto /socket.io/ quanto /socket.io (com ou sem barra final)
+    # Use o mesmo host do backend (ex.: painelcrm-backend:3001)
     location ~ ^/socket\.io(/.*)?$ {
-        set $backend "sistemas_painelcrm:3001";
+        set $backend "painelcrm-backend:3001";
         # Definir Connection header baseado em Upgrade (necessário para WebSocket)
         set $connection_upgrade "upgrade";
         if ($http_upgrade = '') {
@@ -54,12 +53,10 @@ server {
         # O Socket.IO precisa processar OPTIONS para configurar CORS corretamente
     }
 
-    # API proxy - Use o nome do serviço backend no Easypanel
-    # IMPORTANTE: O nome deve corresponder EXATAMENTE ao nome do serviço no Easypanel
-    # Se o serviço se chama "sistemas_painelcrm", use "sistemas_painelcrm:3001"
-    # Se o serviço se chama "painelcrm", use "painelcrm:3001"
+    # API proxy - Nome do serviço backend no Easypanel/Docker
+    # Se der 502: confira o hostname interno do backend (ex.: painelcrm-backend ou painelcrm_painelcrm-backend)
     location /api {
-        set $backend "sistemas_painelcrm:3001";
+        set $backend "painelcrm-backend:3001";
         # Definir Connection header baseado em Upgrade (para suporte a WebSocket via API se necessário)
         set $connection_upgrade "upgrade";
         if ($http_upgrade = '') {
@@ -89,9 +86,9 @@ server {
         proxy_intercept_errors off;
     }
 
-    # Webhooks proxy - Roteia webhooks para o backend
+    # Webhooks proxy - Use o mesmo host do backend
     location /webhooks {
-        set $backend "sistemas_painelcrm:3001";
+        set $backend "painelcrm-backend:3001";
         proxy_pass http://$backend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

@@ -24,6 +24,8 @@ const Leads = lazy(() => import("./pages/Leads"));
 const Funnel = lazy(() => import("./pages/Funnel"));
 const Tasks = lazy(() => import("./pages/Tasks"));
 const Projects = lazy(() => import("./pages/Projects"));
+const ProjectWizardPage = lazy(() => import("./pages/ProjectWizardPage"));
+const ProjectAreaPage = lazy(() => import("./pages/ProjectAreaPage"));
 const ProjectTemplates = lazy(() => import("./pages/ProjectTemplates"));
 const Products = lazy(() => import("./pages/Products"));
 const Proposals = lazy(() => import("./pages/Proposals"));
@@ -184,6 +186,24 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Projects />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projects/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProjectWizardPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projects/:projectId/area/:areaId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProjectAreaPage />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>
