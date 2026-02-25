@@ -21,26 +21,27 @@ function mapProjectRow(row: any) {
 /** Para novo project_type: adicionar aqui, migration (chk_project_type) e branch em createProject; frontend: types.ts + Step1 + Step3. */
 const PROJECT_TYPES = ['simple', 'areas', 'advanced', 'template'] as const;
 
-const projectSchema = z
-  .object({
-    name: z.string().min(1, 'Nome é obrigatório'),
-    description: z.string().optional().nullable(),
-    status: z.string().default('active'),
-    due_date: z.string().optional().nullable(),
-    tags: z.array(z.string()).default([]),
-    kanban_stage: z.string().optional().nullable(),
-    project_type: z.enum(PROJECT_TYPES).optional().default('simple'),
-    template_id: z.string().uuid().optional().nullable(),
-    client_id: z.string().uuid().optional().nullable(),
-    start_date: z.string().optional().nullable(),
-    end_date: z.string().optional().nullable(),
-    responsible_ids: z.array(z.string().uuid()).optional().default([]),
-    team_id: z.string().uuid().optional().nullable(),
-    initial_areas: z.array(z.string().min(1)).optional().default([]),
-    create_first_version: z.boolean().optional().default(false),
-    first_version_name: z.string().optional().nullable(),
-    first_version_date: z.string().optional().nullable(),
-  })
+const projectObjectSchema = z.object({
+  name: z.string().min(1, 'Nome é obrigatório'),
+  description: z.string().optional().nullable(),
+  status: z.string().default('active'),
+  due_date: z.string().optional().nullable(),
+  tags: z.array(z.string()).default([]),
+  kanban_stage: z.string().optional().nullable(),
+  project_type: z.enum(PROJECT_TYPES).optional().default('simple'),
+  template_id: z.string().uuid().optional().nullable(),
+  client_id: z.string().uuid().optional().nullable(),
+  start_date: z.string().optional().nullable(),
+  end_date: z.string().optional().nullable(),
+  responsible_ids: z.array(z.string().uuid()).optional().default([]),
+  team_id: z.string().uuid().optional().nullable(),
+  initial_areas: z.array(z.string().min(1)).optional().default([]),
+  create_first_version: z.boolean().optional().default(false),
+  first_version_name: z.string().optional().nullable(),
+  first_version_date: z.string().optional().nullable(),
+});
+
+const projectSchema = projectObjectSchema
   .refine(
     (data) => {
       if (data.project_type === 'template') return !!data.template_id;
@@ -55,6 +56,9 @@ const projectSchema = z
     },
     { message: 'template_id deve ser null quando project_type não é template', path: ['template_id'] }
   );
+
+/** Schema para PATCH: todos os campos opcionais (ZodEffects não tem .partial()). */
+const projectUpdateSchema = projectObjectSchema.partial();
 
 const PROJECTS_SELECT_COLUMNS = `id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at,
   project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids`;
@@ -345,7 +349,7 @@ export const updateProject = async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const { id } = req.params;
 
-    const validated = projectSchema.partial().parse(req.body);
+    const validated = projectUpdateSchema.parse(req.body);
 
     const updates: string[] = [];
     const values: any[] = [];
