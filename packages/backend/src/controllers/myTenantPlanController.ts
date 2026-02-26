@@ -168,7 +168,8 @@ export async function postMyTenantRole(req: AuthRequest, res: Response): Promise
       return;
     }
     console.error('postMyTenantRole error:', error);
-    res.status(500).json({ error: error.message || 'Internal server error' });
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(500).json({ error: message });
   }
 }
 
