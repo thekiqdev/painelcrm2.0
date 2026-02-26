@@ -10,7 +10,7 @@ Documentação do modelo final implementado conforme o plano em `PLANO-USUARIOS-
 |----------|-----------|
 | **Usuário** | Pessoa que acessa o sistema: nome, email, senha, **equipes** vinculadas e **perfil de acesso** (role) no tenant. |
 | **Equipe** | Agrupamento por tenant (ex.: Comercial, Design). Usado para filtrar projetos e atribuir tarefas. |
-| **Perfil de acesso (Role)** | Conjunto fixo de permissões: Administrador, Gestor, Operacional, Visualizador. |
+| **Perfil de acesso (Role)** | Conjunto fixo de permissões. **Perfis padrão:** Administrador e Operacional (Gestor e Visualizador não são exibidos por padrão; ver plano de permissões por módulo). |
 
 Relações:
 
@@ -104,9 +104,41 @@ O conjunto de permissões de cada **app_role** é definido em código:
 **Onde:** `packages/backend/src/services/rolePermissionsService.ts`.
 
 - **admin:** `all_access`
-- **manager:** manage/view clients, leads, funnels, manage_settings, view_reports
-- **member:** view + manage clients, leads, funnels, view_reports
-- **viewer:** view_clients, view_leads, view_funnels, view_reports
+- **manager:** manage/view clients, leads, funnels, manage_settings, view_reports (existente no BD; não exibido na UI por padrão)
+- **member:** view + manage clients, leads, funnels, view_reports (Operacional)
+- **viewer:** view_clients, view_leads, view_funnels, view_reports (existente no BD; não exibido na UI por padrão)
+
+A API `GET /api/me/tenant/roles` retorna apenas **admin** e **member** (perfis padrão exibidos). Ver `DEFAULT_DISPLAY_ROLES` em `rolePermissionsService.ts` e `docs/PLANO-PERMISSOES-POR-MODULO.md`.
+
+### Permissões por módulo (Etapa 2 do plano)
+
+| Tabela | Onde | Descrição |
+|--------|------|-----------|
+| `role_module_permissions` | `51_role_module_permissions.sql` | Por role e módulo: can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only. |
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/api/me/tenant/module-permissions-schema` | Schema de módulos (id, label, supportsEditOwn, supportsDeleteOwn). |
+| GET | `/api/me/tenant/roles/:role/permissions` | Permissões por módulo do role (admin ou member). |
+| PUT | `/api/me/tenant/roles/:role/permissions` | Atualiza permissões por módulo do role. Body: `{ permissions: { [moduleId]: { can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only } } }`. |
+| GET | `/api/me/tenant/my-permissions` | Permissões efetivas por módulo do usuário logado (para guards no front e backend). |
+
+**Onde:** `packages/backend/src/services/modulePermissionsService.ts`, `myTenantPlanController.ts`, `myTenantPlanRoutes.ts`.
+
+### Aplicação das permissões no backend (Etapa 5)
+
+Antes de criar, editar ou excluir um recurso, o backend chama `assertModulePermission(userId, moduleId, action, options?)`. Se o perfil do usuário não permitir a ação (ou, no caso de "só próprios", se o recurso não for do usuário), é lançado `ModulePermissionError` e a API retorna **403** com mensagem clara.
+
+**Regra "só próprios":** quando o perfil tem `edit_own_only` ou `delete_own_only` para o módulo, a ação só é permitida se o usuário for **dono** (`ownerId`) ou **responsável atribuído** (`assigneeId`) do recurso.
+
+| Módulo | Tabela / recurso | Campo dono (ownerId) | Campo responsável (assigneeId) | Controllers protegidos |
+|--------|-------------------|----------------------|--------------------------------|------------------------|
+| **clients** | clients | user_id | — | clientsController (create, update, delete) |
+| **leads** | leads | user_id | — | leadsController (create, update, delete) |
+| **projects** | projects | user_id | — | projectsController (create, update, delete) |
+| **tasks** | project_tasks | user_id (criador) | assignee_id | projectTasksController (create, update, delete) |
+
+Outros módulos (funnels, products, tickets, proposals, contracts, billing, finance) podem seguir o mesmo padrão: usar `assertModulePermission` no controller e, quando o módulo suportar "só próprios", passar `ownerId` e opcionalmente `assigneeId` conforme a tabela do recurso.
 
 ---
 
@@ -117,7 +149,7 @@ O conjunto de permissões de cada **app_role** é definido em código:
 | Menu **Usuários e Acesso** (Usuários, Equipes, Perfis de acesso) | `src/components/settings/SettingsMenu.tsx`, `src/pages/Settings.tsx` |
 | Lista de usuários, limite (X de Y), botão Novo Usuário desabilitado no limite, edição de equipes por usuário, select de perfil de acesso | `src/components/settings/UsersSection.tsx`, `UserTeamsDialog.tsx` |
 | CRUD de equipes e membros | `src/components/settings/TeamsSection.tsx` |
-| Perfis de acesso (lista de roles e permissões), perfis e membros (workspaces) | `src/components/settings/UserManagementSection.tsx` |
+| Perfis de acesso (lista de roles e permissões; sem abas Perfis e membros / Usuários) | `src/components/settings/UserManagementSection.tsx` |
 | Serviços: limites, usuários do tenant, roles, equipes | `src/services/tenantLimits.ts`, `src/services/teams.ts` |
 
 ---

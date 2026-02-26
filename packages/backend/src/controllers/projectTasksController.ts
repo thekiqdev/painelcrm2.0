@@ -1,6 +1,20 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
+import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+
+const MODULE_TASKS = 'tasks';
+
+/** Valor para coluna jsonb: null, string JSON como está, objeto stringificado. */
+function formatJsonbForDb(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
 
 const taskSchema = z.object({
   title: z.string().min(1, 'Título é obrigatório'),
@@ -108,18 +122,24 @@ export const getProjectTasks = async (req: Request, res: Response) => {
   }
 };
 
+// Condição SQL reutilizável: tarefa acessível ao usuário (dono do projeto ou mesmo tenant)
+const TASK_ACCESS_WHERE = `
+  FROM project_tasks t
+  INNER JOIN projects p ON t.project_id = p.id
+  INNER JOIN users owner ON owner.id = p.user_id
+  WHERE t.id = $1 AND (
+    p.user_id = $2
+    OR (owner.tenant_id IS NOT NULL AND owner.tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
+  )`;
+
 // GET /api/projects/tasks/:taskId
 export const getProjectTaskById = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { taskId } = req.params;
 
-    // Verificar se a tarefa pertence a um projeto do usuário
     const taskCheck = await pool.query(
-      `SELECT t.id
-       FROM project_tasks t
-       INNER JOIN projects p ON t.project_id = p.id
-       WHERE t.id = $1 AND p.user_id = $2`,
+      `SELECT t.id ${TASK_ACCESS_WHERE}`,
       [taskId, userId]
     );
 
@@ -150,6 +170,7 @@ export const createProjectTask = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { listId } = req.params;
+    await assertModulePermission(userId, MODULE_TASKS, 'create');
 
     // Verificar se a lista pertence a um projeto do usuário e obter project_id
     const listCheck = await pool.query(
@@ -179,7 +200,7 @@ export const createProjectTask = async (req: Request, res: Response) => {
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16,
         $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22::jsonb,
-        $23, $24, $25, $26, $27, $28, $29, $30, $31::jsonb, $32, $33, $34, $35
+        $23, $24, $25, $26, $27, $28, $29, $30, $31::jsonb, $32, $33, $34
       )
       RETURNING ${TASK_SELECT}`,
       [
@@ -204,7 +225,7 @@ export const createProjectTask = async (req: Request, res: Response) => {
         JSON.stringify(validated.dependencies || []),
         JSON.stringify(validated.watchers || []),
         JSON.stringify(validated.reminders || []),
-        validated.recurrence_rule ? JSON.stringify(validated.recurrence_rule) : null,
+        formatJsonbForDb(validated.recurrence_rule),
         validated.milestone_id || null,
         validated.parent_task_id || null,
         validated.sprint_id || null,
@@ -222,10 +243,15 @@ export const createProjectTask = async (req: Request, res: Response) => {
 
     res.status(201).json(mapTaskRow(result.rows[0]));
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
-    console.error('Error creating project task:', error);
+    const err = error as Error & { code?: string; detail?: string };
+    console.error('Error creating project task:', err?.message ?? error);
+    if (err?.code) console.error('DB code:', err.code, err.detail ?? '');
     res.status(500).json({ error: 'Erro ao criar tarefa' });
   }
 };
@@ -235,7 +261,17 @@ export const updateProjectTask = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { taskId } = req.params;
-
+    const taskRow = await pool.query(
+      `SELECT t.user_id, t.assignee_id ${TASK_ACCESS_WHERE}`,
+      [taskId, userId]
+    );
+    if (taskRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Tarefa não encontrada' });
+    }
+    await assertModulePermission(userId, MODULE_TASKS, 'edit', {
+      ownerId: taskRow.rows[0].user_id,
+      assigneeId: taskRow.rows[0].assignee_id,
+    });
     const validated = taskSchema.partial().parse(req.body);
 
     const updates: string[] = [];
@@ -262,7 +298,7 @@ export const updateProjectTask = async (req: Request, res: Response) => {
       dependencies: validated.dependencies ? JSON.stringify(validated.dependencies) : undefined,
       watchers: validated.watchers ? JSON.stringify(validated.watchers) : undefined,
       reminders: validated.reminders ? JSON.stringify(validated.reminders) : undefined,
-      recurrence_rule: validated.recurrence_rule ? JSON.stringify(validated.recurrence_rule) : undefined,
+      recurrence_rule: validated.recurrence_rule != null ? formatJsonbForDb(validated.recurrence_rule) : undefined,
       milestone_id: validated.milestone_id,
       parent_task_id: validated.parent_task_id,
       sprint_id: validated.sprint_id,
@@ -292,12 +328,8 @@ export const updateProjectTask = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Nenhum campo para atualizar' });
     }
 
-    // Verificar se a tarefa pertence a um projeto do usuário
     const taskCheck = await pool.query(
-      `SELECT t.id, t.project_id
-       FROM project_tasks t
-       INNER JOIN projects p ON t.project_id = p.id
-       WHERE t.id = $1 AND p.user_id = $2`,
+      `SELECT t.id, t.project_id ${TASK_ACCESS_WHERE}`,
       [taskId, userId]
     );
 
@@ -326,6 +358,9 @@ export const updateProjectTask = async (req: Request, res: Response) => {
 
     res.json(mapTaskRow(result.rows[0]));
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
@@ -340,19 +375,19 @@ export const deleteProjectTask = async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const { taskId } = req.params;
 
-    // Verificar se a tarefa pertence a um projeto do usuário
     const taskCheck = await pool.query(
-      `SELECT t.id
-       FROM project_tasks t
-       INNER JOIN projects p ON t.project_id = p.id
-       WHERE t.id = $1 AND p.user_id = $2`,
+      `SELECT t.id, t.user_id, t.assignee_id ${TASK_ACCESS_WHERE}`,
       [taskId, userId]
     );
 
     if (taskCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Tarefa não encontrada' });
     }
-
+    const row = taskCheck.rows[0];
+    await assertModulePermission(userId, MODULE_TASKS, 'delete', {
+      ownerId: row.user_id,
+      assigneeId: row.assignee_id,
+    });
     await pool.query(
       `DELETE FROM project_tasks WHERE id = $1`,
       [taskId]
@@ -360,6 +395,9 @@ export const deleteProjectTask = async (req: Request, res: Response) => {
 
     res.status(204).send();
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     console.error('Error deleting project task:', error);
     res.status(500).json({ error: 'Erro ao deletar tarefa' });
   }

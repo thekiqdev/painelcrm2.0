@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Plus, Settings, Trash2, ArrowRight, CheckCircle2, ListTodo } from "lucide-react";
+import { Plus, Settings, Trash2, ArrowRight, CheckCircle2, ListTodo, Users } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
@@ -24,15 +24,21 @@ export interface AreaProgress {
   completed: number;
 }
 
+export interface AreaTeam {
+  id: string;
+  name: string;
+}
+
 interface ProjectAreasSectionProps {
   projectType?: string | null;
   projectId: string;
   areas: ProjectArea[];
   areaProgress?: Record<string, AreaProgress>;
   members?: Member[];
+  teams?: AreaTeam[];
   onAreasChange: (areas: ProjectArea[]) => void;
   onCreateArea: (name: string) => Promise<ProjectArea>;
-  onUpdateArea: (areaId: string, data: { name: string; responsible_ids?: string[] }) => Promise<ProjectArea>;
+  onUpdateArea: (areaId: string, data: { name: string; responsible_ids?: string[]; team_ids?: string[] }) => Promise<ProjectArea>;
   onDeleteArea: (areaId: string) => Promise<void>;
 }
 
@@ -42,6 +48,7 @@ export function ProjectAreasSection({
   areas,
   areaProgress = {},
   members = [],
+  teams = [],
   onAreasChange,
   onCreateArea,
   onUpdateArea,
@@ -52,6 +59,7 @@ export function ProjectAreasSection({
   const [editingArea, setEditingArea] = useState<ProjectArea | null>(null);
   const [areaName, setAreaName] = useState("");
   const [responsibleIds, setResponsibleIds] = useState<string[]>([]);
+  const [teamIds, setTeamIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
   if (!hasAreas(projectType)) return null;
@@ -74,6 +82,7 @@ export function ProjectAreasSection({
     setEditingArea(area);
     setAreaName(area.name);
     setResponsibleIds(area.responsible_ids ?? []);
+    setTeamIds(area.team_ids ?? []);
     setDialogOpen(true);
   };
 
@@ -83,7 +92,11 @@ export function ProjectAreasSection({
     setSaving(true);
     try {
       if (editingArea) {
-        const updated = await onUpdateArea(editingArea.id, { name, responsible_ids: responsibleIds });
+        const updated = await onUpdateArea(editingArea.id, {
+          name,
+          responsible_ids: responsibleIds,
+          team_ids: teamIds,
+        });
         onAreasChange(
           areas.map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
         );
@@ -100,6 +113,12 @@ export function ProjectAreasSection({
   const toggleResponsible = (memberId: string) => {
     setResponsibleIds((prev) =>
       prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+    );
+  };
+
+  const toggleTeam = (tid: string) => {
+    setTeamIds((prev) =>
+      prev.includes(tid) ? prev.filter((id) => id !== tid) : [...prev, tid]
     );
   };
 
@@ -210,7 +229,7 @@ export function ProjectAreasSection({
             {editingArea && members.length > 0 && (
               <div className="grid gap-2">
                 <Label>Responsáveis que podem visualizar a área</Label>
-                <div className="max-h-48 overflow-y-auto rounded-md border p-3 space-y-2">
+                <div className="max-h-40 overflow-y-auto rounded-md border p-3 space-y-2">
                   {members.map((member) => (
                     <label
                       key={member.id}
@@ -221,6 +240,28 @@ export function ProjectAreasSection({
                         onCheckedChange={() => toggleResponsible(member.id)}
                       />
                       <span>{member.name || member.email || member.id}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            {editingArea && teams.length > 0 && (
+              <div className="grid gap-2">
+                <Label className="flex items-center gap-1.5">
+                  <Users className="h-4 w-4" />
+                  Equipes que podem visualizar a área
+                </Label>
+                <div className="max-h-40 overflow-y-auto rounded-md border p-3 space-y-2">
+                  {teams.map((team) => (
+                    <label
+                      key={team.id}
+                      className="flex items-center gap-2 cursor-pointer text-sm"
+                    >
+                      <Checkbox
+                        checked={teamIds.includes(team.id)}
+                        onCheckedChange={() => toggleTeam(team.id)}
+                      />
+                      <span>{team.name}</span>
                     </label>
                   ))}
                 </div>

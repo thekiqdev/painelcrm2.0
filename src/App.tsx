@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
+import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
 import AuthLayout from "./layouts/AuthLayout";
 import AuthWhatsApp from "./pages/AuthWhatsApp";
 import Register from "./pages/Register";
@@ -87,6 +88,7 @@ const App = () => (
     <TooltipProvider>
       <BrowserRouter>
         <AuthProvider>
+          <ModulePermissionsProvider>
           <Toaster />
           <Sonner />
           <Suspense fallback={<LoadingFallback />}>
@@ -444,6 +446,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
           </Suspense>
+          </ModulePermissionsProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

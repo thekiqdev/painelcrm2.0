@@ -6,7 +6,21 @@ import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { checkTenantUsersLimit } from '../services/tenantLimitService.js';
-import { ROLE_DISPLAY_NAMES, getPermissionsForRole, type AppRole } from '../services/rolePermissionsService.js';
+import { ROLE_DISPLAY_NAMES, getPermissionsForRole, isValidAppRole, type AppRole } from '../services/rolePermissionsService.js';
+import {
+  getModulePermissionsSchema,
+  getRoleModulePermissions,
+  setRoleModulePermissions,
+  getEffectiveModulePermissions,
+  type ModulePermissionsMap,
+  MODULE_IDS,
+} from '../services/modulePermissionsService.js';
+import {
+  getCustomRolesForProfile,
+  createCustomRole,
+  getCustomRoleModulePermissions,
+  setCustomRoleModulePermissions,
+} from '../services/customRolesService.js';
 import { z } from 'zod';
 
 async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
@@ -32,6 +46,18 @@ async function getMyTenantId(req: AuthRequest): Promise<string | null> {
   return r.rows[0]?.tenant_id ?? null;
 }
 
+async function getMyTenantProfileId(req: AuthRequest): Promise<string | null> {
+  const tenantId = await getMyTenantId(req);
+  if (!tenantId) return null;
+  const r = await pool.query(
+    `SELECT up.id FROM user_profiles up
+     JOIN users o ON o.id = up.owner_id AND o.tenant_id = $1
+     ORDER BY up.created_at ASC LIMIT 1`,
+    [tenantId]
+  );
+  return r.rows[0]?.id ?? null;
+}
+
 /** GET /api/me/tenant/users - lista usuários do tenant do usuário logado (nome, email, role, último acesso). */
 export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -47,7 +73,16 @@ export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise
         (SELECT ur.role::text FROM user_roles ur
          JOIN user_profiles up ON up.id = ur.profile_id
          JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
-         WHERE ur.user_id = u.id LIMIT 1) AS role
+         WHERE ur.user_id = u.id LIMIT 1) AS role,
+        (SELECT ucr.custom_role_id FROM user_custom_roles ucr
+         JOIN user_profiles up ON up.id = ucr.profile_id
+         JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
+         WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_id,
+        (SELECT tcr.name FROM user_custom_roles ucr
+         JOIN tenant_custom_roles tcr ON tcr.id = ucr.custom_role_id
+         JOIN user_profiles up ON up.id = ucr.profile_id
+         JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
+         WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_name
        FROM users u
        LEFT JOIN profiles p ON p.id = u.id
        WHERE u.tenant_id = $1
@@ -60,6 +95,8 @@ export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise
       full_name: (r.full_name as string)?.trim() || null,
       last_used_at: r.last_used_at,
       role: r.role || null,
+      custom_role_id: r.custom_role_id || null,
+      custom_role_name: r.custom_role_name || null,
       is_super_admin: r.is_super_admin === true,
     }));
     res.json(rows);
@@ -69,19 +106,31 @@ export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise
   }
 }
 
-/** GET /api/me/tenant/roles - lista perfis de acesso (roles) com suas permissões padrão. */
+/** GET /api/me/tenant/roles - lista perfis de acesso (sistema + customizados). */
 export async function getMyTenantRoles(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const tenantId = await getMyTenantId(req);
-    if (!tenantId) {
+    const profileId = await getMyTenantProfileId(req);
+    if (!profileId) {
       res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
       return;
     }
-    const roles = (['admin', 'manager', 'member', 'viewer'] as AppRole[]).map((role) => ({
-      role,
-      name: ROLE_DISPLAY_NAMES[role],
-      permissions: getPermissionsForRole(role),
-    }));
+    const systemResult = await pool.query<{ role: AppRole }>(
+      `SELECT role FROM tenant_enabled_roles WHERE profile_id = $1 ORDER BY role`,
+      [profileId]
+    );
+    const customRoles = await getCustomRolesForProfile(profileId);
+    const roles = [
+      ...systemResult.rows.map((row) => ({
+        role: row.role,
+        name: ROLE_DISPLAY_NAMES[row.role],
+        permissions: getPermissionsForRole(row.role),
+      })),
+      ...customRoles.map((cr) => ({
+        role: 'custom' as const,
+        id: cr.id,
+        name: cr.name,
+      })),
+    ];
     res.json(roles);
   } catch (error: any) {
     console.error('getMyTenantRoles error:', error);
@@ -89,9 +138,48 @@ export async function getMyTenantRoles(req: AuthRequest, res: Response): Promise
   }
 }
 
-const putUserRoleSchema = z.object({ role: z.enum(['admin', 'manager', 'member', 'viewer']) });
+const postRoleSchema = z.object({
+  name: z.string().min(1, 'Nome é obrigatório').max(120),
+  base_role: z.enum(['member', 'manager', 'viewer']).optional(),
+});
 
-/** PUT /api/me/tenant/users/:userId/role - atribui perfil de acesso (role) ao usuário no tenant. */
+/** POST /api/me/tenant/roles - cria perfil de acesso personalizado (nome livre). */
+export async function postMyTenantRole(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const profileId = await getMyTenantProfileId(req);
+    if (!profileId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const body = postRoleSchema.parse(req.body);
+    const custom = await createCustomRole(
+      profileId,
+      body.name.trim(),
+      body.base_role as AppRole | undefined
+    );
+    res.status(201).json({
+      role: 'custom',
+      id: custom.id,
+      name: custom.name,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('postMyTenantRole error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+const putUserRoleSchema = z.object({
+  role: z.enum(['admin', 'manager', 'member', 'viewer']).optional(),
+  custom_role_id: z.string().uuid().optional(),
+}).refine((b) => (b.role != null) !== (b.custom_role_id != null), {
+  message: 'Informe role ou custom_role_id, não ambos',
+});
+
+/** PUT /api/me/tenant/users/:userId/role - atribui perfil de acesso (sistema ou customizado) ao usuário. */
 export async function putMyTenantUserRole(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = await getMyTenantId(req);
@@ -102,7 +190,6 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
     const requesterId = req.userId!;
     const { userId: targetUserId } = req.params;
     const body = putUserRoleSchema.parse(req.body);
-    const role = body.role as AppRole;
 
     if (!targetUserId) {
       res.status(400).json({ error: 'userId é obrigatório' });
@@ -141,6 +228,37 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
       );
     }
 
+    if (body.custom_role_id) {
+      const customCheck = await pool.query(
+        'SELECT 1 FROM tenant_custom_roles WHERE id = $1 AND profile_id = $2',
+        [body.custom_role_id, profileId]
+      );
+      if (customCheck.rows.length === 0) {
+        res.status(400).json({ error: 'Perfil personalizado não encontrado neste tenant.' });
+        return;
+      }
+      await pool.query('DELETE FROM user_roles WHERE user_id = $1 AND profile_id = $2', [targetUserId, profileId]);
+      await pool.query(
+        `INSERT INTO user_custom_roles (user_id, profile_id, custom_role_id, created_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, profile_id) DO UPDATE SET custom_role_id = $3`,
+        [targetUserId, profileId, body.custom_role_id, requesterId]
+      );
+      res.json({ custom_role_id: body.custom_role_id, profile_id: profileId });
+      return;
+    }
+
+    const role = body.role as AppRole;
+    const enabled = await pool.query(
+      'SELECT 1 FROM tenant_enabled_roles WHERE profile_id = $1 AND role = $2',
+      [profileId, role]
+    );
+    if (enabled.rows.length === 0) {
+      res.status(400).json({ error: 'Este perfil de acesso não está habilitado no tenant. Adicione-o em Configurações → Perfis de acesso.' });
+      return;
+    }
+
+    await pool.query('DELETE FROM user_custom_roles WHERE user_id = $1 AND profile_id = $2', [targetUserId, profileId]);
     await pool.query(
       'DELETE FROM user_roles WHERE user_id = $1 AND profile_id = $2',
       [targetUserId, profileId]
@@ -316,6 +434,159 @@ export async function putMyTenantPlan(req: AuthRequest, res: Response): Promise<
       return;
     }
     console.error('putMyTenantPlan error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** GET /api/me/tenant/module-permissions-schema - schema de módulos para a UI (labels e suporte a edit_own/delete_own). */
+export async function getModulePermissionsSchemaHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const schema = getModulePermissionsSchema();
+    res.json({ modules: schema });
+  } catch (error: any) {
+    console.error('getModulePermissionsSchema error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** GET /api/me/tenant/custom-roles/:id/permissions - permissões por módulo do perfil customizado. */
+export async function getCustomRolePermissionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const profileId = await getMyTenantProfileId(req);
+    if (!profileId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const { id: customRoleId } = req.params;
+    if (!customRoleId) {
+      res.status(400).json({ error: 'ID do perfil é obrigatório' });
+      return;
+    }
+    const permissions = await getCustomRoleModulePermissions(customRoleId, profileId);
+    res.json({ role: 'custom', id: customRoleId, permissions });
+  } catch (error: any) {
+    console.error('getCustomRolePermissions error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+/** PUT /api/me/tenant/custom-roles/:id/permissions - atualiza permissões do perfil customizado. */
+export async function putCustomRolePermissionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const profileId = await getMyTenantProfileId(req);
+    if (!profileId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const { id: customRoleId } = req.params;
+    if (!customRoleId) {
+      res.status(400).json({ error: 'ID do perfil é obrigatório' });
+      return;
+    }
+    const body = putRolePermissionsSchema.parse(req.body);
+    const permissions: ModulePermissionsMap = {};
+    for (const moduleId of MODULE_IDS) {
+      const p = body.permissions[moduleId];
+      permissions[moduleId] = {
+        module: moduleId,
+        can_view: p?.can_view ?? false,
+        can_create: p?.can_create ?? false,
+        can_edit: p?.can_edit ?? false,
+        can_delete: p?.can_delete ?? false,
+        edit_own_only: p?.edit_own_only ?? false,
+        delete_own_only: p?.delete_own_only ?? false,
+      };
+    }
+    await setCustomRoleModulePermissions(customRoleId, profileId, permissions);
+    const updated = await getCustomRoleModulePermissions(customRoleId, profileId);
+    res.json({ role: 'custom', id: customRoleId, permissions: updated });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('putCustomRolePermissions error:', error);
+    res.status(500).json({ error: error?.message || 'Internal server error' });
+  }
+}
+
+/** GET /api/me/tenant/roles/:role/permissions - permissões por módulo do role (admin ou member). */
+export async function getRolePermissionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { role } = req.params;
+    if (!role || !isValidAppRole(role)) {
+      res.status(400).json({ error: 'Role inválido' });
+      return;
+    }
+    const permissions = await getRoleModulePermissions(role as AppRole);
+    res.json({ role, permissions });
+  } catch (error: any) {
+    console.error('getRolePermissions error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+const putRolePermissionsSchema = z.object({
+  permissions: z.record(
+    z.string(),
+    z.object({
+      can_view: z.boolean(),
+      can_create: z.boolean(),
+      can_edit: z.boolean(),
+      can_delete: z.boolean(),
+      edit_own_only: z.boolean(),
+      delete_own_only: z.boolean(),
+    })
+  ),
+});
+
+/** PUT /api/me/tenant/roles/:role/permissions - atualiza permissões por módulo do role. */
+export async function putRolePermissionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { role } = req.params;
+    if (!role || !isValidAppRole(role)) {
+      res.status(400).json({ error: 'Role inválido' });
+      return;
+    }
+    const body = putRolePermissionsSchema.parse(req.body);
+    const permissions: ModulePermissionsMap = {};
+    for (const moduleId of MODULE_IDS) {
+      const p = body.permissions[moduleId];
+      permissions[moduleId] = {
+        module: moduleId,
+        can_view: p?.can_view ?? false,
+        can_create: p?.can_create ?? false,
+        can_edit: p?.can_edit ?? false,
+        can_delete: p?.can_delete ?? false,
+        edit_own_only: p?.edit_own_only ?? false,
+        delete_own_only: p?.delete_own_only ?? false,
+      };
+    }
+    await setRoleModulePermissions(role as AppRole, permissions);
+    const updated = await getRoleModulePermissions(role as AppRole);
+    res.json({ role, permissions: updated });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('putRolePermissions error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** GET /api/me/tenant/my-permissions - permissões efetivas por módulo do usuário logado. */
+export async function getMyPermissionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    const permissions = await getEffectiveModulePermissions(userId);
+    res.json({ permissions });
+  } catch (error: any) {
+    console.error('getMyPermissions error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

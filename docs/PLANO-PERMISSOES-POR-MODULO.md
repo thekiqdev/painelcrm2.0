@@ -228,6 +228,42 @@ Cada etapa é executada **somente quando você solicitar** (ex.: "execute a Etap
 
 ---
 
+## Modelo final (pós Etapa 6)
+
+- **Perfis padrão:** apenas Administrador e Operacional (admin, member). Seed na migração `51_role_module_permissions.sql`.
+- **Permissões por módulo:** tabela `role_module_permissions` (can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only). API: GET/PUT `/api/me/tenant/roles/:role/permissions`, GET `/api/me/tenant/my-permissions`.
+- **Frontend:** menu e rotas filtrados por `canView(moduleId)`; botões Criar/Editar/Excluir por `canCreate`/`canEdit`/`canDelete`; rota sem permissão → redirect para `/dashboard` com toast "Sem permissão para acessar esta área."
+- **Backend:** `assertModulePermission(userId, moduleId, action, { ownerId?, assigneeId? })` antes de create/update/delete; 403 quando não permitido. Módulos protegidos: clients, leads, projects, tasks (project_tasks). Ownership: ver tabela em `docs/MODELO-USUARIOS-EQUIPES-PERFIS-ACESSO.md` (campo dono/responsável por módulo).
+
+---
+
+## Checklist de validação (testes manuais)
+
+Após implementar as etapas 1–6, validar:
+
+1. **Perfis de acesso (admin)**  
+   - [ ] Configurações → Perfis de acesso: aparecem só Administrador e Operacional.  
+   - [ ] Clicar em "Editar permissões" (Operacional): abre matriz de módulos; colunas têm títulos e tooltips (Visualizar, Criar, Editar, Excluir, Editar só próprios, Excluir só próprios).  
+   - [ ] Alterar alguma permissão do Operacional e salvar: toast "Permissões salvas."
+
+2. **Menu e rota (operacional)**  
+   - [ ] Login com usuário que tem perfil Operacional (e permissões restritas, ex.: sem Meu Plano).  
+   - [ ] Menu lateral: itens sem permissão de visualização não aparecem (ex.: Meu Plano se configurado sem view).  
+   - [ ] Acessar URL de módulo sem permissão (ex.: `/meu-plano`): redireciona para `/dashboard` e exibe toast "Sem permissão para acessar esta área."
+
+3. **Ações na página (operacional)**  
+   - [ ] Em Clientes: sem permissão de criar → botão "Novo Cliente" não aparece.  
+   - [ ] Sem permissão de editar/excluir → ações "Editar Cliente" / "Excluir Cliente" não aparecem na lista.
+
+4. **API (403)**  
+   - [ ] Com usuário operacional, chamar POST `/api/clients` (ou outro create) sem permissão: resposta 403 com mensagem clara.  
+   - [ ] Editar/excluir recurso de outro usuário com perfil "só próprios": 403.
+
+5. **Novo tenant / instalação**  
+   - [ ] Após rodar migrações (incl. `51_role_module_permissions.sql`), existem apenas registros para roles admin e member em `role_module_permissions`, com valores padrão conforme seed.
+
+---
+
 ## Como usar este plano
 
 - Para iniciar: *"Execute a Etapa 1 do plano de permissões por módulo"* (ou o número da etapa desejada).

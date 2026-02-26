@@ -1,7 +1,10 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
+import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+
+const MODULE_LEADS = 'leads';
 
 const leadSchema = z.object({
   name: z.string().min(1),
@@ -62,6 +65,7 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
 export async function createLead(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    await assertModulePermission(userId, MODULE_LEADS, 'create');
     const leadData = leadSchema.parse(req.body);
 
     // Clean up the data - convert empty strings to null for optional fields
@@ -137,6 +141,10 @@ export async function createLead(req: AuthRequest, res: Response): Promise<void>
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -150,6 +158,14 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
   try {
     const userId = req.userId!;
     const { id } = req.params;
+    const existing = await pool.query('SELECT user_id FROM leads WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_LEADS, 'edit', {
+      ownerId: existing.rows[0].user_id,
+    });
     const leadData = leadSchema.partial().parse(req.body);
 
     const updates: string[] = [];
@@ -185,6 +201,10 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
 
     res.json(result.rows[0]);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -198,7 +218,14 @@ export async function deleteLead(req: AuthRequest, res: Response): Promise<void>
   try {
     const userId = req.userId!;
     const { id } = req.params;
-
+    const existing = await pool.query('SELECT user_id FROM leads WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_LEADS, 'delete', {
+      ownerId: existing.rows[0].user_id,
+    });
     const result = await pool.query(
       'DELETE FROM leads WHERE id = $1 AND user_id = $2 RETURNING id',
       [id, userId]
@@ -211,6 +238,10 @@ export async function deleteLead(req: AuthRequest, res: Response): Promise<void>
 
     res.json({ message: 'Lead deleted successfully' });
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error deleting lead:', error);
     res.status(500).json({ error: 'Internal server error' });
   }

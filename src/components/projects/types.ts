@@ -30,6 +30,8 @@ export interface Task {
   tags?: string[];
   labels?: string[];
   checklist?: ChecklistItem[];
+  /** Campos customizados (ex.: tagColors para cores das etiquetas). */
+  customFields?: Record<string, unknown>;
 }
 
 export interface ChecklistItem {
@@ -62,6 +64,7 @@ export interface ProjectArea {
   name: string;
   sort_order: number;
   responsible_ids?: string[];
+  team_ids?: string[];
   created_at?: string;
   updated_at?: string;
 }

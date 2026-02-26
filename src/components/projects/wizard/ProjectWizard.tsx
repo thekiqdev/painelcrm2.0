@@ -188,7 +188,8 @@ export function ProjectWizard() {
         start_date: state.basicConfig.startDate || null,
         end_date: state.basicConfig.endDate || null,
         responsible_ids: state.basicConfig.responsibleIds,
-        team_id: state.basicConfig.teamId ?? null,
+        team_ids: state.basicConfig.teamIds?.length ? state.basicConfig.teamIds : undefined,
+        team_id: state.basicConfig.teamIds?.[0] ?? state.basicConfig.teamId ?? null,
       };
       if (state.projectType === "template" && state.templateId) {
         payload.template_id = state.templateId;
@@ -293,7 +294,7 @@ export function ProjectWizard() {
           />
         )}
         {state.step === 4 && (
-          <Step4Review state={state} clients={clients} members={members} />
+          <Step4Review state={state} clients={clients} members={members} teams={teams} />
         )}
       </div>
 

@@ -5,6 +5,8 @@ import { ptBR } from "date-fns/locale";
 import type { WizardState } from "../types";
 import type { Member } from "@/components/shared/types";
 import type { Client } from "@/services/clients";
+import type { Team } from "@/services/teams";
+
 const PROJECT_TYPE_LABELS: Record<string, string> = {
   simple: "Projeto simples",
   areas: "Projeto com áreas",
@@ -16,14 +18,18 @@ interface Step4ReviewProps {
   state: WizardState;
   clients: Client[];
   members: Member[];
+  teams?: Team[];
 }
 
-export function Step4Review({ state, clients, members }: Step4ReviewProps) {
+export function Step4Review({ state, clients, members, teams = [] }: Step4ReviewProps) {
   const client = state.basicConfig.clientId
     ? clients.find((c) => c.id === state.basicConfig.clientId)
     : null;
   const responsibles = members.filter((m) =>
     state.basicConfig.responsibleIds.includes(m.id)
+  );
+  const selectedTeams = teams.filter((t) =>
+    (state.basicConfig.teamIds ?? []).includes(t.id)
   );
 
   return (
@@ -89,13 +95,24 @@ export function Step4Review({ state, clients, members }: Step4ReviewProps) {
           </CardContent>
         </Card>
       )}
-      {responsibles.length > 0 && (
+      {(selectedTeams.length > 0 || responsibles.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Responsáveis</CardTitle>
+            <CardTitle className="text-base">Equipes e responsáveis</CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="text-sm">{responsibles.map((m) => m.name).join(", ")}</p>
+          <CardContent className="space-y-2">
+            {selectedTeams.length > 0 && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">Equipe(s):</span>{" "}
+                {selectedTeams.map((t) => t.name).join(", ")}
+              </p>
+            )}
+            {responsibles.length > 0 && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">Responsáveis:</span>{" "}
+                {responsibles.map((m) => m.name).join(", ")}
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

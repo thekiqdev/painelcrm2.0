@@ -7,8 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Calendar as CalendarIcon, Clock, Plus, CheckCircle, User, Circle, CheckSquare, MoreHorizontal, X, Edit } from "lucide-react";
+import { Calendar as CalendarIcon, Clock, Plus, CheckCircle, User, Circle, CheckSquare, MoreHorizontal, X, Edit, FileText, ChevronDown, ChevronUp, Settings2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar } from "@/components/ui/avatar";
@@ -19,6 +18,10 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { clientsService, Client } from "@/services/clients";
+import { UnifiedTaskCard, TaskSummaryPopover, TaskFullView } from "@/components/tasks";
+import { globalTaskToUnified, type UnifiedTask } from "@/lib/taskUnified";
+import { SystemRichEditor, SystemRichEditorReadOnly } from "@/components/editor";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 const Tasks = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -51,6 +54,8 @@ const Tasks = () => {
   const [formClient, setFormClient] = useState("");
   const [formDeal, setFormDeal] = useState("");
   const [formAssignee, setFormAssignee] = useState("");
+  const [formAdvancedOpen, setFormAdvancedOpen] = useState(false);
+  const [fullViewTask, setFullViewTask] = useState<UnifiedTask | null>(null);
 
   // Carregar tarefas e clientes
   useEffect(() => {
@@ -303,6 +308,49 @@ const closeTaskDetail = () => {
     }
   };
 
+  const handleFullViewUpdate = async (
+    taskId: string,
+    updates: Record<string, unknown>
+  ) => {
+    if (!fullViewTask || fullViewTask.id !== taskId) return;
+    try {
+      const payload: Partial<Task> = {
+        title: (updates.title as string) ?? fullViewTask.title,
+        description: (updates.description as string) ?? fullViewTask.description ?? undefined,
+        date: (updates.due_date as string) ?? fullViewTask.dueDate ?? null,
+        time: (updates.due_time as string) ?? fullViewTask.dueTime ?? null,
+        status: (updates.status as "pending" | "completed") ?? (fullViewTask.status === "completed" ? "completed" : "pending"),
+        priority: (updates.priority as "low" | "medium" | "high") ?? fullViewTask.priority,
+        client: (updates.client_name as string) ?? fullViewTask.clientName ?? null,
+        deal: (updates.deal as string) ?? fullViewTask.deal ?? null,
+        assignee: (updates.assignee_name as string) ?? fullViewTask.assigneeName ?? null,
+        checklist: (updates.checklist as ChecklistItem[]) ?? fullViewTask.checklist ?? [],
+      };
+      const updatedTask = await tasksService.updateTask(taskId, payload);
+      const normalized = { ...updatedTask, date: updatedTask.date || "" };
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? normalized : t)));
+      setFullViewTask(globalTaskToUnified(updatedTask));
+      if (selectedTask?.id === taskId) setSelectedTask(normalized);
+      toast.success("Tarefa atualizada");
+    } catch (error) {
+      console.error("Erro ao atualizar tarefa:", error);
+      toast.error("Não foi possível atualizar a tarefa");
+    }
+  };
+
+  const handleFullViewDelete = async (taskId: string) => {
+    try {
+      await tasksService.deleteTask(taskId);
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      setFullViewTask(null);
+      if (selectedTask?.id === taskId) closeTaskDetail();
+      toast.success("Tarefa excluída");
+    } catch (error) {
+      console.error("Erro ao excluir tarefa:", error);
+      toast.error("Não foi possível excluir a tarefa");
+    }
+  };
+
   // Cálculo do progresso do checklist
   const getChecklistProgress = (task: Task) => {
     if (!task.checklist || task.checklist.length === 0) return 0;
@@ -357,11 +405,12 @@ const closeTaskDetail = () => {
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="description">Descrição</Label>
-                      <Textarea 
-                        id="description" 
-                        placeholder="Detalhes da tarefa..."
+                      <SystemRichEditor
+                        id="description"
                         value={formDescription}
-                        onChange={(e) => setFormDescription(e.target.value)}
+                        onChange={setFormDescription}
+                        placeholder="Detalhes da tarefa..."
+                        className="min-h-[120px] rounded-md border"
                       />
                     </div>
                   </div>
@@ -398,56 +447,67 @@ const closeTaskDetail = () => {
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="priority">Prioridade</Label>
-                      <Select value={formPriority} onValueChange={(value: "low" | "medium" | "high") => setFormPriority(value)}>
-                        <SelectTrigger id="priority">
-                          <SelectValue placeholder="Selecione" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="high">Alta</SelectItem>
-                          <SelectItem value="medium">Média</SelectItem>
-                          <SelectItem value="low">Baixa</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="assignee">Responsável</Label>
-                      <Input 
-                        id="assignee" 
-                        placeholder="Nome do responsável"
-                        value={formAssignee}
-                        onChange={(e) => setFormAssignee(e.target.value)}
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="priority">Prioridade</Label>
+                    <Select value={formPriority} onValueChange={(value: "low" | "medium" | "high") => setFormPriority(value)}>
+                      <SelectTrigger id="priority">
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="high">Alta</SelectItem>
+                        <SelectItem value="medium">Média</SelectItem>
+                        <SelectItem value="low">Baixa</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="client">Cliente (Opcional)</Label>
-                      <Select value={formClient} onValueChange={setFormClient}>
-                        <SelectTrigger id="client">
-                          <SelectValue placeholder="Selecione um cliente" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {clients.map(client => (
-                            <SelectItem key={client.id} value={client.id}>
-                              {client.name} {client.company ? `(${client.company})` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="deal">Negócio (Opcional)</Label>
-                      <Input 
-                        id="deal" 
-                        placeholder="Nome do negócio"
-                        value={formDeal}
-                        onChange={(e) => setFormDeal(e.target.value)}
-                      />
-                    </div>
-                  </div>
+                  <Collapsible open={formAdvancedOpen} onOpenChange={setFormAdvancedOpen} className="space-y-2">
+                    <CollapsibleTrigger asChild>
+                      <Button type="button" variant="outline" className="w-full justify-between">
+                        <span className="flex items-center gap-2">
+                          <Settings2 className="h-4 w-4" />
+                          {formAdvancedOpen ? "Ocultar" : "Expandir"} configurações avançadas
+                        </span>
+                        {formAdvancedOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border rounded-md p-4 bg-muted/30 space-y-4">
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor="assignee">Responsável</Label>
+                          <Input
+                            id="assignee"
+                            placeholder="Nome do responsável"
+                            value={formAssignee}
+                            onChange={(e) => setFormAssignee(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="client">Cliente (Opcional)</Label>
+                          <Select value={formClient} onValueChange={setFormClient}>
+                            <SelectTrigger id="client">
+                              <SelectValue placeholder="Selecione um cliente" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {clients.map(client => (
+                                <SelectItem key={client.id} value={client.id}>
+                                  {client.name} {client.company ? `(${client.company})` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="deal">Negócio (Opcional)</Label>
+                          <Input
+                            id="deal"
+                            placeholder="Nome do negócio"
+                            value={formDeal}
+                            onChange={(e) => setFormDeal(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setIsAddTaskDialogOpen(false)}>
@@ -475,6 +535,7 @@ const closeTaskDetail = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
 
@@ -484,6 +545,7 @@ const closeTaskDetail = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
 
@@ -493,6 +555,7 @@ const closeTaskDetail = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
 
@@ -502,9 +565,31 @@ const closeTaskDetail = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
       </Tabs>
+
+      <TaskFullView
+        task={fullViewTask}
+        open={!!fullViewTask}
+        onOpenChange={(open) => !open && setFullViewTask(null)}
+        clients={clients.map((c) => ({ id: c.id, name: c.name }))}
+        onUpdate={handleFullViewUpdate}
+        onDelete={handleFullViewDelete}
+        onToggleStatus={
+          fullViewTask
+            ? (taskId) => {
+                handleToggleTaskStatus(taskId);
+                setFullViewTask((prev) =>
+                  prev && prev.id === taskId
+                    ? { ...prev, status: prev.status === "completed" ? "pending" : "completed" }
+                    : prev
+                );
+              }
+            : undefined
+        }
+      />
 
       {/* Modal de Detalhes da Tarefa */}
       <Dialog open={taskDetailOpen} onOpenChange={(open) => (open ? setTaskDetailOpen(true) : closeTaskDetail())}>
@@ -547,9 +632,11 @@ const closeTaskDetail = () => {
                   </div>
                   <div className="grid gap-3">
                     <Label>Descrição</Label>
-                    <Textarea
+                    <SystemRichEditor
                       value={editTaskFields.description}
-                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, description: e.target.value }))}
+                      onChange={(v) => setEditTaskFields(prev => ({ ...prev, description: v }))}
+                      placeholder="Descrição da tarefa..."
+                      className="min-h-[120px] rounded-md border"
                     />
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -637,9 +724,9 @@ const closeTaskDetail = () => {
               {selectedTask.description && (
                 <div>
                   <h4 className="text-sm font-semibold mb-1">Descrição</h4>
-                  <p className="text-sm text-muted-foreground">{selectedTask.description}</p>
+                  <SystemRichEditorReadOnly html={selectedTask.description} className="text-sm" />
                 </div>
-                  )}
+              )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                     {selectedTask.date && (
                       <div className="flex gap-2">
@@ -794,9 +881,10 @@ type TaskListProps = {
   onToggleTaskStatus: (taskId: string) => void;
   getPriorityColor: (priority: string) => string;
   onTaskClick: (task: Task) => void;
+  onOpenFull?: (task: UnifiedTask) => void;
 };
 
-const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick }: TaskListProps) => {
+const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick, onOpenFull }: TaskListProps) => {
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return format(date, "dd/MM/yyyy");
@@ -815,6 +903,31 @@ const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick }: 
           </div>
         </CardContent>
       </Card>
+    );
+  }
+
+  if (onOpenFull) {
+    return (
+      <div className="space-y-4">
+        {tasks.map((task) => {
+          const unified = globalTaskToUnified(task);
+          return (
+            <TaskSummaryPopover
+              key={task.id}
+              task={unified}
+              onOpenFull={() => onOpenFull(unified)}
+            >
+              <div>
+                <UnifiedTaskCard
+                  task={unified}
+                  onToggleStatus={() => onToggleTaskStatus(task.id)}
+                  onClick={() => {}}
+                />
+              </div>
+            </TaskSummaryPopover>
+          );
+        })}
+      </div>
     );
   }
 

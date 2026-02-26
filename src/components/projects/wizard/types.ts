@@ -15,6 +15,7 @@ export interface WizardBasicConfig {
   startDate: string | null;
   endDate: string | null;
   teamId: string | null;
+  teamIds: string[];
 }
 
 export interface WizardSpecificConfig {
@@ -40,6 +41,7 @@ export const INITIAL_BASIC_CONFIG: WizardBasicConfig = {
   startDate: null,
   endDate: null,
   teamId: null,
+  teamIds: [],
 };
 
 export const INITIAL_SPECIFIC_CONFIG: WizardSpecificConfig = {};

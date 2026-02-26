@@ -66,6 +66,12 @@ const order = [
   '48_project_areas_responsible_ids.sql',
   '49_teams_and_team_members.sql',
   '50_projects_team_id.sql',
+  '51_role_module_permissions.sql',
+  '52_tenant_enabled_roles.sql',
+  '53_tenant_custom_roles.sql',
+  '54_projects_team_ids.sql',
+  '55_project_areas_team_ids.sql',
+  '56_project_area_comments.sql',
   'create-admin-user.sql',
 ];
 

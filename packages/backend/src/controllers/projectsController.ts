@@ -1,8 +1,16 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
+import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+
+const MODULE_PROJECTS = 'projects';
 
 function mapProjectRow(row: any) {
+  const teamIds = Array.isArray(row.team_ids)
+    ? row.team_ids
+    : row.team_id
+      ? [row.team_id]
+      : [];
   return {
     ...row,
     tags: Array.isArray(row.tags) ? row.tags : [],
@@ -14,7 +22,8 @@ function mapProjectRow(row: any) {
     start_date: row.start_date ? new Date(row.start_date).toISOString().split('T')[0] : null,
     end_date: row.end_date ? new Date(row.end_date).toISOString().split('T')[0] : null,
     responsible_ids: Array.isArray(row.responsible_ids) ? row.responsible_ids : [],
-    team_id: row.team_id ?? null,
+    team_id: row.team_id ?? (teamIds[0] || null),
+    team_ids: teamIds,
   };
 }
 
@@ -35,6 +44,7 @@ const projectObjectSchema = z.object({
   end_date: z.string().optional().nullable(),
   responsible_ids: z.array(z.string().uuid()).optional().default([]),
   team_id: z.string().uuid().optional().nullable(),
+  team_ids: z.array(z.string().uuid()).optional().default([]),
   initial_areas: z.array(z.string().min(1)).optional().default([]),
   create_first_version: z.boolean().optional().default(false),
   first_version_name: z.string().optional().nullable(),
@@ -63,6 +73,7 @@ const projectUpdateSchema = projectObjectSchema.partial();
 const PROJECTS_SELECT_COLUMNS = `id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at,
   project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids`;
 const PROJECTS_SELECT_COLUMNS_WITH_TEAM = `${PROJECTS_SELECT_COLUMNS}, team_id`;
+const PROJECTS_SELECT_COLUMNS_WITH_TEAM_IDS = `${PROJECTS_SELECT_COLUMNS}, team_id, COALESCE(team_ids, '[]'::jsonb) AS team_ids`;
 
 // GET /api/projects?team_id=uuid (team_id opcional; tolera BD sem coluna team_id — migração 50)
 export const getProjects = async (req: Request, res: Response) => {
@@ -74,8 +85,23 @@ export const getProjects = async (req: Request, res: Response) => {
     const teamId = (req.query.team_id as string) || null;
 
     let result;
+    const selectWithTeamIds = PROJECTS_SELECT_COLUMNS_WITH_TEAM_IDS;
     const selectWithTeam = PROJECTS_SELECT_COLUMNS_WITH_TEAM;
     const selectWithoutTeam = PROJECTS_SELECT_COLUMNS;
+
+    const runListQuery = async (select: string, params: string[]) => {
+      try {
+        return await pool.query(
+          `SELECT ${select} FROM projects WHERE user_id = $1 ORDER BY created_at DESC`,
+          params
+        );
+      } catch (colErr: any) {
+        if (colErr?.code === '42703' || colErr?.message?.includes('team_ids') || colErr?.message?.includes('team_id')) {
+          return null;
+        }
+        throw colErr;
+      }
+    };
 
     if (teamId) {
       const teamCheck = await pool.query(
@@ -89,28 +115,26 @@ export const getProjects = async (req: Request, res: Response) => {
       }
       try {
         result = await pool.query(
-          `SELECT ${selectWithTeam} FROM projects WHERE user_id = $1 AND team_id = $2 ORDER BY created_at DESC`,
+          `SELECT ${selectWithTeamIds} FROM projects
+           WHERE user_id = $1 AND (team_id = $2 OR (team_ids @> to_jsonb(ARRAY[$2::text])))
+           ORDER BY created_at DESC`,
           [userId, teamId]
         );
       } catch (colErr: any) {
-        if (colErr?.code === '42703' || colErr?.message?.includes('team_id')) {
+        if (colErr?.code === '42703' || colErr?.message?.includes('team_ids')) {
+          result = await pool.query(
+            `SELECT ${selectWithTeam} FROM projects WHERE user_id = $1 AND team_id = $2 ORDER BY created_at DESC`,
+            [userId, teamId]
+          );
+        } else if (colErr?.code === '42703' || colErr?.message?.includes('team_id')) {
           result = { rows: [] };
         } else throw colErr;
       }
     } else {
-      try {
-        result = await pool.query(
-          `SELECT ${selectWithTeam} FROM projects WHERE user_id = $1 ORDER BY created_at DESC`,
-          [userId]
-        );
-      } catch (colErr: any) {
-        if (colErr?.code === '42703' || colErr?.message?.includes('team_id')) {
-          result = await pool.query(
-            `SELECT ${selectWithoutTeam} FROM projects WHERE user_id = $1 ORDER BY created_at DESC`,
-            [userId]
-          );
-        } else throw colErr;
-      }
+      result = await runListQuery(selectWithTeamIds, [userId]);
+      if (!result) result = await runListQuery(selectWithTeam, [userId]);
+      if (!result) result = await runListQuery(selectWithoutTeam, [userId]);
+      if (!result) result = { rows: [] };
     }
 
     const projects = result.rows.map((project: any) => mapProjectRow(project));
@@ -123,24 +147,33 @@ export const getProjects = async (req: Request, res: Response) => {
 
 const PROJECT_TYPES_WITH_AREAS = ['areas', 'advanced'] as const;
 
-// GET /api/projects/:id (tolera BD sem coluna team_id)
+// GET /api/projects/:id (tolera BD sem coluna team_id / team_ids)
 export const getProjectById = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { id } = req.params;
 
-    let result;
+    let result: any;
     try {
       result = await pool.query(
-        `SELECT ${PROJECTS_SELECT_COLUMNS_WITH_TEAM} FROM projects WHERE id = $1 AND user_id = $2`,
+        `SELECT ${PROJECTS_SELECT_COLUMNS_WITH_TEAM_IDS} FROM projects WHERE id = $1 AND user_id = $2`,
         [id, userId]
       );
     } catch (colErr: any) {
-      if (colErr?.code === '42703' || colErr?.message?.includes('team_id')) {
-        result = await pool.query(
-          `SELECT ${PROJECTS_SELECT_COLUMNS} FROM projects WHERE id = $1 AND user_id = $2`,
-          [id, userId]
-        );
+      if (colErr?.code === '42703' || colErr?.message?.includes('team_ids') || colErr?.message?.includes('team_id')) {
+        try {
+          result = await pool.query(
+            `SELECT ${PROJECTS_SELECT_COLUMNS_WITH_TEAM} FROM projects WHERE id = $1 AND user_id = $2`,
+            [id, userId]
+          );
+        } catch (colErr2: any) {
+          if (colErr2?.code === '42703' || colErr2?.message?.includes('team_id')) {
+            result = await pool.query(
+              `SELECT ${PROJECTS_SELECT_COLUMNS} FROM projects WHERE id = $1 AND user_id = $2`,
+              [id, userId]
+            );
+          } else throw colErr2;
+        }
       } else throw colErr;
     }
 
@@ -153,7 +186,7 @@ export const getProjectById = async (req: Request, res: Response) => {
 
     if (PROJECT_TYPES_WITH_AREAS.includes(projectType as any)) {
       const areasResult = await pool.query(
-        `SELECT id, project_id, name, sort_order, responsible_ids, created_at, updated_at
+        `SELECT id, project_id, name, sort_order, responsible_ids, team_ids, created_at, updated_at
          FROM project_areas WHERE project_id = $1 ORDER BY sort_order ASC, name ASC`,
         [id]
       );
@@ -183,7 +216,7 @@ export const createProject = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ error: 'Não autenticado' });
     }
-
+    await assertModulePermission(userId, MODULE_PROJECTS, 'create');
     const validated = projectSchema.parse(req.body);
     const projectType = validated.project_type ?? 'simple';
     const templateId = validated.template_id ?? null;
@@ -204,18 +237,23 @@ export const createProject = async (req: Request, res: Response) => {
       }
     }
 
-    let teamId: string | null = validated.team_id ?? null;
-    if (teamId) {
+    const teamIds = Array.isArray(validated.team_ids) && validated.team_ids.length > 0
+      ? validated.team_ids
+      : validated.team_id
+        ? [validated.team_id]
+        : [];
+    for (const tid of teamIds) {
       const teamCheck = await pool.query(
         `SELECT t.id FROM teams t
          INNER JOIN users u ON u.tenant_id = t.tenant_id AND u.id = $1
          WHERE t.id = $2`,
-        [userId, teamId]
+        [userId, tid]
       );
       if (teamCheck.rows.length === 0) {
         return res.status(400).json({ error: 'Equipe não encontrada ou não pertence ao seu tenant' });
       }
     }
+    const primaryTeamId = teamIds[0] ?? null;
 
     let sourceTemplateId: string | null = null;
     if (templateId) {
@@ -239,27 +277,55 @@ export const createProject = async (req: Request, res: Response) => {
     try {
       await client.query('BEGIN');
 
-      const projectResult = await client.query(
-        `INSERT INTO projects (user_id, name, description, status, due_date, tags, kanban_stage, project_type, source_template_id, client_id, start_date, end_date, responsible_ids, team_id)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11::timestamptz, $12::timestamptz, $13::jsonb, $14)
-         RETURNING id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id`,
-        [
-          userId,
-          validated.name,
-          validated.description || null,
-          validated.status,
-          validated.due_date || null,
-          JSON.stringify(validated.tags || []),
-          validated.kanban_stage || null,
-          projectType,
-          sourceTemplateId,
-          clientId,
-          validated.start_date || null,
-          validated.end_date || null,
-          JSON.stringify(responsibleIds),
-          teamId,
-        ]
-      );
+      let projectResult: any;
+      try {
+        projectResult = await client.query(
+          `INSERT INTO projects (user_id, name, description, status, due_date, tags, kanban_stage, project_type, source_template_id, client_id, start_date, end_date, responsible_ids, team_id, team_ids)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11::timestamptz, $12::timestamptz, $13::jsonb, $14, $15::jsonb)
+           RETURNING id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id, team_ids`,
+          [
+            userId,
+            validated.name,
+            validated.description || null,
+            validated.status,
+            validated.due_date || null,
+            JSON.stringify(validated.tags || []),
+            validated.kanban_stage || null,
+            projectType,
+            sourceTemplateId,
+            clientId,
+            validated.start_date || null,
+            validated.end_date || null,
+            JSON.stringify(responsibleIds),
+            primaryTeamId,
+            JSON.stringify(teamIds),
+          ]
+        );
+      } catch (insErr: any) {
+        if (insErr?.code === '42703' && insErr?.message?.includes('team_ids')) {
+          projectResult = await client.query(
+            `INSERT INTO projects (user_id, name, description, status, due_date, tags, kanban_stage, project_type, source_template_id, client_id, start_date, end_date, responsible_ids, team_id)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11::timestamptz, $12::timestamptz, $13::jsonb, $14)
+             RETURNING id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id`,
+            [
+              userId,
+              validated.name,
+              validated.description || null,
+              validated.status,
+              validated.due_date || null,
+              JSON.stringify(validated.tags || []),
+              validated.kanban_stage || null,
+              projectType,
+              sourceTemplateId,
+              clientId,
+              validated.start_date || null,
+              validated.end_date || null,
+              JSON.stringify(responsibleIds),
+              primaryTeamId,
+            ]
+          );
+        } else throw insErr;
+      }
       const project = projectResult.rows[0];
       const projectId = project.id;
 
@@ -335,6 +401,9 @@ export const createProject = async (req: Request, res: Response) => {
       client.release();
     }
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
@@ -348,7 +417,13 @@ export const updateProject = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { id } = req.params;
-
+    const existing = await pool.query('SELECT user_id FROM projects WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
+    await assertModulePermission(userId, MODULE_PROJECTS, 'edit', {
+      ownerId: existing.rows[0].user_id,
+    });
     const validated = projectUpdateSchema.parse(req.body);
 
     const updates: string[] = [];
@@ -395,7 +470,23 @@ export const updateProject = async (req: Request, res: Response) => {
       updates.push(`responsible_ids = $${paramCount++}::jsonb`);
       values.push(JSON.stringify(validated.responsible_ids));
     }
-    if (validated.team_id !== undefined) {
+    if (validated.team_ids !== undefined) {
+      const teamIds = validated.team_ids;
+      for (const tid of teamIds) {
+        const teamCheck = await pool.query(
+          `SELECT t.id FROM teams t INNER JOIN users u ON u.tenant_id = t.tenant_id AND u.id = $1 WHERE t.id = $2`,
+          [userId, tid]
+        );
+        if (teamCheck.rows.length === 0) {
+          return res.status(400).json({ error: 'Equipe não encontrada ou não pertence ao seu tenant' });
+        }
+      }
+      const primaryTeamId = teamIds[0] ?? null;
+      updates.push(`team_id = $${paramCount++}`);
+      values.push(primaryTeamId);
+      updates.push(`team_ids = $${paramCount++}::jsonb`);
+      values.push(JSON.stringify(teamIds));
+    } else if (validated.team_id !== undefined) {
       const teamId = validated.team_id;
       if (teamId) {
         const teamCheck = await pool.query(
@@ -414,12 +505,15 @@ export const updateProject = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Nenhum campo para atualizar' });
     }
 
+    const returningCols = updates.some((u) => u.startsWith('team_ids'))
+      ? 'id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id, team_ids'
+      : 'id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id';
     values.push(id, userId);
     const result = await pool.query(
       `UPDATE projects
        SET ${updates.join(', ')}, updated_at = now()
        WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
-       RETURNING id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id`,
+       RETURNING ${returningCols}`,
       values
     );
 
@@ -429,6 +523,9 @@ export const updateProject = async (req: Request, res: Response) => {
 
     res.json(mapProjectRow(result.rows[0]));
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
@@ -442,7 +539,13 @@ export const deleteProject = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { id } = req.params;
-
+    const existing = await pool.query('SELECT user_id FROM projects WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
+    await assertModulePermission(userId, MODULE_PROJECTS, 'delete', {
+      ownerId: existing.rows[0].user_id,
+    });
     const result = await pool.query(
       `DELETE FROM projects
        WHERE id = $1 AND user_id = $2
@@ -456,6 +559,9 @@ export const deleteProject = async (req: Request, res: Response) => {
 
     res.status(204).send();
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     console.error('Error deleting project:', error);
     res.status(500).json({ error: 'Erro ao deletar projeto' });
   }

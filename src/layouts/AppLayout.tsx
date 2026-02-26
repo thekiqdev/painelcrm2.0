@@ -21,6 +21,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
+import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import {
   Command,
   CommandDialog,
@@ -34,6 +35,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Input } from "@/components/ui/input";
 import { searchService } from '@/services/search';
 import { Logo } from '@/components/Logo';
+import { RequireModuleView } from '@/components/RequireModuleView';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -43,6 +45,7 @@ const Nav = () => {
   const location = useLocation();
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
+  const { canView } = useModulePermissions();
   const hasDashboard = useFeatureFlag('dashboard');
   const hasClients = useFeatureFlag('clients');
   const hasLeads = useFeatureFlag('leads');
@@ -57,7 +60,9 @@ const Nav = () => {
   const hasInvoices = useFeatureFlag('invoices');
   const hasExpenses = useFeatureFlag('expenses');
   const hasSettings = useFeatureFlag('settings');
-  
+
+  const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
+
   const getNavClass = ({ isActive }: { isActive: boolean }) => 
     isActive ? "bg-crm-primary/10 text-crm-primary font-medium" : "hover:bg-muted/50";
 
@@ -79,7 +84,7 @@ const Nav = () => {
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
-            {hasDashboard && (
+            {show(hasDashboard, 'dashboard') && (
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
                   <NavLink to="/dashboard" className={getNavClass}>
@@ -96,7 +101,7 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Vendas</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {hasClients && (
+              {show(hasClients, 'clients') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/clients" className={getNavClass}>
@@ -106,7 +111,7 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {hasLeads && (
+              {show(hasLeads, 'leads') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/leads" className={getNavClass}>
@@ -116,7 +121,7 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {hasFunnels && (
+              {show(hasFunnels, 'funnels') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/funnel" className={getNavClass}>
@@ -126,7 +131,7 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {hasProducts && (
+              {show(hasProducts, 'products') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/products" className={getNavClass}>
@@ -144,7 +149,7 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Projetos</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {hasProjects && (
+              {show(hasProjects, 'projects') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/projects" className={getNavClass}>
@@ -154,25 +159,25 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {hasTasks && (
-                <>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
-                      <NavLink to="/tasks" className={getNavClass}>
-                        <ClipboardCheck className="mr-2 h-5 w-5" />
-                        {!collapsed && <span>Tarefas</span>}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
-                      <NavLink to="/project-templates" className={getNavClass}>
-                        <LayoutTemplate className="mr-2 h-5 w-5" />
-                        {!collapsed && <span>Templates</span>}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </>
+              {show(hasTasks, 'tasks') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/tasks" className={getNavClass}>
+                      <ClipboardCheck className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Tarefas</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasTasks, 'project_templates') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/project-templates" className={getNavClass}>
+                      <LayoutTemplate className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Templates</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -182,7 +187,7 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {hasChat && (
+              {show(hasChat, 'chat') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/chat" className={getNavClass}>
@@ -192,7 +197,7 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {hasTickets && (
+              {show(hasTickets, 'tickets') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/support/tickets" className={getNavClass}>
@@ -210,7 +215,7 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Documentação</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {hasProposals && (
+              {show(hasProposals, 'proposals') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/proposals" className={getNavClass}>
@@ -220,7 +225,7 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {hasContracts && (
+              {show(hasContracts, 'contracts') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/contracts" className={getNavClass}>
@@ -238,7 +243,7 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Financeiro</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {hasInvoices && (
+              {show(hasInvoices, 'billing') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/billing" className={getNavClass}>
@@ -248,7 +253,7 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {hasExpenses && (
+              {show(hasExpenses, 'finance') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink to="/finance" className={getNavClass}>
@@ -264,7 +269,7 @@ const Nav = () => {
         
         <SidebarGroup>
           <SidebarMenu>
-            {hasSettings && (
+            {show(hasSettings, 'settings') && (
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
                   <NavLink to="/settings" className={getNavClass}>
@@ -283,6 +288,7 @@ const Nav = () => {
 
 const Header = () => {
   const { user, profile, signOut } = useAuth();
+  const { canView } = useModulePermissions();
   const navigate = useNavigate();
   const [commandDialogOpen, setCommandDialogOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -490,7 +496,7 @@ const Header = () => {
               <Settings className="mr-2 h-4 w-4" />
               <span>Configurações</span>
             </DropdownMenuItem>
-            {user?.can_manage_plan && (
+            {user?.can_manage_plan && canView('meu_plano') && (
               <DropdownMenuItem onClick={() => navigate('/meu-plano')}>
                 <CreditCard className="mr-2 h-4 w-4" />
                 <span>Planos</span>
@@ -522,7 +528,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
         <div className="flex-1 flex flex-col overflow-hidden">
           <Header />
           <main className="flex-1 overflow-auto p-6">
-            {children}
+            <RequireModuleView>{children}</RequireModuleView>
           </main>
         </div>
       </div>

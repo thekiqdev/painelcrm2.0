@@ -13,7 +13,6 @@ import type { WizardBasicConfig } from "../types";
 import type { Member } from "@/components/shared/types";
 import type { Client } from "@/services/clients";
 import { AddClientDialog } from "@/components/clients/AddClientDialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface TeamOption {
   id: string;
@@ -41,6 +40,7 @@ export function Step2BasicConfig({
   onClientCreated,
 }: Step2BasicConfigProps) {
   const selectedMembers = members.filter((m) => config.responsibleIds.includes(m.id));
+  const selectedTeams = teams.filter((t) => config.teamIds.includes(t.id));
   const [clientSearchOpen, setClientSearchOpen] = useState(false);
   const [createClientDialogOpen, setCreateClientDialogOpen] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState("");
@@ -210,26 +210,6 @@ export function Step2BasicConfig({
         />
       </div>
 
-      {teams.length > 0 && (
-        <div className="space-y-2">
-          <Label>Equipe responsável (opcional)</Label>
-          <Select
-            value={config.teamId ?? "none"}
-            onValueChange={(v) => onChange({ teamId: v === "none" ? null : v })}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Nenhuma" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">Nenhuma</SelectItem>
-              {teams.map((t) => (
-                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
       <div className="space-y-2">
         <Label htmlFor="wizard-description">Descrição (opcional)</Label>
         <SystemRichEditor
@@ -241,58 +221,116 @@ export function Step2BasicConfig({
         />
       </div>
 
-      <div className="space-y-2">
-        <Label>Responsáveis iniciais (opcional)</Label>
-        <div className="flex flex-wrap gap-2">
-          {selectedMembers.map((m) => (
-            <span
-              key={m.id}
-              className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
-            >
-              {m.name}
-              <button
-                type="button"
-                onClick={() =>
-                  onChange({
-                    responsibleIds: config.responsibleIds.filter((id) => id !== m.id),
-                  })
-                }
-                className="rounded p-0.5 hover:bg-muted-foreground/20"
-                aria-label={`Remover ${m.name}`}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button type="button" variant="outline" size="sm" className="gap-1">
-                <ChevronDown className="h-4 w-4" />
-                Adicionar
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-56 p-2" align="start">
-              {members
-                .filter((m) => !config.responsibleIds.includes(m.id))
-                .map((m) => (
+      <div className="grid gap-6 sm:grid-cols-2">
+        {teams.length > 0 && (
+          <div className="space-y-2">
+            <Label>Equipe(s) responsável(eis) (opcional)</Label>
+            <div className="flex flex-wrap gap-2">
+              {selectedTeams.map((t) => (
+                <span
+                  key={t.id}
+                  className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
+                >
+                  {t.name}
                   <button
-                    key={m.id}
                     type="button"
-                    className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
                     onClick={() =>
-                      onChange({ responsibleIds: [...config.responsibleIds, m.id] })
+                      onChange({
+                        teamIds: config.teamIds.filter((id) => id !== t.id),
+                      })
                     }
+                    className="rounded p-0.5 hover:bg-muted-foreground/20"
+                    aria-label={`Remover ${t.name}`}
                   >
-                    {m.name}
+                    <X className="h-3 w-3" />
                   </button>
-                ))}
-              {members.filter((m) => !config.responsibleIds.includes(m.id)).length === 0 && (
-                <p className="px-2 py-1 text-sm text-muted-foreground">
-                  Todos já adicionados
-                </p>
-              )}
-            </PopoverContent>
-          </Popover>
+                </span>
+              ))}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="outline" size="sm" className="gap-1">
+                    <ChevronDown className="h-4 w-4" />
+                    Adicionar
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-56 p-2" align="start">
+                  {teams
+                    .filter((t) => !config.teamIds.includes(t.id))
+                    .map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
+                        onClick={() =>
+                          onChange({ teamIds: [...config.teamIds, t.id] })
+                        }
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                  {teams.filter((t) => !config.teamIds.includes(t.id)).length === 0 && (
+                    <p className="px-2 py-1 text-sm text-muted-foreground">
+                      Todas já adicionadas
+                    </p>
+                  )}
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+        )}
+        <div className="space-y-2">
+          <Label>Responsáveis iniciais (opcional)</Label>
+          <div className="flex flex-wrap gap-2">
+            {selectedMembers.map((m) => (
+              <span
+                key={m.id}
+                className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
+              >
+                {m.name}
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      responsibleIds: config.responsibleIds.filter((id) => id !== m.id),
+                    })
+                  }
+                  className="rounded p-0.5 hover:bg-muted-foreground/20"
+                  aria-label={`Remover ${m.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="gap-1">
+                  <ChevronDown className="h-4 w-4" />
+                  Adicionar
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 p-2" align="start">
+                {members
+                  .filter((m) => !config.responsibleIds.includes(m.id))
+                  .map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
+                      onClick={() =>
+                        onChange({ responsibleIds: [...config.responsibleIds, m.id] })
+                      }
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                {members.filter((m) => !config.responsibleIds.includes(m.id)).length === 0 && (
+                  <p className="px-2 py-1 text-sm text-muted-foreground">
+                    Todos já adicionados
+                  </p>
+                )}
+              </PopoverContent>
+            </Popover>
+          </div>
         </div>
       </div>
 

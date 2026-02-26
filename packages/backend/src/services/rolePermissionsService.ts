@@ -68,3 +68,6 @@ export function getPermissionsForRole(role: AppRole): PermissionType[] {
 export function isValidAppRole(role: string): role is AppRole {
   return role === 'admin' || role === 'manager' || role === 'member' || role === 'viewer';
 }
+
+/** Perfis exibidos por padrão na UI (Etapa 1 do plano de permissões por módulo). */
+export const DEFAULT_DISPLAY_ROLES: AppRole[] = ['admin', 'member'];

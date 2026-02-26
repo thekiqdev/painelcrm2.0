@@ -54,11 +54,14 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
     getTenantRoles().then(setRoles).catch(() => setRoles([]));
   }, []);
 
-  const handleRoleChange = async (userId: string, role: string) => {
+  const handleRoleChange = async (userId: string, value: string) => {
+    const payload =
+      value.startsWith("custom:") ? { custom_role_id: value.slice(7) } : { role: value };
     setUpdatingRoleUserId(userId);
     try {
-      await setUserRole(userId, role);
-      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role } : u)));
+      await setUserRole(userId, payload);
+      const list = await getMyTenantUsers();
+      setUsers(list);
       toast.success("Perfil de acesso atualizado");
     } catch (err: any) {
       toast.error(err?.message ?? "Erro ao atualizar perfil");
@@ -66,6 +69,9 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
       setUpdatingRoleUserId(null);
     }
   };
+
+  const selectValueForUser = (u: TenantUser) =>
+    u.custom_role_id ? `custom:${u.custom_role_id}` : (u.role ?? "");
 
   const atLimit = usersLimit?.limit != null && usersLimit.current >= usersLimit.limit;
   const limitLabel =
@@ -135,7 +141,7 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                         </span>
                       ) : roles.length > 0 ? (
                         <Select
-                          value={u.role ?? ""}
+                          value={selectValueForUser(u)}
                           onValueChange={(value) => handleRoleChange(u.id, value)}
                           disabled={updatingRoleUserId === u.id}
                         >
@@ -144,12 +150,19 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                           </SelectTrigger>
                           <SelectContent>
                             {roles.map((r) => (
-                              <SelectItem key={r.role} value={r.role}>
+                              <SelectItem
+                                key={r.id ?? r.role}
+                                value={r.role === "custom" ? `custom:${r.id}` : r.role}
+                              >
                                 {r.name}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
+                      ) : u.custom_role_name ? (
+                        <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-full text-xs">
+                          {u.custom_role_name}
+                        </span>
                       ) : u.role ? (
                         <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-full text-xs">
                           {roles.find((r) => r.role === u.role)?.name ?? u.role}

@@ -47,6 +47,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -59,8 +60,11 @@ const taskSchema = z.object({
   status: z.string().default("Pendente"),
 });
 
+const MODULE_CLIENTS = 'clients';
+
 const Clients = () => {
   const navigate = useNavigate();
+  const { canCreate, canEdit, canDelete } = useModulePermissions();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -917,6 +921,7 @@ const Clients = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          {canCreate(MODULE_CLIENTS) && (
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -1028,6 +1033,7 @@ const Clients = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
 
           {/* Dialog para adicionar nova tarefa */}
           <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
@@ -1232,9 +1238,11 @@ const Clients = () => {
                       <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
                         Fechar
                       </Button>
+                      {canEdit(MODULE_CLIENTS) && (
                       <Button onClick={handleEditClient}>
                         Editar Cliente
                       </Button>
+                      )}
                     </>
                   )}
                 </DialogFooter>
@@ -1375,6 +1383,7 @@ const Clients = () => {
                           <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Ações</DropdownMenuLabel>
                             <DropdownMenuSeparator />
+                            {canEdit(MODULE_CLIENTS) && (
                             <DropdownMenuItem onClick={(e) => {
                               e.stopPropagation();
                               setSelectedClient(client);
@@ -1384,6 +1393,7 @@ const Clients = () => {
                               <FileText className="h-4 w-4 mr-2" />
                               Editar Cliente
                             </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem onClick={(e) => {
                               e.stopPropagation();
                               setSelectedClient(client);
@@ -1402,6 +1412,7 @@ const Clients = () => {
                               Gerar Proposta
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            {canDelete(MODULE_CLIENTS) && (
                             <DropdownMenuItem 
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1412,6 +1423,7 @@ const Clients = () => {
                               <Trash2 className="h-4 w-4 mr-2" />
                               Excluir Cliente
                             </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>

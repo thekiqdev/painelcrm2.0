@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button";
 import { MoreHorizontal, Edit, Trash2, Plus, Check, ClipboardList, Calendar, User, ChevronDown, ChevronUp } from "lucide-react";
 import { ProjectList, Task, Project } from "./types";
 import { TaskCard } from "./TaskCard";
+import { UnifiedTaskCard, TaskSummaryPopover } from "@/components/tasks";
+import { projectUITaskToUnified } from "@/lib/taskUnified";
+import type { UnifiedTask } from "@/lib/taskUnified";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +38,10 @@ interface BoardViewProps {
   onMoveProject?: (projectId: string, newListId: string) => void;
   // For task drag and drop
   onMoveTask?: (taskId: string, sourceListId: string, targetListId: string) => void;
+  // Fluxo unificado: card resumo + abrir completo
+  projectId?: string;
+  areaId?: string | null;
+  onOpenFull?: (task: UnifiedTask) => void;
 }
 
 export function BoardView({
@@ -52,7 +59,10 @@ export function BoardView({
   onAddProject,
   onMoveProject,
   // Task drag and drop props
-  onMoveTask
+  onMoveTask,
+  projectId,
+  areaId,
+  onOpenFull,
 }: BoardViewProps) {
   const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
   
@@ -214,22 +224,59 @@ export function BoardView({
     </Card>
   );
 
-  // Wrap task card with drag functionality
-  const renderDraggableTaskCard = (task: Task, listId: string) => (
-    <div
-      key={task.id} 
-      draggable
-      onDragStart={(e) => handleTaskDragStart(e, task.id, listId)}
-      className="mb-3 last:mb-0"
-    >
-      <TaskCard 
+  const renderDraggableTaskCard = (task: Task, listId: string) => {
+    const useUnified = onOpenFull != null;
+    const unifiedTask = useUnified
+      ? projectUITaskToUnified(task, {
+          listId,
+          projectId: projectId ?? undefined,
+          areaId: areaId ?? undefined,
+        })
+      : null;
+
+    const cardContent = useUnified && unifiedTask ? (
+      <TaskSummaryPopover
+        task={unifiedTask}
+        onOpenFull={() => onOpenFull(unifiedTask)}
+      >
+        <div className="mb-3 last:mb-0">
+          <UnifiedTaskCard
+            task={unifiedTask}
+            listId={listId}
+            onToggleStatus={(taskId, listIdParam) =>
+              onToggleTaskStatus(listIdParam ?? listId, taskId)
+            }
+            onClick={() => {}}
+          />
+        </div>
+      </TaskSummaryPopover>
+    ) : (
+      <TaskCard
         task={task}
         listId={listId}
         onClick={() => onTaskClick(task, listId)}
-        onToggleStatus={() => onToggleTaskStatus(listId, task.id)}
+        onToggleStatus={onToggleTaskStatus}
       />
-    </div>
-  );
+    );
+
+    const canDrag = onMoveTask != null;
+    return (
+      <div
+        key={task.id}
+        draggable={canDrag}
+        onDragStart={
+          canDrag ? (e) => handleTaskDragStart(e, task.id, listId) : undefined
+        }
+        className={cn(
+          "mb-3 last:mb-0",
+          useUnified && "cursor-pointer",
+          canDrag && "cursor-grab active:cursor-grabbing"
+        )}
+      >
+        {cardContent}
+      </div>
+    );
+  };
 
   return (
     <div className="flex-1 h-full">

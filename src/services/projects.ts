@@ -9,6 +9,17 @@ export interface ProjectArea {
   updated_at?: string;
 }
 
+export interface AreaComment {
+  id: string;
+  area_id: string;
+  user_id: string;
+  body: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  author_name: string;
+  author_email?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -27,6 +38,7 @@ export interface Project {
   end_date?: string | null;
   responsible_ids?: string[];
   team_id?: string | null;
+  team_ids?: string[];
   areas?: ProjectArea[];
 }
 
@@ -107,6 +119,7 @@ export class ProjectsService {
     end_date?: string | null;
     responsible_ids?: string[];
     team_id?: string | null;
+    team_ids?: string[];
     initial_areas?: string[];
     create_first_version?: boolean;
     first_version_name?: string | null;
@@ -127,6 +140,7 @@ export class ProjectsService {
       tags?: string[];
       kanban_stage?: string | null;
       team_id?: string | null;
+      team_ids?: string[];
     }
   ): Promise<Project> {
     const response = await apiClient.patch<Project>(`/api/projects/${id}`, data);
@@ -157,7 +171,7 @@ export class ProjectsService {
 
   async updateProjectArea(
     areaId: string,
-    data: { name?: string; sort_order?: number; responsible_ids?: string[] }
+    data: { name?: string; sort_order?: number; responsible_ids?: string[]; team_ids?: string[] }
   ): Promise<ProjectArea> {
     const response = await apiClient.patch<ProjectArea>(`/api/projects/areas/${areaId}`, data);
     if (response.error) throw new Error(response.error);
@@ -166,6 +180,24 @@ export class ProjectsService {
 
   async deleteProjectArea(areaId: string): Promise<void> {
     const response = await apiClient.delete(`/api/projects/areas/${areaId}`);
+    if (response.error) throw new Error(response.error);
+  }
+
+  /** Comentários da área (estilo rede social). */
+  async getAreaComments(projectId: string, areaId: string): Promise<AreaComment[]> {
+    const response = await apiClient.get<AreaComment[]>(`/api/projects/${projectId}/areas/${areaId}/comments`);
+    if (response.error) throw new Error(response.error);
+    return response.data ?? [];
+  }
+
+  async createAreaComment(projectId: string, areaId: string, body: string): Promise<AreaComment> {
+    const response = await apiClient.post<AreaComment>(`/api/projects/${projectId}/areas/${areaId}/comments`, { body });
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async deleteAreaComment(projectId: string, areaId: string, commentId: string): Promise<void> {
+    const response = await apiClient.delete(`/api/projects/${projectId}/areas/${areaId}/comments/${commentId}`);
     if (response.error) throw new Error(response.error);
   }
 

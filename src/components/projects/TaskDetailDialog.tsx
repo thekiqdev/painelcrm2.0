@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -49,23 +49,12 @@ export function TaskDetailDialog({
   setEditMode,
   onUpdateTask
 }: TaskDetailDialogProps) {
-  if (!task || !listId) return null;
+  // Form state for editing (inicial seguro para cumprir regras dos hooks)
+  const [editData, setEditData] = useState<Partial<Task>>({});
+  const [targetListId, setTargetListId] = useState<string>("");
 
-  // Form state for editing
-  const [editData, setEditData] = useState<Partial<Task>>({
-    title: task.title,
-    description: task.description,
-    priority: task.priority,
-    dueDate: task.dueDate,
-    tags: task.tags || []
-  });
-
-  // Target list for moving task
-  const [targetListId, setTargetListId] = useState<string>(listId);
-
-  // Update form data when task changes
   useEffect(() => {
-    if (task) {
+    if (task && listId) {
       setEditData({
         title: task.title,
         description: task.description,
@@ -77,11 +66,8 @@ export function TaskDetailDialog({
     }
   }, [task, listId]);
 
-  const checklistItems = task.checklist || [];
-  const completedItems = checklistItems.filter(item => item.completed).length;
-  const totalItems = checklistItems.length;
-  const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
-  
+  const [newTag, setNewTag] = useState("");
+
   const handleAddItem = () => {
     if (!newChecklistItemText.trim()) return;
     onAddChecklistItem(newChecklistItemText);
@@ -110,9 +96,6 @@ export function TaskDetailDialog({
     }
   };
 
-  // Handle tag input changes
-  const [newTag, setNewTag] = useState("");
-  
   const addTag = () => {
     if (newTag.trim() && !editData.tags?.includes(newTag.trim())) {
       setEditData({
@@ -130,9 +113,19 @@ export function TaskDetailDialog({
     });
   };
 
+  if (!task || !listId) return null;
+
+  const checklistItems = task.checklist || [];
+  const completedItems = checklistItems.filter(item => item.completed).length;
+  const totalItems = checklistItems.length;
+  const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[600px]" aria-describedby={undefined}>
+        <DialogDescription className="sr-only">
+          Detalhes da tarefa: {task.title}
+        </DialogDescription>
         <DialogHeader>
           <div className="flex items-center gap-2">
             {!editMode ? (

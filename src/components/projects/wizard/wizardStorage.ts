@@ -35,6 +35,12 @@ export function loadWizardDraft(): WizardState | null {
           : [],
         startDate: parsed.basicConfig?.startDate ?? null,
         endDate: parsed.basicConfig?.endDate ?? null,
+        teamId: parsed.basicConfig?.teamId ?? null,
+        teamIds: Array.isArray(parsed.basicConfig?.teamIds)
+          ? parsed.basicConfig.teamIds
+          : parsed.basicConfig?.teamId
+            ? [parsed.basicConfig.teamId]
+            : [],
       },
       specificConfig: {
         areas: Array.isArray(parsed.specificConfig?.areas)
