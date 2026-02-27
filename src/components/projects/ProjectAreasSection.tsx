@@ -245,25 +245,31 @@ export function ProjectAreasSection({
                 </div>
               </div>
             )}
-            {editingArea && teams.length > 0 && (
+            {editingArea && (
               <div className="grid gap-2">
                 <Label className="flex items-center gap-1.5">
                   <Users className="h-4 w-4" />
                   Equipes que podem visualizar a área
                 </Label>
                 <div className="max-h-40 overflow-y-auto rounded-md border p-3 space-y-2">
-                  {teams.map((team) => (
-                    <label
-                      key={team.id}
-                      className="flex items-center gap-2 cursor-pointer text-sm"
-                    >
-                      <Checkbox
-                        checked={teamIds.includes(team.id)}
-                        onCheckedChange={() => toggleTeam(team.id)}
-                      />
-                      <span>{team.name}</span>
-                    </label>
-                  ))}
+                  {teams.length > 0 ? (
+                    teams.map((team) => (
+                      <label
+                        key={team.id}
+                        className="flex items-center gap-2 cursor-pointer text-sm"
+                      >
+                        <Checkbox
+                          checked={teamIds.includes(team.id)}
+                          onCheckedChange={() => toggleTeam(team.id)}
+                        />
+                        <span>{team.name}</span>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Nenhuma equipe cadastrada. Adicione equipes em Configurações para poder atribuí-las à área.
+                    </p>
+                  )}
                 </div>
               </div>
             )}
