@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -23,12 +24,32 @@ import { globalTaskToUnified, type UnifiedTask } from "@/lib/taskUnified";
 import { SystemRichEditor, SystemRichEditorReadOnly } from "@/components/editor";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
+const TASKS_QUERY_KEY = ["tasks", "list"] as const;
+
 const Tasks = () => {
+  const queryClient = useQueryClient();
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [date, setDate] = useState<Date>();
   const [clients, setClients] = useState<Client[]>([]);
+
+  const { data: tasksData, isPending: loading } = useQuery({
+    queryKey: ["tasks", "list"],
+    queryFn: async () => {
+      const [tasksRes, clientsRes] = await Promise.all([
+        tasksService.getTasks(),
+        clientsService.getClients(),
+      ]);
+      const formatted = (tasksRes || []).map((t: Task) => ({ ...t, date: t.date || "" }));
+      return { tasks: formatted, clients: clientsRes || [] };
+    },
+  });
+  useEffect(() => {
+    if (tasksData) {
+      setTasks(tasksData.tasks);
+      setClients(tasksData.clients);
+    }
+  }, [tasksData]);
   
   // Estados para o modal de detalhes e gerenciamento de checklist
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
@@ -57,34 +78,6 @@ const Tasks = () => {
   const [formAdvancedOpen, setFormAdvancedOpen] = useState(false);
   const [fullViewTask, setFullViewTask] = useState<UnifiedTask | null>(null);
 
-  // Carregar tarefas e clientes
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setLoading(true);
-        const [tasksData, clientsData] = await Promise.all([
-          tasksService.getTasks(),
-          clientsService.getClients(),
-        ]);
-        
-        // Converter tarefas para o formato esperado
-        const formattedTasks = (tasksData || []).map(task => ({
-          ...task,
-          date: task.date || "",
-        }));
-        
-        setTasks(formattedTasks);
-        setClients(clientsData || []);
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error);
-        toast.error("Erro ao carregar tarefas");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, []);
 
   const handleToggleTaskStatus = async (taskId: string) => {
     try {
@@ -134,6 +127,7 @@ const Tasks = () => {
       });
 
       setTasks(prev => [...prev, { ...newTask, date: newTask.date || "" }]);
+      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
       
       // Reset form
       setFormTitle("");
@@ -342,6 +336,7 @@ const closeTaskDetail = () => {
     try {
       await tasksService.deleteTask(taskId);
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
       setFullViewTask(null);
       if (selectedTask?.id === taskId) closeTaskDetail();
       toast.success("Tarefa excluída");
@@ -358,7 +353,7 @@ const closeTaskDetail = () => {
     return Math.round((completedItems / task.checklist.length) * 100);
   };
 
-  if (loading) {
+  if (loading && tasks.length === 0) {
     return (
       <div className="flex items-center justify-center p-10">
         <div className="text-center">

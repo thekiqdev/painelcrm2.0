@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect } from "react";
+import React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowUp, ArrowDown, Users, DollarSign, List, FileText, Calendar } from "lucide-react";
@@ -20,46 +21,37 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+async function loadDashboardData() {
+  const [kpisData, salesChart, leadsChart, funnel, activitiesData, tasksData] = await Promise.all([
+    dashboardService.getKPIs(),
+    dashboardService.getSalesChart(),
+    dashboardService.getLeadsChart(),
+    dashboardService.getFunnelData(),
+    dashboardService.getRecentActivities(),
+    dashboardService.getUpcomingTasks(),
+  ]);
+  return {
+    kpis: kpisData,
+    salesData: salesChart,
+    leadsData: leadsChart,
+    funnelData: funnel,
+    activities: activitiesData,
+    tasks: tasksData,
+  };
+}
+
 const Dashboard = () => {
-  const [loading, setLoading] = useState(true);
-  const [kpis, setKpis] = useState<KPIData | null>(null);
-  const [salesData, setSalesData] = useState<ChartData[]>([]);
-  const [leadsData, setLeadsData] = useState<ChartData[]>([]);
-  const [funnelData, setFunnelData] = useState<FunnelData[]>([]);
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [tasks, setTasks] = useState<UpcomingTask[]>([]);
+  const { data, isPending, error } = useQuery({
+    queryKey: ["dashboard"],
+    queryFn: loadDashboardData,
+  });
 
-  useEffect(() => {
-    const loadDashboardData = async () => {
-      try {
-        setLoading(true);
-        const [kpisData, salesChart, leadsChart, funnel, activitiesData, tasksData] = await Promise.all([
-          dashboardService.getKPIs(),
-          dashboardService.getSalesChart(),
-          dashboardService.getLeadsChart(),
-          dashboardService.getFunnelData(),
-          dashboardService.getRecentActivities(),
-          dashboardService.getUpcomingTasks(),
-        ]);
+  if (error) {
+    toast.error("Erro ao carregar dados do dashboard");
+  }
 
-        setKpis(kpisData);
-        setSalesData(salesChart);
-        setLeadsData(leadsChart);
-        setFunnelData(funnel);
-        setActivities(activitiesData);
-        setTasks(tasksData);
-      } catch (error) {
-        console.error("Erro ao carregar dados do dashboard:", error);
-        toast.error("Erro ao carregar dados do dashboard");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadDashboardData();
-  }, []);
-
-  if (loading) {
+  // Só mostra loading na primeira vez; com cache os dados aparecem na hora
+  if (isPending && !data) {
     return (
       <div className="flex items-center justify-center p-10">
         <div className="text-center">
@@ -68,6 +60,13 @@ const Dashboard = () => {
       </div>
     );
   }
+
+  const kpis = data?.kpis ?? null;
+  const salesData = data?.salesData ?? [];
+  const leadsData = data?.leadsData ?? [];
+  const funnelData = data?.funnelData ?? [];
+  const activities = data?.activities ?? [];
+  const tasks = data?.tasks ?? [];
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {

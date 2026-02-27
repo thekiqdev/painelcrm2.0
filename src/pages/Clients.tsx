@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,8 +63,11 @@ const taskSchema = z.object({
 
 const MODULE_CLIENTS = 'clients';
 
+const CLIENTS_QUERY_KEY = ["clients", "list"] as const;
+
 const Clients = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { canCreate, canEdit, canDelete } = useModulePermissions();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
@@ -79,7 +83,6 @@ const Clients = () => {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [newClientGroup, setNewClientGroup] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [isLoading, setIsLoading] = useState(true);
   const [notes, setNotes] = useState<StickyNoteData[]>([]);
   const [clientTasks, setClientTasks] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
@@ -119,42 +122,35 @@ const Clients = () => {
     },
   });
 
-  // Carregar clientes e grupos
+  // Clientes e grupos em cache – ao voltar na página os dados aparecem na hora
+  const { data: clientsData, isPending: isLoading } = useQuery({
+    queryKey: ["clients", "list"],
+    queryFn: async () => {
+      const [groupsData, clientsData] = await Promise.all([
+        clientsService.getClientGroups(),
+        clientsService.getClients(),
+      ]);
+      const groups = groupsData || [];
+      const formatted = (clientsData || []).map((client: any) => ({
+        id: client.id,
+        name: client.name,
+        company: client.company,
+        email: client.email,
+        phone: client.phone,
+        status: client.status,
+        group: client.client_groups?.name || "",
+        group_id: client.group_id,
+        notes: client.notes,
+      }));
+      return { clients: formatted, groups };
+    },
+  });
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        // Carregar grupos de clientes
-        const groupsData = await clientsService.getClientGroups();
-        setClientGroups(groupsData || []);
-
-        // Carregar clientes
-        const clientsData = await clientsService.getClients();
-        
-        // Formatar os dados dos clientes
-        const formattedClients = clientsData?.map(client => ({
-          id: client.id,
-          name: client.name,
-          company: client.company,
-          email: client.email,
-          phone: client.phone,
-          status: client.status,
-          group: client.client_groups?.name || "",
-          group_id: client.group_id,
-          notes: client.notes
-        }));
-
-        setClients(formattedClients || []);
-      } catch (error: any) {
-        console.error("Erro ao carregar dados:", error);
-        toast.error(error.message || "Erro ao carregar os dados. Tente novamente.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, []);
+    if (clientsData) {
+      setClients(clientsData.clients);
+      setClientGroups(clientsData.groups);
+    }
+  }, [clientsData]);
 
   // Carregar tarefas do cliente selecionado
   useEffect(() => {
@@ -278,6 +274,7 @@ const Clients = () => {
         });
         
         setClients(updatedClients);
+        queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
         setSelectedClient({
           ...selectedClient,
           name: editedClient.name,
@@ -371,9 +368,8 @@ const Clients = () => {
         notes: addedClient.notes
       };
       
-      // Add the new client to the list
       setClients([...clients, formattedClient]);
-      
+      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
       toast.success("Cliente adicionado com sucesso!");
       setIsAddDialogOpen(false);
       
@@ -415,8 +411,7 @@ const Clients = () => {
         });
         
         setClients(updatedClients);
-        
-        // Atualizar o cliente selecionado
+        queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
         setSelectedClient({
           ...selectedClient, 
           group_id: newClientGroup,
@@ -485,7 +480,7 @@ const Clients = () => {
       });
       
       setClients(updatedClients);
-      
+      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
       // Atualizar o cliente selecionado
       setSelectedClient({
         ...selectedClient,
@@ -573,10 +568,8 @@ const Clients = () => {
     
     try {
       await clientsService.deleteClient(clientToDelete.id);
-      
-      // Remove the client from the local list
       setClients(clients.filter(client => client.id !== clientToDelete.id));
-      
+      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
       // If the deleted client was selected, clear selection
       if (selectedClient && selectedClient.id === clientToDelete.id) {
         setSelectedClient(null);
@@ -1320,7 +1313,7 @@ const Clients = () => {
             </div>
           </div>
           
-          {isLoading ? (
+          {isLoading && clients.length === 0 ? (
             <div className="py-10 text-center">
               <p className="text-muted-foreground">Carregando clientes...</p>
             </div>

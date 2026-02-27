@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -43,18 +44,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 // Padrão de página única para toda a funcionalidade de projetos
 const MODULE_PROJECTS = 'projects';
 
+const PROJECTS_QUERY_KEY = ["projects"] as const;
+
 const Projects = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const restoringFromUrlRef = useRef(false);
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const { canCreate: canCreateProject } = useModulePermissions();
 
   // Estados principais
   const [viewMode, setViewMode] = useState<"list" | "detail">("list");
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState("board");
   const [projectsViewType, setProjectsViewType] = useState<"grid" | "kanban">("grid");
@@ -83,9 +85,50 @@ const Projects = () => {
   const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [areaProgress, setAreaProgress] = useState<Record<string, AreaProgress>>({});
-  const [teams, setTeams] = useState<Team[]>([]);
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [fullViewTask, setFullViewTask] = useState<UnifiedTask | null>(null);
+
+  // Lista de projetos e equipes em cache – ao voltar na página os dados aparecem na hora
+  const { data: teamsData } = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => teamsService.getTeams(),
+  });
+  const teams = teamsData ?? [];
+  const { data: projectsData, isPending: loading } = useQuery({
+    queryKey: [...PROJECTS_QUERY_KEY, teamFilter],
+    queryFn: async () => {
+      const [teamsList, apiProjects] = await Promise.all([
+        teamsService.getTeams(),
+        projectsService.getProjects(teamFilter ?? undefined),
+      ]);
+      const teamMap = new Map(teamsList.map((t) => [t.id, t.name]));
+      return apiProjects.map((apiProject) => ({
+        id: apiProject.id,
+        name: apiProject.name,
+        description: apiProject.description || "",
+        status: apiProject.status,
+        dueDate: apiProject.due_date || undefined,
+        members: [],
+        tags: apiProject.tags || [],
+        lists: [],
+        files: [],
+        financeItems: [],
+        kanbanStage: apiProject.kanban_stage || "backlog",
+        project_type: (apiProject.project_type as Project["project_type"]) || "simple",
+        areas: [],
+        team_id: apiProject.team_id ?? null,
+        teamName: apiProject.team_id ? teamMap.get(apiProject.team_id) ?? null : null,
+      })) as Project[];
+    },
+    enabled: true,
+  });
+  const projects = projectsData ?? [];
+  const setProjects = (updater: Project[] | ((prev: Project[]) => Project[])) => {
+    queryClient.setQueryData<Project[]>(
+      [...PROJECTS_QUERY_KEY, teamFilter],
+      (prev) => (typeof updater === "function" ? updater(prev ?? []) : updater)
+    );
+  };
 
   // Deep state: sincronizar painel da tarefa com URL (restaura ao navegar/atualizar)
   useEffect(() => {
@@ -144,61 +187,14 @@ const Projects = () => {
     if (project) setSelectedProject(project);
   }, [searchParams.get("project"), projects]);
 
-  // Carregar membros do backend
+  // Membros em cache para carregamento rápido
+  const { data: membersData } = useQuery({
+    queryKey: ["members"],
+    queryFn: () => membersService.getMembers(),
+  });
   useEffect(() => {
-    const loadMembers = async () => {
-      try {
-        const membersData = await membersService.getMembers();
-        setMembers(membersData);
-      } catch (error) {
-        console.error('Erro ao carregar membros:', error);
-        // Continuar mesmo se falhar, usando array vazio
-        setMembers([]);
-      }
-    };
-
-    loadMembers();
-  }, []);
-
-  useEffect(() => {
-    teamsService.getTeams().then(setTeams).catch(() => setTeams([]));
-  }, []);
-
-  // Carregar projetos do backend (com filtro por equipe)
-  useEffect(() => {
-    const loadProjects = async () => {
-      try {
-        setLoading(true);
-        const apiProjects = await projectsService.getProjects(teamFilter ?? undefined);
-        const teamMap = new Map(teams.map(t => [t.id, t.name]));
-        const convertedProjects: Project[] = apiProjects.map(apiProject => ({
-          id: apiProject.id,
-          name: apiProject.name,
-          description: apiProject.description || "",
-          status: apiProject.status,
-          dueDate: apiProject.due_date || undefined,
-          members: [],
-          tags: apiProject.tags || [],
-          lists: [],
-          files: [],
-          financeItems: [],
-          kanbanStage: apiProject.kanban_stage || "backlog",
-          project_type: (apiProject.project_type as Project["project_type"]) || "simple",
-          areas: [],
-          team_id: apiProject.team_id ?? null,
-          teamName: apiProject.team_id ? (teamMap.get(apiProject.team_id) ?? null) : null,
-        }));
-        setProjects(convertedProjects);
-      } catch (error) {
-        console.error('Erro ao carregar projetos:', error);
-        toast.error('Erro ao carregar projetos');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadProjects();
-  }, [teamFilter, teams]);
+    setMembers(membersData ?? []);
+  }, [membersData]);
 
   // Em projetos com áreas, as abas Etapas/Tarefas não existem; manter aba válida (Documentos, Calendário ou Financeiro)
   useEffect(() => {
@@ -1530,7 +1526,7 @@ const Projects = () => {
       </div>
 
       {/* Conteúdo principal */}
-      {loading ? (
+      {loading && projects.length === 0 ? (
         <div className="flex items-center justify-center h-64">
           <p className="text-muted-foreground">Carregando projetos...</p>
         </div>

@@ -36,16 +36,32 @@ import { Input } from "@/components/ui/input";
 import { searchService } from '@/services/search';
 import { Logo } from '@/components/Logo';
 import { RequireModuleView } from '@/components/RequireModuleView';
+import { routePreload } from '@/routePreload';
 
 interface AppLayoutProps {
   children: React.ReactNode;
 }
+
+// Prefetch dos chunks das rotas mais usadas após o layout carregar (evita espera no primeiro clique)
+const usePrefetchRoutes = () => {
+  useEffect(() => {
+    const t = setTimeout(() => {
+      routePreload.dashboard();
+      routePreload.clients();
+      routePreload.tasks();
+      routePreload.projects();
+      routePreload.products();
+    }, 1500);
+    return () => clearTimeout(t);
+  }, []);
+};
 
 const Nav = () => {
   const location = useLocation();
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const { canView } = useModulePermissions();
+  usePrefetchRoutes();
   const hasDashboard = useFeatureFlag('dashboard');
   const hasClients = useFeatureFlag('clients');
   const hasLeads = useFeatureFlag('leads');
@@ -87,7 +103,7 @@ const Nav = () => {
             {show(hasDashboard, 'dashboard') && (
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <NavLink to="/dashboard" className={getNavClass}>
+                  <NavLink to="/dashboard" className={getNavClass} onMouseEnter={() => routePreload.dashboard()}>
                     <LayoutDashboard className="mr-2 h-5 w-5" />
                     {!collapsed && <span>Dashboard</span>}
                   </NavLink>
@@ -104,7 +120,7 @@ const Nav = () => {
               {show(hasClients, 'clients') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/clients" className={getNavClass}>
+                    <NavLink to="/clients" className={getNavClass} onMouseEnter={() => routePreload.clients()}>
                       <Users className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Clientes</span>}
                     </NavLink>
@@ -114,7 +130,7 @@ const Nav = () => {
               {show(hasLeads, 'leads') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/leads" className={getNavClass}>
+                    <NavLink to="/leads" className={getNavClass} onMouseEnter={() => routePreload.leads()}>
                       <UserPlus className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Leads</span>}
                     </NavLink>
@@ -124,7 +140,7 @@ const Nav = () => {
               {show(hasFunnels, 'funnels') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/funnel" className={getNavClass}>
+                    <NavLink to="/funnel" className={getNavClass} onMouseEnter={() => routePreload.funnel()}>
                       <List className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Funil de Vendas</span>}
                     </NavLink>
@@ -134,7 +150,7 @@ const Nav = () => {
               {show(hasProducts, 'products') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/products" className={getNavClass}>
+                    <NavLink to="/products" className={getNavClass} onMouseEnter={() => routePreload.products()}>
                       <Briefcase className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Produtos</span>}
                     </NavLink>
@@ -152,7 +168,7 @@ const Nav = () => {
               {show(hasProjects, 'projects') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/projects" className={getNavClass}>
+                    <NavLink to="/projects" className={getNavClass} onMouseEnter={() => routePreload.projects()}>
                       <Calendar className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Projetos</span>}
                     </NavLink>
@@ -162,7 +178,7 @@ const Nav = () => {
               {show(hasTasks, 'tasks') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/tasks" className={getNavClass}>
+                    <NavLink to="/tasks" className={getNavClass} onMouseEnter={() => routePreload.tasks()}>
                       <ClipboardCheck className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Tarefas</span>}
                     </NavLink>
@@ -172,7 +188,7 @@ const Nav = () => {
               {show(hasTasks, 'project_templates') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/project-templates" className={getNavClass}>
+                    <NavLink to="/project-templates" className={getNavClass} onMouseEnter={() => routePreload.projectTemplates()}>
                       <LayoutTemplate className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Templates</span>}
                     </NavLink>
@@ -190,7 +206,7 @@ const Nav = () => {
               {show(hasChat, 'chat') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/chat" className={getNavClass}>
+                    <NavLink to="/chat" className={getNavClass} onMouseEnter={() => routePreload.chat()}>
                       <MessageSquare className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Chat</span>}
                     </NavLink>
@@ -200,7 +216,7 @@ const Nav = () => {
               {show(hasTickets, 'tickets') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/support/tickets" className={getNavClass}>
+                    <NavLink to="/support/tickets" className={getNavClass} onMouseEnter={() => routePreload.tickets()}>
                       <Ticket className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Tickets</span>}
                     </NavLink>
@@ -218,7 +234,7 @@ const Nav = () => {
               {show(hasProposals, 'proposals') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/proposals" className={getNavClass}>
+                    <NavLink to="/proposals" className={getNavClass} onMouseEnter={() => routePreload.proposals()}>
                       <FileText className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Propostas</span>}
                     </NavLink>
@@ -228,7 +244,7 @@ const Nav = () => {
               {show(hasContracts, 'contracts') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/contracts" className={getNavClass}>
+                    <NavLink to="/contracts" className={getNavClass} onMouseEnter={() => routePreload.contracts()}>
                       <FileSearch className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Contratos</span>}
                     </NavLink>
@@ -246,7 +262,7 @@ const Nav = () => {
               {show(hasInvoices, 'billing') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/billing" className={getNavClass}>
+                    <NavLink to="/billing" className={getNavClass} onMouseEnter={() => routePreload.billing()}>
                       <DollarSign className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Faturamento</span>}
                     </NavLink>
@@ -256,7 +272,7 @@ const Nav = () => {
               {show(hasExpenses, 'finance') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
-                    <NavLink to="/finance" className={getNavClass}>
+                    <NavLink to="/finance" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
                       <DollarSign className="mr-2 h-5 w-5" />
                       {!collapsed && <span>Financeiro</span>}
                     </NavLink>
@@ -272,7 +288,7 @@ const Nav = () => {
             {show(hasSettings, 'settings') && (
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <NavLink to="/settings" className={getNavClass}>
+                  <NavLink to="/settings" className={getNavClass} onMouseEnter={() => routePreload.settings()}>
                     <Settings className="mr-2 h-5 w-5" />
                     {!collapsed && <span>Configurações</span>}
                   </NavLink>
