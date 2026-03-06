@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import * as registrationStepsController from '../controllers/registrationStepsController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuth);
 
-router.post('/', authenticateToken, registrationStepsController.upsertRegistrationStep);
+router.post('/', registrationStepsController.upsertRegistrationStep);
 
 export default router;
 

@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
-import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
-
+import { AuthRequest } from '../middleware/auth.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 const MODULE_TASKS = 'tasks';
 
 /** Valor para coluna jsonb: null, string JSON como está, objeto stringificado. */
@@ -80,16 +80,20 @@ function mapTaskRow(row: any) {
 // GET /api/projects/lists/:listId/tasks?areaId=uuid (areaId opcional: filtra por área)
 export const getProjectTasks = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as any).tenantId ?? null;
     const { listId } = req.params;
     const areaId = (req.query.areaId as string) || null;
 
+    if (!tenantId) {
+      return res.status(404).json({ error: 'Lista não encontrada' });
+    }
     const listCheck = await pool.query(
       `SELECT pl.id, pl.project_id
        FROM project_lists pl
        INNER JOIN projects p ON pl.project_id = p.id
-       WHERE pl.id = $1 AND p.user_id = $2`,
-      [listId, userId]
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE pl.id = $2`,
+      [tenantId, listId]
     );
 
     if (listCheck.rows.length === 0) {
@@ -169,16 +173,20 @@ export const getProjectTaskById = async (req: Request, res: Response) => {
 export const createProjectTask = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const tenantId = (req as any).tenantId ?? null;
     const { listId } = req.params;
-    await assertModulePermission(userId, MODULE_TASKS, 'create');
+    await assertModulePermission(userId, MODULE_TASKS, 'create', undefined, req as AuthRequest);
 
-    // Verificar se a lista pertence a um projeto do usuário e obter project_id
+    if (!tenantId) {
+      return res.status(404).json({ error: 'Lista não encontrada' });
+    }
     const listCheck = await pool.query(
       `SELECT pl.id, pl.project_id
        FROM project_lists pl
        INNER JOIN projects p ON pl.project_id = p.id
-       WHERE pl.id = $1 AND p.user_id = $2`,
-      [listId, userId]
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE pl.id = $2`,
+      [tenantId, listId]
     );
 
     if (listCheck.rows.length === 0) {
@@ -271,7 +279,7 @@ export const updateProjectTask = async (req: Request, res: Response) => {
     await assertModulePermission(userId, MODULE_TASKS, 'edit', {
       ownerId: taskRow.rows[0].user_id,
       assigneeId: taskRow.rows[0].assignee_id,
-    });
+    }, req as AuthRequest);
     const validated = taskSchema.partial().parse(req.body);
 
     const updates: string[] = [];
@@ -387,7 +395,7 @@ export const deleteProjectTask = async (req: Request, res: Response) => {
     await assertModulePermission(userId, MODULE_TASKS, 'delete', {
       ownerId: row.user_id,
       assigneeId: row.assignee_id,
-    });
+    }, req as AuthRequest);
     await pool.query(
       `DELETE FROM project_tasks WHERE id = $1`,
       [taskId]
@@ -406,14 +414,18 @@ export const deleteProjectTask = async (req: Request, res: Response) => {
 // GET /api/projects/:projectId/areas/:areaId/tasks — tarefas da área (para painel contextual)
 export const getTasksByArea = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as any).tenantId ?? null;
     const { projectId, areaId } = req.params;
 
+    if (!tenantId) {
+      return res.status(404).json({ error: 'Área não encontrada' });
+    }
     const areaCheck = await pool.query(
       `SELECT pa.id FROM project_areas pa
        INNER JOIN projects p ON pa.project_id = p.id
-       WHERE pa.id = $1 AND pa.project_id = $2 AND p.user_id = $3`,
-      [areaId, projectId, userId]
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE pa.id = $2 AND pa.project_id = $3`,
+      [tenantId, areaId, projectId]
     );
     if (areaCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Área não encontrada' });

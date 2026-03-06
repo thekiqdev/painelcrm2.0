@@ -57,6 +57,7 @@ export function ProjectSettingsDialog({
   );
   const [ownerId, setOwnerId] = useState<string>(project.members[0]?.id || "");
   const [teamId, setTeamId] = useState<string | null>(project.team_id ?? null);
+  const [projectTeamIds, setProjectTeamIds] = useState<string[]>(project.team_ids ?? (project.team_id ? [project.team_id] : []));
 
   useEffect(() => {
     if (open) {
@@ -65,8 +66,11 @@ export function ProjectSettingsDialog({
       setProjectStatus(project.status);
       setDueDate(project.dueDate ? new Date(project.dueDate) : undefined);
       setTeamId(project.team_id ?? null);
+      setProjectTeamIds(project.team_ids ?? (project.team_id ? [project.team_id] : []));
+      const rids = project.responsible_ids ?? [];
+      setProjectMembers(rids.length > 0 ? members.filter((m) => rids.includes(m.id)) : (project.members ?? []));
     }
-  }, [open, project.id, project.name, project.description, project.status, project.dueDate, project.team_id]);
+  }, [open, project.id, project.name, project.description, project.status, project.dueDate, project.team_id, project.team_ids, project.responsible_ids, project.members, members]);
 
   // Team tab state
   const [projectMembers, setProjectMembers] = useState<Member[]>(project.members);
@@ -79,13 +83,17 @@ export function ProjectSettingsDialog({
   const [costCenter, setCostCenter] = useState("");
 
   const handleSave = () => {
+    const responsibleIds = projectMembers.map((m) => m.id);
+    const teamIds = projectTeamIds.length > 0 ? projectTeamIds : (teamId ? [teamId] : []);
     const updatedProject: Partial<Project> = {
       name: projectName,
       description: projectDescription,
       status: projectStatus,
       dueDate: dueDate ? format(dueDate, 'yyyy-MM-dd') : undefined,
       members: projectMembers,
-      team_id: teamId ?? undefined,
+      team_id: teamIds[0] ?? teamId ?? undefined,
+      responsible_ids: responsibleIds,
+      team_ids: teamIds,
     };
 
     onSave(updatedProject);
@@ -108,6 +116,14 @@ export function ProjectSettingsDialog({
 
   const handleSetMemberRole = (memberId: string, role: string) => {
     setMemberRoles({ ...memberRoles, [memberId]: role });
+  };
+
+  const handleAddTeam = (tid: string) => {
+    if (tid && !projectTeamIds.includes(tid)) setProjectTeamIds([...projectTeamIds, tid]);
+  };
+
+  const handleRemoveTeam = (tid: string) => {
+    setProjectTeamIds(projectTeamIds.filter((id) => id !== tid));
   };
 
   return (
@@ -231,12 +247,16 @@ export function ProjectSettingsDialog({
             </TabsContent>
 
             {/* TAB: EQUIPE */}
-            <TabsContent value="team" className="space-y-4">
+            <TabsContent value="team" className="space-y-6">
+              <p className="text-sm text-muted-foreground">
+                Apenas os membros e as equipes listados abaixo poderão ver e acessar este projeto.
+              </p>
+
               <div className="space-y-2">
-                <Label>Adicionar Membro</Label>
+                <Label>Membros do projeto</Label>
                 <Select onValueChange={handleAddMember}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecionar membro" />
+                    <SelectValue placeholder="Adicionar membro" />
                   </SelectTrigger>
                   <SelectContent>
                     {members.filter(m => !projectMembers.find(pm => pm.id === m.id)).map(member => (
@@ -246,55 +266,77 @@ export function ProjectSettingsDialog({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-
-              <div className="space-y-3">
-                <Label>Membros do Projeto</Label>
-                {projectMembers.map(member => (
-                  <div key={member.id} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={member.avatar} />
-                        <AvatarFallback>{member.name.charAt(0)}</AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm font-medium">{member.name}</p>
-                        <p className="text-xs text-muted-foreground">{member.role}</p>
+                <div className="rounded-md border divide-y">
+                  {projectMembers.length === 0 ? (
+                    <div className="py-6 text-center text-sm text-muted-foreground">
+                      Nenhum membro. Adicione para que possam acessar o projeto.
+                    </div>
+                  ) : (
+                    projectMembers.map(member => (
+                      <div key={member.id} className="flex items-center justify-between p-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={member.avatar} />
+                            <AvatarFallback>{member.name?.charAt(0) ?? "?"}</AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="text-sm font-medium">{member.name}</p>
+                            <p className="text-xs text-muted-foreground">{member.email ?? member.role}</p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          onClick={() => handleRemoveMember(member.id)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={memberRoles[member.id] || "member"}
-                        onValueChange={(value) => handleSetMemberRole(member.id, value)}
-                      >
-                        <SelectTrigger className="w-32 h-8">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="owner">Owner</SelectItem>
-                          <SelectItem value="admin">Admin</SelectItem>
-                          <SelectItem value="member">Membro</SelectItem>
-                          <SelectItem value="viewer">Visualizador</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleRemoveMember(member.id)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                    ))
+                  )}
+                </div>
               </div>
 
-              {projectMembers.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  Nenhum membro adicionado ao projeto
+              <div className="space-y-2">
+                <Label>Equipes do projeto</Label>
+                <Select onValueChange={handleAddTeam}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Adicionar equipe" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {teams.filter(t => !projectTeamIds.includes(t.id)).map(team => (
+                      <SelectItem key={team.id} value={team.id}>
+                        {team.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="rounded-md border divide-y">
+                  {projectTeamIds.length === 0 ? (
+                    <div className="py-6 text-center text-sm text-muted-foreground">
+                      Nenhuma equipe. Adicione para que os membros da equipe possam acessar o projeto.
+                    </div>
+                  ) : (
+                    projectTeamIds.map(tid => {
+                      const team = teams.find(t => t.id === tid);
+                      return (
+                        <div key={tid} className="flex items-center justify-between p-3">
+                          <span className="text-sm font-medium">{team?.name ?? tid}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => handleRemoveTeam(tid)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
-              )}
+              </div>
 
               <div className="flex justify-end gap-2 pt-4">
                 <Button variant="outline" onClick={() => onOpenChange(false)}>

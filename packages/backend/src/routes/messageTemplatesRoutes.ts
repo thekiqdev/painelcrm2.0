@@ -1,18 +1,19 @@
 import { Router } from 'express';
 import * as messageTemplatesController from '../controllers/messageTemplatesController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuth);
 
-router.get('/', authenticateToken, messageTemplatesController.getMessageTemplates);
-router.get('/resources', authenticateToken, messageTemplatesController.getResourceTypes);
-router.get('/by-resource/:resource_type/:action', authenticateToken, messageTemplatesController.getMessageTemplateByResource);
-router.post('/', authenticateToken, messageTemplatesController.createMessageTemplate);
-router.post('/initialize-predefined', authenticateToken, messageTemplatesController.initializePredefinedTemplates);
-router.post('/:id/test', authenticateToken, messageTemplatesController.testMessageTemplate);
-router.get('/:id', authenticateToken, messageTemplatesController.getMessageTemplateById);
-router.patch('/:id', authenticateToken, messageTemplatesController.updateMessageTemplate);
-router.delete('/:id', authenticateToken, messageTemplatesController.deleteMessageTemplate);
+router.get('/', messageTemplatesController.getMessageTemplates);
+router.get('/resources', messageTemplatesController.getResourceTypes);
+router.get('/by-resource/:resource_type/:action', messageTemplatesController.getMessageTemplateByResource);
+router.post('/', messageTemplatesController.createMessageTemplate);
+router.post('/initialize-predefined', messageTemplatesController.initializePredefinedTemplates);
+router.post('/:id/test', messageTemplatesController.testMessageTemplate);
+router.get('/:id', messageTemplatesController.getMessageTemplateById);
+router.patch('/:id', messageTemplatesController.updateMessageTemplate);
+router.delete('/:id', messageTemplatesController.deleteMessageTemplate);
 
 export default router;
 

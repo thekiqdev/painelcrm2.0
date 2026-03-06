@@ -19,6 +19,8 @@ export interface TenantUser {
   custom_role_id?: string | null;
   custom_role_name?: string | null;
   is_super_admin: boolean;
+  /** Nomes das equipes do usuário separados por " | " */
+  team_names?: string | null;
 }
 
 export async function getTenantLimits(): Promise<TenantLimits | null> {
@@ -61,6 +63,31 @@ export async function setUserRole(
   );
   if (response.error) throw new Error(response.error);
   return response.data ?? payload;
+}
+
+export interface CreateTenantUserPayload {
+  email: string;
+  password: string;
+  full_name: string;
+  phone?: string;
+}
+
+export interface CreateTenantUserResult {
+  id: string;
+  email: string;
+  full_name: string;
+}
+
+export async function createTenantUser(
+  payload: CreateTenantUserPayload
+): Promise<CreateTenantUserResult> {
+  const response = await apiClient.post<CreateTenantUserResult>(
+    '/api/me/tenant/users',
+    payload
+  );
+  if (response.error) throw new Error(response.error);
+  if (!response.data) throw new Error('Resposta inválida');
+  return response.data;
 }
 
 /** Opções de perfil base para copiar permissões ao criar perfil personalizado. */

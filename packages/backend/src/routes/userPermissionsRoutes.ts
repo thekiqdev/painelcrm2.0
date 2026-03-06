@@ -4,12 +4,12 @@ import {
   createMemberPermission,
   deleteMemberPermission,
 } from '../controllers/userPermissionsController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
 
-// Todas as rotas requerem autenticação
-router.use(authenticateToken);
+// Todas as rotas requerem autenticação e tenant atual
+router.use(...tenantAuth);
 
 // Rotas de permissões
 router.get('/members/:memberId/permissions', getMemberPermissions);

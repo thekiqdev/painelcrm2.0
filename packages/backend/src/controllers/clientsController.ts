@@ -2,9 +2,21 @@ import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
-import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 
 const MODULE_CLIENTS = 'clients';
+
+/** Verifica se o cliente pertence ao tenant (acesso por conta, não por dono). */
+async function clientBelongsToTenant(clientId: string, tenantId: string | null): Promise<boolean> {
+  if (!tenantId) return false;
+  const r = await pool.query(
+    `SELECT 1 FROM clients c
+     INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+     WHERE c.id = $2`,
+    [tenantId, clientId]
+  );
+  return r.rows.length > 0;
+}
 
 const clientSchema = z.object({
   name: z.string().min(1),
@@ -21,7 +33,11 @@ const clientSchema = z.object({
 
 export async function getClients(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const { profileId } = req.query;
 
     let query = `
@@ -30,10 +46,11 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
         cg.id as group_table_id,
         cg.name as group_table_name
       FROM clients c
+      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
       LEFT JOIN client_groups cg ON c.group_id = cg.id
-      WHERE c.user_id = $1
+      WHERE 1=1
     `;
-    const params: any[] = [userId];
+    const params: any[] = [tenantId];
 
     if (profileId) {
       query += ' AND c.profile_id = $2';
@@ -77,7 +94,9 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM clients WHERE id = $1 AND user_id = $2',
+      `SELECT c.* FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE c.id = $1`,
       [id, userId]
     );
 
@@ -96,7 +115,7 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
 export async function createClient(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
-    await assertModulePermission(userId, MODULE_CLIENTS, 'create');
+    await assertModulePermission(userId, MODULE_CLIENTS, 'create', undefined, req);
     const clientData = clientSchema.parse(req.body);
 
     // Convert empty strings to null for optional fields
@@ -227,14 +246,19 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const existing = await pool.query('SELECT user_id FROM clients WHERE id = $1', [id]);
+    const existing = await pool.query(
+      `SELECT c.user_id FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE c.id = $1`,
+      [id, userId]
+    );
     if (existing.rows.length === 0) {
       res.status(404).json({ error: 'Client not found' });
       return;
     }
     await assertModulePermission(userId, MODULE_CLIENTS, 'edit', {
       ownerId: existing.rows[0].user_id,
-    });
+    }, req);
     const clientData = clientSchema.partial().parse(req.body);
 
     const updates: string[] = [];
@@ -254,13 +278,14 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
       `UPDATE clients 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex}
+         AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
-      values
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -287,16 +312,23 @@ export async function deleteClient(req: AuthRequest, res: Response): Promise<voi
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const existing = await pool.query('SELECT user_id FROM clients WHERE id = $1', [id]);
+    const existing = await pool.query(
+      `SELECT c.user_id FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE c.id = $1`,
+      [id, userId]
+    );
     if (existing.rows.length === 0) {
       res.status(404).json({ error: 'Client not found' });
       return;
     }
     await assertModulePermission(userId, MODULE_CLIENTS, 'delete', {
       ownerId: existing.rows[0].user_id,
-    });
+    }, req);
     const result = await pool.query(
-      'DELETE FROM clients WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM clients WHERE id = $1
+       AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
+       RETURNING id`,
       [id, userId]
     );
 
@@ -329,20 +361,15 @@ export async function getClientTasks(req: AuthRequest, res: Response): Promise<v
     const userId = req.userId!;
     const { id } = req.params;
 
-    // Verificar se o cliente pertence ao usuário
-    const clientCheck = await pool.query(
-      'SELECT id FROM clients WHERE id = $1 AND user_id = $2',
-      [id, userId]
-    );
-
-    if (clientCheck.rows.length === 0) {
+    const ok = await clientBelongsToTenant(id, req.tenantId ?? null);
+    if (!ok) {
       res.status(404).json({ error: 'Client not found' });
       return;
     }
 
     const result = await pool.query(
-      'SELECT * FROM client_tasks WHERE client_id = $1 AND user_id = $2 ORDER BY created_at DESC',
-      [id, userId]
+      'SELECT * FROM client_tasks WHERE client_id = $1 ORDER BY created_at DESC',
+      [id]
     );
 
     res.json(result.rows);
@@ -363,13 +390,8 @@ export async function createClientTask(req: AuthRequest, res: Response): Promise
       return;
     }
 
-    // Verificar se o cliente pertence ao usuário
-    const clientCheck = await pool.query(
-      'SELECT id FROM clients WHERE id = $1 AND user_id = $2',
-      [client_id, userId]
-    );
-
-    if (clientCheck.rows.length === 0) {
+    const ok = await clientBelongsToTenant(client_id, req.tenantId ?? null);
+    if (!ok) {
       res.status(404).json({ error: 'Client not found' });
       return;
     }
@@ -407,13 +429,16 @@ export async function updateClientTask(req: AuthRequest, res: Response): Promise
     const { id } = req.params;
     const taskData = clientTaskSchema.partial().parse(req.body);
 
-    // Verificar se a tarefa pertence ao usuário
-    const taskCheck = await pool.query(
-      'SELECT id FROM client_tasks WHERE id = $1 AND user_id = $2',
-      [id, userId]
+    const taskRow = await pool.query<{ client_id: string; user_id: string }>(
+      'SELECT client_id, user_id FROM client_tasks WHERE id = $1',
+      [id]
     );
-
-    if (taskCheck.rows.length === 0) {
+    if (taskRow.rows.length === 0) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
+    const ok = await clientBelongsToTenant(taskRow.rows[0].client_id, req.tenantId ?? null);
+    if (!ok) {
       res.status(404).json({ error: 'Task not found' });
       return;
     }
@@ -444,13 +469,14 @@ export async function updateClientTask(req: AuthRequest, res: Response): Promise
       return;
     }
 
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
       `UPDATE client_tasks
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex}
+         AND client_id IN (SELECT c.id FROM clients c INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
-      values
+      [...values, userId]
     );
 
     res.json(result.rows[0]);
@@ -469,8 +495,21 @@ export async function deleteClientTask(req: AuthRequest, res: Response): Promise
     const userId = req.userId!;
     const { id } = req.params;
 
+    const taskRow = await pool.query<{ client_id: string }>('SELECT client_id FROM client_tasks WHERE id = $1', [id]);
+    if (taskRow.rows.length === 0) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
+    const ok = await clientBelongsToTenant(taskRow.rows[0].client_id, req.tenantId ?? null);
+    if (!ok) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
+
     const result = await pool.query(
-      'DELETE FROM client_tasks WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM client_tasks WHERE id = $1
+       AND client_id IN (SELECT c.id FROM clients c INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
+       RETURNING id`,
       [id, userId]
     );
 

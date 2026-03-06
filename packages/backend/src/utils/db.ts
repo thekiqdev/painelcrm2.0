@@ -1,7 +1,9 @@
 import pg from 'pg';
+import { AsyncLocalStorage } from 'async_hooks';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { assertTenantScopedQuery } from './tenantSecurity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../../.env');
@@ -10,7 +12,8 @@ dotenv.config();
 
 const { Pool } = pg;
 
-export const pool = new Pool({
+/** Pool interno; uso direto em migrate e em middleware que configura o client. */
+const internalPool = new Pool({
   host: process.env.POSTGRES_HOST || 'localhost',
   port: parseInt(process.env.POSTGRES_PORT || '5432'),
   database: process.env.POSTGRES_DB || 'painelcrm',
@@ -21,16 +24,53 @@ export const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
+/** Contexto por request para RLS (Etapa 5): client com SET LOCAL app.current_tenant_id e opcionalmente app.bypass_rls. */
+export const dbRequestStorage = new AsyncLocalStorage<{ client: pg.PoolClient }>();
+
+/**
+ * Pool que, quando há contexto de request (setRequestDb), usa o client com SET LOCAL já aplicado.
+ * Assim as políticas RLS enxergam app.current_tenant_id e app.bypass_rls.
+ */
+function getQueryText(textOrConfig: string | pg.QueryConfig): string {
+  return typeof textOrConfig === 'string' ? textOrConfig : textOrConfig.text;
+}
+
+export const pool = {
+  query(
+    textOrConfig: string | pg.QueryConfig,
+    values?: unknown[]
+  ): Promise<pg.QueryResult> {
+    const text = getQueryText(textOrConfig);
+    assertTenantScopedQuery(text);
+
+    const store = dbRequestStorage.getStore();
+    if (store?.client) {
+      if (typeof textOrConfig === 'string') {
+        return store.client.query(textOrConfig, values);
+      }
+      return store.client.query(textOrConfig);
+    }
+    if (typeof textOrConfig === 'string') {
+      return internalPool.query(textOrConfig, values);
+    }
+    return internalPool.query(textOrConfig);
+  },
+  connect(): Promise<pg.PoolClient> {
+    return internalPool.connect();
+  },
+  on: internalPool.on.bind(internalPool),
+} as pg.Pool;
+
 // Test connection - log apenas na primeira conexão
 let firstConnection = true;
-pool.on('connect', () => {
+internalPool.on('connect', () => {
   if (firstConnection) {
     console.log('Connected to PostgreSQL database');
     firstConnection = false;
   }
 });
 
-pool.on('error', (err) => {
+internalPool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
   process.exit(-1);
 });

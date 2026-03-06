@@ -3,6 +3,8 @@
  * Schema dos módulos, CRUD em role_module_permissions e permissões efetivas por usuário.
  */
 import { pool } from '../utils/db.js';
+import { ModulePermissionError } from '../permissions/errors.js';
+import { incrementPermissionVersion } from './permissionVersionService.js';
 import type { AppRole } from './rolePermissionsService.js';
 import { isValidAppRole } from './rolePermissionsService.js';
 
@@ -161,6 +163,14 @@ export async function setRoleModulePermissions(
   } finally {
     client.release();
   }
+
+  const usersWithRole = await pool.query<{ user_id: string }>(
+    'SELECT user_id FROM user_roles WHERE role = $1',
+    [role]
+  );
+  for (const row of usersWithRole.rows) {
+    await incrementPermissionVersion(row.user_id);
+  }
 }
 
 /** Retorna o role do usuário no tenant (primeiro user_profile do tenant). */
@@ -206,16 +216,8 @@ export async function getEffectiveModulePermissions(userId: string): Promise<Mod
   return {};
 }
 
-/** Erro lançado quando a permissão do módulo não permite a ação. */
-export class ModulePermissionError extends Error {
-  constructor(
-    public readonly statusCode: number = 403,
-    message: string
-  ) {
-    super(message);
-    this.name = 'ModulePermissionError';
-  }
-}
+/** Reexport para compatibilidade: controllers podem continuar importando do service. */
+export { ModulePermissionError };
 
 export interface AssertModulePermissionOptions {
   /** UUID do dono/criador do recurso (ex.: client.user_id). */

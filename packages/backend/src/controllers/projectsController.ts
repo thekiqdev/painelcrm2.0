@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
-import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+import { AuthRequest } from '../middleware/auth.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { isTenantAdmin } from '../utils/tenant.js';
 
 const MODULE_PROJECTS = 'projects';
 
@@ -89,10 +91,18 @@ export const getProjects = async (req: Request, res: Response) => {
     const selectWithTeam = PROJECTS_SELECT_COLUMNS_WITH_TEAM;
     const selectWithoutTeam = PROJECTS_SELECT_COLUMNS;
 
-    const runListQuery = async (select: string, params: string[]) => {
+    const tenantId = (req as any).tenantId ?? null;
+    if (!tenantId) {
+      return res.json([]);
+    }
+
+    const runListQuery = async (select: string, extraWhere: string, params: any[]) => {
       try {
         return await pool.query(
-          `SELECT ${select} FROM projects WHERE user_id = $1 ORDER BY created_at DESC`,
+          `SELECT p.* FROM projects p
+           INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+           WHERE 1=1 ${extraWhere}
+           ORDER BY p.created_at DESC`,
           params
         );
       } catch (colErr: any) {
@@ -115,29 +125,50 @@ export const getProjects = async (req: Request, res: Response) => {
       }
       try {
         result = await pool.query(
-          `SELECT ${selectWithTeamIds} FROM projects
-           WHERE user_id = $1 AND (team_id = $2 OR (team_ids @> to_jsonb(ARRAY[$2::text])))
-           ORDER BY created_at DESC`,
-          [userId, teamId]
+          `SELECT p.* FROM projects p
+           INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+           WHERE (p.team_id = $2 OR (p.team_ids @> to_jsonb(ARRAY[$2::text])))
+           ORDER BY p.created_at DESC`,
+          [tenantId, teamId]
         );
+        if (result.rows.length >= 0) result = { rows: result.rows.map((r: any) => ({ ...r, team_ids: r.team_ids ?? [] })) };
       } catch (colErr: any) {
         if (colErr?.code === '42703' || colErr?.message?.includes('team_ids')) {
           result = await pool.query(
-            `SELECT ${selectWithTeam} FROM projects WHERE user_id = $1 AND team_id = $2 ORDER BY created_at DESC`,
-            [userId, teamId]
+            `SELECT p.* FROM projects p
+             INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+             WHERE p.team_id = $2 ORDER BY p.created_at DESC`,
+            [tenantId, teamId]
           );
         } else if (colErr?.code === '42703' || colErr?.message?.includes('team_id')) {
           result = { rows: [] };
         } else throw colErr;
       }
     } else {
-      result = await runListQuery(selectWithTeamIds, [userId]);
-      if (!result) result = await runListQuery(selectWithTeam, [userId]);
-      if (!result) result = await runListQuery(selectWithoutTeam, [userId]);
+      result = await runListQuery(selectWithTeamIds, '', [tenantId]);
+      if (!result) result = await runListQuery(selectWithTeam, '', [tenantId]);
+      if (!result) result = await runListQuery(selectWithoutTeam, '', [tenantId]);
       if (!result) result = { rows: [] };
     }
 
-    const projects = result.rows.map((project: any) => mapProjectRow(project));
+    let rows = result.rows;
+    const isTenantAdminUser = await isTenantAdmin(userId);
+    if (!isTenantAdminUser) {
+      const userTeamRows = await pool.query<{ team_id: string }>(
+        'SELECT team_id FROM team_members WHERE user_id = $1',
+        [userId]
+      );
+      const userTeamIdSet = new Set(userTeamRows.rows.map((r) => r.team_id));
+      rows = rows.filter((row: any) => {
+        if (row.user_id === userId) return true;
+        const respIds: string[] = Array.isArray(row.responsible_ids) ? row.responsible_ids : [];
+        if (respIds.includes(userId)) return true;
+        const tids: string[] = Array.isArray(row.team_ids) ? row.team_ids : row.team_id ? [row.team_id] : [];
+        return tids.some((tid: string) => userTeamIdSet.has(tid));
+      });
+    }
+
+    const projects = rows.map((project: any) => mapProjectRow(project));
     res.json(projects);
   } catch (error) {
     console.error('Error fetching projects:', error);
@@ -156,20 +187,26 @@ export const getProjectById = async (req: Request, res: Response) => {
     let result: any;
     try {
       result = await pool.query(
-        `SELECT ${PROJECTS_SELECT_COLUMNS_WITH_TEAM_IDS} FROM projects WHERE id = $1 AND user_id = $2`,
+        `SELECT p.* FROM projects p
+         INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+         WHERE p.id = $1`,
         [id, userId]
       );
     } catch (colErr: any) {
       if (colErr?.code === '42703' || colErr?.message?.includes('team_ids') || colErr?.message?.includes('team_id')) {
         try {
           result = await pool.query(
-            `SELECT ${PROJECTS_SELECT_COLUMNS_WITH_TEAM} FROM projects WHERE id = $1 AND user_id = $2`,
+            `SELECT p.* FROM projects p
+             INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+             WHERE p.id = $1`,
             [id, userId]
           );
         } catch (colErr2: any) {
           if (colErr2?.code === '42703' || colErr2?.message?.includes('team_id')) {
             result = await pool.query(
-              `SELECT ${PROJECTS_SELECT_COLUMNS} FROM projects WHERE id = $1 AND user_id = $2`,
+              `SELECT p.* FROM projects p
+               INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+               WHERE p.id = $1`,
               [id, userId]
             );
           } else throw colErr2;
@@ -181,7 +218,30 @@ export const getProjectById = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Projeto não encontrado' });
     }
 
-    const project = mapProjectRow(result.rows[0]);
+    const row = result.rows[0];
+    const projectOwnerId = row.user_id;
+    const isOwner = projectOwnerId === userId;
+    const isTenantAdminUser = await isTenantAdmin(userId);
+    if (!isOwner && !isTenantAdminUser) {
+      const respIds: string[] = Array.isArray(row.responsible_ids) ? row.responsible_ids : [];
+      const inResponsibles = respIds.includes(userId);
+      let inTeam = false;
+      if (!inResponsibles) {
+        const tids: string[] = Array.isArray(row.team_ids) ? row.team_ids : row.team_id ? [row.team_id] : [];
+        if (tids.length > 0) {
+          const memberCheck = await pool.query(
+            'SELECT 1 FROM team_members WHERE user_id = $1 AND team_id = ANY($2::uuid[]) LIMIT 1',
+            [userId, tids]
+          );
+          inTeam = memberCheck.rows.length > 0;
+        }
+      }
+      if (!inResponsibles && !inTeam) {
+        return res.status(404).json({ error: 'Projeto não encontrado' });
+      }
+    }
+
+    const project = mapProjectRow(row);
     const projectType = (project as any).project_type ?? 'simple';
 
     if (PROJECT_TYPES_WITH_AREAS.includes(projectType as any)) {
@@ -190,7 +250,22 @@ export const getProjectById = async (req: Request, res: Response) => {
          FROM project_areas WHERE project_id = $1 ORDER BY sort_order ASC, name ASC`,
         [id]
       );
-      (project as any).areas = areasResult.rows;
+      let areas = areasResult.rows;
+      const isAdminAreas = isOwner || isTenantAdminUser;
+      if (!isAdminAreas) {
+        const userTeams = await pool.query<{ team_id: string }>(
+          'SELECT team_id FROM team_members WHERE user_id = $1',
+          [userId]
+        );
+        const userTeamIdSet = new Set(userTeams.rows.map((r) => r.team_id));
+        areas = areas.filter((row: any) => {
+          const respIds: string[] = Array.isArray(row.responsible_ids) ? row.responsible_ids : [];
+          if (respIds.includes(userId)) return true;
+          const tids: string[] = Array.isArray(row.team_ids) ? row.team_ids : [];
+          return tids.some((tid: string) => userTeamIdSet.has(tid));
+        });
+      }
+      (project as any).areas = areas;
     } else {
       (project as any).areas = [];
     }
@@ -216,7 +291,7 @@ export const createProject = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ error: 'Não autenticado' });
     }
-    await assertModulePermission(userId, MODULE_PROJECTS, 'create');
+    await assertModulePermission(userId, MODULE_PROJECTS, 'create', undefined, req as AuthRequest);
     const validated = projectSchema.parse(req.body);
     const projectType = validated.project_type ?? 'simple';
     const templateId = validated.template_id ?? null;
@@ -229,7 +304,9 @@ export const createProject = async (req: Request, res: Response) => {
 
     if (clientId) {
       const clientCheck = await pool.query(
-        `SELECT id FROM clients WHERE id = $1 AND user_id = $2`,
+        `SELECT c.id FROM clients c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+         WHERE c.id = $1`,
         [clientId, userId]
       );
       if (clientCheck.rows.length === 0) {
@@ -266,9 +343,14 @@ export const createProject = async (req: Request, res: Response) => {
       }
       const template = templateResult.rows[0];
       const isSystem = template.is_system === true;
-      const belongsToUser = template.user_id === userId;
-      if (!isSystem && !belongsToUser) {
-        return res.status(403).json({ error: 'Template não disponível para este usuário' });
+      if (!isSystem) {
+        const templateInTenant = await pool.query(
+          `SELECT 1 FROM users u WHERE u.id = $1 AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)`,
+          [template.user_id, userId]
+        );
+        if (templateInTenant.rows.length === 0) {
+          return res.status(403).json({ error: 'Template não disponível para este usuário' });
+        }
       }
       sourceTemplateId = templateId;
     }
@@ -417,13 +499,18 @@ export const updateProject = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { id } = req.params;
-    const existing = await pool.query('SELECT user_id FROM projects WHERE id = $1', [id]);
+    const existing = await pool.query(
+      `SELECT p.user_id FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [id, userId]
+    );
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'Projeto não encontrado' });
     }
     await assertModulePermission(userId, MODULE_PROJECTS, 'edit', {
       ownerId: existing.rows[0].user_id,
-    });
+    }, req as AuthRequest);
     const validated = projectUpdateSchema.parse(req.body);
 
     const updates: string[] = [];
@@ -508,13 +595,13 @@ export const updateProject = async (req: Request, res: Response) => {
     const returningCols = updates.some((u) => u.startsWith('team_ids'))
       ? 'id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id, team_ids'
       : 'id, name, description, status, due_date, tags, kanban_stage, created_at, updated_at, project_type, template_id, source_template_id, client_id, start_date, end_date, responsible_ids, team_id';
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
       `UPDATE projects
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+       WHERE id = $${paramCount} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
        RETURNING ${returningCols}`,
-      values
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -539,16 +626,21 @@ export const deleteProject = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { id } = req.params;
-    const existing = await pool.query('SELECT user_id FROM projects WHERE id = $1', [id]);
+    const existing = await pool.query(
+      `SELECT p.user_id FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [id, userId]
+    );
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'Projeto não encontrado' });
     }
     await assertModulePermission(userId, MODULE_PROJECTS, 'delete', {
       ownerId: existing.rows[0].user_id,
-    });
+    }, req as AuthRequest);
     const result = await pool.query(
       `DELETE FROM projects
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
        RETURNING id`,
       [id, userId]
     );

@@ -40,38 +40,39 @@ const messageTemplateSchema = z.object({
 // GET /api/message-templates
 export async function getMessageTemplates(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId;
-    
-    if (!userId) {
-      res.status(401).json({ error: 'Usuário não autenticado' });
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
       return;
     }
 
     const { resource_type, action, is_predefined } = req.query;
 
-    let query = 'SELECT * FROM message_templates WHERE user_id = $1';
-    const params: any[] = [userId];
+    let query = `SELECT mt.* FROM message_templates mt
+       INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = $1
+       WHERE 1=1`;
+    const params: any[] = [tenantId];
     let paramIndex = 2;
 
     if (resource_type) {
-      query += ` AND resource_type = $${paramIndex}`;
+      query += ` AND mt.resource_type = $${paramIndex}`;
       params.push(resource_type);
       paramIndex++;
     }
 
     if (action) {
-      query += ` AND action = $${paramIndex}`;
+      query += ` AND mt.action = $${paramIndex}`;
       params.push(action);
       paramIndex++;
     }
 
     if (is_predefined !== undefined) {
-      query += ` AND is_predefined = $${paramIndex}`;
+      query += ` AND mt.is_predefined = $${paramIndex}`;
       params.push(is_predefined === 'true');
       paramIndex++;
     }
 
-    query += ' ORDER BY is_predefined DESC, resource_type ASC, action ASC, name ASC';
+    query += ' ORDER BY mt.is_predefined DESC, mt.resource_type ASC, mt.action ASC, mt.name ASC';
 
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -113,7 +114,9 @@ export async function getMessageTemplateById(req: AuthRequest, res: Response): P
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM message_templates WHERE id = $1 AND user_id = $2',
+      `SELECT mt.* FROM message_templates mt
+       INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE mt.id = $1`,
       [id, userId]
     );
 
@@ -135,13 +138,19 @@ export async function getMessageTemplateByResource(req: AuthRequest, res: Respon
     const userId = req.userId!;
     const { resource_type, action } = req.params;
 
-    // Buscar template ativo para o resource_type e action
+    // Buscar template ativo para o resource_type e action (escopo tenant)
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(404).json({ error: 'Modelo de mensagem não encontrado para este recurso e ação' });
+      return;
+    }
     const result = await pool.query(
-      `SELECT * FROM message_templates 
-       WHERE user_id = $1 AND resource_type = $2 AND action = $3 AND is_active = true
-       ORDER BY is_predefined DESC, created_at DESC
+      `SELECT mt.* FROM message_templates mt
+       INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = $1
+       WHERE mt.resource_type = $2 AND mt.action = $3 AND mt.is_active = true
+       ORDER BY mt.is_predefined DESC, mt.created_at DESC
        LIMIT 1`,
-      [userId, resource_type, action]
+      [tenantId, resource_type, action]
     );
 
     if (result.rows.length === 0) {
@@ -172,10 +181,17 @@ export async function createMessageTemplate(req: AuthRequest, res: Response): Pr
       return;
     }
 
-    // Verificar se já existe um template com o mesmo nome, resource_type e action para o usuário
+    // Verificar se já existe um template com o mesmo nome, resource_type e action no tenant
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
     const existingResult = await pool.query(
-      'SELECT id FROM message_templates WHERE user_id = $1 AND name = $2 AND resource_type = $3 AND action = $4',
-      [userId, templateData.name, templateData.resource_type, templateData.action]
+      `SELECT mt.id FROM message_templates mt
+       INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = $1
+       WHERE mt.name = $2 AND mt.resource_type = $3 AND mt.action = $4`,
+      [tenantId, templateData.name, templateData.resource_type, templateData.action]
     );
 
     if (existingResult.rows.length > 0) {
@@ -220,9 +236,11 @@ export async function updateMessageTemplate(req: AuthRequest, res: Response): Pr
     const { id } = req.params;
     const templateData = messageTemplateSchema.partial().parse(req.body);
 
-    // Verificar se o template existe e pertence ao usuário
+    // Verificar se o template existe e pertence ao tenant
     const existingResult = await pool.query(
-      'SELECT id, is_predefined, resource_type, action FROM message_templates WHERE id = $1 AND user_id = $2',
+      `SELECT mt.id, mt.is_predefined, mt.resource_type, mt.action FROM message_templates mt
+       INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE mt.id = $1`,
       [id, userId]
     );
 
@@ -247,13 +265,15 @@ export async function updateMessageTemplate(req: AuthRequest, res: Response): Pr
       }
     }
 
-    // Se estiver atualizando nome, resource_type e action, verificar duplicatas
+    // Se estiver atualizando nome, resource_type e action, verificar duplicatas no tenant
     if (templateData.name || templateData.resource_type || templateData.action) {
       const newName = templateData.name || currentTemplate.name;
 
       const duplicateResult = await pool.query(
-        'SELECT id FROM message_templates WHERE user_id = $1 AND name = $2 AND resource_type = $3 AND action = $4 AND id != $5',
-        [userId, newName, finalResourceType, finalAction, id]
+        `SELECT mt.id FROM message_templates mt
+         INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $5)
+         WHERE mt.name = $1 AND mt.resource_type = $2 AND mt.action = $3 AND mt.id != $4`,
+        [newName, finalResourceType, finalAction, id, userId]
       );
 
       if (duplicateResult.rows.length > 0) {
@@ -304,7 +324,7 @@ export async function updateMessageTemplate(req: AuthRequest, res: Response): Pr
     const result = await pool.query(
       `UPDATE message_templates 
        SET ${updateFields.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
       params
     );
@@ -331,9 +351,11 @@ export async function deleteMessageTemplate(req: AuthRequest, res: Response): Pr
     const userId = req.userId!;
     const { id } = req.params;
 
-    // Verificar se o template existe e pertence ao usuário
+    // Verificar se o template existe e pertence ao tenant
     const existingResult = await pool.query(
-      'SELECT id, is_predefined FROM message_templates WHERE id = $1 AND user_id = $2',
+      `SELECT mt.id, mt.is_predefined FROM message_templates mt
+       INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE mt.id = $1`,
       [id, userId]
     );
 
@@ -349,7 +371,7 @@ export async function deleteMessageTemplate(req: AuthRequest, res: Response): Pr
     }
 
     await pool.query(
-      'DELETE FROM message_templates WHERE id = $1 AND user_id = $2',
+      `DELETE FROM message_templates WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))`,
       [id, userId]
     );
 
@@ -380,9 +402,11 @@ export async function testMessageTemplate(req: AuthRequest, res: Response): Prom
       return;
     }
 
-    // Buscar template
+    // Buscar template (escopo tenant)
     const templateResult = await pool.query(
-      'SELECT * FROM message_templates WHERE id = $1 AND user_id = $2',
+      `SELECT mt.* FROM message_templates mt
+       INNER JOIN users u ON u.id = mt.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE mt.id = $1`,
       [id, userId]
     );
 

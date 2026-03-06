@@ -11,11 +11,11 @@ import {
   getUserTeams,
   setUserTeams,
 } from '../controllers/teamsController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
 
-router.use(authenticateToken);
+router.use(...tenantAuth);
 
 router.get('/', getTeams);
 router.post('/', createTeam);

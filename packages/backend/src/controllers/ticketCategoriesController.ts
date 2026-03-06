@@ -14,11 +14,17 @@ const categorySchema = z.object({
 // Get ticket categories
 export async function getTicketCategories(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
 
     const result = await pool.query(
-      'SELECT * FROM ticket_categories WHERE user_id = $1 ORDER BY name',
-      [userId]
+      `SELECT tc.* FROM ticket_categories tc
+       INNER JOIN users u ON u.id = tc.user_id AND u.tenant_id = $1
+       ORDER BY tc.name`,
+      [tenantId]
     );
 
     res.json(result.rows);
@@ -90,7 +96,7 @@ export async function updateTicketCategory(req: AuthRequest, res: Response): Pro
     const result = await pool.query(
       `UPDATE ticket_categories 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
       values
     );
@@ -117,9 +123,11 @@ export async function deleteTicketCategory(req: AuthRequest, res: Response): Pro
     const userId = req.userId!;
     const { id } = req.params;
 
-    // Check if category is used by any tickets
+    // Check if category is used by any tickets (tenant-scoped)
     const ticketsResult = await pool.query(
-      'SELECT COUNT(*) FROM tickets WHERE category_id = $1 AND user_id = $2',
+      `SELECT COUNT(*) FROM tickets t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE t.category_id = $1`,
       [id, userId]
     );
 
@@ -129,7 +137,7 @@ export async function deleteTicketCategory(req: AuthRequest, res: Response): Pro
     }
 
     const result = await pool.query(
-      'DELETE FROM ticket_categories WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM ticket_categories WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2)) RETURNING id`,
       [id, userId]
     );
 

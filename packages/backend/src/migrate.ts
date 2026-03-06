@@ -72,6 +72,7 @@ const order = [
   '54_projects_team_ids.sql',
   '55_project_areas_team_ids.sql',
   '56_project_area_comments.sql',
+  '57_rls_tenant_isolation.sql',
   'create-admin-user.sql',
 ];
 

@@ -5,98 +5,95 @@ import { AuthRequest } from '../middleware/auth.js';
 // GET /api/dashboard/kpis
 export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json({
+        sales: { value: 0, change: 0, changeType: 'positive' },
+        leads: { value: 0, change: 0, changeType: 'positive' },
+        proposals: { value: 0, change: 0, changeType: 'positive' },
+        tasks: { value: 0, change: 0, changeType: 'positive' },
+      });
+      return;
+    }
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
     const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
     const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
 
-    // Vendas Totais (soma dos orders do mês atual)
+    // Vendas Totais (orders do tenant)
     const currentMonthSales = await pool.query(
-      `SELECT COALESCE(SUM(total_amount), 0) as total
-       FROM orders
-       WHERE store_user_id = $1
-       AND EXTRACT(MONTH FROM created_at) = $2
-       AND EXTRACT(YEAR FROM created_at) = $3`,
-      [userId, currentMonth + 1, currentYear]
+      `SELECT COALESCE(SUM(o.total_amount), 0) as total
+       FROM orders o
+       INNER JOIN users u ON u.id = o.store_user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM o.created_at) = $2 AND EXTRACT(YEAR FROM o.created_at) = $3`,
+      [tenantId, currentMonth + 1, currentYear]
     );
 
     const lastMonthSales = await pool.query(
-      `SELECT COALESCE(SUM(total_amount), 0) as total
-       FROM orders
-       WHERE store_user_id = $1
-       AND EXTRACT(MONTH FROM created_at) = $2
-       AND EXTRACT(YEAR FROM created_at) = $3`,
-      [userId, lastMonth + 1, lastMonthYear]
+      `SELECT COALESCE(SUM(o.total_amount), 0) as total
+       FROM orders o
+       INNER JOIN users u ON u.id = o.store_user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM o.created_at) = $2 AND EXTRACT(YEAR FROM o.created_at) = $3`,
+      [tenantId, lastMonth + 1, lastMonthYear]
     );
 
     const currentSales = parseFloat(currentMonthSales.rows[0]?.total || '0');
     const lastSales = parseFloat(lastMonthSales.rows[0]?.total || '0');
     const salesChange = lastSales > 0 ? ((currentSales - lastSales) / lastSales * 100) : 0;
 
-    // Novos Leads (leads criados no mês atual)
+    // Novos Leads (tenant)
     const currentMonthLeads = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM leads
-       WHERE user_id = $1
-       AND EXTRACT(MONTH FROM created_at) = $2
-       AND EXTRACT(YEAR FROM created_at) = $3`,
-      [userId, currentMonth + 1, currentYear]
+      `SELECT COUNT(*) as count FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM l.created_at) = $2 AND EXTRACT(YEAR FROM l.created_at) = $3`,
+      [tenantId, currentMonth + 1, currentYear]
     );
 
     const lastMonthLeads = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM leads
-       WHERE user_id = $1
-       AND EXTRACT(MONTH FROM created_at) = $2
-       AND EXTRACT(YEAR FROM created_at) = $3`,
-      [userId, lastMonth + 1, lastMonthYear]
+      `SELECT COUNT(*) as count FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM l.created_at) = $2 AND EXTRACT(YEAR FROM l.created_at) = $3`,
+      [tenantId, lastMonth + 1, lastMonthYear]
     );
 
     const currentLeads = parseInt(currentMonthLeads.rows[0]?.count || '0');
     const lastLeads = parseInt(lastMonthLeads.rows[0]?.count || '0');
     const leadsChange = lastLeads > 0 ? ((currentLeads - lastLeads) / lastLeads * 100) : 0;
 
-    // Propostas Enviadas (usando contracts como proxy por enquanto)
+    // Propostas/Contratos (tenant)
     const currentMonthProposals = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM contracts
-       WHERE user_id = $1
-       AND EXTRACT(MONTH FROM created_at) = $2
-       AND EXTRACT(YEAR FROM created_at) = $3`,
-      [userId, currentMonth + 1, currentYear]
+      `SELECT COUNT(*) as count FROM contracts c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM c.created_at) = $2 AND EXTRACT(YEAR FROM c.created_at) = $3`,
+      [tenantId, currentMonth + 1, currentYear]
     );
 
     const lastMonthProposals = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM contracts
-       WHERE user_id = $1
-       AND EXTRACT(MONTH FROM created_at) = $2
-       AND EXTRACT(YEAR FROM created_at) = $3`,
-      [userId, lastMonth + 1, lastMonthYear]
+      `SELECT COUNT(*) as count FROM contracts c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM c.created_at) = $2 AND EXTRACT(YEAR FROM c.created_at) = $3`,
+      [tenantId, lastMonth + 1, lastMonthYear]
     );
 
     const currentProposals = parseInt(currentMonthProposals.rows[0]?.count || '0');
     const lastProposals = parseInt(lastMonthProposals.rows[0]?.count || '0');
     const proposalsChange = lastProposals > 0 ? ((currentProposals - lastProposals) / lastProposals * 100) : 0;
 
-    // Tarefas Pendentes
+    // Tarefas Pendentes (tenant)
     const pendingTasks = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM tasks
-       WHERE user_id = $1 AND status = 'pending'`,
-      [userId]
+      `SELECT COUNT(*) as count FROM tasks t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.status = 'pending'`,
+      [tenantId]
     );
 
     const lastMonthPendingTasks = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM tasks
-       WHERE user_id = $1
-       AND status = 'pending'
-       AND EXTRACT(MONTH FROM created_at) = $2
-       AND EXTRACT(YEAR FROM created_at) = $3`,
-      [userId, lastMonth + 1, lastMonthYear]
+      `SELECT COUNT(*) as count FROM tasks t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.status = 'pending'
+       AND EXTRACT(MONTH FROM t.created_at) = $2 AND EXTRACT(YEAR FROM t.created_at) = $3`,
+      [tenantId, lastMonth + 1, lastMonthYear]
     );
 
     const currentPendingTasks = parseInt(pendingTasks.rows[0]?.count || '0');
@@ -134,11 +131,14 @@ export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
 // GET /api/dashboard/charts/sales
 export async function getSalesChart(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const months = [];
     const now = new Date();
     
-    // Últimos 7 meses
     for (let i = 6; i >= 0; i--) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       months.push({
@@ -151,12 +151,11 @@ export async function getSalesChart(req: AuthRequest, res: Response): Promise<vo
     const salesData = await Promise.all(
       months.map(async (m) => {
         const result = await pool.query(
-          `SELECT COALESCE(SUM(total_amount), 0) as total
-           FROM orders
-           WHERE store_user_id = $1
-           AND EXTRACT(MONTH FROM created_at) = $2
-           AND EXTRACT(YEAR FROM created_at) = $3`,
-          [userId, m.month, m.year]
+          `SELECT COALESCE(SUM(o.total_amount), 0) as total
+           FROM orders o
+           INNER JOIN users u ON u.id = o.store_user_id AND u.tenant_id = $1
+           WHERE EXTRACT(MONTH FROM o.created_at) = $2 AND EXTRACT(YEAR FROM o.created_at) = $3`,
+          [tenantId, m.month, m.year]
         );
         return {
           name: m.name,
@@ -175,11 +174,14 @@ export async function getSalesChart(req: AuthRequest, res: Response): Promise<vo
 // GET /api/dashboard/charts/leads
 export async function getLeadsChart(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const months = [];
     const now = new Date();
     
-    // Últimos 7 meses
     for (let i = 6; i >= 0; i--) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       months.push({
@@ -192,12 +194,10 @@ export async function getLeadsChart(req: AuthRequest, res: Response): Promise<vo
     const leadsData = await Promise.all(
       months.map(async (m) => {
         const result = await pool.query(
-          `SELECT COUNT(*) as count
-           FROM leads
-           WHERE user_id = $1
-           AND EXTRACT(MONTH FROM created_at) = $2
-           AND EXTRACT(YEAR FROM created_at) = $3`,
-          [userId, m.month, m.year]
+          `SELECT COUNT(*) as count FROM leads l
+           INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+           WHERE EXTRACT(MONTH FROM l.created_at) = $2 AND EXTRACT(YEAR FROM l.created_at) = $3`,
+          [tenantId, m.month, m.year]
         );
         return {
           name: m.name,
@@ -216,18 +216,21 @@ export async function getLeadsChart(req: AuthRequest, res: Response): Promise<vo
 // GET /api/dashboard/funnel
 export async function getFunnelData(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
 
-    // Buscar distribuição de clientes por funnel_stage
     const funnelData = await pool.query(
       `SELECT 
-        COALESCE(funnel_stage, 'Sem estágio') as stage,
+        COALESCE(c.funnel_stage, 'Sem estágio') as stage,
         COUNT(*) as count
-       FROM clients
-       WHERE user_id = $1
-       GROUP BY funnel_stage
+       FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+       GROUP BY c.funnel_stage
        ORDER BY count DESC`,
-      [userId]
+      [tenantId]
     );
 
     // Cores padrão para os estágios
@@ -257,64 +260,40 @@ export async function getFunnelData(req: AuthRequest, res: Response): Promise<vo
 export async function getRecentActivities(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
 
-    // Buscar atividades recentes de diferentes tabelas
     const activities = [];
 
-    // Leads criados
     const recentLeads = await pool.query(
-      `SELECT 
-        'lead' as type,
-        'adicionou um novo lead' as action,
-        name as entity_name,
-        created_at
-       FROM leads
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT 3`,
-      [userId]
+      `SELECT 'lead' as type, 'adicionou um novo lead' as action, l.name as entity_name, l.created_at
+       FROM leads l INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+       ORDER BY l.created_at DESC LIMIT 3`,
+      [tenantId]
     );
 
-    // Clientes criados
     const recentClients = await pool.query(
-      `SELECT 
-        'client' as type,
-        'adicionou um novo cliente' as action,
-        name as entity_name,
-        created_at
-       FROM clients
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT 3`,
-      [userId]
+      `SELECT 'client' as type, 'adicionou um novo cliente' as action, c.name as entity_name, c.created_at
+       FROM clients c INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+       ORDER BY c.created_at DESC LIMIT 3`,
+      [tenantId]
     );
 
-    // Contratos criados
     const recentContracts = await pool.query(
-      `SELECT 
-        'contract' as type,
-        'criou um contrato' as action,
-        title as entity_name,
-        created_at
-       FROM contracts
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT 3`,
-      [userId]
+      `SELECT 'contract' as type, 'criou um contrato' as action, c.title as entity_name, c.created_at
+       FROM contracts c INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+       ORDER BY c.created_at DESC LIMIT 3`,
+      [tenantId]
     );
 
-    // Tarefas criadas
     const recentTasks = await pool.query(
-      `SELECT 
-        'task' as type,
-        'adicionou uma tarefa' as action,
-        title as entity_name,
-        created_at
-       FROM tasks
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT 3`,
-      [userId]
+      `SELECT 'task' as type, 'adicionou uma tarefa' as action, t.title as entity_name, t.created_at
+       FROM tasks t INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       ORDER BY t.created_at DESC LIMIT 3`,
+      [tenantId]
     );
 
     // Combinar todas as atividades
@@ -371,33 +350,24 @@ export async function getRecentActivities(req: AuthRequest, res: Response): Prom
 // GET /api/dashboard/tasks
 export async function getUpcomingTasks(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Buscar tarefas de hoje e próximos dias
     const tasks = await pool.query(
-      `SELECT 
-        id,
-        title,
-        due_date,
-        due_time,
-        priority,
-        status
-       FROM tasks
-       WHERE user_id = $1
-       AND status = 'pending'
-       AND (due_date >= $2 OR due_date IS NULL)
+      `SELECT t.id, t.title, t.due_date, t.due_time, t.priority, t.status
+       FROM tasks t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.status = 'pending' AND (t.due_date >= $2 OR t.due_date IS NULL)
        ORDER BY 
-         CASE 
-           WHEN due_date = $2::date THEN 0
-           WHEN due_date IS NULL THEN 2
-           ELSE 1
-         END,
-         due_time ASC NULLS LAST,
-         created_at ASC
+         CASE WHEN t.due_date = $2::date THEN 0 WHEN t.due_date IS NULL THEN 2 ELSE 1 END,
+         t.due_time ASC NULLS LAST, t.created_at ASC
        LIMIT 10`,
-      [userId, today.toISOString().split('T')[0]]
+      [tenantId, today.toISOString().split('T')[0]]
     );
 
     const priorityColors: { [key: string]: string } = {
@@ -448,32 +418,36 @@ function getTimeAgo(date: Date): string {
   return date.toLocaleDateString('pt-BR');
 }
 
-// Manter endpoint antigo para compatibilidade
+// Manter endpoint antigo para compatibilidade (escopo tenant)
 export async function getDashboardStats(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json({
+        counts: { leads: 0, clients: 0, funnels: 0, products: 0 },
+        recentLeads: [],
+        leadsByStatus: [],
+      });
+      return;
+    }
 
-    // Get counts
     const [leadsCount, clientsCount, funnelsCount, productsCount] = await Promise.all([
-      pool.query('SELECT COUNT(*) as count FROM leads WHERE user_id = $1', [userId]),
-      pool.query('SELECT COUNT(*) as count FROM clients WHERE user_id = $1', [userId]),
-      pool.query('SELECT COUNT(*) as count FROM sales_funnels WHERE user_id = $1', [userId]),
-      pool.query('SELECT COUNT(*) as count FROM products WHERE user_id = $1', [userId]),
+      pool.query(`SELECT COUNT(*) as count FROM leads l INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1`, [tenantId]),
+      pool.query(`SELECT COUNT(*) as count FROM clients c INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1`, [tenantId]),
+      pool.query(`SELECT COUNT(*) as count FROM sales_funnels sf INNER JOIN users u ON u.id = sf.user_id AND u.tenant_id = $1`, [tenantId]),
+      pool.query(`SELECT COUNT(*) as count FROM products p INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1`, [tenantId]),
     ]);
 
-    // Get recent leads
     const recentLeads = await pool.query(
-      'SELECT * FROM leads WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5',
-      [userId]
+      `SELECT l.* FROM leads l INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1 ORDER BY l.created_at DESC LIMIT 5`,
+      [tenantId]
     );
 
-    // Get leads by status
     const leadsByStatus = await pool.query(
-      `SELECT status, COUNT(*) as count 
-       FROM leads 
-       WHERE user_id = $1 AND status IS NOT NULL
-       GROUP BY status`,
-      [userId]
+      `SELECT l.status, COUNT(*) as count FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+       WHERE l.status IS NOT NULL GROUP BY l.status`,
+      [tenantId]
     );
 
     res.json({

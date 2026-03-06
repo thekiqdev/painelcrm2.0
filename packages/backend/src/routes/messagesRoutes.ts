@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import * as messagesController from '../controllers/messagesController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuth);
 
-router.post('/send', authenticateToken, messagesController.sendNotificationMessage);
+router.post('/send', messagesController.sendNotificationMessage);
 
 export default router;
 

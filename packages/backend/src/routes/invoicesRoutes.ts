@@ -6,12 +6,12 @@ import {
   updateInvoice,
   deleteInvoice,
 } from '../controllers/invoicesController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
 
-// Todas as rotas requerem autenticação
-router.use(authenticateToken);
+// Todas as rotas requerem autenticação e tenant atual
+router.use(...tenantAuth);
 
 // Rotas de invoices
 router.get('/', getInvoices);

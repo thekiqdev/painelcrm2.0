@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
+import { AuthRequest } from '../middleware/auth.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { z } from 'zod';
 
 const proposalItemSchema = z.object({
@@ -26,47 +28,48 @@ const proposalSchema = z.object({
 // GET /api/proposals
 export const getProposals = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Não autenticado' });
+    const tenantId = (req as any).tenantId as string | null | undefined;
+    if (!tenantId) {
+      return res.json([]);
     }
 
     const { status, client_id, funnel_id, stage_id } = req.query;
 
     let query = `
-      SELECT id, client_id, funnel_id, stage_id, title, description, amount,
-             status, sent_date, valid_until, items, created_at, updated_at
-      FROM proposals
-      WHERE user_id = $1
+      SELECT p.id, p.client_id, p.funnel_id, p.stage_id, p.title, p.description, p.amount,
+             p.status, p.sent_date, p.valid_until, p.items, p.created_at, p.updated_at
+      FROM proposals p
+      INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+      WHERE 1=1
     `;
-    const params: any[] = [userId];
-    let paramCount = 1;
+    const params: any[] = [tenantId];
+    let paramCount = 2;
 
     if (status) {
       paramCount++;
-      query += ` AND status = $${paramCount}`;
+      query += ` AND p.status = $${paramCount}`;
       params.push(status);
     }
 
     if (client_id) {
       paramCount++;
-      query += ` AND client_id = $${paramCount}`;
+      query += ` AND p.client_id = $${paramCount}`;
       params.push(client_id);
     }
 
     if (funnel_id) {
       paramCount++;
-      query += ` AND funnel_id = $${paramCount}`;
+      query += ` AND p.funnel_id = $${paramCount}`;
       params.push(funnel_id);
     }
 
     if (stage_id) {
       paramCount++;
-      query += ` AND stage_id = $${paramCount}`;
+      query += ` AND p.stage_id = $${paramCount}`;
       params.push(stage_id);
     }
 
-    query += ` ORDER BY created_at DESC`;
+    query += ` ORDER BY p.created_at DESC`;
 
     const result = await pool.query(query, params);
 
@@ -90,10 +93,11 @@ export const getProposalById = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT id, client_id, funnel_id, stage_id, title, description, amount,
-              status, sent_date, valid_until, items, created_at, updated_at
-       FROM proposals
-       WHERE id = $1 AND user_id = $2`,
+      `SELECT p.id, p.client_id, p.funnel_id, p.stage_id, p.title, p.description, p.amount,
+              p.status, p.sent_date, p.valid_until, p.items, p.created_at, p.updated_at
+       FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
       [id, userId]
     );
 
@@ -123,6 +127,8 @@ export const createProposal = async (req: Request, res: Response) => {
     }
 
     const validated = proposalSchema.parse(req.body);
+
+    await assertModulePermission(userId, 'proposals', 'create', undefined, req as AuthRequest);
 
     const result = await pool.query(
       `INSERT INTO proposals (
@@ -155,6 +161,9 @@ export const createProposal = async (req: Request, res: Response) => {
 
     res.status(201).json(proposal);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
@@ -168,6 +177,17 @@ export const updateProposal = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const { id } = req.params;
+
+    const existing = await pool.query<{ user_id: string }>(
+      `SELECT user_id FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Proposta não encontrada' });
+    }
+    await assertModulePermission(userId, 'proposals', 'edit', { ownerId: existing.rows[0].user_id }, req as AuthRequest);
 
     const validated = proposalSchema.partial().parse(req.body);
 
@@ -224,7 +244,7 @@ export const updateProposal = async (req: Request, res: Response) => {
     const result = await pool.query(
       `UPDATE proposals
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+       WHERE id = $${paramCount} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
        RETURNING id, client_id, funnel_id, stage_id, title, description, amount,
                  status, sent_date, valid_until, items, created_at, updated_at`,
       values
@@ -242,6 +262,9 @@ export const updateProposal = async (req: Request, res: Response) => {
 
     res.json(proposal);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
@@ -256,9 +279,20 @@ export const deleteProposal = async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const { id } = req.params;
 
+    const existing = await pool.query<{ user_id: string }>(
+      `SELECT user_id FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Proposta não encontrada' });
+    }
+    await assertModulePermission(userId, 'proposals', 'delete', { ownerId: existing.rows[0].user_id }, req as AuthRequest);
+
     const result = await pool.query(
       `DELETE FROM proposals
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
        RETURNING id`,
       [id, userId]
     );
@@ -269,6 +303,9 @@ export const deleteProposal = async (req: Request, res: Response) => {
 
     res.status(204).send();
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     console.error('Error deleting proposal:', error);
     res.status(500).json({ error: 'Erro ao deletar proposta' });
   }

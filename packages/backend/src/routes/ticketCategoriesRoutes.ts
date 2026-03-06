@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import * as ticketCategoriesController from '../controllers/ticketCategoriesController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuth);
 
-router.get('/', authenticateToken, ticketCategoriesController.getTicketCategories);
-router.post('/', authenticateToken, ticketCategoriesController.createTicketCategory);
-router.patch('/:id', authenticateToken, ticketCategoriesController.updateTicketCategory);
-router.delete('/:id', authenticateToken, ticketCategoriesController.deleteTicketCategory);
+router.get('/', ticketCategoriesController.getTicketCategories);
+router.post('/', ticketCategoriesController.createTicketCategory);
+router.patch('/:id', ticketCategoriesController.updateTicketCategory);
+router.delete('/:id', ticketCategoriesController.deleteTicketCategory);
 
 export default router;
 

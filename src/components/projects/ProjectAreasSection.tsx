@@ -34,8 +34,14 @@ interface ProjectAreasSectionProps {
   projectId: string;
   areas: ProjectArea[];
   areaProgress?: Record<string, AreaProgress>;
+  /** Membros do tenant (na configuração da área serão filtrados pelos que estão no projeto). */
   members?: Member[];
+  /** Equipes do tenant (na configuração da área serão filtradas pelas que estão no projeto). */
   teams?: AreaTeam[];
+  /** IDs dos responsáveis selecionados no projeto; só esses aparecem na seleção da área. */
+  projectResponsibleIds?: string[];
+  /** IDs das equipes selecionadas no projeto; só essas aparecem na seleção da área. */
+  projectTeamIds?: string[];
   onAreasChange: (areas: ProjectArea[]) => void;
   onCreateArea: (name: string) => Promise<ProjectArea>;
   onUpdateArea: (areaId: string, data: { name: string; responsible_ids?: string[]; team_ids?: string[] }) => Promise<ProjectArea>;
@@ -49,11 +55,19 @@ export function ProjectAreasSection({
   areaProgress = {},
   members = [],
   teams = [],
+  projectResponsibleIds = [],
+  projectTeamIds = [],
   onAreasChange,
   onCreateArea,
   onUpdateArea,
   onDeleteArea,
 }: ProjectAreasSectionProps) {
+  const membersInProject = projectResponsibleIds.length > 0
+    ? members.filter((m) => projectResponsibleIds.includes(m.id))
+    : members;
+  const teamsInProject = projectTeamIds.length > 0
+    ? teams.filter((t) => projectTeamIds.includes(t.id))
+    : teams;
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingArea, setEditingArea] = useState<ProjectArea | null>(null);
@@ -226,23 +240,29 @@ export function ProjectAreasSection({
                 placeholder="Ex.: Frontend, Backend"
               />
             </div>
-            {editingArea && members.length > 0 && (
+            {editingArea && (membersInProject.length > 0 || projectResponsibleIds.length === 0) && (
               <div className="grid gap-2">
                 <Label>Responsáveis que podem visualizar a área</Label>
-                <div className="max-h-40 overflow-y-auto rounded-md border p-3 space-y-2">
-                  {members.map((member) => (
-                    <label
-                      key={member.id}
-                      className="flex items-center gap-2 cursor-pointer text-sm"
-                    >
-                      <Checkbox
-                        checked={responsibleIds.includes(member.id)}
-                        onCheckedChange={() => toggleResponsible(member.id)}
-                      />
-                      <span>{member.name || member.email || member.id}</span>
-                    </label>
-                  ))}
-                </div>
+                {projectResponsibleIds.length > 0 ? (
+                  <div className="max-h-40 overflow-y-auto rounded-md border p-3 space-y-2">
+                    {membersInProject.map((member) => (
+                      <label
+                        key={member.id}
+                        className="flex items-center gap-2 cursor-pointer text-sm"
+                      >
+                        <Checkbox
+                          checked={responsibleIds.includes(member.id)}
+                          onCheckedChange={() => toggleResponsible(member.id)}
+                        />
+                        <span>{member.name || member.email || member.id}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Selecione responsáveis no projeto para poder atribuí-los às áreas.
+                  </p>
+                )}
               </div>
             )}
             {editingArea && (
@@ -252,8 +272,8 @@ export function ProjectAreasSection({
                   Equipes que podem visualizar a área
                 </Label>
                 <div className="max-h-40 overflow-y-auto rounded-md border p-3 space-y-2">
-                  {teams.length > 0 ? (
-                    teams.map((team) => (
+                  {teamsInProject.length > 0 ? (
+                    teamsInProject.map((team) => (
                       <label
                         key={team.id}
                         className="flex items-center gap-2 cursor-pointer text-sm"
@@ -267,7 +287,9 @@ export function ProjectAreasSection({
                     ))
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      Nenhuma equipe cadastrada. Adicione equipes em Configurações para poder atribuí-las à área.
+                      {projectTeamIds.length === 0
+                        ? "Selecione equipes no projeto para poder atribuí-las às áreas."
+                        : "Nenhuma equipe cadastrada. Adicione equipes em Configurações para poder atribuí-las à área."}
                     </p>
                   )}
                 </div>

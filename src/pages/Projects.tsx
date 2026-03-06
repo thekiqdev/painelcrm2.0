@@ -1347,6 +1347,8 @@ const Projects = () => {
             areaProgress={areaProgress}
             members={members}
             teams={teams.map((t) => ({ id: t.id, name: t.name }))}
+            projectResponsibleIds={selectedProject.responsible_ids ?? []}
+            projectTeamIds={selectedProject.team_ids ?? (selectedProject.team_id ? [selectedProject.team_id] : [])}
             onAreasChange={handleAreasChange}
             onCreateArea={handleCreateArea}
             onUpdateArea={handleUpdateArea}
@@ -1680,6 +1682,8 @@ const Projects = () => {
                   status: updatedProject.status,
                   due_date: updatedProject.dueDate ?? null,
                   team_id: updatedProject.team_id ?? null,
+                  responsible_ids: updatedProject.responsible_ids,
+                  team_ids: updatedProject.team_ids,
                 });
               } catch (e) {
                 console.error(e);

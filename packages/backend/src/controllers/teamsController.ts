@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
+import { AuthRequest } from '../middleware/auth.js';
+import { ensureTenantIdForInsert, stripTenantIdFromBody } from '../utils/tenantScope.js';
 import { z } from 'zod';
 
 function slugify(name: string): string {
@@ -11,11 +13,6 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9-]/g, '')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '') || 'equipe';
-}
-
-async function getTenantId(userId: string): Promise<string | null> {
-  const r = await pool.query('SELECT tenant_id FROM users WHERE id = $1', [userId]);
-  return r.rows[0]?.tenant_id ?? null;
 }
 
 const teamSchema = z.object({
@@ -32,10 +29,7 @@ const teamMemberSchema = z.object({
 // GET /api/teams (retorna [] se a tabela teams não existir — migração 49 não aplicada)
 export const getTeams = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const result = await pool.query(
@@ -58,11 +52,8 @@ export const getTeams = async (req: Request, res: Response) => {
 // GET /api/teams/:id
 export const getTeamById = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { id } = req.params;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const result = await pool.query(
@@ -79,16 +70,12 @@ export const getTeamById = async (req: Request, res: Response) => {
   }
 };
 
-// POST /api/teams
+// POST /api/teams (tenant_id sempre de req.tenantId, nunca do body)
 export const createTeam = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
-
-    const validated = teamSchema.parse(req.body);
+    const tenantId = ensureTenantIdForInsert(req as any);
+    const bodyWithoutTenant = stripTenantIdFromBody((req.body || {}) as Record<string, unknown>);
+    const validated = teamSchema.parse(bodyWithoutTenant);
     const slug = validated.slug?.trim() || slugify(validated.name);
 
     const result = await pool.query(
@@ -98,14 +85,18 @@ export const createTeam = async (req: Request, res: Response) => {
       [tenantId, validated.name.trim(), slug, validated.description || null]
     );
     res.status(201).json(result.rows[0]);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === 'Tenant required') {
+      return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Dados inválidos', details: error.errors });
     }
-    if (error?.code === '23505') {
+    const err = error as { code?: string; message?: string };
+    if (err?.code === '23505') {
       return res.status(409).json({ error: 'Já existe uma equipe com esse nome ou slug' });
     }
-    if (error?.code === '42P01' || error?.message?.includes('relation "teams" does not exist')) {
+    if (err?.code === '42P01' || err?.message?.includes('relation "teams" does not exist')) {
       return res.status(503).json({
         error: 'Tabela de equipes não existe. Execute as migrações do banco (npm run migrate ou script de migração).',
       });
@@ -118,14 +109,12 @@ export const createTeam = async (req: Request, res: Response) => {
 // PATCH /api/teams/:id
 export const updateTeam = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { id } = req.params;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
-    const validated = teamSchema.partial().parse(req.body);
+    const bodyWithoutTenant = stripTenantIdFromBody((req.body || {}) as Record<string, unknown>);
+    const validated = teamSchema.partial().parse(bodyWithoutTenant);
     const updates: string[] = [];
     const values: any[] = [];
     let pos = 1;
@@ -167,11 +156,8 @@ export const updateTeam = async (req: Request, res: Response) => {
 // DELETE /api/teams/:id
 export const deleteTeam = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { id } = req.params;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const result = await pool.query(
@@ -189,11 +175,8 @@ export const deleteTeam = async (req: Request, res: Response) => {
 // GET /api/teams/:teamId/members
 export const getTeamMembers = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { teamId } = req.params;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const teamCheck = await pool.query(
@@ -233,11 +216,8 @@ export const getTeamMembers = async (req: Request, res: Response) => {
 // POST /api/teams/:teamId/members
 export const addTeamMember = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { teamId } = req.params;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const teamCheck = await pool.query(
@@ -286,11 +266,8 @@ export const addTeamMember = async (req: Request, res: Response) => {
 // DELETE /api/teams/:teamId/members/:memberId
 export const removeTeamMember = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { teamId, memberId } = req.params;
-    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(userId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const teamCheck = await pool.query(
@@ -316,11 +293,8 @@ export const removeTeamMember = async (req: Request, res: Response) => {
 // GET /api/teams/by-user/:userId - equipes às quais o usuário pertence (mesmo tenant)
 export const getUserTeams = async (req: Request, res: Response) => {
   try {
-    const requesterId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { userId: targetUserId } = req.params;
-    if (!requesterId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(requesterId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const userTenantCheck = await pool.query(
@@ -351,11 +325,8 @@ const setUserTeamsSchema = z.object({
 // PUT /api/teams/by-user/:userId - define as equipes do usuário (substitui vínculos no tenant)
 export const setUserTeams = async (req: Request, res: Response) => {
   try {
-    const requesterId = (req as any).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
     const { userId: targetUserId } = req.params;
-    if (!requesterId) return res.status(401).json({ error: 'Não autenticado' });
-
-    const tenantId = await getTenantId(requesterId);
     if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
 
     const userTenantCheck = await pool.query(

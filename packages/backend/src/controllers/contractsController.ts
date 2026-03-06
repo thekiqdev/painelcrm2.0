@@ -1,6 +1,7 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { z } from 'zod';
 
 const contractSchema = z.object({
@@ -27,45 +28,51 @@ const contractSchema = z.object({
 // Get contracts with filters
 export async function getContracts(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const { status, clientId, responsibleId, startDate, endDate, search, sortField, sortDirection } = req.query;
 
-    let query = 'SELECT * FROM contracts WHERE user_id = $1';
-    const params: any[] = [userId];
+    let query = `SELECT c.* FROM contracts c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+       WHERE 1=1`;
+    const params: any[] = [tenantId];
     let paramIndex = 2;
 
     if (status && status !== 'all') {
-      query += ` AND status = $${paramIndex}`;
+      query += ` AND c.status = $${paramIndex}`;
       params.push(status);
       paramIndex++;
     }
 
     if (clientId) {
-      query += ` AND client_id = $${paramIndex}`;
+      query += ` AND c.client_id = $${paramIndex}`;
       params.push(clientId);
       paramIndex++;
     }
 
     if (responsibleId) {
-      query += ` AND responsible_id = $${paramIndex}`;
+      query += ` AND c.responsible_id = $${paramIndex}`;
       params.push(responsibleId);
       paramIndex++;
     }
 
     if (startDate) {
-      query += ` AND start_date >= $${paramIndex}`;
+      query += ` AND c.start_date >= $${paramIndex}`;
       params.push(startDate);
       paramIndex++;
     }
 
     if (endDate) {
-      query += ` AND end_date <= $${paramIndex}`;
+      query += ` AND c.end_date <= $${paramIndex}`;
       params.push(endDate);
       paramIndex++;
     }
 
     if (search) {
-      query += ` AND (title ILIKE $${paramIndex} OR contract_number ILIKE $${paramIndex})`;
+      query += ` AND (c.title ILIKE $${paramIndex} OR c.contract_number ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
       paramIndex++;
     }
@@ -74,7 +81,7 @@ export async function getContracts(req: AuthRequest, res: Response): Promise<voi
     const validSortFields = ['updated_at', 'title', 'contract_number', 'created_at', 'start_date', 'end_date'];
     const sortFieldValue = validSortFields.includes(sortField as string) ? sortField : 'updated_at';
     const sortDirectionValue = sortDirection === 'asc' ? 'ASC' : 'DESC';
-    query += ` ORDER BY ${sortFieldValue} ${sortDirectionValue}`;
+    query += ` ORDER BY c.${sortFieldValue} ${sortDirectionValue}`;
 
     const result = await pool.query(query, params);
     
@@ -105,7 +112,9 @@ export async function getContractById(req: AuthRequest, res: Response): Promise<
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM contracts WHERE id = $1 AND user_id = $2',
+      `SELECT c.* FROM contracts c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE c.id = $1`,
       [id, userId]
     );
 
@@ -141,6 +150,8 @@ export async function createContract(req: AuthRequest, res: Response): Promise<v
   try {
     const userId = req.userId!;
     const contractData = contractSchema.parse(req.body);
+
+    await assertModulePermission(userId, 'contracts', 'create', undefined, req);
 
     // Generate contract number
     const contractNumber = `CONTRACT-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
@@ -183,6 +194,10 @@ export async function createContract(req: AuthRequest, res: Response): Promise<v
 
     res.status(201).json(formattedContract);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -198,6 +213,22 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
     const userId = req.userId!;
     const { id } = req.params;
     const contractData = contractSchema.partial().parse(req.body);
+
+    const existing = await pool.query<{ user_id: string; responsible_id: string | null }>(
+      `SELECT user_id, responsible_id FROM contracts c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE c.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Contract not found' });
+      return;
+    }
+    const row = existing.rows[0];
+    await assertModulePermission(userId, 'contracts', 'edit', {
+      ownerId: row.user_id,
+      assigneeId: row.responsible_id,
+    }, req);
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -225,7 +256,7 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
     const result = await pool.query(
       `UPDATE contracts 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
       values
     );
@@ -250,6 +281,10 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
 
     res.json(formattedContract);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -265,8 +300,24 @@ export async function deleteContract(req: AuthRequest, res: Response): Promise<v
     const userId = req.userId!;
     const { id } = req.params;
 
+    const existing = await pool.query<{ user_id: string; responsible_id: string | null }>(
+      `SELECT user_id, responsible_id FROM contracts c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE c.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Contract not found' });
+      return;
+    }
+    const row = existing.rows[0];
+    await assertModulePermission(userId, 'contracts', 'delete', {
+      ownerId: row.user_id,
+      assigneeId: row.responsible_id,
+    }, req);
+
     const result = await pool.query(
-      'DELETE FROM contracts WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM contracts WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2)) RETURNING id`,
       [id, userId]
     );
 
@@ -277,6 +328,10 @@ export async function deleteContract(req: AuthRequest, res: Response): Promise<v
 
     res.json({ message: 'Contract deleted successfully' });
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error deleting contract:', error);
     res.status(500).json({ error: 'Internal server error' });
   }

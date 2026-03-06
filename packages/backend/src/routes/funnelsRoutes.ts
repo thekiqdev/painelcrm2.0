@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import * as funnelsController from '../controllers/funnelsController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuth);
 
-router.get('/', authenticateToken, funnelsController.getFunnels);
-router.get('/:id', authenticateToken, funnelsController.getFunnelById);
-router.post('/', authenticateToken, funnelsController.createFunnel);
-router.patch('/:id', authenticateToken, funnelsController.updateFunnel);
-router.delete('/:id', authenticateToken, funnelsController.deleteFunnel);
+router.get('/', funnelsController.getFunnels);
+router.get('/:id', funnelsController.getFunnelById);
+router.post('/', funnelsController.createFunnel);
+router.patch('/:id', funnelsController.updateFunnel);
+router.delete('/:id', funnelsController.deleteFunnel);
 
 export default router;
 

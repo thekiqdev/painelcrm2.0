@@ -13,6 +13,7 @@ import { FileEdit, Trash2, UserPlus, Users2 } from "lucide-react";
 import { SettingsSectionProps } from "./types";
 import { getTenantLimits, getMyTenantUsers, getTenantRoles, setUserRole, type TenantUser, type TenantRole } from "@/services/tenantLimits";
 import { UserTeamsDialog } from "./UserTeamsDialog";
+import { NewUserDialog } from "./NewUserDialog";
 import { toast } from "sonner";
 
 function getInitials(user: TenantUser): string {
@@ -30,6 +31,7 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
   const [roles, setRoles] = useState<TenantRole[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [teamsDialogOpen, setTeamsDialogOpen] = useState(false);
+  const [newUserDialogOpen, setNewUserDialogOpen] = useState(false);
   const [editingUserForTeams, setEditingUserForTeams] = useState<{ id: string; name: string } | null>(null);
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
 
@@ -101,7 +103,12 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                   <span className="text-sm text-muted-foreground">({limitLabel})</span>
                 )}
               </div>
-              <Button size="sm" disabled={atLimit} title={atLimit ? "Limite de usuários do plano atingido" : undefined}>
+              <Button
+                size="sm"
+                disabled={atLimit}
+                title={atLimit ? "Limite de usuários do plano atingido" : undefined}
+                onClick={() => setNewUserDialogOpen(true)}
+              >
                 <UserPlus className="mr-2 h-4 w-4" />
                 Novo Usuário
               </Button>
@@ -128,10 +135,15 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                 users.map((u) => (
                   <div key={u.id} className="grid grid-cols-12 gap-4 p-4 border-b text-sm last:border-b-0">
                     <div className="col-span-3 flex items-center gap-2">
-                      <Avatar className="h-8 w-8">
+                      <Avatar className="h-8 w-8 shrink-0">
                         <AvatarFallback>{getInitials(u)}</AvatarFallback>
                       </Avatar>
-                      <span>{displayName(u)}</span>
+                      <div className="min-w-0 flex flex-col">
+                        <span>{displayName(u)}</span>
+                        {u.team_names && (
+                          <span className="text-xs text-muted-foreground truncate">{u.team_names}</span>
+                        )}
+                      </div>
                     </div>
                     <div className="col-span-4 flex items-center">{u.email}</div>
                     <div className="col-span-3 flex items-center">
@@ -207,6 +219,12 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
         userId={editingUserForTeams?.id ?? null}
         userDisplayName={editingUserForTeams?.name}
         onSaved={() => getMyTenantUsers().then(setUsers).catch(() => {})}
+      />
+
+      <NewUserDialog
+        open={newUserDialogOpen}
+        onOpenChange={setNewUserDialogOpen}
+        onCreated={() => getMyTenantUsers().then(setUsers).catch(() => {})}
       />
     </>
   );

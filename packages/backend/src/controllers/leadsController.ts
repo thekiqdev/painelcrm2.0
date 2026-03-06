@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
-import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 
 const MODULE_LEADS = 'leads';
 
@@ -19,18 +19,26 @@ const leadSchema = z.object({
 
 export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const { profileId } = req.query;
 
-    let query = 'SELECT * FROM leads WHERE user_id = $1';
-    const params: any[] = [userId];
+    let query = `
+      SELECT l.* FROM leads l
+      INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+      WHERE 1=1
+    `;
+    const params: any[] = [tenantId];
 
     if (profileId) {
-      query += ' AND profile_id = $2';
+      query += ' AND l.profile_id = $2';
       params.push(profileId);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY l.created_at DESC';
 
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -46,7 +54,9 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM leads WHERE id = $1 AND user_id = $2',
+      `SELECT l.* FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE l.id = $1`,
       [id, userId]
     );
 
@@ -65,7 +75,7 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
 export async function createLead(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
-    await assertModulePermission(userId, MODULE_LEADS, 'create');
+    await assertModulePermission(userId, MODULE_LEADS, 'create', undefined, req);
     const leadData = leadSchema.parse(req.body);
 
     // Clean up the data - convert empty strings to null for optional fields
@@ -158,14 +168,19 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const existing = await pool.query('SELECT user_id FROM leads WHERE id = $1', [id]);
+    const existing = await pool.query(
+      `SELECT l.user_id FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE l.id = $1`,
+      [id, userId]
+    );
     if (existing.rows.length === 0) {
       res.status(404).json({ error: 'Lead not found' });
       return;
     }
     await assertModulePermission(userId, MODULE_LEADS, 'edit', {
       ownerId: existing.rows[0].user_id,
-    });
+    }, req);
     const leadData = leadSchema.partial().parse(req.body);
 
     const updates: string[] = [];
@@ -185,13 +200,13 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
       `UPDATE leads 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
-      values
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -218,16 +233,21 @@ export async function deleteLead(req: AuthRequest, res: Response): Promise<void>
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const existing = await pool.query('SELECT user_id FROM leads WHERE id = $1', [id]);
+    const existing = await pool.query(
+      `SELECT l.user_id FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE l.id = $1`,
+      [id, userId]
+    );
     if (existing.rows.length === 0) {
       res.status(404).json({ error: 'Lead not found' });
       return;
     }
     await assertModulePermission(userId, MODULE_LEADS, 'delete', {
       ownerId: existing.rows[0].user_id,
-    });
+    }, req);
     const result = await pool.query(
-      'DELETE FROM leads WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM leads WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2)) RETURNING id`,
       [id, userId]
     );
 

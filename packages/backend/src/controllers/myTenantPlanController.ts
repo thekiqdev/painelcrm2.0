@@ -5,7 +5,8 @@
 import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { checkTenantUsersLimit } from '../services/tenantLimitService.js';
+import { checkTenantUsersLimit, checkTenantUsersLimitForAddOne } from '../services/tenantLimitService.js';
+import { hashPassword } from '../utils/bcrypt.js';
 import { ROLE_DISPLAY_NAMES, getPermissionsForRole, isValidAppRole, type AppRole } from '../services/rolePermissionsService.js';
 import {
   getModulePermissionsSchema,
@@ -21,6 +22,7 @@ import {
   getCustomRoleModulePermissions,
   setCustomRoleModulePermissions,
 } from '../services/customRolesService.js';
+import { incrementPermissionVersion } from '../services/permissionVersionService.js';
 import { z } from 'zod';
 
 async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
@@ -82,7 +84,11 @@ export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise
          JOIN tenant_custom_roles tcr ON tcr.id = ucr.custom_role_id
          JOIN user_profiles up ON up.id = ucr.profile_id
          JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
-         WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_name
+         WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_name,
+        (SELECT string_agg(t.name, ' | ' ORDER BY t.name)
+         FROM teams t
+         INNER JOIN team_members tm ON tm.team_id = t.id AND tm.user_id = u.id
+         WHERE t.tenant_id = u.tenant_id) AS team_names
        FROM users u
        LEFT JOIN profiles p ON p.id = u.id
        WHERE u.tenant_id = $1
@@ -98,11 +104,122 @@ export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise
       custom_role_id: r.custom_role_id || null,
       custom_role_name: r.custom_role_name || null,
       is_super_admin: r.is_super_admin === true,
+      team_names: (r.team_names as string) || null,
     }));
     res.json(rows);
   } catch (error: any) {
     console.error('getMyTenantUsers error:', error);
     res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+const createTenantUserSchema = z.object({
+  email: z.string().email('E-mail inválido'),
+  password: z.string().min(6, 'Senha deve ter no mínimo 6 caracteres'),
+  full_name: z.string().min(1, 'Nome completo é obrigatório'),
+  phone: z.string().optional(),
+});
+
+/** POST /api/me/tenant/users - cria novo usuário na conta (apenas admin/primary user). */
+export async function postMyTenantUser(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const requesterId = req.userId!;
+
+    const profileRow = await pool.query(
+      `SELECT up.id, up.owner_id FROM user_profiles up
+       JOIN users o ON o.id = up.owner_id AND o.tenant_id = $1
+       ORDER BY up.created_at ASC LIMIT 1`,
+      [tenantId]
+    );
+    if (profileRow.rows.length === 0) {
+      res.status(400).json({ error: 'Nenhum perfil encontrado no tenant' });
+      return;
+    }
+    const profileId = profileRow.rows[0].id;
+    const ownerId = profileRow.rows[0].owner_id;
+    const isOwner = ownerId === requesterId;
+    const adminRole = await pool.query(
+      `SELECT 1 FROM user_roles WHERE user_id = $1 AND profile_id = $2 AND role = 'admin'`,
+      [requesterId, profileId]
+    );
+    if (!isOwner && adminRole.rows.length === 0) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode adicionar usuários' });
+      return;
+    }
+
+    const limitCheck = await checkTenantUsersLimitForAddOne(tenantId);
+    if (!limitCheck.allowed) {
+      const msg = limitCheck.limit != null
+        ? `Limite de usuários do plano atingido (${limitCheck.current} de ${limitCheck.limit}).`
+        : 'Limite de usuários atingido.';
+      res.status(403).json({ error: msg });
+      return;
+    }
+
+    const body = createTenantUserSchema.parse(req.body);
+    const email = body.email.trim().toLowerCase();
+    const phone = body.phone?.replace(/\D/g, '').trim() || null;
+
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      res.status(400).json({ error: 'Já existe um usuário com este e-mail' });
+      return;
+    }
+
+    const passwordHash = await hashPassword(body.password);
+    const fullName = body.full_name.trim();
+    const nameParts = fullName.split(/\s+/).filter(Boolean);
+    const firstName = nameParts[0] ?? fullName;
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+    const userResult = await pool.query(
+      `INSERT INTO users (email, password_hash, whatsapp_number, tenant_id)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, email`,
+      [email, passwordHash, phone, tenantId]
+    );
+    const newUser = userResult.rows[0];
+
+    await pool.query(
+      `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
+       VALUES ($1, $2, $3, '', $4, true)`,
+      [newUser.id, firstName, lastName, phone ?? '']
+    );
+
+    await pool.query(
+      'INSERT INTO profile_members (profile_id, user_id, created_by) VALUES ($1, $2, $3)',
+      [profileId, newUser.id, requesterId]
+    );
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role, profile_id, created_by) VALUES ($1, 'member', $2, $3)`,
+      [newUser.id, profileId, requesterId]
+    );
+    const memberPerms = getPermissionsForRole('member' as AppRole);
+    for (const permission of memberPerms) {
+      await pool.query(
+        `INSERT INTO user_permissions (user_id, profile_id, permission, created_by) VALUES ($1, $2, $3, $4)`,
+        [newUser.id, profileId, permission, requesterId]
+      );
+    }
+
+    res.status(201).json({
+      id: newUser.id,
+      email: newUser.email,
+      full_name: fullName,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors[0]?.message ?? 'Dados inválidos', details: error.errors });
+      return;
+    }
+    console.error('postMyTenantUser error:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao criar usuário';
+    res.status(500).json({ error: message });
   }
 }
 
@@ -245,6 +362,7 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
          ON CONFLICT (user_id, profile_id) DO UPDATE SET custom_role_id = $3`,
         [targetUserId, profileId, body.custom_role_id, requesterId]
       );
+      await incrementPermissionVersion(targetUserId);
       res.json({ custom_role_id: body.custom_role_id, profile_id: profileId });
       return;
     }
@@ -281,6 +399,7 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
       );
     }
 
+    await incrementPermissionVersion(targetUserId);
     res.json({ role, profile_id: profileId });
   } catch (error) {
     if (error instanceof z.ZodError) {

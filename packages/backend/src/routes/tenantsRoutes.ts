@@ -1,11 +1,10 @@
 import { Router } from 'express';
-import { authenticateToken, requireSuperAdmin } from '../middleware/auth.js';
+import { superadminAuth } from '../middleware/auth.js';
 import * as tenantsController from '../controllers/tenantsController.js';
 
 const router = Router();
 
-router.use(authenticateToken);
-router.use(requireSuperAdmin);
+router.use(...superadminAuth);
 
 router.get('/', tenantsController.listTenants);
 router.get('/:id/features', tenantsController.getTenantFeatures);

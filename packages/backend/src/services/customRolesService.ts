@@ -6,6 +6,7 @@ import type { AppRole } from './rolePermissionsService.js';
 import { getRoleModulePermissions } from './modulePermissionsService.js';
 import { MODULE_IDS } from './modulePermissionsService.js';
 import type { ModulePermissionsMap } from './modulePermissionsService.js';
+import { incrementPermissionVersion } from './permissionVersionService.js';
 
 export interface TenantCustomRole {
   id: string;
@@ -160,6 +161,14 @@ export async function setCustomRoleModulePermissions(
     }
   } finally {
     client.release();
+  }
+
+  const usersWithCustomRole = await pool.query<{ user_id: string }>(
+    'SELECT user_id FROM user_custom_roles WHERE custom_role_id = $1 AND profile_id = $2',
+    [customRoleId, profileId]
+  );
+  for (const row of usersWithCustomRole.rows) {
+    await incrementPermissionVersion(row.user_id);
   }
 }
 

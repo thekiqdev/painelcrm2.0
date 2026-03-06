@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 import {
   getNotifications,
   getUnreadCount,
@@ -12,7 +12,7 @@ import {
 const router = Router();
 
 // Todas as rotas requerem autenticação
-router.use(authenticateToken);
+router.use(...tenantAuth);
 
 // Rotas específicas devem vir antes de rotas com parâmetros dinâmicos
 // GET /api/notifications/unread-count - Contador de não lidas

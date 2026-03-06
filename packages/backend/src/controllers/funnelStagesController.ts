@@ -13,13 +13,20 @@ const stageSchema = z.object({
 export async function createStage(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
     const { funnelId } = req.params;
     const stageData = stageSchema.parse(req.body);
 
-    // Verify funnel belongs to user
+    // Verify funnel belongs to user's tenant
+    if (!tenantId) {
+      res.status(404).json({ error: 'Funnel not found' });
+      return;
+    }
     const funnelResult = await pool.query(
-      'SELECT id FROM sales_funnels WHERE id = $1 AND user_id = $2',
-      [funnelId, userId]
+      `SELECT sf.id FROM sales_funnels sf
+       INNER JOIN users u ON u.id = sf.user_id AND u.tenant_id = $1
+       WHERE sf.id = $2`,
+      [tenantId, funnelId]
     );
 
     if (funnelResult.rows.length === 0) {
@@ -61,11 +68,12 @@ export async function updateStage(req: AuthRequest, res: Response): Promise<void
     const { id } = req.params;
     const stageData = stageSchema.partial().parse(req.body);
 
-    // Verify stage belongs to user
+    // Verify stage belongs to user's tenant (via funnel owner)
     const stageResult = await pool.query(
       `SELECT fs.id FROM funnel_stages fs
        INNER JOIN sales_funnels sf ON fs.funnel_id = sf.id
-       WHERE fs.id = $1 AND sf.user_id = $2`,
+       INNER JOIN users u ON u.id = sf.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE fs.id = $1`,
       [id, userId]
     );
 
@@ -117,11 +125,12 @@ export async function deleteStage(req: AuthRequest, res: Response): Promise<void
     const userId = req.userId!;
     const { id } = req.params;
 
-    // Verify stage belongs to user
+    // Verify stage belongs to user's tenant (via funnel owner)
     const stageResult = await pool.query(
       `SELECT fs.id FROM funnel_stages fs
        INNER JOIN sales_funnels sf ON fs.funnel_id = sf.id
-       WHERE fs.id = $1 AND sf.user_id = $2`,
+       INNER JOIN users u ON u.id = sf.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE fs.id = $1`,
       [id, userId]
     );
 

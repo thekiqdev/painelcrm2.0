@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticateToken, requireFeature } from '../middleware/auth.js';
+import { tenantAuth, requireFeature } from '../middleware/auth.js';
 import {
   createInstance,
   listInstances,
@@ -21,7 +21,7 @@ import {
 
 const router = Router();
 
-router.use(authenticateToken);
+router.use(...tenantAuth);
 router.use(requireFeature('chat'));
 
 router.get('/instances', listInstances);

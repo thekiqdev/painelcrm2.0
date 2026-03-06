@@ -88,4 +88,8 @@ export interface Project {
   /** Equipe responsável (opcional). */
   team_id?: string | null;
   teamName?: string | null;
+  /** IDs dos responsáveis selecionados no projeto (disponíveis para áreas). */
+  responsible_ids?: string[];
+  /** IDs das equipes selecionadas no projeto (disponíveis para áreas). */
+  team_ids?: string[];
 }

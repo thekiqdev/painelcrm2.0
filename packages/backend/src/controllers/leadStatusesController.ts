@@ -10,11 +10,17 @@ const leadStatusSchema = z.object({
 
 export async function getLeadStatuses(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
 
     const result = await pool.query(
-      'SELECT * FROM lead_statuses WHERE user_id = $1 ORDER BY created_at DESC',
-      [userId]
+      `SELECT ls.* FROM lead_statuses ls
+       INNER JOIN users u ON u.id = ls.user_id AND u.tenant_id = $1
+       ORDER BY ls.created_at DESC`,
+      [tenantId]
     );
 
     res.json(result.rows);
@@ -69,10 +75,12 @@ export async function updateLeadStatus(req: AuthRequest, res: Response): Promise
       return;
     }
 
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
-      `UPDATE lead_statuses SET ${updates.join(', ')}, updated_at = now() WHERE id = $${paramCount} AND user_id = $${paramCount + 1} RETURNING *`,
-      values
+      `UPDATE lead_statuses SET ${updates.join(', ')}, updated_at = now()
+       WHERE id = $${paramCount} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
+       RETURNING *`,
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -97,7 +105,9 @@ export async function deleteLeadStatus(req: AuthRequest, res: Response): Promise
     const { id } = req.params;
 
     const result = await pool.query(
-      'DELETE FROM lead_statuses WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM lead_statuses WHERE id = $1
+       AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
+       RETURNING id`,
       [id, userId]
     );
 

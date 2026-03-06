@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
+import { isTenantAdmin } from '../utils/tenant.js';
 
 /** Tipos que permitem áreas: areas e advanced (fonte única de regra). */
 const PROJECT_TYPES_WITH_AREAS = ['areas', 'advanced'] as const;
@@ -21,11 +22,17 @@ const areaSchema = z.object({
 export const getProjectAreas = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const tenantId = (req as any).tenantId ?? null;
     const { projectId } = req.params;
 
+    if (!tenantId) {
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
     const projectCheck = await pool.query(
-      `SELECT id, user_id, project_type FROM projects WHERE id = $1`,
-      [projectId]
+      `SELECT p.id, p.user_id, p.project_type FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE p.id = $2`,
+      [tenantId, projectId]
     );
     if (projectCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Projeto não encontrado' });
@@ -35,7 +42,7 @@ export const getProjectAreas = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Este tipo de projeto não possui áreas' });
     }
 
-    const isAdmin = project.user_id === userId;
+    const isAdmin = project.user_id === userId || (await isTenantAdmin(userId));
 
     const result = await pool.query(
       `SELECT id, project_id, name, sort_order, responsible_ids, team_ids, created_at, updated_at
@@ -73,12 +80,17 @@ export const getProjectAreas = async (req: Request, res: Response) => {
 // POST /api/projects/:projectId/areas
 export const createProjectArea = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as any).tenantId ?? null;
     const { projectId } = req.params;
 
+    if (!tenantId) {
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
     const projectCheck = await pool.query(
-      `SELECT id, project_type FROM projects WHERE id = $1 AND user_id = $2`,
-      [projectId, userId]
+      `SELECT p.id, p.project_type FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE p.id = $2`,
+      [tenantId, projectId]
     );
     if (projectCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Projeto não encontrado' });
@@ -87,7 +99,22 @@ export const createProjectArea = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Este tipo de projeto não permite criar áreas' });
     }
 
+    const projectRow = await pool.query<{ responsible_ids: string[]; team_ids: string[] }>(
+      'SELECT COALESCE(responsible_ids, \'[]\'::jsonb) AS responsible_ids, COALESCE(team_ids, \'[]\'::jsonb) AS team_ids FROM projects WHERE id = $1',
+      [projectId]
+    );
+    const projectResponsibleIds = new Set((projectRow.rows[0]?.responsible_ids ?? []) as string[]);
+    const projectTeamIds = new Set((projectRow.rows[0]?.team_ids ?? []) as string[]);
+
     const validated = areaSchema.parse(req.body);
+    const areaRespIds = validated.responsible_ids ?? [];
+    const areaTeamIds = validated.team_ids ?? [];
+    if (areaRespIds.length > 0 && areaRespIds.some((id: string) => !projectResponsibleIds.has(id))) {
+      return res.status(400).json({ error: 'Só é possível atribuir responsáveis que estão selecionados no projeto.' });
+    }
+    if (areaTeamIds.length > 0 && areaTeamIds.some((id: string) => !projectTeamIds.has(id))) {
+      return res.status(400).json({ error: 'Só é possível atribuir equipes que estão selecionadas no projeto.' });
+    }
 
     const maxOrder = await pool.query(
       `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM project_areas WHERE project_id = $1`,
@@ -123,7 +150,39 @@ export const updateProjectArea = async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const { areaId } = req.params;
 
+    const areaRow = await pool.query<{ project_id: string }>(
+      'SELECT project_id FROM project_areas WHERE id = $1',
+      [areaId]
+    );
+    if (areaRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Área não encontrada' });
+    }
+    const projectId = areaRow.rows[0].project_id;
+
+    const projectRow = await pool.query<{ responsible_ids: string[]; team_ids: string[] }>(
+      `SELECT COALESCE(p.responsible_ids, '[]'::jsonb) AS responsible_ids, COALESCE(p.team_ids, '[]'::jsonb) AS team_ids
+       FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [projectId, userId]
+    );
+    if (projectRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
+    const projectResponsibleIds = new Set((projectRow.rows[0].responsible_ids ?? []) as string[]);
+    const projectTeamIds = new Set((projectRow.rows[0].team_ids ?? []) as string[]);
+
     const validated = areaSchema.partial().parse(req.body);
+    if (validated.responsible_ids !== undefined) {
+      if (validated.responsible_ids.some((id: string) => !projectResponsibleIds.has(id))) {
+        return res.status(400).json({ error: 'Só é possível atribuir responsáveis que estão selecionados no projeto.' });
+      }
+    }
+    if (validated.team_ids !== undefined) {
+      if (validated.team_ids.some((id: string) => !projectTeamIds.has(id))) {
+        return res.status(400).json({ error: 'Só é possível atribuir equipes que estão selecionadas no projeto.' });
+      }
+    }
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
@@ -148,14 +207,14 @@ export const updateProjectArea = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Nenhum campo para atualizar' });
     }
 
-    values.push(userId, areaId);
+    values.push(areaId);
     const result = await pool.query(
       `UPDATE project_areas
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramCount + 1}
-         AND project_id IN (SELECT id FROM projects WHERE user_id = $${paramCount})
+       WHERE id = $${paramCount}
+         AND project_id IN (SELECT p.id FROM projects p INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
        RETURNING id, project_id, name, sort_order, responsible_ids, team_ids, created_at, updated_at`,
-      values
+      [...values, userId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Área não encontrada' });
@@ -178,10 +237,10 @@ export const deleteProjectArea = async (req: Request, res: Response) => {
 
     const result = await pool.query(
       `DELETE FROM project_areas pa
-       USING projects p
-       WHERE pa.project_id = p.id AND p.user_id = $1 AND pa.id = $2
+       WHERE pa.id = $1
+         AND pa.project_id IN (SELECT p.id FROM projects p INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
        RETURNING pa.id`,
-      [userId, areaId]
+      [areaId, userId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Área não encontrada' });

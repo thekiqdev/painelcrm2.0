@@ -11,10 +11,10 @@ import {
   createAreaComment,
   deleteAreaComment,
 } from '../controllers/projectAreaCommentsController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
-router.use(authenticateToken);
+router.use(...tenantAuth);
 
 router.get('/:projectId/areas', getProjectAreas);
 router.get('/:projectId/areas/:areaId/tasks', getTasksByArea);

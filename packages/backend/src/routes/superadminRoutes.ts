@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticateToken, requireSuperAdmin } from '../middleware/auth.js';
+import { superadminAuth } from '../middleware/auth.js';
 import * as superadminController from '../controllers/superadminController.js';
 import * as auditLogController from '../controllers/auditLogController.js';
 import * as reportsController from '../controllers/reportsController.js';
@@ -10,8 +10,7 @@ import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsSe
 
 const router = Router();
 
-router.use(authenticateToken);
-router.use(requireSuperAdmin);
+router.use(...superadminAuth);
 
 router.get('/me', superadminController.getSuperAdminMe);
 router.get('/dashboard', superadminController.getDashboard);
