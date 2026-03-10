@@ -79,7 +79,21 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       navigate(registrationComplete ? '/dashboard' : '/register/steps');
       return;
     }
-    
+
+    // Case 5: Tenant ativo mas onboarding não concluído → redirecionar para /onboarding
+    const isOnboardingPage = location.pathname === '/onboarding';
+    const needsOnboarding = user?.tenant_status === 'active' && user?.onboarding_completed === false;
+    if (requireAuth && user && needsOnboarding && !isOnboardingPage) {
+      navigate('/onboarding', { replace: true });
+      return;
+    }
+
+    // Case 6: Onboarding já concluído e usuário está em /onboarding → redirecionar para dashboard
+    if (user && user.onboarding_completed === true && isOnboardingPage) {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+
   }, [
     user, 
     loading, 

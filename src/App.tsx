@@ -73,6 +73,7 @@ const SuperAdminPagamentos = lazy(() => import("./pages/superadmin/SuperAdminPag
 
 const MeuPlano = lazy(() => import("./pages/MeuPlano"));
 const PlanCheckout = lazy(() => import("./pages/PlanCheckout"));
+const Onboarding = lazy(() => import("./pages/Onboarding"));
 
 const LandingPage = lazy(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
 
@@ -127,7 +128,8 @@ const App = () => (
             } />
             <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
             <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
-            
+            <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
+
               {/* Protected routes - lazy loaded */}
             <Route path="/dashboard" element={
               <AuthGuard requireAuth={true} redirectTo="/">

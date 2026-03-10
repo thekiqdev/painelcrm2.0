@@ -21,6 +21,10 @@ interface User {
   can_manage_plan?: boolean;
   /** Se true, o plano grátis expirou e o usuário deve ser direcionado para contratação. */
   plan_expired?: boolean;
+  /** Status do tenant (active, trial, payment_pending, suspended). */
+  tenant_status?: string | null;
+  /** Se false e tenant_status === 'active', redirecionar para /onboarding. */
+  onboarding_completed?: boolean;
 }
 
 interface SignUpParams {
@@ -47,6 +51,10 @@ type AuthContextType = {
   updateRegistrationStep: (step: string, completed: boolean) => Promise<void>;
   /** Recarrega as features do usuário (ex.: após troca de tenant/plano). */
   refreshFeatures: () => Promise<void>;
+  /** Define token e usuário (ex.: após onboarding create-admin) e recarrega features. */
+  setTokenAndUser: (token: string, user: User) => Promise<void>;
+  /** Recarrega dados do usuário (ex.: após concluir onboarding). */
+  refreshUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -288,6 +296,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const setTokenAndUser = async (token: string, newUser: User) => {
+    apiClient.setToken(token);
+    setSession({ token });
+    setUser(newUser);
+    setProfile(newUser);
+    setRegistrationComplete(newUser.registration_complete ?? false);
+    await fetchMeFeatures();
+  };
+
+  const refreshUser = async () => {
+    await fetchCurrentUser();
+  };
+
   const updateRegistrationStep = async (step: string, completed: boolean) => {
     try {
       if (!user) {
@@ -329,6 +350,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     updateProfile,
     updateRegistrationStep,
     refreshFeatures: fetchMeFeatures,
+    setTokenAndUser,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

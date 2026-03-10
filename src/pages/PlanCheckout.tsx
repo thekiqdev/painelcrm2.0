@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -93,6 +93,12 @@ interface PurchaseResult {
   pix_copy_paste?: string;
 }
 
+interface BillingStatusResponse {
+  billing_id: string;
+  status: 'pending' | 'paid' | 'overdue';
+  tenant_status: string | null;
+}
+
 function formatPrice(cents: number): string {
   if (cents === 0) return 'Grátis';
   return new Intl.NumberFormat('pt-BR', {
@@ -158,6 +164,8 @@ export default function PlanCheckout() {
   const [paymentMethod, setPaymentMethod] = useState<'BOLETO' | 'PIX' | 'CREDIT_CARD'>('PIX');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PurchaseResult | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isLoggedIn = !!apiClient.getToken();
   const isCustom = plan?.plan_type === 'custom';
@@ -188,6 +196,59 @@ export default function PlanCheckout() {
       navigate('/landing', { replace: true });
     }
   }, [plan, state, navigate]);
+
+  // Polling do status da cobrança (PIX/boleto): a cada 5s, timeout 10 min
+  useEffect(() => {
+    const billingId = result?.billing_id;
+    if (!billingId) return;
+
+    const POLL_INTERVAL_MS = 5_000;
+    const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutos
+
+    const redirectAfterPayment = () => {
+      toast.success('Pagamento confirmado! Redirecionando...');
+      if (isLoggedIn) {
+        navigate('/dashboard', { replace: true });
+      } else {
+        navigate('/onboarding', {
+          state: {
+            tenantId: result!.tenant_id,
+            prefill: { name: company.responsible_name, email: company.email },
+          },
+          replace: true,
+        });
+      }
+    };
+
+    const checkStatus = async () => {
+      const res = await apiClient.get<BillingStatusResponse>(`/api/billing/${billingId}/status`);
+      if (res.error || !res.data) return;
+      const { status, tenant_status } = res.data;
+      if (status === 'paid' || tenant_status === 'active') {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        pollingRef.current = null;
+        timeoutRef.current = null;
+        redirectAfterPayment();
+      }
+    };
+
+    pollingRef.current = setInterval(checkStatus, POLL_INTERVAL_MS);
+    checkStatus(); // primeira verificação imediata
+
+    timeoutRef.current = setTimeout(() => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      pollingRef.current = null;
+      timeoutRef.current = null;
+    }, POLL_TIMEOUT_MS);
+
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      pollingRef.current = null;
+      timeoutRef.current = null;
+    };
+  }, [result?.billing_id, result?.tenant_id, isLoggedIn, navigate, company.responsible_name, company.email]);
 
   const validateStep1 = (): boolean => {
     if (isLoggedIn) return true;

@@ -80,6 +80,7 @@ const order = [
   '62_payment_webhook_events_phase5.sql',
   '63_activation_plan_phase1.sql',
   '64_tenants_billing_contact.sql',
+  '65_tenants_onboarding_completed.sql',
   'create-admin-user.sql',
 ];
 

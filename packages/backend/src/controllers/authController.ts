@@ -390,27 +390,40 @@ export async function getMe(req: Request, res: Response): Promise<void> {
 
     let canManagePlan = false;
     let planExpired = false;
-    const tenantCheck = await pool.query(
+    let tenantStatus: string | null = null;
+    let onboardingCompleted = false;
+    const tenantCheck = await pool.query<{
+      tenant_id: string;
+      primary_user_id: string;
+      status: string;
+      onboarding_completed: boolean;
+    }>(
       `SELECT u.tenant_id,
-        (SELECT u2.id FROM users u2 WHERE u2.tenant_id = u.tenant_id ORDER BY u2.created_at ASC LIMIT 1) AS primary_user_id
-       FROM users u WHERE u.id = $1 AND u.tenant_id IS NOT NULL`,
+        (SELECT u2.id FROM users u2 WHERE u2.tenant_id = u.tenant_id ORDER BY u2.created_at ASC LIMIT 1) AS primary_user_id,
+        t.status,
+        t.onboarding_completed
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.id = $1 AND u.tenant_id IS NOT NULL`,
       [userId]
     );
     if (tenantCheck.rows.length > 0) {
-      const primaryUserId = tenantCheck.rows[0].primary_user_id;
+      const row = tenantCheck.rows[0];
+      tenantStatus = row.status;
+      onboardingCompleted = row.onboarding_completed === true;
+      const primaryUserId = row.primary_user_id;
       const isPrimaryUser = primaryUserId === userId;
       const hasAdminProfile = await pool.query(
         'SELECT 1 FROM user_profiles WHERE owner_id = $1 AND is_admin = true LIMIT 1',
         [userId]
       );
       canManagePlan = isPrimaryUser || hasAdminProfile.rows.length > 0;
-      const tid = tenantCheck.rows[0].tenant_id;
       const expCheck = await pool.query(
         `SELECT t.trial_ends_at, p.is_free
          FROM tenants t
          JOIN plans p ON p.id = t.plan_id
          WHERE t.id = $1`,
-        [tid]
+        [row.tenant_id]
       );
       if (expCheck.rows.length > 0 && expCheck.rows[0].is_free === true && expCheck.rows[0].trial_ends_at) {
         const endsAt = new Date(expCheck.rows[0].trial_ends_at);
@@ -434,6 +447,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       is_super_admin: user.is_super_admin === true,
       can_manage_plan: canManagePlan,
       plan_expired: planExpired,
+      tenant_status: tenantStatus,
+      onboarding_completed: onboardingCompleted,
     });
   } catch (error) {
     console.error('Get me error:', error);
