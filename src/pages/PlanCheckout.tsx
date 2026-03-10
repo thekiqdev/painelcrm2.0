@@ -651,7 +651,7 @@ export default function PlanCheckout() {
                       </div>
                       <div className="mt-3 flex items-center gap-2 rounded-lg border bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
                         <span className="text-lg" aria-hidden>🟡</span>
-                        <span className="font-medium">Aguardando pagamento</span>
+                        <span className="font-medium">Aguardando confirmação do pagamento...</span>
                       </div>
                     </div>
 
@@ -690,7 +690,7 @@ export default function PlanCheckout() {
                     )}
 
                     <p className="text-center text-sm text-muted-foreground">
-                      Após o pagamento o acesso será liberado automaticamente
+                      Após o pagamento seu acesso será liberado automaticamente.
                     </p>
 
                     <Button

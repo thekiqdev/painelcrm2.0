@@ -43,6 +43,7 @@ export function addInterval(date: Date, interval: BillingInterval): Date {
 /**
  * Ativa o plano no tenant a partir da fatura paga.
  * Sempre calcula plan_period_start e plan_period_end no backend (nunca copia do gateway).
+ * Idempotente: não reexecuta se o tenant já estiver ativo com esta fatura (evita duplicação webhook + polling).
  */
 export async function activatePlanFromBilling(billingId: string): Promise<void> {
   const billing = await getInvoiceById(billingId);
@@ -52,6 +53,16 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
   }
   if (billing.status !== 'paid') {
     console.log('[SUBSCRIPTION] activatePlanFromBilling: billing não está paid', { billingId, status: billing.status });
+    return;
+  }
+
+  const tenantCheck = await pool.query<{ status: string; activated_billing_id: string | null }>(
+    `SELECT status, activated_billing_id FROM tenants WHERE id = $1`,
+    [billing.tenant_id]
+  );
+  const tenant = tenantCheck.rows[0];
+  if (tenant?.status === 'active' && tenant.activated_billing_id === billingId) {
+    console.log('[SUBSCRIPTION] activatePlanFromBilling: tenant já ativo com esta fatura, skip', { billingId });
     return;
   }
 

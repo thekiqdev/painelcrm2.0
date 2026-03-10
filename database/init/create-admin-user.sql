@@ -7,7 +7,8 @@
 -- Gerado com: bcrypt.hash('admin123', 10)
 
 -- Inserir usuário (só cria se não existir; se já existir, NÃO sobrescreve a senha)
-INSERT INTO users (id, email, password_hash, whatsapp_number, email_verified, is_super_admin, created_at, updated_at)
+-- tenant_id NULL: usa índice users_email_null_tenant_key (email WHERE tenant_id IS NULL)
+INSERT INTO users (id, email, password_hash, whatsapp_number, email_verified, is_super_admin, created_at, updated_at, tenant_id)
 VALUES (
   gen_random_uuid(),
   'admin@painelcrm.com',
@@ -16,9 +17,10 @@ VALUES (
   true,
   true,
   NOW(),
-  NOW()
+  NOW(),
+  NULL
 )
-ON CONFLICT (email) DO UPDATE
+ON CONFLICT (email) WHERE (tenant_id IS NULL) DO UPDATE
 SET 
   whatsapp_number = EXCLUDED.whatsapp_number,
   is_super_admin = true,
@@ -47,7 +49,7 @@ SET
   whatsapp_number = EXCLUDED.whatsapp_number,
   updated_at = NOW();
 
--- Verificar se foi criado
+-- Verificar se foi criado (admin sem tenant)
 SELECT 
   u.id,
   u.email,
@@ -58,5 +60,5 @@ SELECT
   p.registration_complete
 FROM users u
 LEFT JOIN profiles p ON u.id = p.id
-WHERE u.email = 'admin@painelcrm.com';
+WHERE u.email = 'admin@painelcrm.com' AND u.tenant_id IS NULL;
 

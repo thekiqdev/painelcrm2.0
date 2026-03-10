@@ -205,7 +205,7 @@ export default function Onboarding() {
               const active = step === s.id;
               const done = step > s.id;
               return (
-                <React.Fragment key={s.id}>
+                <span key={s.id} className="inline-flex items-center gap-2">
                   <span
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm ${active ? 'bg-primary text-primary-foreground' : done ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'}`}
                   >
@@ -213,7 +213,7 @@ export default function Onboarding() {
                     {s.title}
                   </span>
                   {i < STEPS.length - 1 && <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-                </React.Fragment>
+                </span>
               );
             })}
           </div>

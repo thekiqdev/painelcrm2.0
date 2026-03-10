@@ -1,16 +1,19 @@
--- Etapa 2.4: Seed de planos iniciais (Free, Pro, Enterprise)
+-- Etapa 2.4: Seed de planos iniciais (Free, Pro, Enterprise) apenas se a tabela estiver vazia
 -- Executar após 24_plans_and_plan_features.sql
--- Usa ON CONFLICT para não duplicar se rodar mais de uma vez
+-- Não cria planos se já existir algum (evita duplicar a cada migração)
 
-INSERT INTO public.plans (id, name, slug, description, price_cents, billing_interval, max_users, max_profiles, is_active, sort_order, created_at, updated_at)
-VALUES
-  (gen_random_uuid(), 'Free', 'free', 'Plano gratuito com recursos essenciais', 0, 'monthly', 1, 1, true, 0, now(), now()),
-  (gen_random_uuid(), 'Pro', 'pro', 'Plano profissional com mais recursos', 9900, 'monthly', 5, 5, true, 1, now(), now()),
-  (gen_random_uuid(), 'Enterprise', 'enterprise', 'Plano completo para grandes equipes', 29900, 'monthly', NULL, NULL, true, 2, now(), now())
-ON CONFLICT (slug) DO NOTHING;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.plans LIMIT 1) THEN
+    INSERT INTO public.plans (id, name, slug, description, price_cents, billing_interval, max_users, max_profiles, is_active, sort_order, created_at, updated_at)
+    VALUES
+      (gen_random_uuid(), 'Free', 'free', 'Plano gratuito com recursos essenciais', 0, 'monthly', 1, 1, true, 0, now(), now()),
+      (gen_random_uuid(), 'Pro', 'pro', 'Plano profissional com mais recursos', 9900, 'monthly', 5, 5, true, 1, now(), now()),
+      (gen_random_uuid(), 'Enterprise', 'enterprise', 'Plano completo para grandes equipes', 29900, 'monthly', NULL, NULL, true, 2, now(), now());
+  END IF;
+END $$;
 
--- Inserir features para cada plano (após os planos existirem)
--- Free: apenas dashboard, leads, clients, settings
+-- Inserir features para cada plano (apenas se plan_features estiver vazio)
 DO $$
 DECLARE
   plan_rec RECORD;
@@ -18,7 +21,12 @@ DECLARE
   free_keys TEXT[] := ARRAY['dashboard', 'leads', 'clients', 'settings'];
   pro_keys TEXT[] := ARRAY['dashboard', 'leads', 'clients', 'funnels', 'products', 'contracts', 'projects', 'tickets', 'chat', 'proposals', 'tasks', 'settings', 'message_templates', 'whatsapp'];
   all_keys TEXT[] := ARRAY['dashboard', 'leads', 'clients', 'funnels', 'products', 'contracts', 'projects', 'tickets', 'chat', 'invoices', 'expenses', 'proposals', 'tasks', 'reports', 'settings', 'message_templates', 'whatsapp'];
+  has_features BOOLEAN;
 BEGIN
+  SELECT EXISTS (SELECT 1 FROM plan_features LIMIT 1) INTO has_features;
+  IF has_features THEN
+    RETURN;
+  END IF;
   FOR plan_rec IN SELECT id, slug FROM plans LOOP
     IF plan_rec.slug = 'free' THEN
       FOREACH fkey IN ARRAY free_keys LOOP
