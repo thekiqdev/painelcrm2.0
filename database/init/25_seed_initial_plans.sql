@@ -1,19 +1,8 @@
--- Etapa 2.4: Seed de planos iniciais (Free, Pro, Enterprise) apenas se a tabela estiver vazia
--- Executar após 24_plans_and_plan_features.sql
--- Não cria planos se já existir algum (evita duplicar a cada migração)
+-- Etapa 2.4: Estrutura de planos (sem seed automático).
+-- Planos são criados pelo Super Admin; migração não insere mais Free/Pro/Enterprise
+-- para evitar duplicação e permitir gerenciamento apenas via painel.
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.plans LIMIT 1) THEN
-    INSERT INTO public.plans (id, name, slug, description, price_cents, billing_interval, max_users, max_profiles, is_active, sort_order, created_at, updated_at)
-    VALUES
-      (gen_random_uuid(), 'Free', 'free', 'Plano gratuito com recursos essenciais', 0, 'monthly', 1, 1, true, 0, now(), now()),
-      (gen_random_uuid(), 'Pro', 'pro', 'Plano profissional com mais recursos', 9900, 'monthly', 5, 5, true, 1, now(), now()),
-      (gen_random_uuid(), 'Enterprise', 'enterprise', 'Plano completo para grandes equipes', 29900, 'monthly', NULL, NULL, true, 2, now(), now());
-  END IF;
-END $$;
-
--- Inserir features para cada plano (apenas se plan_features estiver vazio)
+-- Inserir features para planos existentes (apenas se plan_features estiver vazio)
 DO $$
 DECLARE
   plan_rec RECORD;

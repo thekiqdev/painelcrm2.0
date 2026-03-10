@@ -314,11 +314,26 @@ export async function updatePlan(req: AuthRequest, res: Response): Promise<void>
 export async function deletePlan(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM plans WHERE id = $1 RETURNING id', [id]);
-    if (result.rows.length === 0) {
+    const planCheck = await pool.query('SELECT id FROM plans WHERE id = $1', [id]);
+    if (planCheck.rows.length === 0) {
       res.status(404).json({ error: 'Plano não encontrado' });
       return;
     }
+    const fallback = await pool.query<{ id: string }>(
+      `SELECT id FROM plans WHERE id != $1 AND is_active = true ORDER BY is_default DESC, sort_order ASC, name ASC LIMIT 1`,
+      [id]
+    );
+    const fallbackPlanId = fallback.rows[0]?.id;
+    if (!fallbackPlanId) {
+      res.status(400).json({
+        error: 'Não é possível excluir o único plano ativo. Crie outro plano antes de excluir este.',
+      });
+      return;
+    }
+    await pool.query('UPDATE tenants SET plan_id = $1, updated_at = now() WHERE plan_id = $2', [fallbackPlanId, id]);
+    await pool.query('UPDATE tenant_billing SET plan_id = $1, updated_at = now() WHERE plan_id = $2', [fallbackPlanId, id]);
+    await pool.query('UPDATE tenant_plan SET plan_id = $1 WHERE plan_id = $2', [fallbackPlanId, id]);
+    await pool.query('DELETE FROM plans WHERE id = $1', [id]);
     res.status(204).send();
   } catch (error: any) {
     console.error('deletePlan error:', error);
