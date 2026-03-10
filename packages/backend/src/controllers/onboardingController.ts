@@ -1,5 +1,6 @@
 /**
- * Onboarding pós-pagamento: criar primeiro admin, confirmar dados da empresa, finalizar.
+ * Onboarding pós-pagamento: definir senha do administrador existente e finalizar.
+ * O administrador já foi criado no checkout (sem senha). Aqui apenas atualizamos a senha.
  * POST /api/onboarding/create-admin — sem auth (tenant_id no body).
  * GET/PATCH /api/onboarding/* — com auth (tenant do usuário).
  */
@@ -9,8 +10,6 @@ import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { hashPassword } from '../utils/bcrypt.js';
 import { generateToken } from '../utils/jwt.js';
-import { getPermissionsForRole } from '../services/rolePermissionsService.js';
-import type { AppRole } from '../services/rolePermissionsService.js';
 
 const createAdminSchema = z.object({
   tenant_id: z.string().uuid(),
@@ -19,7 +18,11 @@ const createAdminSchema = z.object({
   password: z.string().min(6, 'Senha deve ter no mínimo 6 caracteres'),
 });
 
-/** POST /api/onboarding/create-admin — cria o primeiro usuário administrador do tenant (sem auth). */
+/**
+ * POST /api/onboarding/create-admin
+ * Busca o administrador existente (criado no checkout) por email ou por tenant_id (owner).
+ * Atualiza apenas password_hash e marca onboarding_completed no tenant. Não cria usuário.
+ */
 export async function postOnboardingCreateAdmin(req: import('express').Request, res: Response): Promise<void> {
   try {
     const body = createAdminSchema.parse(req.body);
@@ -49,126 +52,56 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
     const firstName = nameParts[0] ?? fullName;
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-    const existingUserRow = await pool.query<{ id: string; tenant_id: string | null }>(
-      'SELECT id, tenant_id FROM users WHERE email = $1',
-      [email]
+    // 1) Buscar usuário existente: por email no tenant ou único usuário do tenant (owner)
+    let userRow = await pool.query<{ id: string; email: string }>(
+      'SELECT id, email FROM users WHERE tenant_id = $1 AND email = $2 LIMIT 1',
+      [body.tenant_id, email]
     );
-    const existingUser = existingUserRow.rows[0];
-
-    if (existingUser) {
-      if (existingUser.tenant_id !== body.tenant_id) {
-        res.status(400).json({ error: 'Já existe um usuário com este e-mail em outra conta.' });
-        return;
-      }
-      // Mesmo tenant: usuário já foi criado antes (ex.: sem senha); atualizar senha e nome
-      await pool.query(
-        'UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2',
-        [passwordHash, existingUser.id]
+    if (userRow.rows.length === 0) {
+      userRow = await pool.query<{ id: string; email: string }>(
+        `SELECT u.id, u.email FROM users u
+         WHERE u.tenant_id = $1
+         ORDER BY u.created_at ASC
+         LIMIT 1`,
+        [body.tenant_id]
       );
-      const profileExists = await pool.query('SELECT 1 FROM profiles WHERE id = $1', [existingUser.id]);
-      if (profileExists.rows.length > 0) {
-        await pool.query(
-          `UPDATE profiles SET first_name = $1, last_name = $2, company_name = COALESCE(NULLIF(trim(company_name), ''), $3), registration_complete = true, updated_at = now() WHERE id = $4`,
-          [firstName, lastName, tenant.name, existingUser.id]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
-           VALUES ($1, $2, $3, $4, '', true)`,
-          [existingUser.id, firstName, lastName, tenant.name]
-        );
-      }
-      // Garantir que tenha user_profile e role admin (caso tenha sido criado só parcialmente)
-      const hasProfile = await pool.query(
-        'SELECT id FROM user_profiles WHERE owner_id = $1 LIMIT 1',
-        [existingUser.id]
-      );
-      if (hasProfile.rows.length === 0) {
-        const profileResult = await pool.query<{ id: string }>(
-          `INSERT INTO user_profiles (owner_id, name, description, is_admin) VALUES ($1, $2, NULL, true) RETURNING id`,
-          [existingUser.id, tenant.name]
-        );
-        const profileId = profileResult.rows[0].id;
-        await pool.query(
-          'INSERT INTO profile_members (profile_id, user_id, created_by) VALUES ($1, $2, $3)',
-          [profileId, existingUser.id, existingUser.id]
-        );
-        await pool.query(
-          `INSERT INTO user_roles (user_id, role, profile_id, created_by) VALUES ($1, 'admin', $2, $3)`,
-          [existingUser.id, profileId, existingUser.id]
-        );
-        const adminPerms = getPermissionsForRole('admin' as AppRole);
-        for (const permission of adminPerms) {
-          await pool.query(
-            `INSERT INTO user_permissions (user_id, profile_id, permission, created_by) VALUES ($1, $2, $3, $4)`,
-            [existingUser.id, profileId, permission, existingUser.id]
-          );
-        }
-      }
-      const token = generateToken({ userId: existingUser.id, email });
-      res.status(200).json({
-        token,
-        user: {
-          id: existingUser.id,
-          email,
-          first_name: firstName,
-          last_name: lastName || undefined,
-          registration_complete: true,
-        },
+    }
+    if (userRow.rows.length === 0) {
+      res.status(404).json({
+        error: 'Nenhum administrador encontrado para esta conta. Use o e-mail informado no checkout.',
       });
       return;
     }
+    const user = userRow.rows[0];
 
-    const countUsers = await pool.query<{ count: string }>(
-      'SELECT COUNT(*) AS count FROM users WHERE tenant_id = $1',
-      [body.tenant_id]
-    );
-    if (parseInt(countUsers.rows[0]?.count ?? '0', 10) > 0) {
-      res.status(400).json({ error: 'Esta conta já possui um administrador. Faça login.' });
-      return;
-    }
-
-    const userResult = await pool.query<{ id: string; email: string }>(
-      `INSERT INTO users (email, password_hash, tenant_id)
-       VALUES ($1, $2, $3)
-       RETURNING id, email`,
-      [email, passwordHash, body.tenant_id]
-    );
-    const user = userResult.rows[0];
-
+    // 2) Atualizar apenas password_hash (e nome no profile se existir)
     await pool.query(
-      `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
-       VALUES ($1, $2, $3, $4, '', true)`,
-      [user.id, firstName, lastName, tenant.name]
+      'UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2',
+      [passwordHash, user.id]
     );
-
-    const profileResult = await pool.query<{ id: string }>(
-      `INSERT INTO user_profiles (owner_id, name, description, is_admin)
-       VALUES ($1, $2, NULL, true)
-       RETURNING id`,
-      [user.id, tenant.name]
-    );
-    const profileId = profileResult.rows[0].id;
-
-    await pool.query(
-      `INSERT INTO profile_members (profile_id, user_id, created_by) VALUES ($1, $2, $3)`,
-      [profileId, user.id, user.id]
-    );
-    await pool.query(
-      `INSERT INTO user_roles (user_id, role, profile_id, created_by) VALUES ($1, 'admin', $2, $3)`,
-      [user.id, profileId, user.id]
-    );
-    const adminPerms = getPermissionsForRole('admin' as AppRole);
-    for (const permission of adminPerms) {
+    const profileExists = await pool.query('SELECT 1 FROM profiles WHERE id = $1', [user.id]);
+    if (profileExists.rows.length > 0) {
       await pool.query(
-        `INSERT INTO user_permissions (user_id, profile_id, permission, created_by) VALUES ($1, $2, $3, $4)`,
-        [user.id, profileId, permission, user.id]
+        `UPDATE profiles SET first_name = $1, last_name = $2, registration_complete = true, updated_at = now() WHERE id = $3`,
+        [firstName, lastName, user.id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
+         VALUES ($1, $2, $3, $4, '', true)`,
+        [user.id, firstName, lastName, tenant.name]
       );
     }
 
-    const token = generateToken({ userId: user.id, email: user.email });
+    // 3) Marcar onboarding como concluído
+    await pool.query(
+      'UPDATE tenants SET onboarding_completed = true, updated_at = now() WHERE id = $1',
+      [body.tenant_id]
+    );
 
-    res.status(201).json({
+    // 4) Retornar sucesso e permitir login
+    const token = generateToken({ userId: user.id, email: user.email });
+    res.status(200).json({
       token,
       user: {
         id: user.id,
@@ -184,7 +117,7 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
       return;
     }
     console.error('[onboarding] create-admin', err);
-    res.status(500).json({ error: 'Erro ao criar administrador' });
+    res.status(500).json({ error: 'Erro ao definir senha do administrador' });
   }
 }
 
