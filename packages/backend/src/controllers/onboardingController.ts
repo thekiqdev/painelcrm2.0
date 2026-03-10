@@ -106,7 +106,7 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
         }
       }
       const token = generateToken({ userId: existingUser.id, email });
-      return res.status(200).json({
+      res.status(200).json({
         token,
         user: {
           id: existingUser.id,
@@ -116,6 +116,7 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
           registration_complete: true,
         },
       });
+      return;
     }
 
     const countUsers = await pool.query<{ count: string }>(
