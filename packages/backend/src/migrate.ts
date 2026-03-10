@@ -73,6 +73,13 @@ const order = [
   '55_project_areas_team_ids.sql',
   '56_project_area_comments.sql',
   '57_rls_tenant_isolation.sql',
+  '58_user_permission_versions.sql',
+  '59_asaas_integration_phase1.sql',
+  '60_payment_gateway_configuration.sql',
+  '61_payment_gateways_panel_phase1.sql',
+  '62_payment_webhook_events_phase5.sql',
+  '63_activation_plan_phase1.sql',
+  '64_tenants_billing_contact.sql',
   'create-admin-user.sql',
 ];
 

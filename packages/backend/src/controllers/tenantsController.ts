@@ -5,6 +5,9 @@ import { FEATURE_KEYS, isValidFeatureKey } from '../constants/features.js';
 import { logSuperAdminAction, insertTenantPlanHistory } from '../services/auditLogService.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
 import { checkTenantUsersLimit, checkTenantProfilesLimit, checkTenantWhatsAppInstancesLimit } from '../services/tenantLimitService.js';
+import { getActiveGateway, getActiveAsaasConfigForSaas } from '../modules/payments/gatewayProvider.js';
+import { getActiveConfig } from '../services/paymentGatewayConfigService.js';
+import { ensureCustomerForTenant } from '../modules/gateways/asaas/index.js';
 import { z } from 'zod';
 
 const createTenantSchema = z.object({
@@ -708,12 +711,64 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
       d.setMonth(d.getMonth() + 1);
       dueDate = d;
     }
+    const dueDateStr = dueDate.toISOString().slice(0, 10);
     const invoiceNumber = `INV-${id.slice(0, 8)}-${Date.now().toString(36).toUpperCase()}`;
+    const idempotencyKey = `saas_${id}_${planId}_${dueDateStr}`;
+
+    const existing = await pool.query(
+      `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
+        gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key, created_at
+       FROM tenant_billing WHERE idempotency_key = $1 AND asaas_payment_id IS NOT NULL`,
+      [idempotencyKey]
+    );
+    if (existing.rows.length > 0) {
+      res.status(200).json(existing.rows[0]);
+      return;
+    }
+
+    const config = await getActiveConfig('saas');
+    const gateway = await getActiveGateway({ billingType: 'saas' });
+    const asaasConfig = await getActiveAsaasConfigForSaas();
+    const gatewayKey = config?.gateway_key ?? 'asaas';
+
+    let chargeResult: { paymentId: string; status: string; invoiceUrl?: string; bankSlipUrl?: string; pixQrCode?: string; pixCopyPaste?: string } | null = null;
+    if (gateway) {
+      try {
+        const customerId = await ensureCustomerForTenant(id, asaasConfig ?? undefined);
+        chargeResult = await gateway.createCharge({
+          customerId,
+          amountCents: amount,
+          dueDate: dueDateStr,
+          paymentMethod: 'BOLETO',
+          description: invoiceNumber,
+          idempotencyKey,
+          externalReference: id,
+        });
+      } catch (err) {
+        console.error('createTenantCharge gateway error:', err);
+      }
+    }
+
     const insert = await pool.query(
-      `INSERT INTO tenant_billing (tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-       RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number, created_at`,
-      [id, planId, billingInterval, amount, dueDate, invoiceNumber]
+      `INSERT INTO tenant_billing (
+        tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
+        gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key
+      ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11)
+      RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
+        gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key, created_at`,
+      [
+        id,
+        planId,
+        billingInterval,
+        amount,
+        dueDate,
+        invoiceNumber,
+        gatewayKey,
+        chargeResult ? 'BOLETO' : null,
+        chargeResult?.paymentId ?? null,
+        chargeResult?.status ?? null,
+        idempotencyKey,
+      ]
     );
     const createdCharge = insert.rows[0];
     if (req.user?.id) {
@@ -721,9 +776,15 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
         billing_id: createdCharge.id,
         amount_cents: createdCharge.amount_cents,
         due_date: createdCharge.due_date,
+        asaas_payment_id: createdCharge.asaas_payment_id ?? undefined,
       });
     }
-    res.status(201).json(createdCharge);
+    const response: Record<string, unknown> = { ...createdCharge };
+    if (chargeResult?.invoiceUrl) response.invoiceUrl = chargeResult.invoiceUrl;
+    if (chargeResult?.bankSlipUrl) response.bankSlipUrl = chargeResult.bankSlipUrl;
+    if (chargeResult?.pixQrCode) response.pixQrCode = chargeResult.pixQrCode;
+    if (chargeResult?.pixCopyPaste) response.pixCopyPaste = chargeResult.pixCopyPaste;
+    res.status(201).json(response);
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });

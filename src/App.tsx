@@ -14,6 +14,7 @@ import AuthGuard from "./components/AuthGuard";
 import SuperAdminGuard from "./components/SuperAdminGuard";
 import AppLayout from "./layouts/AppLayout";
 import SuperAdminLayout from "./layouts/SuperAdminLayout";
+import SettingsLayout from "./layouts/SettingsLayout";
 import NotFound from "./pages/NotFound";
 import HomeOrRedirect from "./components/HomeOrRedirect";
 
@@ -36,6 +37,8 @@ const ContractDetails = lazy(() => import("./pages/ContractDetails"));
 const Billing = lazy(() => import("./pages/Billing"));
 const Finance = lazy(() => import("./pages/Finance"));
 const Settings = lazy(() => import("./pages/Settings"));
+const PaymentsPanelPage = lazy(() => import("./pages/settings/PaymentsPanelPage"));
+const GatewayConfigPage = lazy(() => import("./pages/settings/GatewayConfigPage"));
 const Chat = lazy(() => import("./pages/Chat"));
 const FunnelDetails = lazy(() => import("./pages/FunnelDetails"));
 const ProposalDetails = lazy(() => import("./pages/ProposalDetails"));
@@ -66,8 +69,10 @@ const SuperAdminAudit = lazy(() => import("./pages/superadmin/SuperAdminAudit"))
 const SuperAdminReports = lazy(() => import("./pages/superadmin/SuperAdminReports"));
 const SuperAdminUsers = lazy(() => import("./pages/superadmin/SuperAdminUsers"));
 const SuperAdminNotifications = lazy(() => import("./pages/superadmin/SuperAdminNotifications"));
+const SuperAdminPagamentos = lazy(() => import("./pages/superadmin/SuperAdminPagamentos"));
 
 const MeuPlano = lazy(() => import("./pages/MeuPlano"));
+const PlanCheckout = lazy(() => import("./pages/PlanCheckout"));
 
 const LandingPage = lazy(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
 
@@ -121,6 +126,7 @@ const App = () => (
               </AuthGuard>
             } />
             <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
+            <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
             
               {/* Protected routes - lazy loaded */}
             <Route path="/dashboard" element={
@@ -382,12 +388,26 @@ const App = () => (
             <Route path="/settings" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
-                      <Settings />
-                    </Suspense>
+                    <SettingsLayout />
                   </AppLayout>
               </AuthGuard>
-            } />
+            }>
+              <Route index element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <Settings />
+                </Suspense>
+              } />
+              <Route path="payments" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PaymentsPanelPage />
+                </Suspense>
+              } />
+              <Route path="payments/:gatewayKey" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <GatewayConfigPage />
+                </Suspense>
+              } />
+            </Route>
             <Route path="/meu-plano" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
@@ -441,6 +461,7 @@ const App = () => (
                 <Route path="reports" element={<Suspense fallback={<LoadingFallback />}><SuperAdminReports /></Suspense>} />
                 <Route path="users" element={<Suspense fallback={<LoadingFallback />}><SuperAdminUsers /></Suspense>} />
                 <Route path="notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotifications /></Suspense>} />
+                <Route path="pagamentos" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPagamentos /></Suspense>} />
               </Route>
             </Route>
             

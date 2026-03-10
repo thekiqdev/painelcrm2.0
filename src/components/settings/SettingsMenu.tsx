@@ -1,5 +1,6 @@
 
 import React from "react";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { 
@@ -34,7 +35,8 @@ type SettingSection =
   | "collaborators" 
   | "whatsapp" 
   | "domain" 
-  | "messageTemplates";
+  | "messageTemplates"
+  | "paymentGateway";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -49,6 +51,9 @@ interface MenuItem {
 }
 
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSelect }) => {
+  const location = useLocation();
+  const isPaymentsRoute = location.pathname.startsWith("/settings/payments");
+
   // Definir itens do menu agrupados por categoria
   const menuItems: MenuItem[] = [
     // Usuários e Acesso
@@ -72,7 +77,8 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
     // Categoria Integrações
     { id: "whatsapp", label: "WhatsApp", icon: <MessageSquare className="h-4 w-4" />, category: "Integrações" },
     { id: "domain", label: "Domínio", icon: <Globe className="h-4 w-4" />, category: "Integrações" },
-    { id: "messageTemplates", label: "Modelos de Mensagens", icon: <FileText className="h-4 w-4" />, category: "Integrações" }
+    { id: "messageTemplates", label: "Modelos de Mensagens", icon: <FileText className="h-4 w-4" />, category: "Integrações" },
+    { id: "paymentGateway", label: "Pagamentos", icon: <CreditCard className="h-4 w-4" />, category: "Integrações" }
   ];
 
   // Agrupar itens por categoria
@@ -99,20 +105,42 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
             <div key={category} className="mb-6 last:mb-0">
               <h4 className="text-sm font-medium text-muted-foreground mb-2">{category}</h4>
               <div className="space-y-1">
-                {items.map(item => (
-                  <Button
-                    key={item.id}
-                    variant={activeSection === item.id ? "secondary" : "ghost"}
-                    className={cn(
-                      "w-full justify-start",
-                      activeSection === item.id && "bg-secondary"
-                    )}
-                    onClick={() => onSelect(item.id)}
-                  >
-                    {item.icon}
-                    <span className="ml-2">{item.label}</span>
-                  </Button>
-                ))}
+                {items.map(item => {
+                  const isPaymentLink = item.id === "paymentGateway";
+                  const isActive = isPaymentLink ? isPaymentsRoute : activeSection === item.id;
+                  if (isPaymentLink) {
+                    return (
+                      <Button
+                        key={item.id}
+                        variant={isActive ? "secondary" : "ghost"}
+                        className={cn(
+                          "w-full justify-start",
+                          isActive && "bg-secondary"
+                        )}
+                        asChild
+                      >
+                        <Link to="/settings/payments">
+                          {item.icon}
+                          <span className="ml-2">{item.label}</span>
+                        </Link>
+                      </Button>
+                    );
+                  }
+                  return (
+                    <Button
+                      key={item.id}
+                      variant={activeSection === item.id ? "secondary" : "ghost"}
+                      className={cn(
+                        "w-full justify-start",
+                        activeSection === item.id && "bg-secondary"
+                      )}
+                      onClick={() => onSelect(item.id)}
+                    >
+                      {item.icon}
+                      <span className="ml-2">{item.label}</span>
+                    </Button>
+                  );
+                })}
               </div>
               {category !== categoryOrder[categoryOrder.length - 1] && (
                 <Separator className="my-4" />

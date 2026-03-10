@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from 'sonner';
-import { Check, ChevronLeft, ChevronRight, Minus, Plus, ArrowRight } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Minus, Plus, ArrowRight, CreditCard, Calendar } from 'lucide-react';
 import {
   Users,
   MessageCircle,
@@ -82,6 +83,9 @@ interface MyPlanResponse {
   trial_ends_at: string | null;
   max_users_override: number | null;
   max_whatsapp_instances_override: number | null;
+  tenant_status?: string;
+  plan_period_start?: string | null;
+  plan_period_end?: string | null;
 }
 
 function formatPrice(cents: number): string {
@@ -107,6 +111,7 @@ function formatDate(iso: string): string {
 }
 
 export default function MeuPlano() {
+  const navigate = useNavigate();
   const [myPlan, setMyPlan] = useState<MyPlanResponse | null>(null);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -193,6 +198,14 @@ export default function MeuPlano() {
   const priceRow = prices.find((p) => p.billing_interval === interval.key);
   const currentPriceCents = isCustom && priceRow ? priceRow.price_per_user_cents * usersCount : plan.price_cents;
   const otherPlans = allPlans.filter((p) => p.id !== plan.id);
+  const tenantStatus = myPlan.tenant_status ?? 'active';
+  const isActive = tenantStatus === 'active';
+  const isPaymentPending = tenantStatus === 'payment_pending';
+  const planPeriodEnd = myPlan.plan_period_end;
+
+  const refetchPlan = () => {
+    apiClient.get<MyPlanResponse>('/api/me/tenant/plan').then((r) => r.data && setMyPlan(r.data));
+  };
 
   return (
     <div className="p-6 space-y-8">
@@ -219,7 +232,43 @@ export default function MeuPlano() {
                 Acesso até {formatDate(myPlan.trial_ends_at)}
               </span>
             )}
+            {isPaymentPending && !plan.is_free && (
+              <span className="text-sm text-amber-600 font-medium">Aguardando pagamento</span>
+            )}
+            {isActive && planPeriodEnd && (
+              <span className="text-sm text-muted-foreground flex items-center gap-1">
+                <Calendar className="h-4 w-4" />
+                Próxima cobrança em {formatDate(planPeriodEnd)}
+              </span>
+            )}
           </div>
+          {!plan.is_free && (isPaymentPending || !isActive) && (
+            <Button
+              variant="default"
+              size="sm"
+              className="gap-1"
+              onClick={() =>
+                navigate('/checkout', {
+                  state: {
+                    plan: {
+                      id: plan.id,
+                      name: plan.name,
+                      plan_type: plan.plan_type,
+                      price_cents: plan.price_cents,
+                      interval_prices: plan.interval_prices,
+                      description: plan.description,
+                      benefits: plan.benefits,
+                    },
+                    billingInterval: interval.key,
+                    usersCount: plan.plan_type === 'custom' ? usersCount : undefined,
+                  },
+                })
+              }
+            >
+              <CreditCard className="h-4 w-4" />
+              {isPaymentPending ? 'Ver link de pagamento' : 'Assinar plano'}
+            </Button>
+          )}
           {isCustom && (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm text-muted-foreground">Usuários contratados:</span>
@@ -294,7 +343,9 @@ export default function MeuPlano() {
         <Card>
           <CardHeader>
             <CardTitle>Outros planos</CardTitle>
-            <CardDescription>Altere o plano da sua conta.</CardDescription>
+            <CardDescription>
+              {isActive ? 'Troque de plano ou assine outro.' : 'Escolha um plano para assinar.'}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -313,9 +364,25 @@ export default function MeuPlano() {
                       size="sm"
                       className="w-full gap-1"
                       disabled={saving}
-                      onClick={() => changePlan(p.id)}
+                      onClick={() =>
+                        navigate('/checkout', {
+                          state: {
+                            plan: {
+                              id: p.id,
+                              name: p.name,
+                              plan_type: p.plan_type,
+                              price_cents: p.price_cents,
+                              interval_prices: p.interval_prices,
+                              description: p.description,
+                              benefits: p.benefits,
+                            },
+                            billingInterval: interval.key,
+                            usersCount: p.plan_type === 'custom' ? usersCount : undefined,
+                          },
+                        })
+                      }
                     >
-                      Contratar
+                      Assinar
                       <ArrowRight className="h-4 w-4" />
                     </Button>
                   </div>

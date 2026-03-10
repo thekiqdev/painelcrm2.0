@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Check, ArrowRight, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
-import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/integrations/api/client";
 import {
@@ -85,6 +85,7 @@ function formatPrice(cents: number): string {
 }
 
 const Pricing = () => {
+  const navigate = useNavigate();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [intervalIndex, setIntervalIndex] = useState<Record<string, number>>({});
@@ -294,12 +295,26 @@ const Pricing = () => {
                 <Button
                   variant={plan.is_default ? "default" : "outline"}
                   className="w-full gap-2 font-semibold"
-                  asChild
+                  onClick={() =>
+                    navigate("/checkout", {
+                      state: {
+                        plan: {
+                          id: plan.id,
+                          name: plan.name,
+                          plan_type: plan.plan_type,
+                          price_cents: plan.price_cents,
+                          interval_prices: plan.interval_prices,
+                          description: plan.description,
+                          benefits: plan.benefits,
+                        },
+                        billingInterval: INTERVALS[intervalIndex[plan.id] ?? 0]?.key ?? "monthly",
+                        usersCount: usersCount[plan.id] ?? 1,
+                      },
+                    })
+                  }
                 >
-                  <Link to={`/register?plan=${encodeURIComponent(plan.slug)}`}>
-                    Contratar
-                    <ArrowRight size={16} />
-                  </Link>
+                  Contratar
+                  <ArrowRight size={16} />
                 </Button>
               </div>
             );

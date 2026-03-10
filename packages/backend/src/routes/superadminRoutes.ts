@@ -6,6 +6,7 @@ import * as reportsController from '../controllers/reportsController.js';
 import * as exportController from '../controllers/exportController.js';
 import * as superadminUsersController from '../controllers/superadminUsersController.js';
 import * as systemFeaturesController from '../controllers/systemFeaturesController.js';
+import * as paymentGatewayConfigController from '../controllers/paymentGatewayConfigController.js';
 import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsService.js';
 
 const router = Router();
@@ -35,6 +36,12 @@ router.post('/notifications/check-trials', async (req, res) => {
     res.status(500).json({ error: e.message || 'Internal server error' });
   }
 });
+
+router.get('/payment-gateways', paymentGatewayConfigController.getPaymentGatewaysList);
+router.get('/payment-gateways/status', paymentGatewayConfigController.getPaymentGatewaysStatus);
+router.get('/payment-gateways/webhooks/events', paymentGatewayConfigController.getPaymentWebhookEvents);
+router.get('/payment-gateway', paymentGatewayConfigController.getPaymentGatewayConfig);
+router.put('/payment-gateway', paymentGatewayConfigController.putPaymentGatewayConfig);
 
 router.get('/features', systemFeaturesController.listSystemFeatures);
 router.get('/features/:id', systemFeaturesController.getSystemFeature);

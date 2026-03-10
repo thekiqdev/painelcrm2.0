@@ -42,6 +42,7 @@ import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
+import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
 import messagesRoutes from './routes/messagesRoutes.js';
@@ -49,6 +50,7 @@ import superadminRoutes from './routes/superadminRoutes.js';
 import plansRoutes from './routes/plansRoutes.js';
 import * as plansController from './controllers/plansController.js';
 import myTenantPlanRoutes from './routes/myTenantPlanRoutes.js';
+import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
 import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
 import { initializeWebSocket } from './services/websocketService.js';
@@ -228,11 +230,13 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/message-templates', messageTemplatesRoutes);
 app.use('/api/messages', messagesRoutes);
 app.get('/api/plans', plansController.listPublicPlans);
+app.use('/api/plan-purchase', planPurchaseRoutes);
 app.use('/api/me/tenant', myTenantPlanRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);
 app.use('/api/superadmin/tenants', tenantsRoutes);
 app.use('/webhooks/uazapi', uazapiWebhookRoutes);
+app.use('/webhooks/asaas', asaasWebhookRoutes);
 
 // 404 handler
 app.use((req, res) => {

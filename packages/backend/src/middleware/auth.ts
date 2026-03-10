@@ -59,6 +59,46 @@ export async function authenticateToken(
 }
 
 /**
+ * Autenticação opcional: se houver Authorization válido, preenche req.userId e req.tenantId.
+ * Se não houver token ou for inválido, segue sem preencher (não retorna 401).
+ * Útil para rotas que aceitam chamada logada ou anônima (ex.: POST /api/plan-purchase).
+ */
+export async function optionalAuthenticateAndTenant(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) {
+    next();
+    return;
+  }
+  try {
+    const payload = verifyToken(token);
+    const result = await pool.query(
+      'SELECT id, email, is_super_admin FROM users WHERE id = $1',
+      [payload.userId]
+    );
+    if (result.rows.length === 0) {
+      next();
+      return;
+    }
+    const row = result.rows[0];
+    req.userId = row.id;
+    req.user = {
+      id: row.id,
+      email: row.email,
+      is_super_admin: row.is_super_admin === true,
+    };
+    req.tenantId = await getTenantIdForUser(row.id);
+  } catch {
+    // token inválido ou expirado: segue sem user/tenant
+  }
+  next();
+}
+
+/**
  * Middleware que define o tenant atual no request (req.tenantId).
  * Deve ser usado após authenticateToken nas rotas tenant-scoped.
  * Se o usuário não tiver tenant_id (ex.: superadmin), req.tenantId fica null.
@@ -207,8 +247,47 @@ export async function setRequestDb(
   });
 }
 
-/** Cadeia para rotas tenant-scoped: auth + tenant + RLS (SET LOCAL). */
-export const tenantAuth = [authenticateToken, setCurrentTenant, setRequestDb];
+/**
+ * Middleware que bloqueia acesso se o período do plano do tenant estiver expirado (plan_period_end < now()).
+ * Retorna 402 com code PLAN_EXPIRED para o front redirecionar para /renovar-plano.
+ * Se o tenant não tiver plan_period_end (ex.: trial legado), permite.
+ */
+export async function requireActivePlanPeriod(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  if (!req.tenantId) {
+    next();
+    return;
+  }
+  try {
+    const row = await pool.query<{ plan_period_end: string | null }>(
+      'SELECT plan_period_end FROM tenants WHERE id = $1',
+      [req.tenantId]
+    );
+    const periodEnd = row.rows[0]?.plan_period_end;
+    if (!periodEnd) {
+      next();
+      return;
+    }
+    const end = new Date(periodEnd);
+    if (end < new Date()) {
+      res.status(402).json({
+        error: 'Período do plano expirado. Renove para continuar acessando.',
+        code: 'PLAN_EXPIRED',
+        redirect: '/renovar-plano',
+      });
+      return;
+    }
+    next();
+  } catch {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** Cadeia para rotas tenant-scoped: auth + tenant + período ativo + RLS (SET LOCAL). */
+export const tenantAuth = [authenticateToken, setCurrentTenant, requireActivePlanPeriod, setRequestDb];
 
 /** Cadeia para rotas superadmin: auth + superadmin + RLS (bypass). */
 export const superadminAuth = [authenticateToken, requireSuperAdmin, setRequestDb];

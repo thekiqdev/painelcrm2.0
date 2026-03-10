@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Users, Flag, LogOut, ScrollText, BarChart3, UserCog, Bell } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Flag, LogOut, ScrollText, BarChart3, UserCog, Bell, CreditCard } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -96,6 +96,21 @@ export default function SuperAdminLayout() {
                     <NavLink to="/superadmin/notifications" className={getNavClass}>
                       <Bell className="mr-2 h-5 w-5" />
                       <span>Notificações</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          <SidebarGroup>
+            <SidebarGroupLabel>Configurações</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/superadmin/pagamentos" className={getNavClass}>
+                      <CreditCard className="mr-2 h-5 w-5" />
+                      <span>Pagamentos</span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

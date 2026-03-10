@@ -442,7 +442,8 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
       return;
     }
     const planResult = await pool.query(
-      `SELECT p.*, t.trial_ends_at, t.max_users_override, t.max_whatsapp_instances_override
+      `SELECT p.*, t.trial_ends_at, t.max_users_override, t.max_whatsapp_instances_override,
+              t.status AS tenant_status, t.plan_period_start, t.plan_period_end
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
        WHERE t.id = $1`,
@@ -467,6 +468,9 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
       trial_ends_at: plan.trial_ends_at,
       max_users_override: plan.max_users_override,
       max_whatsapp_instances_override: plan.max_whatsapp_instances_override,
+      tenant_status: plan.tenant_status,
+      plan_period_start: plan.plan_period_start,
+      plan_period_end: plan.plan_period_end,
     });
   } catch (error: any) {
     console.error('getMyTenantPlan error:', error);
