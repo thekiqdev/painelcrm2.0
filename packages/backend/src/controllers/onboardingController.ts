@@ -42,6 +42,82 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
       return;
     }
 
+    const email = body.email.trim().toLowerCase();
+    const passwordHash = await hashPassword(body.password);
+    const fullName = body.name.trim();
+    const nameParts = fullName.split(/\s+/).filter(Boolean);
+    const firstName = nameParts[0] ?? fullName;
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+    const existingUserRow = await pool.query<{ id: string; tenant_id: string | null }>(
+      'SELECT id, tenant_id FROM users WHERE email = $1',
+      [email]
+    );
+    const existingUser = existingUserRow.rows[0];
+
+    if (existingUser) {
+      if (existingUser.tenant_id !== body.tenant_id) {
+        res.status(400).json({ error: 'Já existe um usuário com este e-mail em outra conta.' });
+        return;
+      }
+      // Mesmo tenant: usuário já foi criado antes (ex.: sem senha); atualizar senha e nome
+      await pool.query(
+        'UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2',
+        [passwordHash, existingUser.id]
+      );
+      const profileExists = await pool.query('SELECT 1 FROM profiles WHERE id = $1', [existingUser.id]);
+      if (profileExists.rows.length > 0) {
+        await pool.query(
+          `UPDATE profiles SET first_name = $1, last_name = $2, company_name = COALESCE(NULLIF(trim(company_name), ''), $3), registration_complete = true, updated_at = now() WHERE id = $4`,
+          [firstName, lastName, tenant.name, existingUser.id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
+           VALUES ($1, $2, $3, $4, '', true)`,
+          [existingUser.id, firstName, lastName, tenant.name]
+        );
+      }
+      // Garantir que tenha user_profile e role admin (caso tenha sido criado só parcialmente)
+      const hasProfile = await pool.query(
+        'SELECT id FROM user_profiles WHERE owner_id = $1 LIMIT 1',
+        [existingUser.id]
+      );
+      if (hasProfile.rows.length === 0) {
+        const profileResult = await pool.query<{ id: string }>(
+          `INSERT INTO user_profiles (owner_id, name, description, is_admin) VALUES ($1, $2, NULL, true) RETURNING id`,
+          [existingUser.id, tenant.name]
+        );
+        const profileId = profileResult.rows[0].id;
+        await pool.query(
+          'INSERT INTO profile_members (profile_id, user_id, created_by) VALUES ($1, $2, $3)',
+          [profileId, existingUser.id, existingUser.id]
+        );
+        await pool.query(
+          `INSERT INTO user_roles (user_id, role, profile_id, created_by) VALUES ($1, 'admin', $2, $3)`,
+          [existingUser.id, profileId, existingUser.id]
+        );
+        const adminPerms = getPermissionsForRole('admin' as AppRole);
+        for (const permission of adminPerms) {
+          await pool.query(
+            `INSERT INTO user_permissions (user_id, profile_id, permission, created_by) VALUES ($1, $2, $3, $4)`,
+            [existingUser.id, profileId, permission, existingUser.id]
+          );
+        }
+      }
+      const token = generateToken({ userId: existingUser.id, email });
+      return res.status(200).json({
+        token,
+        user: {
+          id: existingUser.id,
+          email,
+          first_name: firstName,
+          last_name: lastName || undefined,
+          registration_complete: true,
+        },
+      });
+    }
+
     const countUsers = await pool.query<{ count: string }>(
       'SELECT COUNT(*) AS count FROM users WHERE tenant_id = $1',
       [body.tenant_id]
@@ -50,19 +126,6 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
       res.status(400).json({ error: 'Esta conta já possui um administrador. Faça login.' });
       return;
     }
-
-    const email = body.email.trim().toLowerCase();
-    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existingUser.rows.length > 0) {
-      res.status(400).json({ error: 'Já existe um usuário com este e-mail' });
-      return;
-    }
-
-    const passwordHash = await hashPassword(body.password);
-    const fullName = body.name.trim();
-    const nameParts = fullName.split(/\s+/).filter(Boolean);
-    const firstName = nameParts[0] ?? fullName;
-    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
     const userResult = await pool.query<{ id: string; email: string }>(
       `INSERT INTO users (email, password_hash, tenant_id)
