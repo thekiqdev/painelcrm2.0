@@ -164,8 +164,10 @@ export default function PlanCheckout() {
   const [paymentMethod, setPaymentMethod] = useState<'BOLETO' | 'PIX' | 'CREDIT_CARD'>('PIX');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PurchaseResult | null>(null);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const redirectParamsRef = useRef<{ isLoggedIn: boolean; tenantId?: string; prefill?: { name?: string; email?: string } } | null>(null);
 
   const isLoggedIn = !!apiClient.getToken();
   const isCustom = plan?.plan_type === 'custom';
@@ -205,19 +207,17 @@ export default function PlanCheckout() {
     const POLL_INTERVAL_MS = 5_000;
     const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutos
 
-    const redirectAfterPayment = () => {
-      toast.success('Pagamento confirmado! Redirecionando...');
-      if (isLoggedIn) {
-        navigate('/dashboard', { replace: true });
-      } else {
-        navigate('/onboarding', {
-          state: {
-            tenantId: result!.tenant_id,
-            prefill: { name: company.responsible_name, email: company.email },
-          },
-          replace: true,
-        });
-      }
+    const onPaymentConfirmed = () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      pollingRef.current = null;
+      timeoutRef.current = null;
+      redirectParamsRef.current = {
+        isLoggedIn,
+        tenantId: result!.tenant_id,
+        prefill: { name: company.responsible_name, email: company.email },
+      };
+      setPaymentConfirmed(true);
     };
 
     const checkStatus = async () => {
@@ -225,11 +225,7 @@ export default function PlanCheckout() {
       if (res.error || !res.data) return;
       const { status, tenant_status } = res.data;
       if (status === 'paid' || tenant_status === 'active') {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        pollingRef.current = null;
-        timeoutRef.current = null;
-        redirectAfterPayment();
+        onPaymentConfirmed();
       }
     };
 
@@ -249,6 +245,23 @@ export default function PlanCheckout() {
       timeoutRef.current = null;
     };
   }, [result?.billing_id, result?.tenant_id, isLoggedIn, navigate, company.responsible_name, company.email]);
+
+  // Após mostrar tela de sucesso (1,5s), redireciona para onboarding ou dashboard
+  useEffect(() => {
+    if (!paymentConfirmed) return;
+    const t = setTimeout(() => {
+      const params = redirectParamsRef.current;
+      if (params?.isLoggedIn) {
+        navigate('/dashboard', { replace: true });
+      } else if (params?.tenantId) {
+        navigate('/onboarding', {
+          state: { tenantId: params.tenantId, prefill: params.prefill },
+          replace: true,
+        });
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [paymentConfirmed, navigate]);
 
   const validateStep1 = (): boolean => {
     if (isLoggedIn) return true;
@@ -615,62 +628,114 @@ export default function PlanCheckout() {
 
             {step === 3 && result && (
               <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
-                  {formatPrice(result.amount_cents)}
-                </p>
-                <p className="text-sm font-medium">Aguardando pagamento</p>
+                {paymentConfirmed ? (
+                  <div className="py-8 flex flex-col items-center justify-center gap-4 text-center">
+                    <div className="rounded-full bg-green-500/20 p-4">
+                      <Check className="h-12 w-12 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="text-lg font-semibold text-foreground">Pagamento confirmado!</p>
+                      <p className="text-sm text-muted-foreground mt-1">Redirecionando para configurar sua conta...</p>
+                    </div>
+                  </div>
+                ) : (result.pix_qr_code || result.pix_copy_paste) ? (
+                  /* Área de pagamento PIX */
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-lg font-semibold text-foreground">Finalizar pagamento</h3>
+                      <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span className="font-medium text-foreground">{plan?.name}</span>
+                        <span className="text-muted-foreground">
+                          {formatPrice(result.amount_cents)} / {periodLabel}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2 rounded-lg border bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+                        <span className="text-lg" aria-hidden>🟡</span>
+                        <span className="font-medium">Aguardando pagamento</span>
+                      </div>
+                    </div>
 
-                {result.invoice_url && (
-                  <Button variant="outline" className="w-full gap-2" asChild>
-                    <a href={result.invoice_url} target="_blank" rel="noopener noreferrer">
-                      Abrir página de pagamento
-                      <ExternalLink className="h-4 w-4" />
-                    </a>
-                  </Button>
-                )}
-                {result.bank_slip_url && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Boleto</Label>
-                    <Button variant="outline" size="sm" className="w-full mt-1 gap-2" asChild>
-                      <a href={result.bank_slip_url} target="_blank" rel="noopener noreferrer">
-                        Ver boleto
-                        <ExternalLink className="h-4 w-4" />
-                      </a>
+                    {result.pix_qr_code && (
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium text-foreground">Escaneie o QR Code</p>
+                        <div className="flex justify-center rounded-xl border bg-white p-4 dark:bg-muted/30">
+                          <img
+                            src={result.pix_qr_code}
+                            alt="QR Code PIX"
+                            className="h-56 w-56 min-h-[224px] min-w-[224px] object-contain"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {result.pix_copy_paste && (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <Input
+                            readOnly
+                            value={result.pix_copy_paste}
+                            className="font-mono text-xs"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                            onClick={() => copyToClipboard(result.pix_copy_paste!)}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-center text-sm text-muted-foreground">
+                      Após o pagamento o acesso será liberado automaticamente
+                    </p>
+
+                    <Button
+                      variant="ghost"
+                      className="w-full text-muted-foreground"
+                      onClick={() => (isLoggedIn ? navigate('/meu-plano') : navigate('/landing'))}
+                    >
+                      Concluir depois
                     </Button>
                   </div>
-                )}
-                {result.pix_copy_paste && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">PIX Copia e Cola</Label>
-                    <div className="flex gap-2 mt-1">
-                      <Input readOnly value={result.pix_copy_paste} className="font-mono text-xs" />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => copyToClipboard(result.pix_copy_paste!)}
-                      >
-                        <Copy className="h-4 w-4" />
+                ) : (
+                  /* Boleto / link de pagamento */
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
+                      {formatPrice(result.amount_cents)}
+                    </p>
+                    <p className="text-sm font-medium">Aguardando pagamento</p>
+                    {result.invoice_url && (
+                      <Button variant="outline" className="w-full gap-2" asChild>
+                        <a href={result.invoice_url} target="_blank" rel="noopener noreferrer">
+                          Abrir página de pagamento
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
                       </Button>
-                    </div>
-                  </div>
+                    )}
+                    {result.bank_slip_url && (
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Boleto</Label>
+                        <Button variant="outline" size="sm" className="w-full mt-1 gap-2" asChild>
+                          <a href={result.bank_slip_url} target="_blank" rel="noopener noreferrer">
+                            Ver boleto
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </Button>
+                      </div>
+                    )}
+                    <Button
+                      className="w-full"
+                      onClick={() => (isLoggedIn ? navigate('/meu-plano') : navigate('/landing'))}
+                    >
+                      Concluir
+                    </Button>
+                  </>
                 )}
-                {result.pix_qr_code && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">PIX QR Code</Label>
-                    <div className="mt-1 p-2 bg-white rounded border inline-block">
-                      <img src={result.pix_qr_code} alt="QR Code PIX" className="w-32 h-32" />
-                    </div>
-                  </div>
-                )}
-
-                <Button
-                  className="w-full"
-                  onClick={() => (isLoggedIn ? navigate('/meu-plano') : navigate('/landing'))}
-                >
-                  Concluir
-                </Button>
               </div>
             )}
           </CardContent>

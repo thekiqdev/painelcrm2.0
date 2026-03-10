@@ -75,7 +75,7 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
     await pool.query(
       `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
        VALUES ($1, $2, $3, $4, '', true)`,
-      [user.id, firstName, lastName, tenant.name, '']
+      [user.id, firstName, lastName, tenant.name]
     );
 
     const profileResult = await pool.query<{ id: string }>(
