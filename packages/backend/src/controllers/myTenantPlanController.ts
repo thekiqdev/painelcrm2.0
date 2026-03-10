@@ -165,9 +165,9 @@ export async function postMyTenantUser(req: AuthRequest, res: Response): Promise
     const email = body.email.trim().toLowerCase();
     const phone = body.phone?.replace(/\D/g, '').trim() || null;
 
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    const existing = await pool.query('SELECT id FROM users WHERE tenant_id = $1 AND email = $2', [tenantId, email]);
     if (existing.rows.length > 0) {
-      res.status(400).json({ error: 'Já existe um usuário com este e-mail' });
+      res.status(400).json({ error: 'Já existe um usuário com este e-mail nesta conta.' });
       return;
     }
 

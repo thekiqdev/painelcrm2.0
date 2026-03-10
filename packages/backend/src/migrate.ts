@@ -81,6 +81,7 @@ const order = [
   '63_activation_plan_phase1.sql',
   '64_tenants_billing_contact.sql',
   '65_tenants_onboarding_completed.sql',
+  '66_users_tenant_email_unique.sql',
   'create-admin-user.sql',
 ];
 

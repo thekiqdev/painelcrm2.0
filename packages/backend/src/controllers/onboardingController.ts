@@ -10,6 +10,7 @@ import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { hashPassword } from '../utils/bcrypt.js';
 import { generateToken } from '../utils/jwt.js';
+import { createTenantAdminUser } from '../services/tenantAdminService.js';
 
 const createAdminSchema = z.object({
   tenant_id: z.string().uuid(),
@@ -66,13 +67,40 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
         [body.tenant_id]
       );
     }
-    if (userRow.rows.length === 0) {
-      res.status(404).json({
-        error: 'Nenhum administrador encontrado para esta conta. Use o e-mail informado no checkout.',
+    let user: { id: string; email: string };
+    if (userRow.rows.length > 0) {
+      user = userRow.rows[0];
+    } else {
+      // Fallback: criar admin com o e-mail do checkout e associar ao tenant (garante tenant sempre com admin)
+      const created = await createTenantAdminUser({
+        tenantId: body.tenant_id,
+        tenantName: tenant.name,
+        email,
+        responsibleName: fullName,
+        password: body.password,
+      });
+      user = { id: created.userId, email: created.email };
+      await pool.query(
+        'UPDATE profiles SET first_name = $1, last_name = $2, registration_complete = true, updated_at = now() WHERE id = $3',
+        [firstName, lastName, user.id]
+      );
+      await pool.query(
+        'UPDATE tenants SET onboarding_completed = true, updated_at = now() WHERE id = $1',
+        [body.tenant_id]
+      );
+      const token = generateToken({ userId: user.id, email: user.email });
+      res.status(201).json({
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          first_name: firstName,
+          last_name: lastName || undefined,
+          registration_complete: true,
+        },
       });
       return;
     }
-    const user = userRow.rows[0];
 
     // 2) Atualizar apenas password_hash (e nome no profile se existir)
     await pool.query(

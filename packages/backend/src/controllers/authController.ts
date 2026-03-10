@@ -74,7 +74,7 @@ export async function register(req: Request, res: Response): Promise<void> {
     transactionStarted = true;
 
     const existingUser = await client.query(
-      'SELECT id FROM users WHERE email = $1',
+      'SELECT id FROM users WHERE email = $1 AND tenant_id IS NULL',
       [normalizedEmail]
     );
 

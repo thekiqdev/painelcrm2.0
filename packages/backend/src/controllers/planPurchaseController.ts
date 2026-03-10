@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { subscribePlan } from '../services/subscriptionService.js';
+import { createTenantAdminUser } from '../services/tenantAdminService.js';
 
 const planPurchaseBodySchema = z.object({
   plan_id: z.string().uuid(),
@@ -93,6 +94,20 @@ async function resolveTenantId(
       'UPDATE tenants SET max_users_override = $1, updated_at = now() WHERE id = $2',
       [usersCount, tenantId]
     );
+  }
+
+  const adminEmail = body.email?.trim();
+  if (adminEmail) {
+    try {
+      await createTenantAdminUser({
+        tenantId,
+        tenantName: name,
+        email: adminEmail,
+        responsibleName: body.responsible_name?.trim(),
+      });
+    } catch (err) {
+      console.error('[plan-purchase] createTenantAdminUser', err);
+    }
   }
 
   return { tenantId, isNewTenant: true };
