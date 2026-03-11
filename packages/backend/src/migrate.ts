@@ -82,6 +82,10 @@ const order = [
   '64_tenants_billing_contact.sql',
   '65_tenants_onboarding_completed.sql',
   '66_users_tenant_email_unique.sql',
+  '67_subscriptions.sql',
+  '68_tenant_billing_subscription_id.sql',
+  '69_billing_recurring_jobs.sql',
+  '70_customer_invoices.sql',
   'create-admin-user.sql',
 ];
 

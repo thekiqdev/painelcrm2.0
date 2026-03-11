@@ -3,6 +3,7 @@
  * Geração de invoice_number; usado pelo webhook e pelo fluxo de compra.
  */
 import { pool } from '../utils/db.js';
+import { billingLog } from './billingLogger.js';
 
 export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 export type BillingSource = 'superadmin' | 'self_service' | 'api';
@@ -26,6 +27,9 @@ export interface TenantBillingRow {
   idempotency_key: string | null;
   period_start: string | null;
   period_end: string | null;
+  subscription_id: string | null;
+  plan_name_snapshot: string | null;
+  plan_price_snapshot: number | null;
   users_count: number | null;
   source: string | null;
   billing_reason: string | null;
@@ -47,6 +51,11 @@ export interface CreateInvoiceInput {
   asaas_payment_id?: string | null;
   asaas_status?: string | null;
   idempotency_key?: string | null;
+  subscription_id?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  plan_name_snapshot?: string | null;
+  plan_price_snapshot?: number | null;
 }
 
 /**
@@ -59,7 +68,7 @@ function generateInvoiceNumber(tenantId: string): string {
 }
 
 /**
- * Cria registro em tenant_billing. Campos novos (Fase 1): users_count, source, billing_reason.
+ * Cria registro em tenant_billing. Inclui subscription_id, period_start/end e snapshot do plano quando recorrência.
  */
 export async function createInvoice(data: CreateInvoiceInput): Promise<TenantBillingRow> {
   const dueDate = typeof data.due_date === 'string' ? data.due_date : data.due_date.toISOString().slice(0, 10);
@@ -69,11 +78,13 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<TenantBil
     `INSERT INTO tenant_billing (
       tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
       gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
-      users_count, source, billing_reason
-    ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      users_count, source, billing_reason, subscription_id, period_start, period_end,
+      plan_name_snapshot, plan_price_snapshot
+    ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
     RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
       invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
-      period_start, period_end, users_count, source, billing_reason, created_at, updated_at`,
+      period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
+      users_count, source, billing_reason, created_at, updated_at`,
     [
       data.tenant_id,
       data.plan_id,
@@ -89,9 +100,36 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<TenantBil
       data.users_count ?? null,
       data.source ?? null,
       data.billing_reason ?? null,
+      data.subscription_id ?? null,
+      data.period_start ?? null,
+      data.period_end ?? null,
+      data.plan_name_snapshot ?? null,
+      data.plan_price_snapshot ?? null,
     ]
   );
-  return result.rows[0];
+  const row = result.rows[0];
+  billingLog('invoice', 'invoice_created', {
+    subscriptionId: data.subscription_id ?? undefined,
+    invoiceId: row.id,
+    invoiceNumber: row.invoice_number ?? undefined,
+    periodStart: data.period_start ?? undefined,
+    periodEnd: data.period_end ?? undefined,
+    amount: data.amount_cents,
+  });
+  return row;
+}
+
+/**
+ * Atualiza subscription_id na fatura (após criar assinatura no activatePlanFromBilling).
+ */
+export async function setBillingSubscriptionId(
+  billingId: string,
+  subscriptionId: string
+): Promise<void> {
+  await pool.query(
+    `UPDATE tenant_billing SET subscription_id = $1, updated_at = now() WHERE id = $2`,
+    [subscriptionId, billingId]
+  );
 }
 
 /**
@@ -105,7 +143,8 @@ export async function getInvoiceByGatewayPaymentId(
   const result = await pool.query<TenantBillingRow>(
     `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
        invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
-       period_start, period_end, users_count, source, billing_reason, created_at, updated_at
+       period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
+       users_count, source, billing_reason, created_at, updated_at
      FROM tenant_billing
      WHERE gateway = $1 AND asaas_payment_id = $2`,
     [gateway, paymentId]
@@ -165,9 +204,30 @@ export async function getInvoiceById(billingId: string): Promise<TenantBillingRo
   const result = await pool.query<TenantBillingRow>(
     `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
        invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
-       period_start, period_end, users_count, source, billing_reason, created_at, updated_at
+       period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
+       users_count, source, billing_reason, created_at, updated_at
      FROM tenant_billing WHERE id = $1`,
     [billingId]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Verifica se já existe fatura para a assinatura e período (idempotência).
+ */
+export async function findInvoiceBySubscriptionAndPeriod(
+  subscriptionId: string,
+  periodStart: string
+): Promise<TenantBillingRow | null> {
+  const result = await pool.query<TenantBillingRow>(
+    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
+       invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
+       period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
+       users_count, source, billing_reason, created_at, updated_at
+     FROM tenant_billing
+     WHERE subscription_id = $1 AND period_start = $2
+     LIMIT 1`,
+    [subscriptionId, periodStart]
   );
   return result.rows[0] ?? null;
 }

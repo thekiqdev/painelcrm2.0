@@ -227,6 +227,9 @@ export async function deleteTenant(req: AuthRequest, res: Response): Promise<voi
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
     }
+    // Excluir usuários do tenant antes do tenant para evitar ON DELETE SET NULL em users:
+    // senão, usuários com mesmo e-mail do super admin violariam users_email_null_tenant_key.
+    await pool.query('DELETE FROM users WHERE tenant_id = $1', [id]);
     await pool.query('DELETE FROM tenants WHERE id = $1', [id]);
     if (req.user?.id) {
       await logSuperAdminAction(req.user.id, 'tenant.deleted', 'tenant', id, { name: row.rows[0].name });

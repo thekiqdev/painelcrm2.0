@@ -10,20 +10,21 @@ export interface PaymentCustomerRow {
   gateway_key: string;
   gateway_customer_id: string;
   external_reference: string | null;
+  client_id: string | null;
   created_at: string;
 }
 
 /**
- * Busca o customer do gateway já vinculado ao tenant. Retorna null se não existir.
+ * Busca o customer do gateway já vinculado ao tenant (SaaS). Retorna null se não existir.
  */
 export async function getPaymentCustomer(
   tenantId: string,
   gatewayKey: string
 ): Promise<PaymentCustomerRow | null> {
   const r = await pool.query<PaymentCustomerRow>(
-    `SELECT id, tenant_id, gateway_key, gateway_customer_id, external_reference, created_at
+    `SELECT id, tenant_id, gateway_key, gateway_customer_id, external_reference, client_id, created_at
      FROM payment_customers
-     WHERE tenant_id = $1 AND gateway_key = $2
+     WHERE tenant_id = $1 AND gateway_key = $2 AND client_id IS NULL
      LIMIT 1`,
     [tenantId, gatewayKey]
   );
@@ -31,7 +32,8 @@ export async function getPaymentCustomer(
 }
 
 /**
- * Persiste o vínculo tenant ↔ customer do gateway (após criar o customer na API do gateway).
+ * Persiste o vínculo tenant ↔ customer do gateway (SaaS). client_id = NULL.
+ * Usa índice parcial UNIQUE(tenant_id, gateway_key) WHERE client_id IS NULL.
  */
 export async function createPaymentCustomer(
   tenantId: string,
@@ -40,13 +42,54 @@ export async function createPaymentCustomer(
   externalReference: string | null
 ): Promise<PaymentCustomerRow> {
   const r = await pool.query<PaymentCustomerRow>(
-    `INSERT INTO payment_customers (tenant_id, gateway_key, gateway_customer_id, external_reference)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (tenant_id, gateway_key) DO UPDATE SET
+    `INSERT INTO payment_customers (tenant_id, gateway_key, gateway_customer_id, external_reference, client_id)
+     VALUES ($1, $2, $3, $4, NULL)
+     ON CONFLICT (tenant_id, gateway_key) WHERE (client_id IS NULL) DO UPDATE SET
        gateway_customer_id = EXCLUDED.gateway_customer_id,
        external_reference = EXCLUDED.external_reference
-     RETURNING id, tenant_id, gateway_key, gateway_customer_id, external_reference, created_at`,
+     RETURNING id, tenant_id, gateway_key, gateway_customer_id, external_reference, client_id, created_at`,
     [tenantId, gatewayKey, gatewayCustomerId, externalReference]
+  );
+  return r.rows[0];
+}
+
+/**
+ * Busca o customer do gateway vinculado ao tenant + client (CRM). Retorna null se não existir.
+ */
+export async function getPaymentCustomerForClient(
+  tenantId: string,
+  gatewayKey: string,
+  clientId: string
+): Promise<PaymentCustomerRow | null> {
+  const r = await pool.query<PaymentCustomerRow>(
+    `SELECT id, tenant_id, gateway_key, gateway_customer_id, external_reference, client_id, created_at
+     FROM payment_customers
+     WHERE tenant_id = $1 AND gateway_key = $2 AND client_id = $3
+     LIMIT 1`,
+    [tenantId, gatewayKey, clientId]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
+ * Persiste o vínculo tenant + client ↔ customer do gateway (CRM).
+ * Usa índice parcial UNIQUE(tenant_id, gateway_key, client_id) WHERE client_id IS NOT NULL.
+ */
+export async function createPaymentCustomerForClient(
+  tenantId: string,
+  gatewayKey: string,
+  clientId: string,
+  gatewayCustomerId: string,
+  externalReference: string | null
+): Promise<PaymentCustomerRow> {
+  const r = await pool.query<PaymentCustomerRow>(
+    `INSERT INTO payment_customers (tenant_id, gateway_key, gateway_customer_id, external_reference, client_id)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (tenant_id, gateway_key, client_id) WHERE (client_id IS NOT NULL) DO UPDATE SET
+       gateway_customer_id = EXCLUDED.gateway_customer_id,
+       external_reference = EXCLUDED.external_reference
+     RETURNING id, tenant_id, gateway_key, gateway_customer_id, external_reference, client_id, created_at`,
+    [tenantId, gatewayKey, gatewayCustomerId, externalReference, clientId]
   );
   return r.rows[0];
 }

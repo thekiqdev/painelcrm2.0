@@ -7,6 +7,7 @@ import * as exportController from '../controllers/exportController.js';
 import * as superadminUsersController from '../controllers/superadminUsersController.js';
 import * as systemFeaturesController from '../controllers/systemFeaturesController.js';
 import * as paymentGatewayConfigController from '../controllers/paymentGatewayConfigController.js';
+import * as superadminBillingController from '../controllers/superadminBillingController.js';
 import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsService.js';
 
 const router = Router();
@@ -48,5 +49,12 @@ router.get('/features/:id', systemFeaturesController.getSystemFeature);
 router.post('/features', systemFeaturesController.createSystemFeature);
 router.put('/features/:id', systemFeaturesController.updateSystemFeature);
 router.delete('/features/:id', systemFeaturesController.deleteSystemFeature);
+
+// Billing Engine – relatórios e configurações (Fase 3)
+router.get('/billing/subscriptions', superadminBillingController.getBillingSubscriptions);
+router.get('/billing/upcoming', superadminBillingController.getBillingUpcoming);
+router.get('/billing/jobs-failed', superadminBillingController.getBillingJobsFailed);
+router.get('/billing/settings', superadminBillingController.getBillingSettingsHandler);
+router.put('/billing/settings', superadminBillingController.putBillingSettingsHandler);
 
 export default router;

@@ -2,10 +2,16 @@ import { Router } from 'express';
 import { tenantAuth } from '../middleware/auth.js';
 import * as myTenantPlanController from '../controllers/myTenantPlanController.js';
 import * as myTenantPaymentGatewayController from '../controllers/myTenantPaymentGatewayController.js';
+import * as myTenantSubscriptionController from '../controllers/myTenantSubscriptionController.js';
 
 const router = Router();
 
 router.use(...tenantAuth);
+
+// Assinatura recorrente (Billing Engine Fase 2)
+router.get('/subscription', myTenantSubscriptionController.getMySubscription);
+router.post('/subscription/cancel', myTenantSubscriptionController.cancelMySubscription);
+router.patch('/subscription', myTenantSubscriptionController.patchMySubscription);
 
 router.get('/payment-gateways', myTenantPaymentGatewayController.getMyTenantPaymentGatewaysList);
 router.get('/payment-gateways/status', myTenantPaymentGatewayController.getMyTenantPaymentGatewaysStatus);

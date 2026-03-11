@@ -59,6 +59,8 @@ export interface PaymentGateway {
   createCustomer(input: CreateCustomerInput): Promise<CreateCustomerResult>;
   /** Criar ou reutilizar cliente (ex.: por tenant_id); retorna gateway_customer_id. */
   ensureCustomer?(tenantId: string): Promise<string>;
+  /** CRM: criar ou reutilizar cliente do gateway para um client_id; retorna gateway_customer_id. Dados do cliente em clientData. */
+  ensureCustomerForClient?(tenantId: string, clientId: string, clientData: CreateCustomerInput): Promise<string>;
   createCharge(input: CreateChargeInput): Promise<CreateChargeResult>;
   getPayment(paymentId: string): Promise<PaymentResult | null>;
   /** Alias de getPayment para padronizar nome na interface. */

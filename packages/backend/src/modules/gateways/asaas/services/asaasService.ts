@@ -66,6 +66,17 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
         ensureCustomerForTenant(tenantId, config)
       );
     },
+    async ensureCustomerForClient(
+      _tenantId: string,
+      _clientId: string,
+      clientData: CreateCustomerInput
+    ): Promise<string> {
+      return withLog('ensureCustomerForClient', _tenantId, async () => {
+        const body = asaasMapper.toAsaasCustomer(clientData);
+        const res = await asaasClient.createCustomer(body, config);
+        return res.id;
+      });
+    },
     async createCharge(input: CreateChargeInput): Promise<CreateChargeResult> {
       return withLog('createCharge', undefined, async () => {
         const body: AsaasPaymentRequest = asaasMapper.toAsaasPayment(input.customerId, input);

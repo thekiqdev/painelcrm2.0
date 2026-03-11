@@ -8,16 +8,20 @@ import {
   createInvoice,
   getInvoiceById,
   updateInvoiceGatewayData,
+  setBillingSubscriptionId,
   type CreateInvoiceInput,
   type TenantBillingRow,
 } from './invoiceService.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
+import { createSubscription, getActiveSaasSubscriptionByTenant } from './billingSubscriptionService.js';
+import { getBillingSettings } from './billingSettingsService.js';
 
 /**
  * Adiciona intervalo à data (monthly, quarterly, semi_annual, yearly).
  * Usado para calcular plan_period_end no backend (fonte de verdade).
+ * Atenção: em datas como 31/01, setMonth(+1) pode gerar 03/03 (rollover JS); para próximo ciclo de cobrança use calculateNextBillingDate.
  */
 export function addInterval(date: Date, interval: BillingInterval): Date {
   const result = new Date(date);
@@ -38,6 +42,52 @@ export function addInterval(date: Date, interval: BillingInterval): Date {
       result.setMonth(result.getMonth() + 1);
   }
   return result;
+}
+
+/**
+ * Calcula a próxima data de cobrança respeitando billing_anchor_day e último dia do mês (Stripe/Chargebee).
+ * Regra: next_day = MIN(anchor_day, last_day_of_month) no mês alvo.
+ * Ex.: 31 Jan + 1 mês → 28 Fev; 31 Mar + 1 mês → 30 Abr; dia 15 → sempre dia 15.
+ */
+export function calculateNextBillingDate(
+  periodStart: string,
+  billingInterval: BillingInterval,
+  billingAnchorDay: number | null
+): string {
+  const d = new Date(periodStart + 'T12:00:00Z');
+  let y = d.getUTCFullYear();
+  let m = d.getUTCMonth();
+  const dayOfPeriod = d.getUTCDate();
+  const anchor = billingAnchorDay ?? dayOfPeriod;
+
+  switch (billingInterval) {
+    case 'monthly':
+      m += 1;
+      break;
+    case 'quarterly':
+      m += 3;
+      break;
+    case 'semi_annual':
+      m += 6;
+      break;
+    case 'yearly':
+      y += 1;
+      break;
+    default:
+      m += 1;
+  }
+  if (m > 11) {
+    y += Math.floor(m / 12);
+    m = m % 12;
+  }
+
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const day = Math.min(anchor, lastDay);
+  const next = new Date(Date.UTC(y, m, day));
+  const yy = next.getUTCFullYear();
+  const mm = String(next.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(next.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 /**
@@ -93,6 +143,30 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
      WHERE id = $6`,
     [planId, periodStartStr, periodEndStr, billingId, usersCount, tenantId]
   );
+
+  // Billing Engine Fase 1: criar assinatura (saas) e vincular fatura
+  const existing = await getActiveSaasSubscriptionByTenant(tenantId);
+  if (!existing) {
+    const config = await getActiveConfig('saas');
+    const gatewayKey = config?.gateway_key ?? 'asaas';
+    const billingSettings = await getBillingSettings();
+    const sub = await createSubscription({
+      type: 'saas',
+      tenant_id: tenantId,
+      plan_id: planId,
+      amount_cents: billing.amount_cents,
+      billing_interval: billingInterval,
+      next_billing_date: periodEndStr,
+      current_period_start: periodStartStr,
+      current_period_end: periodEndStr,
+      billing_anchor_day: periodStart.getDate(),
+      grace_period_days: billingSettings.grace_period_days,
+      users_count: usersCount ?? null,
+      gateway: gatewayKey,
+      created_by: 'checkout',
+    });
+    await setBillingSubscriptionId(billingId, sub.id);
+  }
 }
 
 export interface SubscribePlanResult {
