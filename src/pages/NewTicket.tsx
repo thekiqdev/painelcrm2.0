@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ClientSearchCombobox } from '@/components/clients/ClientSearchCombobox';
 import { ticketsService } from '@/services/tickets';
 import { clientsService } from '@/services/clients';
 import { useAuth } from '@/contexts/AuthContext';
@@ -24,7 +25,7 @@ export default function NewTicket() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState<TicketCategory[]>([]);
-  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClientLabel, setSelectedClientLabel] = useState<string | undefined>();
 
   const [formData, setFormData] = useState({
     subject: '',
@@ -41,7 +42,6 @@ export default function NewTicket() {
   useEffect(() => {
     if (user) {
       loadCategories();
-      loadClients();
     }
   }, [user]);
 
@@ -54,25 +54,34 @@ export default function NewTicket() {
     }
   };
 
-  const loadClients = async () => {
-    try {
-      const data = await clientsService.getClients();
-      setClients(data);
-    } catch (error: any) {
-      console.error('Error loading clients:', error);
+  const handleClientChange = async (clientId: string | null) => {
+    if (!clientId) {
+      setSelectedClientLabel(undefined);
+      setFormData((f) => ({
+        ...f,
+        client_id: '',
+        contact_name: '',
+        contact_email: '',
+        contact_phone: '',
+      }));
+      return;
     }
-  };
-
-  const handleClientChange = (clientId: string) => {
-    const client = clients.find((c) => c.id === clientId);
-    if (client) {
-      setFormData({
-        ...formData,
-        client_id: clientId,
-        contact_name: client.name,
-        contact_email: client.email || '',
-        contact_phone: client.phone || '',
-      });
+    try {
+      const client = await clientsService.getClientById(clientId);
+      if (client) {
+        setSelectedClientLabel(
+          `${client.name}${client.company ? ` — ${client.company}` : ''}`
+        );
+        setFormData((f) => ({
+          ...f,
+          client_id: clientId,
+          contact_name: client.name,
+          contact_email: client.email || '',
+          contact_phone: client.phone || '',
+        }));
+      }
+    } catch (error: any) {
+      console.error('Error loading client:', error);
     }
   };
 
@@ -127,22 +136,15 @@ export default function NewTicket() {
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Cliente */}
           <div className="space-y-2">
-            <Label htmlFor="client">Cliente</Label>
-            <Select
-              value={formData.client_id}
-              onValueChange={handleClientChange}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione um cliente" />
-              </SelectTrigger>
-              <SelectContent>
-                {clients.map((client) => (
-                  <SelectItem key={client.id} value={client.id}>
-                    {client.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ClientSearchCombobox
+              id="new-ticket-client"
+              label="Cliente"
+              placeholderTrigger="Buscar ou selecionar cliente..."
+              remoteSearch
+              value={formData.client_id || null}
+              onChange={handleClientChange}
+              selectedLabel={selectedClientLabel}
+            />
           </div>
 
           {/* Contato Manual */}

@@ -1,9 +1,11 @@
 /**
  * CRUD de tenant_billing: criação, lookup por gateway e atualização de status.
  * Geração de invoice_number; usado pelo webhook e pelo fluxo de compra.
+ * Fase 4: apenas colunas genéricas gateway_reference_id, gateway_metadata, gateway_status.
  */
 import { pool } from '../utils/db.js';
 import { billingLog } from './billingLogger.js';
+import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
 
 export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 export type BillingSource = 'superadmin' | 'self_service' | 'api';
@@ -22,8 +24,9 @@ export interface TenantBillingRow {
   invoice_number: string | null;
   gateway: string | null;
   payment_method: string | null;
-  asaas_payment_id: string | null;
-  asaas_status: string | null;
+  gateway_reference_id: string | null;
+  gateway_metadata: Record<string, unknown> | null;
+  gateway_status: string | null;
   idempotency_key: string | null;
   period_start: string | null;
   period_end: string | null;
@@ -48,8 +51,6 @@ export interface CreateInvoiceInput {
   payment_method?: string | null;
   users_count?: number | null;
   gateway?: string | null;
-  asaas_payment_id?: string | null;
-  asaas_status?: string | null;
   idempotency_key?: string | null;
   subscription_id?: string | null;
   period_start?: string | null;
@@ -77,12 +78,13 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<TenantBil
   const result = await pool.query<TenantBillingRow>(
     `INSERT INTO tenant_billing (
       tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
-      gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
+      gateway, payment_method, idempotency_key,
       users_count, source, billing_reason, subscription_id, period_start, period_end,
       plan_name_snapshot, plan_price_snapshot
-    ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+    ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
-      invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
+      invoice_number, gateway, payment_method,
+      gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
       period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
       users_count, source, billing_reason, created_at, updated_at`,
     [
@@ -94,8 +96,6 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<TenantBil
       invoiceNumber,
       data.gateway ?? null,
       data.payment_method ?? null,
-      data.asaas_payment_id ?? null,
-      data.asaas_status ?? null,
       data.idempotency_key ?? null,
       data.users_count ?? null,
       data.source ?? null,
@@ -133,66 +133,86 @@ export async function setBillingSubscriptionId(
 }
 
 /**
- * Busca tenant_billing pelo ID do pagamento no gateway (ex.: asaas_payment_id).
- * Para gateway 'asaas' usa coluna asaas_payment_id.
+ * Busca tenant_billing pelo ID do pagamento no gateway (gateway_reference_id).
+ * Fase 3: lookup apenas por coluna genérica.
  */
 export async function getInvoiceByGatewayPaymentId(
   gateway: string,
   paymentId: string
 ): Promise<TenantBillingRow | null> {
+  return getInvoiceByGatewayReferenceId(gateway, paymentId);
+}
+
+/**
+ * Busca tenant_billing por (gateway, gateway_reference_id).
+ */
+export async function getInvoiceByGatewayReferenceId(
+  gateway: string,
+  referenceId: string
+): Promise<TenantBillingRow | null> {
   const result = await pool.query<TenantBillingRow>(
     `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
-       invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
+       invoice_number, gateway, payment_method,
+       gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
        users_count, source, billing_reason, created_at, updated_at
      FROM tenant_billing
-     WHERE gateway = $1 AND asaas_payment_id = $2`,
-    [gateway, paymentId]
+     WHERE gateway = $1 AND gateway_reference_id = $2`,
+    [gateway, referenceId]
   );
   return result.rows[0] ?? null;
 }
 
 /**
- * Atualiza dados do gateway na fatura (após createCharge).
+ * Atualiza dados do gateway na fatura (após createCharge). Fase 4: apenas colunas genéricas.
  */
 export async function updateInvoiceGatewayData(
   billingId: string,
-  data: {
-    gateway: string;
-    payment_method: string | null;
-    asaas_payment_id: string | null;
-    asaas_status: string | null;
-    idempotency_key?: string | null;
-  }
+  data: GatewayPaymentData
 ): Promise<void> {
+  const metadataJson = data.gateway_metadata != null ? JSON.stringify(data.gateway_metadata) : null;
   await pool.query(
     `UPDATE tenant_billing
-     SET gateway = $1, payment_method = $2, asaas_payment_id = $3, asaas_status = $4, idempotency_key = COALESCE($5, idempotency_key), updated_at = now()
-     WHERE id = $6`,
-    [data.gateway, data.payment_method, data.asaas_payment_id, data.asaas_status, data.idempotency_key ?? null, billingId]
+     SET gateway = $1, payment_method = $2,
+         gateway_reference_id = $3, gateway_metadata = $4, gateway_status = $5,
+         idempotency_key = COALESCE($6, idempotency_key), updated_at = now()
+     WHERE id = $7`,
+    [
+      data.gateway,
+      data.payment_method,
+      data.gateway_reference_id,
+      metadataJson,
+      data.gateway_status,
+      data.idempotency_key ?? null,
+      billingId,
+    ]
   );
 }
 
 /**
- * Atualiza status da fatura (e paid_at, payment_method quando pago).
+ * Atualiza status da fatura (e paid_at, payment_method, gateway_status quando pago). Fase 4: apenas gateway_status.
  */
 export async function updateInvoiceStatus(
   billingId: string,
   status: BillingStatus,
   paidAt?: Date | null,
-  paymentMethod?: string | null
+  paymentMethod?: string | null,
+  gatewayStatus?: string | null
 ): Promise<void> {
   if (status === 'paid') {
     await pool.query(
       `UPDATE tenant_billing
-       SET status = $1, paid_at = COALESCE($2::timestamptz, now()), payment_method = COALESCE($3, payment_method), updated_at = now()
-       WHERE id = $4`,
-      [status, paidAt ?? null, paymentMethod ?? null, billingId]
+       SET status = $1, paid_at = COALESCE($2::timestamptz, now()), payment_method = COALESCE($3, payment_method),
+           gateway_status = COALESCE($4, gateway_status), updated_at = now()
+       WHERE id = $5`,
+      [status, paidAt ?? null, paymentMethod ?? null, gatewayStatus ?? null, billingId]
     );
   } else {
     await pool.query(
-      `UPDATE tenant_billing SET status = $1, updated_at = now() WHERE id = $2`,
-      [status, billingId]
+      `UPDATE tenant_billing
+       SET status = $1, gateway_status = COALESCE($2, gateway_status), updated_at = now()
+       WHERE id = $3`,
+      [status, gatewayStatus ?? null, billingId]
     );
   }
 }
@@ -203,7 +223,8 @@ export async function updateInvoiceStatus(
 export async function getInvoiceById(billingId: string): Promise<TenantBillingRow | null> {
   const result = await pool.query<TenantBillingRow>(
     `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
-       invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
+       invoice_number, gateway, payment_method,
+       gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
        users_count, source, billing_reason, created_at, updated_at
      FROM tenant_billing WHERE id = $1`,
@@ -221,7 +242,8 @@ export async function findInvoiceBySubscriptionAndPeriod(
 ): Promise<TenantBillingRow | null> {
   const result = await pool.query<TenantBillingRow>(
     `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
-       invoice_number, gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key,
+       invoice_number, gateway, payment_method,
+       gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
        users_count, source, billing_reason, created_at, updated_at
      FROM tenant_billing

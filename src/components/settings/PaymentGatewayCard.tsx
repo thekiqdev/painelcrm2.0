@@ -105,6 +105,9 @@ export const PaymentGatewayCard: React.FC<PaymentGatewayCardProps> = ({
           {item.configured && item.webhook_configured && (
             <p className="mt-0.5">Webhook: configurado</p>
           )}
+          {item.configured && (
+            <p className="mt-0.5 text-xs">Testar conexão ativa o gateway para emissão de faturas.</p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="outline" size="sm">

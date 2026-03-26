@@ -36,6 +36,15 @@ export interface Expense {
   updated_at?: string;
 }
 
+/** Receita de cobrança (customer_invoices com status=paid) para o relatório financeiro. */
+export interface BillingReceipt {
+  id: string;
+  amount_cents: number;
+  paid_at: string;
+  invoice_number: string | null;
+  client_id: string | null;
+}
+
 export const financeService = {
   // Invoices
   async getInvoices(filters?: { status?: string; client_id?: string; project_id?: string }): Promise<Invoice[]> {
@@ -151,6 +160,13 @@ export const financeService = {
   async deleteExpense(id: string): Promise<void> {
     const response = await apiClient.delete(`/api/expenses/${id}`);
     if (response.error) throw new Error(response.error);
+  },
+
+  /** Receitas de cobrança (customer_invoices pagas) para o relatório financeiro. */
+  async getBillingReceipts(): Promise<BillingReceipt[]> {
+    const response = await apiClient.get<BillingReceipt[]>('/api/finance/billing-receipts');
+    if (response.error) throw new Error(response.error);
+    return response.data ?? [];
   },
 };
 

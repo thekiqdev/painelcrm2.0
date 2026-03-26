@@ -18,6 +18,36 @@ import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import { createSubscription, getActiveSaasSubscriptionByTenant } from './billingSubscriptionService.js';
 import { getBillingSettings } from './billingSettingsService.js';
 
+/** Erro do gateway/Asaas relacionado a documento — tratado no plan-purchase como 400 + field cpf_cnpj. */
+export const ASAAS_CPF_CNPJ_USER_MESSAGE =
+  'CPF/CNPJ inválido ou ausente no cadastro. Revise os dados e tente novamente.';
+
+function mapAsaasChargeError(err: unknown): Error {
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes('cpf') ||
+    lower.includes('cnpj') ||
+    lower.includes('documento') ||
+    lower.includes('cpfcnpj')
+  ) {
+    return new Error(ASAAS_CPF_CNPJ_USER_MESSAGE);
+  }
+  try {
+    const idx = raw.indexOf('{');
+    if (idx >= 0) {
+      const j = JSON.parse(raw.slice(idx)) as { errors?: Array<{ description?: string }> };
+      const desc = (j.errors ?? []).map((e) => e.description ?? '').join(' ');
+      if (/cpf|cnpj|documento/i.test(desc)) {
+        return new Error(ASAAS_CPF_CNPJ_USER_MESSAGE);
+      }
+    }
+  } catch {
+    /* ignore JSON parse */
+  }
+  return err instanceof Error ? err : new Error(raw);
+}
+
 /**
  * Adiciona intervalo à data (monthly, quarterly, semi_annual, yearly).
  * Usado para calcular plan_period_end no backend (fonte de verdade).
@@ -182,7 +212,7 @@ export interface SubscribePlanResult {
 /**
  * Cria fatura para assinatura do plano (Fase 3: sem gateway; Fase 4: com gateway e paymentUrls).
  * Valida plano, calcula valor, cria invoice. Se gateway disponível, chama ensureCustomer, createCharge,
- * persiste asaas_payment_id e retorna paymentUrls.
+ * persiste gateway_reference_id e retorna paymentUrls.
  */
 export async function subscribePlan(
   tenantId: string,
@@ -266,8 +296,8 @@ export async function subscribePlan(
       await updateInvoiceGatewayData(billing.id, {
         gateway: gatewayKey,
         payment_method: paymentMethod,
-        asaas_payment_id: chargeResult.paymentId,
-        asaas_status: chargeResult.status,
+        gateway_reference_id: chargeResult.paymentId,
+        gateway_status: chargeResult.status,
         idempotency_key: idempotencyKey,
       });
 
@@ -283,6 +313,7 @@ export async function subscribePlan(
       };
     } catch (err) {
       console.error('[subscriptionService] gateway createCharge error:', err);
+      throw mapAsaasChargeError(err);
     }
   }
 

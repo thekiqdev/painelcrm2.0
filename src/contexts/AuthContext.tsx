@@ -8,6 +8,7 @@ import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 interface User {
   id: string;
   email: string;
+  tenant_id?: string | null;
   whatsapp_number?: string;
   first_name?: string;
   last_name?: string;

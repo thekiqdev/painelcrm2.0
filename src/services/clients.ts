@@ -12,6 +12,7 @@ export interface Client {
   notes?: string;
   group_id?: string;
   profile_id?: string;
+  cpf_cnpj?: string | null;
   client_groups?: { id: string; name: string } | null;
   created_at?: string;
   updated_at?: string;
@@ -37,9 +38,30 @@ export interface ClientTask {
   updated_at?: string;
 }
 
+/** Parâmetros opcionais de listagem (Fase 2 — busca B1). */
+export interface GetClientsParams {
+  profileId?: string;
+  /** Busca no servidor (nome, empresa, e-mail, telefone, CPF/CNPJ); limita a 50 resultados. */
+  q?: string;
+}
+
 export class ClientsService {
-  async getClients(profileId?: string): Promise<Client[]> {
-    const url = profileId ? `/api/clients?profileId=${profileId}` : '/api/clients';
+  /**
+   * Lista clientes do tenant.
+   * - `getClients()` — todos (comportamento anterior).
+   * - `getClients('uuid')` — filtro por perfil (string = profileId).
+   * - `getClients({ q, profileId })` — busca e/ou perfil.
+   */
+  async getClients(paramsOrProfileId?: string | GetClientsParams): Promise<Client[]> {
+    const search = new URLSearchParams();
+    if (typeof paramsOrProfileId === 'string') {
+      search.set('profileId', paramsOrProfileId);
+    } else if (paramsOrProfileId && typeof paramsOrProfileId === 'object') {
+      if (paramsOrProfileId.profileId) search.set('profileId', paramsOrProfileId.profileId);
+      if (paramsOrProfileId.q?.trim()) search.set('q', paramsOrProfileId.q.trim());
+    }
+    const qs = search.toString();
+    const url = qs ? `/api/clients?${qs}` : '/api/clients';
     const response = await apiClient.get<Client[]>(url);
     if (response.error) throw new Error(response.error);
     return response.data || [];

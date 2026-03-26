@@ -80,6 +80,7 @@ export function toAsaasPayment(
     billingType,
     value: input.amountCents / 100,
     dueDate: input.dueDate,
+    notificationEnabled: false,
   };
   if (input.description) req.description = input.description;
   if (input.externalReference) req.externalReference = input.externalReference;

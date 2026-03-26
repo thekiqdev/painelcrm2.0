@@ -1,0 +1,298 @@
+/**
+ * Regras de negócio do webhook: validar progressão, aplicar status, ativar plano.
+ * Fase 3 — PLANO-REFATORACAO-MULTI-GATEWAY.
+ */
+import type { InternalPaymentStatus } from '../paymentGatewayTypes.js';
+import { canTransition } from './statusNormalizer.js';
+import { updateInvoiceStatus } from '../../../services/invoiceService.js';
+import { updateCustomerInvoiceStatus } from '../../../services/customerInvoiceService.js';
+import { updateInvoicePaymentAttemptStatus } from '../../../services/customerInvoicePaymentAttemptsService.js';
+import { activatePlanFromBilling } from '../../../services/subscriptionService.js';
+import type { ProcessedResult } from './paymentEventsService.js';
+import { billingLog } from '../../../services/billingLogger.js';
+import { deleteGatewayChargeIfSafe } from '../../../services/billingGatewayChargeService.js';
+import {
+  listPendingAttemptsForInvoiceExcept,
+  markAttemptCancelledSuperseded,
+} from '../../../services/customerInvoicePaymentAttemptsService.js';
+
+export interface ApplyPaymentEventParams {
+  entityType: 'tenant_billing' | 'customer_invoice';
+  entityId: string;
+  currentStatus: string;
+  internalStatus: InternalPaymentStatus;
+  gatewayStatus: string | null;
+  paidAt?: Date | null;
+  paymentMethod?: string | null;
+}
+
+export interface ApplyPaymentAttemptEventParams {
+  attemptId: string;
+  invoiceId: string;
+  invoiceCurrentStatus: string;
+  internalStatus: InternalPaymentStatus;
+  gatewayStatus: string | null;
+  paidAt?: Date | null;
+}
+
+/**
+ * Aplica evento de pagamento: valida transição, atualiza status/gateway_status, ativa plano se paid (tenant_billing).
+ */
+export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promise<ProcessedResult> {
+  const {
+    entityType,
+    entityId,
+    currentStatus,
+    internalStatus,
+    gatewayStatus,
+    paidAt,
+    paymentMethod,
+  } = params;
+
+  if (!canTransition(currentStatus, internalStatus)) {
+    await updateGatewayStatusOnly(entityType, entityId, gatewayStatus);
+    return {
+      previous_status: currentStatus,
+      new_status: internalStatus,
+      action: 'skipped_regression',
+      reason: `Regressão bloqueada: ${currentStatus} não pode voltar para ${internalStatus}`,
+    };
+  }
+
+  if (entityType === 'tenant_billing') {
+    await updateInvoiceStatus(
+      entityId,
+      internalStatus as 'pending' | 'paid' | 'overdue' | 'cancelled',
+      internalStatus === 'paid' ? paidAt ?? new Date() : undefined,
+      paymentMethod ?? null,
+      gatewayStatus
+    );
+    if (internalStatus === 'paid') {
+      await activatePlanFromBilling(entityId);
+    }
+    return {
+      previous_status: currentStatus,
+      new_status: internalStatus,
+      action: currentStatus === internalStatus ? 'no_change' : 'status_updated',
+      reason: `tenant_billing ${entityId} → ${internalStatus}`,
+    };
+  }
+
+  await updateCustomerInvoiceStatus(
+    entityId,
+    internalStatus,
+    internalStatus === 'paid' ? paidAt ?? new Date() : undefined,
+    gatewayStatus
+  );
+  if (internalStatus === 'paid') {
+    const { pool } = await import('../../../utils/db.js');
+    const invoiceRow = await pool.query<{
+      charge_id: string | null;
+      tenant_id: string | null;
+      gateway_reference_id: string | null;
+    }>(
+      'SELECT charge_id, tenant_id, gateway_reference_id FROM customer_invoices WHERE id = $1 LIMIT 1',
+      [entityId]
+    );
+    const invoice = invoiceRow.rows[0];
+    const chargeId = invoice?.charge_id ?? null;
+    if (chargeId) {
+      const { recalculateChargeStatus } = await import('../../../services/customerChargesService.js');
+      await recalculateChargeStatus(chargeId).catch((err) =>
+        console.error('[paymentDomainService] recalculateChargeStatus failed:', err)
+      );
+    }
+
+    /**
+     * Limpeza pós-pagamento (Asaas):
+     * excluir no gateway todas as outras cobranças abertas para a mesma invoice.
+     * - não cancela a tentativa que foi paga
+     * - falhas no cancel são tratadas silenciosamente (sem quebrar fluxo)
+     * - idempotente via seleção somente de tentativas pendentes (pending/waiting/processing/overdue).
+     */
+    const tenantId = invoice?.tenant_id;
+    const invoiceGatewayReferenceId = invoice?.gateway_reference_id ?? null;
+
+    if (tenantId && invoiceGatewayReferenceId) {
+      // Tentativa paga atual: preferimos a que bate com gateway_reference_id da invoice.
+      const paidAttemptRow = await pool.query<{ id: string; gateway_reference_id: string | null }>(
+        `SELECT id, gateway_reference_id
+         FROM customer_invoice_payment_attempts
+         WHERE invoice_id = $1 AND gateway_reference_id = $2
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [entityId, invoiceGatewayReferenceId]
+      );
+      const paidAttemptId = paidAttemptRow.rows[0]?.id ?? null;
+      const paidAttemptGatewayReferenceId = paidAttemptRow.rows[0]?.gateway_reference_id ?? null;
+
+      if (paidAttemptId) {
+        billingLog('invoice', 'payment_cleanup_started', {
+          invoice_id: entityId,
+          attempt_id: paidAttemptId,
+          gateway_reference_id: paidAttemptGatewayReferenceId ?? undefined,
+        });
+
+        try {
+          const rows = await listPendingAttemptsForInvoiceExcept(entityId, paidAttemptId);
+          for (const row of rows) {
+            const refId = row.gateway_reference_id ?? '';
+            if (!refId) continue;
+
+            let cancelled = false;
+            let cancelError: string | undefined;
+            try {
+              const del = await deleteGatewayChargeIfSafe({
+                tenantId,
+                gatewayKey: row.gateway,
+                gatewayReferenceId: refId,
+                gatewayStatusRaw: row.gateway_status,
+                ctx: {
+                  invoice_id: entityId,
+                  attempt_id: row.id,
+                  reason: 'superseded_by_paid',
+                },
+              });
+              cancelled = del.deleted === true || del.skipped === true;
+              if (!cancelled && del.error) cancelError = del.error;
+            } catch (e) {
+              cancelError = e instanceof Error ? e.message : String(e);
+            }
+
+            if (cancelled) {
+              billingLog('invoice', 'payment_cleanup_cancel_success', {
+                invoice_id: entityId,
+                attempt_id: row.id,
+                gateway_reference_id: refId,
+              });
+            } else {
+              billingLog('invoice', 'payment_cleanup_cancel_failed', {
+                invoice_id: entityId,
+                attempt_id: row.id,
+                gateway_reference_id: refId,
+                error: cancelError ?? 'cancel_skipped_or_failed',
+              });
+            }
+
+            // Atualização no banco para manter consistência (histórico preservado).
+            try {
+              await markAttemptCancelledSuperseded(row.id, {
+                reason: 'superseded_by_other_attempt_paid',
+                superseded_by: 'paid_other',
+              });
+            } catch (dbErr) {
+              billingLog('invoice', 'payment_cleanup_cancel_failed', {
+                invoice_id: entityId,
+                attempt_id: row.id,
+                gateway_reference_id: refId,
+                error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+              });
+            }
+          }
+        } catch (cleanupErr) {
+          console.error('[paymentDomainService] payment_cleanup failed:', cleanupErr);
+        } finally {
+          billingLog('invoice', 'payment_cleanup_completed', {
+            invoice_id: entityId,
+            attempt_id: paidAttemptId,
+            gateway_reference_id: paidAttemptGatewayReferenceId ?? undefined,
+          });
+        }
+      }
+    }
+  }
+  return {
+    previous_status: currentStatus,
+    new_status: internalStatus,
+    action: currentStatus === internalStatus ? 'no_change' : 'status_updated',
+    reason: `customer_invoice ${entityId} → ${internalStatus}`,
+  };
+}
+
+/**
+ * Aplica evento em tentativa de pagamento e consolida status na fatura agregada.
+ * Fase 2: tentativa é atualizada primeiro; invoice só evolui sem regressão.
+ */
+export async function applyPaymentAttemptEvent(
+  params: ApplyPaymentAttemptEventParams
+): Promise<ProcessedResult> {
+  const { attemptId, invoiceId, invoiceCurrentStatus, internalStatus, gatewayStatus, paidAt } = params;
+
+  await updateInvoicePaymentAttemptStatus({
+    attemptId,
+    status: internalStatus,
+    gatewayStatus,
+    paidAt: internalStatus === 'paid' ? paidAt ?? new Date() : undefined,
+  });
+
+  if (!canTransition(invoiceCurrentStatus, internalStatus)) {
+    await updateCustomerInvoiceStatus(invoiceId, invoiceCurrentStatus, undefined, gatewayStatus);
+    return {
+      previous_status: invoiceCurrentStatus,
+      new_status: internalStatus,
+      action: 'skipped_regression',
+      reason: `Tentativa ${attemptId} atualizada; regressão bloqueada na invoice ${invoiceId}`,
+    };
+  }
+
+  await updateCustomerInvoiceStatus(
+    invoiceId,
+    internalStatus,
+    internalStatus === 'paid' ? paidAt ?? new Date() : undefined,
+    gatewayStatus
+  );
+
+  if (internalStatus === 'paid') {
+    const { pool } = await import('../../../utils/db.js');
+    const chargeRow = await pool.query<{ charge_id: string | null }>(
+      'SELECT charge_id FROM customer_invoices WHERE id = $1',
+      [invoiceId]
+    );
+    const chargeId = chargeRow.rows[0]?.charge_id ?? null;
+    if (chargeId) {
+      const { recalculateChargeStatus } = await import('../../../services/customerChargesService.js');
+      await recalculateChargeStatus(chargeId).catch((err) =>
+        console.error('[paymentDomainService] recalculateChargeStatus failed:', err)
+      );
+    }
+    const tenantRow = await pool.query<{ tenant_id: string }>(
+      'SELECT tenant_id FROM customer_invoices WHERE id = $1',
+      [invoiceId]
+    );
+    const tenantId = tenantRow.rows[0]?.tenant_id;
+    if (tenantId) {
+      const { supersedeOtherPendingAttemptsAfterPaid } = await import(
+        '../../../services/billingGatewayChargeService.js'
+      );
+      await supersedeOtherPendingAttemptsAfterPaid(invoiceId, attemptId, tenantId).catch((err) =>
+        console.error('[paymentDomainService] supersedeOtherPendingAttemptsAfterPaid failed:', err)
+      );
+    }
+  }
+
+  return {
+    previous_status: invoiceCurrentStatus,
+    new_status: internalStatus,
+    action: invoiceCurrentStatus === internalStatus ? 'no_change' : 'status_updated',
+    reason: `Tentativa ${attemptId} consolidada na invoice ${invoiceId} -> ${internalStatus}`,
+  };
+}
+
+async function updateGatewayStatusOnly(
+  entityType: 'tenant_billing' | 'customer_invoice',
+  entityId: string,
+  gatewayStatus: string | null
+): Promise<void> {
+  const { pool } = await import('../../../utils/db.js');
+  if (entityType === 'tenant_billing') {
+    await pool.query(
+      `UPDATE tenant_billing SET gateway_status = COALESCE($1, gateway_status), updated_at = now() WHERE id = $2`,
+      [gatewayStatus, entityId]
+    );
+  } else {
+    await pool.query(
+      `UPDATE customer_invoices SET gateway_status = COALESCE($1, gateway_status), updated_at = now() WHERE id = $2`,
+      [gatewayStatus, entityId]
+    );
+  }
+}

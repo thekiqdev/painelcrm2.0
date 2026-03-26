@@ -29,7 +29,20 @@ const clientSchema = z.object({
   notes: z.any().optional().nullable(),
   group_id: z.any().optional().nullable(),
   profile_id: z.any().optional().nullable(),
+  cpf_cnpj: z.string().optional().nullable(),
 });
+
+/** Normaliza CPF/CNPJ: apenas dígitos. Retorna null se vazio ou inválido. */
+function normalizeCpfCnpj(value: string | null | undefined): string | null {
+  if (value == null || typeof value !== 'string') return null;
+  const digits = value.replace(/\D/g, '');
+  return digits.length === 0 ? null : digits;
+}
+
+/** Valida se o CPF/CNPJ normalizado tem 11 (CPF) ou 14 (CNPJ) dígitos. */
+function isValidCpfCnpjLength(digits: string): boolean {
+  return digits.length === 11 || digits.length === 14;
+}
 
 export async function getClients(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -38,7 +51,7 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
       res.json([]);
       return;
     }
-    const { profileId } = req.query;
+    const { profileId, q } = req.query;
 
     let query = `
       SELECT 
@@ -50,14 +63,37 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
       LEFT JOIN client_groups cg ON c.group_id = cg.id
       WHERE 1=1
     `;
-    const params: any[] = [tenantId];
+    const params: unknown[] = [tenantId];
+    let p = 2;
 
-    if (profileId) {
-      query += ' AND c.profile_id = $2';
+    if (profileId && typeof profileId === 'string') {
+      query += ` AND c.profile_id = $${p}`;
       params.push(profileId);
+      p += 1;
     }
 
-    query += ' ORDER BY c.name';
+    /** Busca por nome, empresa, e-mail, telefone ou CPF/CNPJ (Fase 2 — B1). */
+    if (q && typeof q === 'string') {
+      const trimmed = q.trim().slice(0, 120);
+      if (trimmed.length > 0) {
+        const safe = trimmed.replace(/[%_\\]/g, '');
+        const pattern = `%${safe}%`;
+        query += ` AND (
+          c.name ILIKE $${p}
+          OR COALESCE(c.company, '') ILIKE $${p}
+          OR COALESCE(c.email, '') ILIKE $${p}
+          OR COALESCE(c.phone, '') ILIKE $${p}
+          OR COALESCE(c.cpf_cnpj, '') ILIKE $${p}
+        )`;
+        params.push(pattern);
+        p += 1;
+        query += ' ORDER BY c.name LIMIT 50';
+      } else {
+        query += ' ORDER BY c.name';
+      }
+    } else {
+      query += ' ORDER BY c.name';
+    }
 
     const result = await pool.query(query, params);
     
@@ -196,17 +232,24 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       cleanData.profile_id = null;
     }
 
+    const rawCpfCnpj = clientData.cpf_cnpj != null && typeof clientData.cpf_cnpj === 'string' ? clientData.cpf_cnpj.trim() : '';
+    cleanData.cpf_cnpj = normalizeCpfCnpj(rawCpfCnpj || null);
+    if (cleanData.cpf_cnpj !== null && !isValidCpfCnpjLength(cleanData.cpf_cnpj)) {
+      res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
+      return;
+    }
+
     const result = await pool.query(
       `INSERT INTO clients (
         user_id, name, email, phone, company, status, source,
-        funnel_stage, notes, group_id, profile_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        funnel_stage, notes, group_id, profile_id, cpf_cnpj
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
         userId, cleanData.name, cleanData.email, cleanData.phone,
         cleanData.company, cleanData.status, cleanData.source,
         cleanData.funnel_stage, cleanData.notes, cleanData.group_id,
-        cleanData.profile_id
+        cleanData.profile_id, cleanData.cpf_cnpj
       ]
     );
 
@@ -261,14 +304,29 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
     }, req);
     const clientData = clientSchema.partial().parse(req.body);
 
+    if (clientData.cpf_cnpj !== undefined) {
+      const normalizedCpfCnpj = normalizeCpfCnpj(clientData.cpf_cnpj);
+      if (normalizedCpfCnpj !== null && !isValidCpfCnpjLength(normalizedCpfCnpj)) {
+        res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
+        return;
+      }
+    }
+
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
     Object.entries(clientData).forEach(([key, value]) => {
       if (value !== undefined) {
+        let normalized: unknown = value;
+        if (key === 'cpf_cnpj') {
+          normalized = normalizeCpfCnpj(value as string);
+          if (normalized === null && (value === '' || (typeof value === 'string' && !(value as string).trim()))) {
+            normalized = null;
+          }
+        }
         updates.push(`${key} = $${paramIndex}`);
-        values.push(value);
+        values.push(normalized);
         paramIndex++;
       }
     });

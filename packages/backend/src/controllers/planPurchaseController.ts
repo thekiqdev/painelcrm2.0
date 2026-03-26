@@ -7,8 +7,9 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
-import { subscribePlan } from '../services/subscriptionService.js';
+import { subscribePlan, ASAAS_CPF_CNPJ_USER_MESSAGE } from '../services/subscriptionService.js';
 import { createTenantAdminUser } from '../services/tenantAdminService.js';
+import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
 
 const planPurchaseBodySchema = z.object({
   plan_id: z.string().uuid(),
@@ -120,13 +121,6 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
     const usersCount = body.users_count ?? null;
     const { tenantId, isNewTenant } = await resolveTenantId(req, body, body.plan_id, usersCount);
 
-    const result = await subscribePlan(tenantId, body.plan_id, body.billing_interval, {
-      usersCount,
-      source: 'self_service',
-      billingReason: 'plan_purchase',
-      paymentMethod: body.payment_method ?? 'BOLETO',
-    });
-
     if (!isNewTenant) {
       await pool.query(
         `UPDATE tenants
@@ -150,6 +144,29 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
       );
     }
 
+    const paymentMethod = body.payment_method ?? 'BOLETO';
+    if (paymentMethod === 'PIX') {
+      const row = await pool.query<{ cpf_cnpj: string | null }>(
+        'SELECT cpf_cnpj FROM tenants WHERE id = $1',
+        [tenantId]
+      );
+      const digits = onlyDigits(row.rows[0]?.cpf_cnpj ?? '');
+      if (!isValidCpfOrCnpj(digits)) {
+        res.status(400).json({
+          error: 'CPF/CNPJ é obrigatório e deve ser válido para pagamento PIX.',
+          field: 'cpf_cnpj',
+        });
+        return;
+      }
+    }
+
+    const result = await subscribePlan(tenantId, body.plan_id, body.billing_interval, {
+      usersCount,
+      source: 'self_service',
+      billingReason: 'plan_purchase',
+      paymentMethod: body.payment_method ?? 'BOLETO',
+    });
+
     const b = result.billing;
     const response: Record<string, unknown> = {
       billing_id: b.id,
@@ -170,6 +187,14 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
       return;
     }
     const message = error instanceof Error ? error.message : 'Erro ao processar compra';
+    if (message === ASAAS_CPF_CNPJ_USER_MESSAGE) {
+      res.status(400).json({ error: message, field: 'cpf_cnpj' });
+      return;
+    }
+    if (message.includes('Asaas API') && /cpf|cnpj|documento/i.test(message)) {
+      res.status(400).json({ error: ASAAS_CPF_CNPJ_USER_MESSAGE, field: 'cpf_cnpj' });
+      return;
+    }
     if (message.includes('não encontrado') || message.includes('inativo') || message.includes('exigem')) {
       res.status(400).json({ error: message });
       return;

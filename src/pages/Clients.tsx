@@ -47,6 +47,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
+import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 
@@ -98,7 +99,8 @@ const Clients = () => {
     phone: "",
     status: "Ativo",
     group_id: "",
-    notes: ""
+    notes: "",
+    cpf_cnpj: ""
   });
   
   // Edited client state (for edit mode)
@@ -109,7 +111,8 @@ const Clients = () => {
     phone: "",
     status: "",
     group_id: "",
-    notes: ""
+    notes: "",
+    cpf_cnpj: ""
   });
 
   // Form para adicionar nova tarefa
@@ -141,6 +144,7 @@ const Clients = () => {
         group: client.client_groups?.name || "",
         group_id: client.group_id,
         notes: client.notes,
+        cpf_cnpj: client.cpf_cnpj ?? null,
       }));
       return { clients: formatted, groups };
     },
@@ -231,7 +235,8 @@ const Clients = () => {
         phone: selectedClient.phone || "",
         status: selectedClient.status,
         group_id: selectedClient.group_id || "",
-        notes: selectedClient.notes || ""
+        notes: selectedClient.notes || "",
+        cpf_cnpj: selectedClient.cpf_cnpj ?? ""
       });
       setIsEditMode(true);
     }
@@ -251,7 +256,8 @@ const Clients = () => {
             phone: editedClient.phone,
             status: editedClient.status,
           group_id: editedClient.group_id || undefined,
-            notes: editedClient.notes
+            notes: editedClient.notes,
+            cpf_cnpj: editedClient.cpf_cnpj?.replace(/\D/g, "").trim() || null
         });
         
         // Atualizar o cliente na lista local
@@ -267,7 +273,8 @@ const Clients = () => {
               status: editedClient.status,
               group_id: editedClient.group_id,
               group: updatedGroupName,
-              notes: editedClient.notes
+              notes: editedClient.notes,
+              cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
             };
           }
           return client;
@@ -284,7 +291,8 @@ const Clients = () => {
           status: editedClient.status,
           group_id: editedClient.group_id,
           group: clientGroups.find(g => g.id === editedClient.group_id)?.name || "",
-          notes: editedClient.notes
+          notes: editedClient.notes,
+          cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
         });
         
         setIsEditMode(false);
@@ -341,7 +349,8 @@ const Clients = () => {
         phone: newClient.phone || undefined,
         status: newClient.status || undefined,
         group_id: newClient.group_id || undefined,
-        notes: newClient.notes || undefined
+        notes: newClient.notes || undefined,
+        cpf_cnpj: newClient.cpf_cnpj?.trim() || undefined
       });
       
       if (!result.success) {
@@ -365,7 +374,8 @@ const Clients = () => {
         status: addedClient.status,
         group: clientGroups.find(g => g.id === addedClient.group_id)?.name || "",
         group_id: addedClient.group_id,
-        notes: addedClient.notes
+        notes: addedClient.notes,
+        cpf_cnpj: addedClient.cpf_cnpj ?? null
       };
       
       setClients([...clients, formattedClient]);
@@ -381,7 +391,8 @@ const Clients = () => {
         phone: "",
         status: "Ativo",
         group_id: "",
-        notes: ""
+        notes: "",
+        cpf_cnpj: ""
       });
     } catch (error: any) {
       console.error("Erro ao adicionar cliente:", error);
@@ -727,6 +738,15 @@ const Clients = () => {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+              <Input 
+                id="cpf_cnpj"
+                placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                value={editedClient.cpf_cnpj}
+                onChange={handleEditInputChange}
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="status">Status</Label>
               <Select
                 value={editedClient.status}
@@ -780,6 +800,10 @@ const Clients = () => {
           <div className="space-y-1">
             <Label>Telefone</Label>
             <p className="text-sm">{selectedClient.phone}</p>
+          </div>
+          <div className="space-y-1">
+            <Label>CPF ou CNPJ</Label>
+            <p className="text-sm">{formatCpfCnpjDisplay(selectedClient.cpf_cnpj)}</p>
           </div>
           <div className="space-y-1">
             <Label>Empresa</Label>
@@ -970,6 +994,17 @@ const Clients = () => {
                         id="phone" 
                         placeholder="(00) 00000-0000" 
                         value={newClient.phone}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+                      <Input 
+                        id="cpf_cnpj" 
+                        placeholder="000.000.000-00 ou 00.000.000/0000-00" 
+                        value={newClient.cpf_cnpj}
                         onChange={handleInputChange}
                       />
                     </div>

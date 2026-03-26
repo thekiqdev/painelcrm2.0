@@ -37,6 +37,8 @@ import {
   Banknote,
 } from 'lucide-react';
 import LandingLayout from '@/landingpage/components/LandingLayout';
+import { formatCpfCnpjDigits } from '@/lib/brazilInputMasks';
+import { isValidCpfOrCnpj } from '@/utils/cpfCnpj';
 
 const BILLING_INTERVALS = [
   { key: 'monthly', label: 'Mensal' },
@@ -162,6 +164,7 @@ export default function PlanCheckout() {
   });
 
   const [paymentMethod, setPaymentMethod] = useState<'BOLETO' | 'PIX' | 'CREDIT_CARD'>('PIX');
+  const [cpfCnpjError, setCpfCnpjError] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PurchaseResult | null>(null);
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
@@ -265,6 +268,7 @@ export default function PlanCheckout() {
 
   const validateStep1 = (): boolean => {
     if (isLoggedIn) return true;
+    setCpfCnpjError('');
     if (!company.company_name?.trim()) {
       toast.error('Informe o nome da empresa.');
       return false;
@@ -282,6 +286,11 @@ export default function PlanCheckout() {
       toast.error('Informe o nome do responsável.');
       return false;
     }
+    const docDigits = company.cpf_cnpj.replace(/\D/g, '');
+    if (!isValidCpfOrCnpj(docDigits)) {
+      setCpfCnpjError('Informe um CPF ou CNPJ válido (11 ou 14 dígitos).');
+      return false;
+    }
     return true;
   };
 
@@ -296,6 +305,14 @@ export default function PlanCheckout() {
 
   const handlePayment = async () => {
     if (!plan) return;
+    setCpfCnpjError('');
+    const docDigits = company.cpf_cnpj.replace(/\D/g, '');
+    if (paymentMethod === 'PIX' && !isValidCpfOrCnpj(docDigits)) {
+      setCpfCnpjError('CPF ou CNPJ válido é obrigatório para pagamento PIX.');
+      toast.error('Informe um CPF ou CNPJ válido para gerar o PIX.');
+      return;
+    }
+
     setLoading(true);
     setResult(null);
     const body: Record<string, unknown> = {
@@ -308,19 +325,23 @@ export default function PlanCheckout() {
       body.company_name = company.company_name.trim();
       body.email = company.email.trim();
       body.responsible_name = company.responsible_name.trim();
-      if (company.cpf_cnpj?.trim()) body.cpf_cnpj = company.cpf_cnpj.replace(/\D/g, '');
+      body.cpf_cnpj = docDigits;
       if (company.phone?.trim()) body.phone = company.phone.trim();
     } else {
       if (company.company_name?.trim()) body.company_name = company.company_name.trim();
       if (company.email?.trim()) body.email = company.email.trim();
       if (company.responsible_name?.trim()) body.responsible_name = company.responsible_name.trim();
-      if (company.cpf_cnpj?.trim()) body.cpf_cnpj = company.cpf_cnpj.replace(/\D/g, '');
+      if (docDigits) body.cpf_cnpj = docDigits;
       if (company.phone?.trim()) body.phone = company.phone.trim();
     }
 
     const res = await apiClient.post<PurchaseResult>('/api/plan-purchase', body);
     setLoading(false);
     if (res.error) {
+      if (res.field === 'cpf_cnpj') {
+        setCpfCnpjError(res.error);
+        setStep(1);
+      }
       toast.error(res.error);
       return;
     }
@@ -494,13 +515,29 @@ export default function PlanCheckout() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+                  <Label htmlFor="cpf_cnpj">
+                    CPF ou CNPJ
+                    {!isLoggedIn ? ' *' : ' (obrigatório para PIX)'}
+                  </Label>
                   <Input
                     id="cpf_cnpj"
                     value={company.cpf_cnpj}
-                    onChange={(e) => setCompany((c) => ({ ...c, cpf_cnpj: e.target.value }))}
-                    placeholder="Somente números"
+                    onChange={(e) => {
+                      setCpfCnpjError('');
+                      setCompany((c) => ({ ...c, cpf_cnpj: formatCpfCnpjDigits(e.target.value) }));
+                    }}
+                    placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                    autoComplete="off"
+                    inputMode="numeric"
+                    aria-invalid={!!cpfCnpjError}
+                    aria-describedby={cpfCnpjError ? 'cpf_cnpj_error' : undefined}
+                    className={cpfCnpjError ? 'border-destructive' : undefined}
                   />
+                  {cpfCnpjError ? (
+                    <p id="cpf_cnpj_error" className="mt-1.5 text-sm text-destructive" role="alert">
+                      {cpfCnpjError}
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <Label htmlFor="email">E-mail *</Label>

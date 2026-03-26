@@ -1,13 +1,16 @@
 /**
  * Handler do webhook Asaas (POST /webhooks/asaas).
- * Fase 5: extrai externalReference do payload e persiste em payment_webhook_events para debug.
+ * Fase 3: delega para handleWebhook (webhookCore); mantém asaas_webhook_events para debug.
  */
 import type { Request, Response, NextFunction } from 'express';
 import { createHash } from 'crypto';
 import { pool } from '../../../../utils/db.js';
 import { upsertWebhookEvent } from '../../../../services/paymentWebhookEventsService.js';
 import { isAsaasPaymentEvent } from '../asaasEvents.js';
-import { handlePaymentEvent } from '../services/asaasService.js';
+import { handleWebhook, registerGatewayParser } from '../../../payments/webhook/webhookCore.js';
+import { asaasWebhookParser } from './asaasWebhookParser.js';
+
+registerGatewayParser('asaas', asaasWebhookParser);
 
 const GATEWAY_KEY = 'asaas';
 const MAX_ATTEMPTS = 5;
@@ -139,13 +142,8 @@ export async function asaasWebhookHandler(
       return;
     }
 
-    try {
-      await handlePaymentEvent({
-        eventType,
-        asaasPaymentId: paymentId,
-        payload: body,
-        tenantIdFromPayload: externalReference,
-      });
+    const result = await handleWebhook(GATEWAY_KEY, body);
+    if (result.status === 200) {
       await pool.query(
         `UPDATE asaas_webhook_events SET status = 'processed', processed_at = now() WHERE event_id = $1`,
         [eventId]
@@ -157,8 +155,8 @@ export async function asaasWebhookHandler(
         status: 'processed',
         externalReference,
       });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    } else {
+      const message = result.body?.error ?? 'Erro ao processar webhook';
       await pool.query(
         `UPDATE asaas_webhook_events SET status = 'failed', last_error = $2 WHERE event_id = $1`,
         [eventId, message]
@@ -170,10 +168,10 @@ export async function asaasWebhookHandler(
         status: 'failed',
         externalReference,
       });
-      console.error('asaasWebhook handlePaymentEvent error:', err);
-      res.status(200).json({ received: true });
-      return;
+      console.error('asaasWebhook handleWebhook:', message);
     }
+    res.status(200).json({ received: true });
+    return;
 
     res.status(200).json({ received: true });
   } catch (err: unknown) {

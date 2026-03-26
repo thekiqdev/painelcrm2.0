@@ -110,7 +110,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
     env: 'sandbox' as 'sandbox' | 'production',
   });
 
-  const load = async () => {
+  const load = async (opts?: { preserveConnectionStatus?: boolean }) => {
     setLoading(true);
     const [configRes, gatewaysRes] = await Promise.all([
       apiClient.get<PaymentGatewayConfig | null>(API_CONFIG),
@@ -124,8 +124,8 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
     if (gatewaysRes.error) toast.error(gatewaysRes.error);
     setLoading(false);
     if (configRes.data !== undefined && (!cfg || !cfg.hasCredentials)) {
-      setConnectionStatus('not_configured');
-    } else {
+      if (!opts?.preserveConnectionStatus) setConnectionStatus('not_configured');
+    } else if (!opts?.preserveConnectionStatus) {
       setConnectionStatus('idle');
     }
   };
@@ -197,7 +197,28 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
     }
     toast.success('Configuração salva.');
     setSaving(false);
-    load();
+
+    // Testa automaticamente após salvar (evita necessidade de clique extra).
+    // Critério: se foi informada uma API Key nova OR já havia credenciais na config anterior.
+    const hasCredentialsAfterSave = !!form.api_key.trim() || !!config?.hasCredentials;
+    if (hasCredentialsAfterSave) {
+      setTesting(true);
+      setConnectionStatus('idle');
+      const testRes = await apiClient.post<{ connected: boolean; error?: string }>(API_TEST, {});
+      setTesting(false);
+
+      if (testRes.data?.connected) {
+        setConnectionStatus('connected');
+        toast.success('Conexão com o gateway realizada com sucesso.');
+      } else {
+        const err = testRes.data?.error || testRes.error || 'Falha ao testar conexão.';
+        setConnectionStatus(err.toLowerCase().includes('autenticação') ? 'auth_error' : 'error');
+        toast.error(err);
+      }
+    }
+
+    // Recarrega apenas os dados do config; preserva o status visual do teste que acabamos de disparar.
+    await load({ preserveConnectionStatus: true });
   };
 
   const copyWebhookUrl = () => {
@@ -364,6 +385,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
           <CardTitle>Alterar configuração</CardTitle>
           <CardDescription>
             Selecione o gateway, ambiente e informe a API Key. Deixe a API Key em branco para manter a atual.
+            Após salvar, o sistema testa automaticamente a conexão para ativar a emissão de faturas para clientes.
           </CardDescription>
         </CardHeader>
         <CardContent>

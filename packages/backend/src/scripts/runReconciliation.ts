@@ -1,5 +1,5 @@
 /**
- * Reconciliação de pagamentos: vincula invoices pending sem asaas_payment_id ao pagamento no gateway.
+ * Reconciliação de pagamentos: vincula invoices pending sem gateway_reference_id ao pagamento no gateway.
  * Uso: cron a cada 30 min. Ex.: npm run billing:reconciliation
  */
 import dotenv from 'dotenv';

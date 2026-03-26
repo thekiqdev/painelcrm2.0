@@ -48,6 +48,7 @@ export interface CreateSubscriptionInput {
   users_count?: number | null;
   gateway?: string | null;
   created_by?: string | null; // checkout | admin | api | migration
+  default_payment_method?: string | null; // PIX | BOLETO | CREDIT_CARD (para type=customer)
 }
 
 /**
@@ -58,8 +59,8 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
     `INSERT INTO subscriptions (
       type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date,
-      current_period_start, current_period_end, grace_period_days, users_count, gateway, created_by
-    ) VALUES ($1, $2, $3, $4, $5, 'BRL', $6, 0, $7, 'active', $8, $9, $10, COALESCE($11, 3), $12, $13, $14)
+      current_period_start, current_period_end, grace_period_days, default_payment_method, users_count, gateway, created_by
+    ) VALUES ($1, $2, $3, $4, $5, 'BRL', $6, 0, $7, 'active', $8, $9, $10, COALESCE($11, 3), $12, $13, $14, $15)
     RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at`,
@@ -75,6 +76,7 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
       data.current_period_start,
       data.current_period_end,
       data.grace_period_days ?? 3,
+      data.default_payment_method ?? null,
       data.users_count ?? null,
       data.gateway ?? null,
       data.created_by ?? null,

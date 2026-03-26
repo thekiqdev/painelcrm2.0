@@ -49,6 +49,7 @@ export default function Onboarding() {
   const [company, setCompany] = useState<TenantData>({ company_name: '', cpf_cnpj: '', billing_email: '', billing_phone: '' });
   const [loading, setLoading] = useState(false);
   const [tenantDataLoaded, setTenantDataLoaded] = useState(false);
+  const resolvedTenantId = tenantId ?? user?.tenant_id ?? null;
 
   useEffect(() => {
     const s = Math.min(3, Math.max(1, parseInt(searchParams.get('step') || '1', 10)));
@@ -56,8 +57,8 @@ export default function Onboarding() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (tenantId) sessionStorage.setItem(ONBOARDING_TENANT_KEY, tenantId);
-  }, [tenantId]);
+    if (resolvedTenantId) sessionStorage.setItem(ONBOARDING_TENANT_KEY, resolvedTenantId);
+  }, [resolvedTenantId]);
 
   useEffect(() => {
     if (step === 2 && user && !tenantDataLoaded) {
@@ -83,7 +84,7 @@ export default function Onboarding() {
 
   const handleCreateAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tenantId) {
+    if (!resolvedTenantId) {
       toast.error('Conta não identificada. Refaça o fluxo a partir do checkout.');
       return;
     }
@@ -94,7 +95,7 @@ export default function Onboarding() {
     setLoading(true);
     const res = await apiClient.post<{ token: string; user: { id: string; email: string; first_name?: string; last_name?: string; registration_complete?: boolean } }>(
       '/api/onboarding/create-admin',
-      { tenant_id: tenantId, name: admin.name.trim(), email: admin.email.trim().toLowerCase(), password: admin.password }
+      { tenant_id: resolvedTenantId, name: admin.name.trim(), email: admin.email.trim().toLowerCase(), password: admin.password }
     );
     setLoading(false);
     if (res.error) {
@@ -156,7 +157,17 @@ export default function Onboarding() {
     );
   }
 
-  if (step === 1 && !tenantId) {
+  if (step === 1 && authLoading) {
+    return (
+      <LandingLayout>
+        <div className="flex justify-center items-center min-h-[40vh]">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </LandingLayout>
+    );
+  }
+
+  if (step === 1 && !resolvedTenantId) {
     return (
       <LandingLayout>
         <div className="container max-w-md mx-auto py-16 px-4">

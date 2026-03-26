@@ -41,6 +41,8 @@ export interface AsaasPaymentRequest {
   description?: string;
   /** Identificador externo (ex.: tenant_id) para resolver tenant no webhook. */
   externalReference?: string;
+  /** Desativa envio de notificações (e-mail/SMS) para esta cobrança. */
+  notificationEnabled?: boolean;
 }
 
 export interface AsaasPaymentResponse {
@@ -62,4 +64,11 @@ export interface AsaasPixQrCodeResponse {
   payload?: string;
   expirationDate?: string;
   description?: string;
+}
+
+/** Resposta do GET /v3/payments/{id}/identificationField (linha digitável do boleto). */
+export interface AsaasIdentificationFieldResponse {
+  identificationField?: string;
+  nossoNumero?: string;
+  barCode?: string;
 }

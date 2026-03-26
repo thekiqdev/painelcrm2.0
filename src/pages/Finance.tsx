@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { financeService, Invoice as ApiInvoice, Expense as ApiExpense } from "@/services/finance";
+import { financeService, Invoice as ApiInvoice, Expense as ApiExpense, BillingReceipt } from "@/services/finance";
 import { projectsService } from "@/services/projects";
 import { clientsService } from "@/services/clients";
 
@@ -21,6 +21,7 @@ const Finance = () => {
   const [expenseFormOpen, setExpenseFormOpen] = useState(false);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [billingReceipts, setBillingReceipts] = useState<BillingReceipt[]>([]);
   const [availableProjects, setAvailableProjects] = useState<{ id: string; name: string }[]>([]);
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
 
@@ -28,9 +29,10 @@ const Finance = () => {
     const loadData = async () => {
       try {
         setLoading(true);
-        const [invoicesData, expensesData, projectsData, clientsData] = await Promise.all([
+        const [invoicesData, expensesData, billingReceiptsData, projectsData, clientsData] = await Promise.all([
           financeService.getInvoices(),
           financeService.getExpenses(),
+          financeService.getBillingReceipts(),
           projectsService.getProjects(),
           clientsService.getClients(),
         ]);
@@ -71,6 +73,7 @@ const Finance = () => {
 
         setInvoices(convertedInvoices);
         setExpenses(convertedExpenses);
+        setBillingReceipts(billingReceiptsData);
         setAvailableProjects(projectsData.map(p => ({ id: p.id, name: p.name })));
         setClients(clientsData.map(c => ({ id: c.id, name: c.name })));
       } catch (error) {
@@ -205,7 +208,7 @@ const Finance = () => {
       : <Badge variant="secondary">Pendente</Badge>;
   };
 
-  // Financial data for the summary component
+  // Financial data for the summary component (faturas do finance + receitas de cobrança pagas)
   const financialData = {
     invoices: invoices.map(inv => ({
       id: inv.id,
@@ -213,6 +216,11 @@ const Finance = () => {
       amount: inv.total,
       date: inv.issueDate,
       status: inv.status
+    })),
+    billingReceipts: billingReceipts.map(r => ({
+      id: r.id,
+      amount: r.amount_cents / 100,
+      date: r.paid_at.slice(0, 10)
     })),
     expenses: expenses.map(exp => ({
       id: exp.id,

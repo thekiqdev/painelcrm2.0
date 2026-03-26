@@ -22,6 +22,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { cn } from "@/lib/utils";
+import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
 import { useForm } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -779,6 +780,10 @@ const ClientProfile = () => {
                       <span className="text-sm">{client.phone}</span>
                     </div>
                   )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">CPF/CNPJ</span>
+                    <span className="text-sm">{formatCpfCnpjDisplay(client.cpf_cnpj) === "—" ? "Não informado" : formatCpfCnpjDisplay(client.cpf_cnpj)}</span>
+                  </div>
                   {client.status && (
                     <div>
                       <Label className="text-xs text-muted-foreground">Status</Label>
@@ -859,6 +864,10 @@ const ClientProfile = () => {
                   <div>
                     <Label>Telefone</Label>
                     <p className="text-sm mt-1">{client.phone || "Não informado"}</p>
+                  </div>
+                  <div>
+                    <Label>CPF ou CNPJ</Label>
+                    <p className="text-sm mt-1">{formatCpfCnpjDisplay(client.cpf_cnpj) === "—" ? "Não informado" : formatCpfCnpjDisplay(client.cpf_cnpj)}</p>
                   </div>
                   <div>
                     <Label>Status</Label>

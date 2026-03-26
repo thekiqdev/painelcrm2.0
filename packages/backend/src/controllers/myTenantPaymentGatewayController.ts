@@ -40,7 +40,9 @@ export async function getMyTenantPaymentGatewayConfig(req: Request, res: Respons
     const baseUrl =
       (process.env.PUBLIC_API_URL && process.env.PUBLIC_API_URL.replace(/\/$/, '')) ||
       `${req.protocol}://${req.get('host') || ''}`;
-    const webhookUrl = `${baseUrl}/webhooks/asaas`;
+    const webhookUrl = config?.gateway_key
+      ? `${baseUrl}/webhooks/${config.gateway_key}`
+      : null;
     res.json(config ? { ...config, webhookUrl } : null);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';

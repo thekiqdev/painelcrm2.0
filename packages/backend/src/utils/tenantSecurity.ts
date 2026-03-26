@@ -11,6 +11,7 @@ const TENANT_SCOPED_TABLES = [
   'teams',
   'tenant_plan',
   'tenant_billing',
+  'customer_invoices',
   'tenant_feature_overrides',
   'tenant_admin_notes',
   'tenant_tags',

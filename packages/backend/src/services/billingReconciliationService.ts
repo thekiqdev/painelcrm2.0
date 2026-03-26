@@ -1,6 +1,6 @@
 /**
- * Reconciliação de pagamentos: vincula invoices pending sem asaas_payment_id ao pagamento já criado no gateway.
- * Edge case: worker criou a invoice e chamou createCharge, mas crashou antes de salvar asaas_payment_id.
+ * Reconciliação de pagamentos: vincula invoices pending sem gateway_reference_id ao pagamento já criado no gateway.
+ * Edge case: worker criou a invoice e chamou createCharge, mas crashou antes de salvar gateway_reference_id.
  * Executar a cada ~30 min (cron). Rechama createCharge com a mesma idempotency_key; o gateway retorna o pagamento existente.
  */
 import { pool } from '../utils/db.js';
@@ -21,14 +21,14 @@ export interface PendingInvoiceRow {
 }
 
 /**
- * Busca invoices pending sem asaas_payment_id, com idempotency_key, criadas nas últimas 24h.
+ * Busca invoices pending sem gateway_reference_id, com idempotency_key, criadas nas últimas 24h.
  */
 export async function getPendingInvoicesWithoutPaymentId(): Promise<PendingInvoiceRow[]> {
   const r = await pool.query<PendingInvoiceRow>(
     `SELECT id, tenant_id, amount_cents, due_date, idempotency_key, invoice_number, payment_method, gateway
      FROM tenant_billing
      WHERE status = 'pending'
-       AND asaas_payment_id IS NULL
+       AND gateway_reference_id IS NULL
        AND idempotency_key IS NOT NULL
        AND created_at > now() - interval '1 day'
      ORDER BY created_at ASC
@@ -39,7 +39,7 @@ export async function getPendingInvoicesWithoutPaymentId(): Promise<PendingInvoi
 
 /**
  * Executa uma rodada de reconciliação: para cada invoice pendente sem payment_id, rechama o gateway
- * com a mesma idempotency_key (retorna o pagamento existente) e persiste asaas_payment_id.
+ * com a mesma idempotency_key (retorna o pagamento existente) e persiste gateway_reference_id.
  */
 export async function runReconciliation(): Promise<{ processed: number; failed: number; skipped: number }> {
   const invoices = await getPendingInvoicesWithoutPaymentId();
@@ -77,8 +77,8 @@ export async function runReconciliation(): Promise<{ processed: number; failed: 
       await updateInvoiceGatewayData(inv.id, {
         gateway: gatewayKey,
         payment_method: inv.payment_method,
-        asaas_payment_id: chargeResult.paymentId,
-        asaas_status: chargeResult.status,
+        gateway_reference_id: chargeResult.paymentId,
+        gateway_status: chargeResult.status,
         idempotency_key: inv.idempotency_key,
       });
       result.processed++;

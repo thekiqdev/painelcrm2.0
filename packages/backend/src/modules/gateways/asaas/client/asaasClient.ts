@@ -6,12 +6,15 @@ import type {
   AsaasConfig,
   AsaasCustomerRequest,
   AsaasCustomerResponse,
+  AsaasIdentificationFieldResponse,
   AsaasPaymentRequest,
   AsaasPaymentResponse,
   AsaasPixQrCodeResponse,
 } from '../asaasTypes.js';
 
 const HTTP_TIMEOUT_MS = 10_000;
+/** Cartão: documentação Asaas recomenda timeout ≥ 60s para evitar duplicidade. */
+const PAY_WITH_CARD_TIMEOUT_MS = 65_000;
 const HTTP_RETRY_ATTEMPTS = 2;
 
 function getBaseUrlFromEnv(): string {
@@ -36,20 +39,29 @@ function isRetryable(status: number): boolean {
   return status >= 500 && status < 600;
 }
 
+type RequestOptions = {
+  timeoutMs?: number;
+  /** Retries só para 5xx (comportamento atual). */
+  maxRetries?: number;
+};
+
 async function request<T>(
   method: string,
   path: string,
   body?: object,
-  config?: AsaasConfig | null
+  config?: AsaasConfig | null,
+  options?: RequestOptions
 ): Promise<T> {
   const apiKey = getApiKey(config);
   if (!apiKey) throw new Error('API key Asaas não configurada');
   const baseUrl = getBaseUrl(config);
   const url = `${baseUrl}${path}`;
+  const timeoutMs = options?.timeoutMs ?? HTTP_TIMEOUT_MS;
+  const maxRetries = options?.maxRetries ?? HTTP_RETRY_ATTEMPTS;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   let lastError: Error | null = null;
-  for (let attempt = 0; attempt <= HTTP_RETRY_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const res = await fetch(url, {
         method,
@@ -63,7 +75,7 @@ async function request<T>(
       clearTimeout(timeoutId);
       const text = await res.text();
       if (!res.ok) {
-        if (attempt < HTTP_RETRY_ATTEMPTS && isRetryable(res.status)) {
+        if (attempt < maxRetries && isRetryable(res.status)) {
           lastError = new Error(`Asaas API ${res.status}: ${text}`);
           continue;
         }
@@ -75,7 +87,7 @@ async function request<T>(
       clearTimeout(timeoutId);
       const isAbort = e instanceof Error && e.name === 'AbortError';
       const isRetryableErr = isAbort || (e instanceof Error && e.message.includes('5'));
-      if (attempt < HTTP_RETRY_ATTEMPTS && isRetryableErr) {
+      if (attempt < maxRetries && isRetryableErr) {
         lastError = e instanceof Error ? e : new Error(String(e));
         continue;
       }
@@ -105,6 +117,19 @@ export async function getCustomer(
   }
 }
 
+export async function updateCustomer(
+  customerId: string,
+  data: AsaasCustomerRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasCustomerResponse> {
+  return request<AsaasCustomerResponse>(
+    'PUT',
+    `/customers/${encodeURIComponent(customerId)}`,
+    data,
+    config
+  );
+}
+
 export async function createPayment(
   data: AsaasPaymentRequest,
   config?: AsaasConfig | null
@@ -126,6 +151,23 @@ export async function getPayment(
 }
 
 /**
+ * Exclui/cancela cobrança no Asaas (DELETE /v3/payments/:id).
+ * Retorna { deleted: true, id } em sucesso; 404 se já não existir.
+ */
+export async function deletePayment(
+  paymentId: string,
+  config?: AsaasConfig | null
+): Promise<{ deleted: boolean; id: string } | null> {
+  try {
+    return await request<{ deleted: boolean; id: string }>('DELETE', `/payments/${paymentId}`, undefined, config);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+/**
  * Obtém QR Code PIX para um pagamento (obrigatório para PIX: POST /payments não retorna QR).
  * GET /v3/payments/{id}/pixQrCode
  */
@@ -135,6 +177,64 @@ export async function getPixQrCode(
 ): Promise<AsaasPixQrCodeResponse | null> {
   try {
     return await request<AsaasPixQrCodeResponse>('GET', `/payments/${paymentId}/pixQrCode`, undefined, config);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+/**
+ * Linha digitável do boleto (GET /v3/payments/{id}/identificationField).
+ */
+/**
+ * POST /v3/payments/{id}/payWithCreditCard — captura cartão em cobrança já criada (Desenho A).
+ * Sem retry em 4xx; timeout longo conforme doc Asaas.
+ */
+export async function payWithCreditCard(
+  paymentId: string,
+  body: {
+    creditCard: {
+      holderName: string;
+      number: string;
+      expiryMonth: string;
+      expiryYear: string;
+      ccv: string;
+    };
+    creditCardHolderInfo: {
+      name: string;
+      email: string;
+      cpfCnpj: string;
+      postalCode: string;
+      addressNumber: string;
+      addressComplement?: string | null;
+      phone: string;
+      mobilePhone?: string | null;
+    };
+    creditCardToken?: string;
+  },
+  config?: AsaasConfig | null
+): Promise<AsaasPaymentResponse> {
+  return request<AsaasPaymentResponse>(
+    'POST',
+    `/payments/${encodeURIComponent(paymentId)}/payWithCreditCard`,
+    body,
+    config,
+    { timeoutMs: PAY_WITH_CARD_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+export async function getIdentificationField(
+  paymentId: string,
+  config?: AsaasConfig | null
+): Promise<AsaasIdentificationFieldResponse | null> {
+  try {
+    return await request<AsaasIdentificationFieldResponse>(
+      'GET',
+      `/payments/${paymentId}/identificationField`,
+      undefined,
+      config
+    );
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('404')) return null;

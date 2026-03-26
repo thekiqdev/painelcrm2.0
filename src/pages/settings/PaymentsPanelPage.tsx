@@ -55,6 +55,9 @@ export default function PaymentsPanelPage() {
           <p className="text-muted-foreground text-sm mt-1">
             Configure e gerencie os gateways para cobrança de clientes.
           </p>
+          <p className="text-muted-foreground text-xs mt-1">
+            Após salvar as credenciais, clique em <strong>Testar conexão</strong> no card do gateway para ativá-lo e poder emitir faturas para clientes.
+          </p>
         </div>
       </div>
 

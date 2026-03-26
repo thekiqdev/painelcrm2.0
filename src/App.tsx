@@ -34,7 +34,12 @@ const Proposals = lazy(() => import("./pages/Proposals"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const NewContract = lazy(() => import("./pages/NewContract"));
 const ContractDetails = lazy(() => import("./pages/ContractDetails"));
-const Billing = lazy(() => import("./pages/Billing"));
+const CustomerInvoices = lazy(() => import("./pages/CustomerInvoices"));
+const CustomerInvoiceNew = lazy(() => import("./pages/CustomerInvoiceNew"));
+const CustomerInvoiceDetail = lazy(() => import("./pages/CustomerInvoiceDetail"));
+const CustomerInvoicePay = lazy(() => import("./pages/CustomerInvoicePay"));
+const CustomerCharges = lazy(() => import("./pages/CustomerCharges"));
+const CustomerChargeDetail = lazy(() => import("./pages/CustomerChargeDetail"));
 const Finance = lazy(() => import("./pages/Finance"));
 const Settings = lazy(() => import("./pages/Settings"));
 const PaymentsPanelPage = lazy(() => import("./pages/settings/PaymentsPanelPage"));
@@ -129,6 +134,7 @@ const App = () => (
             <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
             <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
             <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
+            <Route path="/pay/:token" element={<Suspense fallback={<LoadingFallback />}><CustomerInvoicePay /></Suspense>} />
 
               {/* Protected routes - lazy loaded */}
             <Route path="/dashboard" element={
@@ -362,9 +368,50 @@ const App = () => (
             } />
             <Route path="/billing" element={
               <AuthGuard requireAuth={true} redirectTo="/">
+                <Navigate to="/customer-invoices" replace />
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
-                      <Billing />
+                      <CustomerInvoices />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerInvoiceNew />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerInvoiceDetail />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-charges" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerCharges />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-charges/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerChargeDetail />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>

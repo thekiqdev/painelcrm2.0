@@ -64,8 +64,15 @@ export async function createTenantAdminUser(input: CreateTenantAdminInput): Prom
   }
 
   const profileRow = await pool.query<{ id: string }>(
-    'SELECT id FROM user_profiles WHERE owner_id = $1 LIMIT 1',
-    [user.id]
+    `SELECT up.id
+     FROM user_profiles up
+     WHERE up.owner_id IN (
+       SELECT u.id
+       FROM users u
+       WHERE u.id = $1 AND u.tenant_id = $2
+     )
+     LIMIT 1`,
+    [user.id, input.tenantId]
   );
   if (profileRow.rows.length === 0) {
     const inserted = await pool.query<{ id: string }>(

@@ -720,8 +720,8 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
 
     const existing = await pool.query(
       `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
-        gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key, created_at
-       FROM tenant_billing WHERE idempotency_key = $1 AND asaas_payment_id IS NOT NULL`,
+        gateway, payment_method, gateway_reference_id, gateway_metadata, gateway_status, idempotency_key, created_at
+       FROM tenant_billing WHERE idempotency_key = $1 AND gateway_reference_id IS NOT NULL`,
       [idempotencyKey]
     );
     if (existing.rows.length > 0) {
@@ -755,10 +755,10 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
     const insert = await pool.query(
       `INSERT INTO tenant_billing (
         tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
-        gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key
-      ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11)
+        gateway, payment_method, gateway_reference_id, gateway_metadata, gateway_status, idempotency_key
+      ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
-        gateway, payment_method, asaas_payment_id, asaas_status, idempotency_key, created_at`,
+        gateway, payment_method, gateway_reference_id, gateway_metadata, gateway_status, idempotency_key, created_at`,
       [
         id,
         planId,
@@ -769,6 +769,7 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
         gatewayKey,
         chargeResult ? 'BOLETO' : null,
         chargeResult?.paymentId ?? null,
+        null,
         chargeResult?.status ?? null,
         idempotencyKey,
       ]
@@ -779,7 +780,7 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
         billing_id: createdCharge.id,
         amount_cents: createdCharge.amount_cents,
         due_date: createdCharge.due_date,
-        asaas_payment_id: createdCharge.asaas_payment_id ?? undefined,
+        gateway_reference_id: createdCharge.gateway_reference_id ?? undefined,
       });
     }
     const response: Record<string, unknown> = { ...createdCharge };

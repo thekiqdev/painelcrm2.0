@@ -23,11 +23,11 @@ export async function getBillingStatus(req: Request, res: Response): Promise<voi
       id: string;
       status: string;
       tenant_id: string;
-      asaas_payment_id: string | null;
+      gateway_reference_id: string | null;
       gateway: string | null;
       tenant_status: string | null;
     }>(
-      `SELECT b.id, b.status, b.tenant_id, b.asaas_payment_id, b.gateway, t.status AS tenant_status
+      `SELECT b.id, b.status, b.tenant_id, b.gateway_reference_id, b.gateway, t.status AS tenant_status
        FROM tenant_billing b
        LEFT JOIN tenants t ON t.id = b.tenant_id
        WHERE b.id = $1`,
@@ -49,13 +49,13 @@ export async function getBillingStatus(req: Request, res: Response): Promise<voi
       return;
     }
 
-    if (row.status === 'pending' && row.asaas_payment_id && row.gateway === 'asaas') {
+    if (row.status === 'pending' && row.gateway_reference_id && row.gateway) {
       const gateway = await getActiveGateway({ billingType: 'saas', tenantId: row.tenant_id });
       if (gateway?.getPayment) {
-        const payment = await gateway.getPayment(row.asaas_payment_id);
-        const asaasStatus = payment?.status?.toUpperCase?.() ?? '';
-        if (asaasStatus === 'RECEIVED' || asaasStatus === 'CONFIRMED') {
-          await updateInvoiceStatus(billingId, 'paid', new Date(), 'PIX');
+        const payment = await gateway.getPayment(row.gateway_reference_id);
+        const gatewayStatus = payment?.status?.toUpperCase?.() ?? '';
+        if (gatewayStatus === 'RECEIVED' || gatewayStatus === 'CONFIRMED') {
+          await updateInvoiceStatus(billingId, 'paid', new Date(), 'PIX', payment?.status ?? null);
           await activatePlanFromBilling(billingId);
           const updated = await pool.query<{ tenant_status: string | null }>(
             `SELECT t.status AS tenant_status FROM tenant_billing b LEFT JOIN tenants t ON t.id = b.tenant_id WHERE b.id = $1`,

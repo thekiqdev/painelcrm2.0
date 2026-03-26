@@ -1,18 +1,18 @@
-import React, { useState, useMemo } from "react";
+import React from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SystemRichEditor } from "@/components/editor";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, X, ChevronDown, ChevronsUpDown, Plus, Check, Search } from "lucide-react";
+import { CalendarIcon, X, ChevronDown } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import type { WizardBasicConfig } from "../types";
 import type { Member } from "@/components/shared/types";
 import type { Client } from "@/services/clients";
-import { AddClientDialog } from "@/components/clients/AddClientDialog";
+import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
 
 interface TeamOption {
   id: string;
@@ -41,36 +41,6 @@ export function Step2BasicConfig({
 }: Step2BasicConfigProps) {
   const selectedMembers = members.filter((m) => config.responsibleIds.includes(m.id));
   const selectedTeams = teams.filter((t) => config.teamIds.includes(t.id));
-  const [clientSearchOpen, setClientSearchOpen] = useState(false);
-  const [createClientDialogOpen, setCreateClientDialogOpen] = useState(false);
-  const [clientSearchQuery, setClientSearchQuery] = useState("");
-
-  const selectedClient = useMemo(
-    () => clients.find((c) => c.id === config.clientId),
-    [clients, config.clientId]
-  );
-
-  const hasSearch = clientSearchQuery.trim().length > 0;
-
-  const filteredClients = useMemo(() => {
-    if (!hasSearch) return [];
-    const q = clientSearchQuery.trim().toLowerCase();
-    return clients.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.company?.toLowerCase().includes(q)) ||
-        (c.email?.toLowerCase().includes(q))
-    );
-  }, [clients, clientSearchQuery, hasSearch]);
-
-  const showCreateOption = clientSearchQuery.trim().length >= 2;
-
-  const handleClientCreated = (client: Client) => {
-    onChange({ clientId: client.id });
-    onClientCreated?.(client);
-    setClientSearchOpen(false);
-    setCreateClientDialogOpen(false);
-  };
 
   return (
     <div className="space-y-6">
@@ -96,119 +66,16 @@ export function Step2BasicConfig({
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="wizard-client">Cliente (opcional)</Label>
-        <Popover open={clientSearchOpen} onOpenChange={setClientSearchOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              id="wizard-client"
-              variant="outline"
-              role="combobox"
-              aria-expanded={clientSearchOpen}
-              className="w-full justify-between font-normal"
-            >
-              {selectedClient ? (
-                <span>
-                  {selectedClient.name}
-                  {selectedClient.company ? ` — ${selectedClient.company}` : ""}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">Buscar ou selecionar cliente...</span>
-              )}
-              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-            <div className="flex items-center border-b px-3">
-              <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-              <Input
-                placeholder="Buscar cliente..."
-                value={clientSearchQuery}
-                onChange={(e) => setClientSearchQuery(e.target.value)}
-                className="h-11 border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                autoFocus
-              />
-            </div>
-            <div className="max-h-[300px] overflow-y-auto p-1">
-              {!hasSearch ? (
-                <div className="py-6 text-center text-sm text-muted-foreground">
-                  Digite para buscar um cliente
-                </div>
-              ) : (
-                <>
-                  {showCreateOption && (
-                    <button
-                      type="button"
-                      onClick={() => setCreateClientDialogOpen(true)}
-                      className={cn(
-                        "relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground",
-                        "text-primary"
-                      )}
-                    >
-                      <Plus className="mr-2 h-4 w-4 shrink-0" />
-                      Criar novo cliente: {clientSearchQuery.trim()}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onChange({ clientId: null });
-                      setClientSearchOpen(false);
-                      setClientSearchQuery("");
-                    }}
-                    className={cn(
-                      "relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-                    )}
-                  >
-                    <Check className={cn("mr-2 h-4 w-4 shrink-0", !config.clientId ? "opacity-100" : "opacity-0")} />
-                    Nenhum
-                  </button>
-                  {filteredClients.length === 0 && hasSearch && !showCreateOption && (
-                    <div className="py-2 text-center text-sm text-muted-foreground">
-                      Nenhum cliente encontrado.
-                    </div>
-                  )}
-                  {filteredClients.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => {
-                        onChange({ clientId: c.id });
-                        setClientSearchOpen(false);
-                        setClientSearchQuery("");
-                      }}
-                      className={cn(
-                        "relative flex w-full cursor-pointer select-none items-start rounded-sm px-2 py-2 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-                      )}
-                    >
-                      <Check
-                        className={cn(
-                          "mr-2 mt-0.5 h-4 w-4 shrink-0",
-                          config.clientId === c.id ? "opacity-100" : "opacity-0"
-                        )}
-                      />
-                      <div className="flex flex-col min-w-0">
-                        <span>{c.name}</span>
-                        {(c.company || c.email) && (
-                          <span className="text-xs text-muted-foreground">
-                            {[c.company, c.email].filter(Boolean).join(" • ")}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
-        <AddClientDialog
-          open={createClientDialogOpen}
-          onOpenChange={setCreateClientDialogOpen}
-          initialName={clientSearchQuery.trim()}
-          onSuccess={handleClientCreated}
-        />
-      </div>
+      <ClientSearchCombobox
+        id="wizard-client"
+        value={config.clientId}
+        onChange={(clientId) => onChange({ clientId })}
+        clients={clients}
+        remoteSearch={false}
+        onClientCreated={onClientCreated}
+        label="Cliente (opcional)"
+        placeholderTrigger="Buscar ou selecionar cliente..."
+      />
 
       <div className="space-y-2">
         <Label htmlFor="wizard-description">Descrição (opcional)</Label>

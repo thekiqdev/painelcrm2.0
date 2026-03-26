@@ -5,7 +5,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { processNextBatch } from '../services/recurringBillingJobService.js';
+import { processNextBatch, processChildItemDueInvoices } from '../services/recurringBillingJobService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../../../..');
@@ -15,8 +15,12 @@ dotenv.config();
 const workerId = process.env.RECURRING_WORKER_ID ?? `worker-${process.pid}`;
 
 async function main() {
+  const child = await processChildItemDueInvoices();
   const result = await processNextBatch(workerId);
-  console.log('[BILLING]', JSON.stringify({ type: 'worker_exit', workerId, ...result, ts: new Date().toISOString() }));
+  console.log(
+    '[BILLING]',
+    JSON.stringify({ type: 'worker_exit', workerId, child_invoices_e2: child, ...result, ts: new Date().toISOString() })
+  );
 }
 
 main().catch((e) => {

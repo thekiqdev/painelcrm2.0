@@ -19,6 +19,7 @@ function pathToModule(pathname: string): string | null {
   if (pathname.startsWith('/proposals')) return 'proposals';
   if (pathname.startsWith('/contracts')) return 'contracts';
   if (pathname.startsWith('/billing')) return 'billing';
+  if (pathname.startsWith('/customer-invoices')) return 'billing';
   if (pathname.startsWith('/finance')) return 'finance';
   if (pathname.startsWith('/settings')) return 'settings';
   return null;

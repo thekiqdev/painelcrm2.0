@@ -40,6 +40,12 @@ interface FinancialData {
     date: string;
     status: string;
   }[];
+  /** Receitas de cobrança (customer_invoices pagas) para o relatório unificado. */
+  billingReceipts?: {
+    id: string;
+    amount: number;
+    date: string;
+  }[];
   expenses: {
     id: string;
     description: string;
@@ -70,6 +76,13 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
       const date = new Date(invoice.date);
       const monthIndex = date.getMonth();
       monthlyData[monthIndex].income += invoice.amount;
+    });
+
+    // Process billing receipts (customer_invoices paid)
+    (data.billingReceipts ?? []).forEach(receipt => {
+      const date = new Date(receipt.date);
+      const monthIndex = date.getMonth();
+      monthlyData[monthIndex].income += receipt.amount;
     });
     
     // Process expenses
@@ -128,8 +141,10 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
   const categoryData = processCategoryData();
   const statusData = processStatusData();
   
-  // Calculate total metrics
-  const totalIncome = data.invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
+  // Calculate total metrics (receitas = faturas do finance + cobranças pagas)
+  const invoicesTotal = data.invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
+  const billingReceiptsTotal = (data.billingReceipts ?? []).reduce((sum, r) => sum + r.amount, 0);
+  const totalIncome = invoicesTotal + billingReceiptsTotal;
   const totalExpenses = data.expenses.reduce((sum, expense) => sum + expense.amount, 0);
   const totalProfit = totalIncome - totalExpenses;
   
@@ -149,7 +164,9 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">
-              Total de {data.invoices.length} faturas
+              {data.billingReceipts?.length
+                ? `Total de ${data.invoices.length} faturas e ${data.billingReceipts.length} cobranças pagas`
+                : `Total de ${data.invoices.length} faturas`}
             </p>
           </CardContent>
         </Card>

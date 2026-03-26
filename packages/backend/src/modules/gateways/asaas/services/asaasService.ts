@@ -10,12 +10,15 @@ import type {
   CreateChargeInput,
   CreateChargeResult,
   PaymentResult,
+  PayWithCreditCardInput,
+  PayWithCreditCardResult,
 } from '../../../payments/paymentGatewayTypes.js';
 import { logGatewayOperation } from '../../../payments/gatewayLogger.js';
 import { getPaymentCustomer, createPaymentCustomer } from '../../../../services/paymentCustomersService.js';
 import { activatePlanFromBilling } from '../../../../services/subscriptionService.js';
-import { updateInvoiceStatus } from '../../../../services/invoiceService.js';
 import { pool } from '../../../../utils/db.js';
+import { isValidCpfOrCnpj, onlyDigits } from '../../../../utils/cpfCnpj.js';
+import { handleWebhook } from '../../../payments/webhook/webhookCore.js';
 import * as asaasClient from '../client/asaasClient.js';
 import * as asaasMapper from '../mappers/asaasMapper.js';
 import type { AsaasPaymentRequest } from '../asaasTypes.js';
@@ -117,11 +120,27 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
           }
         }
 
+        let bankSlipDigitableLine: string | undefined;
+        if (body.billingType === 'BOLETO') {
+          const fromPost = (res as { identificationField?: string }).identificationField?.trim();
+          if (fromPost) {
+            bankSlipDigitableLine = fromPost;
+          } else {
+            try {
+              const idf = await asaasClient.getIdentificationField(res.id, config);
+              bankSlipDigitableLine = idf?.identificationField?.trim() || undefined;
+            } catch (e) {
+              console.warn('[asaasService] getIdentificationField failed', res.id, e);
+            }
+          }
+        }
+
         return {
           paymentId: res.id,
           status: res.status ?? 'PENDING',
           invoiceUrl: res.invoiceUrl,
           bankSlipUrl: res.bankSlipUrl,
+          bankSlipDigitableLine,
           pixQrCode: pixQrCode ?? (res as { pixQrCode?: string }).pixQrCode,
           pixCopyPaste: pixCopyPaste ?? (res as { pixCopyPaste?: string }).pixCopyPaste,
         };
@@ -143,6 +162,63 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
     getCharge(paymentId: string) {
       return this.getPayment!(paymentId);
     },
+    async cancelPayment(paymentId: string): Promise<void> {
+      return withLog('cancelPayment', undefined, async () => {
+        await asaasClient.deletePayment(paymentId, config);
+      });
+    },
+    async payWithCreditCard(input: PayWithCreditCardInput): Promise<PayWithCreditCardResult> {
+      const start = Date.now();
+      try {
+        const res = await asaasClient.payWithCreditCard(
+          input.paymentId,
+          {
+            creditCard: {
+              holderName: input.creditCard.holderName.trim(),
+              number: input.creditCard.number.replace(/\D/g, ''),
+              expiryMonth: input.creditCard.expiryMonth.trim(),
+              expiryYear: input.creditCard.expiryYear.trim(),
+              ccv: input.creditCard.ccv.trim(),
+            },
+            creditCardHolderInfo: {
+              name: input.creditCardHolderInfo.name.trim(),
+              email: input.creditCardHolderInfo.email.trim(),
+              cpfCnpj: input.creditCardHolderInfo.cpfCnpj.replace(/\D/g, ''),
+              postalCode: input.creditCardHolderInfo.postalCode.replace(/\D/g, ''),
+              addressNumber: input.creditCardHolderInfo.addressNumber.trim(),
+              addressComplement: input.creditCardHolderInfo.addressComplement ?? null,
+              phone: input.creditCardHolderInfo.phone.replace(/\D/g, ''),
+              mobilePhone: input.creditCardHolderInfo.mobilePhone?.replace(/\D/g, '') ?? null,
+            },
+          },
+          config
+        );
+        const paidAt =
+          res.paymentDate ?? (res as { clientPaymentDate?: string }).clientPaymentDate ?? null;
+        logGatewayOperation({
+          gateway: GATEWAY_KEY,
+          tenantId: undefined,
+          operation: 'payWithCreditCard',
+          durationMs: Date.now() - start,
+          status: 'success',
+        });
+        return {
+          paymentId: res.id,
+          status: res.status ?? '',
+          paidAt: paidAt ?? undefined,
+        };
+      } catch (e: unknown) {
+        logGatewayOperation({
+          gateway: GATEWAY_KEY,
+          tenantId: undefined,
+          operation: 'payWithCreditCard',
+          durationMs: Date.now() - start,
+          status: 'error',
+          error: 'Asaas payWithCreditCard failed',
+        });
+        throw e;
+      }
+    },
   };
 }
 
@@ -151,20 +227,49 @@ export function getAsaasGateway(config?: AsaasConfig | null): PaymentGateway | n
   return buildGateway(config);
 }
 
+function normalizeTenantCpfDigits(cpfCnpj: string | null | undefined): string | null {
+  const d = onlyDigits(cpfCnpj ?? '');
+  if (d.length !== 11 && d.length !== 14) return null;
+  if (!isValidCpfOrCnpj(d)) return null;
+  return d;
+}
+
+/**
+ * Se o tenant tem CPF/CNPJ válido e o customer remoto está vazio ou diverge, atualiza no Asaas.
+ */
+async function syncTenantCpfToAsaasCustomerIfNeeded(
+  customerId: string,
+  tenantCpfDigits: string | null,
+  config?: AsaasConfig | null
+): Promise<void> {
+  if (!tenantCpfDigits) return;
+  const remote = await asaasClient.getCustomer(customerId, config);
+  if (!remote?.email) return;
+  const remoteDigits = onlyDigits((remote.cpfCnpj as string | undefined) ?? '');
+  if (remoteDigits === tenantCpfDigits) return;
+
+  const name = String(remote.name ?? '').trim() || 'Cliente';
+  const email = String(remote.email).trim();
+  const payload = asaasMapper.tenantToAsaasCustomer({
+    name,
+    email,
+    cpfCnpj: tenantCpfDigits,
+    phone: remote.phone != null ? String(remote.phone) : undefined,
+  });
+  await asaasClient.updateCustomer(customerId, payload, config);
+}
+
 /**
  * Garante que o tenant tenha um customer no Asaas (Fase 4: usa payment_customers).
- * 1) Busca em payment_customers; se existir, retorna gateway_customer_id.
- * 2) Senão, cria customer no Asaas com externalReference = tenant_id, persiste em payment_customers e retorna.
+ * 1) Carrega tenant (fonte de verdade do CPF/CNPJ).
+ * 2) Busca payment_customers; se existir, sincroniza documento no Asaas se necessário e retorna.
+ * 3) Se houver asaas_customer_id na tabela tenants, persiste vínculo, sincroniza CPF e retorna.
+ * 4) Senão, cria customer no Asaas (sempre com cpf/phone do tenant quando houver billing_email ou não).
  */
 export async function ensureCustomerForTenant(
   tenantId: string,
   config?: AsaasConfig | null
 ): Promise<string> {
-  const existing = await getPaymentCustomer(tenantId, GATEWAY_KEY);
-  if (existing) {
-    return existing.gateway_customer_id;
-  }
-
   const tenantRow = await pool.query<{
     id: string;
     name: string;
@@ -181,22 +286,28 @@ export async function ensureCustomerForTenant(
     throw new Error('Tenant não encontrado');
   }
   const tenant = tenantRow.rows[0];
+  const tenantCpfDigits = normalizeTenantCpfDigits(tenant.cpf_cnpj);
+
+  const existing = await getPaymentCustomer(tenantId, GATEWAY_KEY);
+  if (existing) {
+    await syncTenantCpfToAsaasCustomerIfNeeded(existing.gateway_customer_id, tenantCpfDigits, config);
+    return existing.gateway_customer_id;
+  }
 
   if (tenant.asaas_customer_id) {
     await createPaymentCustomer(tenantId, GATEWAY_KEY, tenant.asaas_customer_id, tenantId);
+    await syncTenantCpfToAsaasCustomerIfNeeded(tenant.asaas_customer_id, tenantCpfDigits, config);
     return tenant.asaas_customer_id;
   }
 
   let email: string;
   let customerName: string;
-  let cpfCnpj: string | null = null;
-  let phone: string | null = null;
+  let cpfCnpj: string | null = tenantCpfDigits;
+  let phone: string | null = tenant.billing_phone ?? null;
 
   if (tenant.billing_email) {
     email = tenant.billing_email;
     customerName = (tenant.responsible_name || tenant.name).trim();
-    cpfCnpj = tenant.cpf_cnpj ?? null;
-    phone = tenant.billing_phone ?? null;
   } else {
     const userRow = await pool.query<{ email: string }>(
       `SELECT u.email FROM users u WHERE u.tenant_id = $1 ORDER BY u.created_at ASC LIMIT 1`,
@@ -257,91 +368,19 @@ export async function testConnection(config?: AsaasConfig | null): Promise<void>
 }
 
 /**
- * Processa evento de webhook: atualiza tenant_billing (asaas_status, status, paid_at).
- * Fase 5: aceita tenantIdFromPayload (externalReference do payload) para validar ou resolver tenant.
+ * Processa evento de webhook: delega para handleWebhook (webhookCore).
+ * Mantido para compatibilidade com quem ainda chama handlePaymentEvent.
  */
 export async function handlePaymentEvent(params: {
   eventType: string;
   asaasPaymentId: string;
   payload: unknown;
-  /** externalReference do payload (ex.: tenant_id) para validar ou resolver tenant. */
   tenantIdFromPayload?: string | null;
 }): Promise<void> {
-  const { asaasPaymentId, payload, tenantIdFromPayload } = params;
-  const payloadObj = payload as Record<string, unknown>;
-  const payment = payloadObj?.payment as Record<string, unknown> | undefined;
-  const asaasStatus =
-    (payment && typeof payment.status === 'string' ? payment.status : null) ||
-    params.eventType;
-
-  console.log('[ASAAS] buscando billing por paymentId:', asaasPaymentId);
-
-  const billingRow = await pool.query<{
-    id: string;
-    tenant_id: string;
-    plan_id: string;
-    status: string;
-  }>(
-    `SELECT id, tenant_id, plan_id, status FROM tenant_billing
-     WHERE gateway = 'asaas' AND asaas_payment_id = $1`,
-    [asaasPaymentId]
-  );
-
-  if (billingRow.rows.length === 0) {
-    console.log('[ASAAS] billing NÃO encontrado para paymentId:', asaasPaymentId);
-    return;
+  const result = await handleWebhook(GATEWAY_KEY, params.payload);
+  if (result.status !== 200) {
+    throw new Error(result.body?.error ?? 'handleWebhook falhou');
   }
-
-  const row = billingRow.rows[0];
-  console.log('[ASAAS] billing encontrado:', { id: row.id, tenant_id: row.tenant_id, plan_id: row.plan_id, status: row.status });
-
-  if (row.status === 'paid') {
-    return;
-  }
-
-  if (tenantIdFromPayload && row.tenant_id !== tenantIdFromPayload) {
-    console.warn(
-      `[PAYMENT_GATEWAY] asaas webhook: tenant_id do billing (${row.tenant_id}) difere do externalReference (${tenantIdFromPayload})`
-    );
-  }
-  const isPaid =
-    params.eventType === 'PAYMENT_RECEIVED' ||
-    params.eventType === 'PAYMENT_CONFIRMED' ||
-    asaasStatus === 'RECEIVED' ||
-    asaasStatus === 'CONFIRMED';
-  const isOverdue = params.eventType === 'PAYMENT_OVERDUE' || asaasStatus === 'OVERDUE';
-
-  const asaasBillingType = payment && typeof payment.billingType === 'string' ? payment.billingType : null;
-  const paymentMethod = mapAsaasBillingTypeToPaymentMethod(asaasBillingType);
-
-  if (isPaid) {
-    await updateInvoiceStatus(row.id, 'paid', new Date(), paymentMethod);
-    await pool.query(
-      `UPDATE tenant_billing SET asaas_status = $1, updated_at = now() WHERE id = $2`,
-      [asaasStatus, row.id]
-    );
-    console.log('[ASAAS] ativando plano do tenant via billing:', row.id);
-    await activatePlanFromBilling(row.id);
-  } else if (isOverdue) {
-    await pool.query(
-      `UPDATE tenant_billing SET asaas_status = $1, status = 'overdue', updated_at = now() WHERE id = $2`,
-      [asaasStatus, row.id]
-    );
-  } else {
-    await pool.query(
-      `UPDATE tenant_billing SET asaas_status = $1, updated_at = now() WHERE id = $2`,
-      [asaasStatus, row.id]
-    );
-  }
-}
-
-function mapAsaasBillingTypeToPaymentMethod(asaasBillingType: string | null): 'PIX' | 'BOLETO' | 'CREDIT_CARD' | null {
-  if (!asaasBillingType) return null;
-  const t = asaasBillingType.toUpperCase();
-  if (t === 'PIX') return 'PIX';
-  if (t === 'BOLETO') return 'BOLETO';
-  if (t === 'CREDIT_CARD' || t === 'DEBIT_CARD') return 'CREDIT_CARD';
-  return null;
 }
 
 /**

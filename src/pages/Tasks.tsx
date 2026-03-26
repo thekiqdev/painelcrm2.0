@@ -23,6 +23,7 @@ import { UnifiedTaskCard, TaskSummaryPopover, TaskFullView } from "@/components/
 import { globalTaskToUnified, type UnifiedTask } from "@/lib/taskUnified";
 import { SystemRichEditor, SystemRichEditorReadOnly } from "@/components/editor";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
 
 const TASKS_QUERY_KEY = ["tasks", "list"] as const;
 
@@ -111,7 +112,17 @@ const Tasks = () => {
     }
 
     try {
-      const selectedClient = clients.find(c => c.id === formClient);
+      let clientId: string | undefined;
+      let clientName: string | undefined;
+      if (formClient) {
+        clientId = formClient;
+        try {
+          const c = await clientsService.getClientById(formClient);
+          clientName = c?.name || c?.company || undefined;
+        } catch {
+          clientName = undefined;
+        }
+      }
       const newTask = await tasksService.createTask({
         title: formTitle,
         description: formDescription || undefined,
@@ -119,8 +130,8 @@ const Tasks = () => {
         time: formTime || undefined,
         status: "pending",
         priority: formPriority,
-        clientId: selectedClient?.id || undefined,
-        client: selectedClient?.name || formClient || undefined,
+        clientId,
+        client: clientName,
         deal: formDeal || undefined,
         assignee: formAssignee || undefined,
         checklist: [],
@@ -477,19 +488,14 @@ const closeTaskDetail = () => {
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="client">Cliente (Opcional)</Label>
-                          <Select value={formClient} onValueChange={setFormClient}>
-                            <SelectTrigger id="client">
-                              <SelectValue placeholder="Selecione um cliente" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {clients.map(client => (
-                                <SelectItem key={client.id} value={client.id}>
-                                  {client.name} {client.company ? `(${client.company})` : ""}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <ClientSearchCombobox
+                            id="task-form-client"
+                            label="Cliente (opcional)"
+                            placeholderTrigger="Buscar cliente..."
+                            remoteSearch
+                            value={formClient || null}
+                            onChange={(id) => setFormClient(id ?? "")}
+                          />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="deal">Negócio (Opcional)</Label>

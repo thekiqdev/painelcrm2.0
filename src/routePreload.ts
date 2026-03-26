@@ -13,7 +13,11 @@ export const routePreload = {
   products: () => import("./pages/Products"),
   proposals: () => import("./pages/Proposals"),
   contracts: () => import("./pages/Contracts"),
-  billing: () => import("./pages/Billing"),
+  /** /billing redireciona para /customer-invoices; preload da página de faturas. */
+  billing: () => import("./pages/CustomerInvoices"),
+  customerInvoices: () => import("./pages/CustomerInvoices"),
+  customerInvoiceDetail: () => import("./pages/CustomerInvoiceDetail"),
+  customerCharges: () => import("./pages/CustomerCharges"),
   finance: () => import("./pages/Finance"),
   settings: () => import("./pages/Settings"),
   chat: () => import("./pages/Chat"),

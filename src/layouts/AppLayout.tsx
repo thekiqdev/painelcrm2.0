@@ -260,14 +260,24 @@ const Nav = () => {
           <SidebarGroupContent>
             <SidebarMenu>
               {show(hasInvoices, 'billing') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
-                    <NavLink to="/billing" className={getNavClass} onMouseEnter={() => routePreload.billing()}>
-                      <DollarSign className="mr-2 h-5 w-5" />
-                      {!collapsed && <span>Faturamento</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/customer-invoices" className={getNavClass} onMouseEnter={() => routePreload.customerInvoices()}>
+                        <FileText className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Faturas de clientes</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/customer-charges" className={getNavClass} onMouseEnter={() => routePreload.customerCharges()}>
+                        <CreditCard className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Cobranças</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
               )}
               {show(hasExpenses, 'finance') && (
                 <SidebarMenuItem>

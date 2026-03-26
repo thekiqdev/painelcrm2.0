@@ -371,7 +371,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
 
     // Get user with profile and is_super_admin
     const userResult = await pool.query(
-      `SELECT u.id, u.email, u.whatsapp_number, u.created_at, COALESCE(u.is_super_admin, false) AS is_super_admin,
+      `SELECT u.id, u.email, u.whatsapp_number, u.created_at, u.tenant_id, COALESCE(u.is_super_admin, false) AS is_super_admin,
               p.first_name, p.last_name, p.company_name, 
               p.whatsapp_connected, p.registration_complete
        FROM users u
@@ -443,6 +443,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       whatsapp_connected: user.whatsapp_connected,
       registration_complete: user.registration_complete,
       created_at: user.created_at,
+      tenant_id: user.tenant_id ?? null,
       default_profile_id: defaultProfileId,
       is_super_admin: user.is_super_admin === true,
       can_manage_plan: canManagePlan,
