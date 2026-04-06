@@ -36,7 +36,8 @@ import { getInvoiceById } from '../services/invoiceService.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import { reassignTenantUserDataAndDeleteUser } from '../services/tenantUserRemovalService.js';
 
-async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
+/** Primeiro usuário do tenant (`users.created_at`); usado em rotas comerciais (plano, cobrança interna). */
+export async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
   const userId = req.userId;
   if (!userId) return null;
   const r = await pool.query(

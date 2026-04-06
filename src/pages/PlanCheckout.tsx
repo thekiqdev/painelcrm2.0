@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -119,6 +119,36 @@ export interface SeatAddonCheckoutQuote {
   billing_interval: string;
 }
 
+/** Resposta de POST /api/me/tenant/seat-addon/preview (campos usados no mapeamento para quote). */
+interface SeatAddonPreviewResponse {
+  current_contracted: number;
+  new_total: number;
+  billing_interval: string;
+  breakdown: {
+    period_start: string;
+    period_end: string;
+    remaining_period_days: number;
+    price_per_user_full_period_cents: number;
+    additional_seats: number;
+    amount_cents: number;
+  };
+}
+
+function seatAddonPreviewToQuote(fresh: SeatAddonPreviewResponse): SeatAddonCheckoutQuote {
+  return {
+    current_contracted: fresh.current_contracted,
+    new_total: fresh.new_total,
+    additional_seats: fresh.breakdown.additional_seats,
+    price_per_user_full_period_cents: fresh.breakdown.price_per_user_full_period_cents,
+    remaining_period_days: fresh.breakdown.remaining_period_days,
+    amount_cents_now: fresh.breakdown.amount_cents,
+    new_recurring_period_cents: fresh.new_total * fresh.breakdown.price_per_user_full_period_cents,
+    period_start: fresh.breakdown.period_start,
+    period_end: fresh.breakdown.period_end,
+    billing_interval: fresh.billing_interval,
+  };
+}
+
 interface CheckoutLocationState {
   plan: PlanCheckoutPlan;
   billingInterval: string;
@@ -158,6 +188,10 @@ interface PurchaseResult {
   pix_copy_paste?: string;
   /** Segredo para POST /api/billing/:id/pay-with-card quando o checkout ainda não tem JWT. */
   inline_pay_token?: string;
+  /** Metadata da fatura seat_addon (GET plan-checkout-pending) para recalcular preview sem state da navegação. */
+  seat_addon_additional_seats?: number;
+  /** Motivo da cobrança no gateway (ex.: seat_addon). */
+  billing_reason?: string;
 }
 
 interface PlanCheckoutPendingApi {
@@ -318,6 +352,12 @@ const STEP_DEFS = [
   { id: 4, title: 'Pagamento', icon: CreditCard },
 ];
 
+/** Stepper dedicado ao modo assentos adicionais (sem Plano / Empresa). */
+const SEAT_ADDON_STEP_DEFS = [
+  { id: 3, title: 'Resumo de assentos', icon: Users },
+  { id: 4, title: 'Pagamento', icon: CreditCard },
+];
+
 function persistCheckout(ctx: PersistedCheckout | null) {
   try {
     if (!ctx?.plan?.id) {
@@ -375,6 +415,14 @@ function toastFromPlanPurchaseCode(code: string | undefined, fallback: string) {
       return;
     case 'ALREADY_AUTHENTICATED':
       toast.error('Você já está logado. Use o fluxo de pagamento no painel.');
+      return;
+    case 'CHECKOUT_TENANT_IDENTITY_MISMATCH':
+      toast.error(
+        'Os dados informados não correspondem a esta conta. Confirme o e-mail e o documento ou faça login.'
+      );
+      return;
+    case 'CHECKOUT_PREPARE_PAYMENT_FAILED':
+      toast.error('Não foi possível preparar este pagamento. Atualize a página ou tente outro método.');
       return;
     default:
       toast.error(fallback);
@@ -440,15 +488,29 @@ export default function PlanCheckout() {
   const [seatAddonQuote, setSeatAddonQuote] = useState<SeatAddonCheckoutQuote | null>(
     () => state?.seatAddonQuote ?? null
   );
+  const [seatAddonPayPrimingLoading, setSeatAddonPayPrimingLoading] = useState(false);
 
   /** Upgrade logado: usuário autenticado no CRM. Evita usar só token (resíduo) sem user carregado. */
   const isCheckoutUpgrade = !authLoading && !!user?.id;
 
-  /** Assentos adicionais: logado + ?mode=seat_addon + billing_id (state ou query, p.ex. após refresh). */
-  const seatAddonFlowActive =
-    isCheckoutUpgrade &&
-    isSeatAddonMode &&
-    !!(state?.focusBillingId?.trim() || seatAddonBillingIdQuery?.trim());
+  /**
+   * Contexto de cobrança de assentos (URL ou pending carregado). Independe de `authLoading`, para não exibir
+   * `amountCents` do plano cheio nem deixar o hydrate genérico sobrescrever a fatura de assentos.
+   */
+  const seatAddonBillingContextActive =
+    !!(state?.focusBillingId?.trim() || seatAddonBillingIdQuery?.trim()) &&
+    (isSeatAddonMode || result?.billing_reason === 'seat_addon');
+
+  /** Fluxo assentos com sessão pronta: preparar pagamento, preview e ações do hub. */
+  const seatAddonFlowActive = isCheckoutUpgrade && seatAddonBillingContextActive;
+
+  /**
+   * Valor a pagar agora no seat_addon: pró-rata do incremental — nunca o preço cheio do plano (`amountCents`).
+   */
+  const seatAddonPayNowCents = useMemo(() => {
+    if (!seatAddonBillingContextActive) return null;
+    return seatAddonQuote?.amount_cents_now ?? result?.amount_cents ?? null;
+  }, [seatAddonBillingContextActive, seatAddonQuote?.amount_cents_now, result?.amount_cents]);
 
   /** Após pagamento confirmado: /auth/me precisa refletir tenant ativo (evita requires_checkout_resume preso no cliente). */
   const flushCheckoutSessionAfterPaid = useCallback(async () => {
@@ -604,9 +666,32 @@ export default function PlanCheckout() {
       let bi = state?.billingInterval ?? 'monthly';
       let uc = state?.usersCount ?? 1;
 
-      /** Cobrança focada (plano ou seat_addon) sem `state.plan` (ex.: refresh com só `?billing_id=`). */
-      if (!planLocal && fid) {
-        const ctxRes = await apiClient.get<CheckoutContextResponse>('/api/me/tenant/checkout-context');
+      const pendingRes = await apiClient.get<PlanCheckoutPendingApi>(
+        `/api/me/tenant/plan-checkout-pending?billing_id=${encodeURIComponent(fid)}`
+      );
+      if (cancelled) return;
+      if (pendingRes.error || !pendingRes.data?.pending) {
+        toast.error(
+          pendingRes.error ||
+            'Não foi possível abrir esta cobrança no checkout. Use o fluxo principal ou o pagamento na central Meu plano.'
+        );
+        meuPlanoBillingFocusHandledRef.current = false;
+        return;
+      }
+      const p = pendingRes.data.pending;
+      const isSeatBilling = p.billing_reason === 'seat_addon';
+      const seatLikeFlow = isSeatAddonMode || isSeatBilling;
+
+      /**
+       * Assentos: sempre busca checkout-context com purpose=seat_addon (empresa/CPF). Demais focos: contexto genérico
+       * só se ainda não há plano (ex.: refresh). Ordem: pending antes de setStep — evita um frame com valor “plano cheio”.
+       */
+      if (fid && (seatLikeFlow || !planLocal)) {
+        const ctxRes = await apiClient.get<CheckoutContextResponse>(
+          seatLikeFlow
+            ? '/api/me/tenant/checkout-context?purpose=seat_addon'
+            : '/api/me/tenant/checkout-context'
+        );
         if (cancelled) return;
         if (ctxRes.error || !ctxRes.data) {
           toast.error(ctxRes.error || 'Não foi possível carregar os dados da conta.');
@@ -617,21 +702,6 @@ export default function PlanCheckout() {
         const resolvedInterval = BILLING_INTERVALS.some((i) => i.key === d.billing_interval)
           ? d.billing_interval!
           : 'monthly';
-        planLocal = {
-          id: d.plan.id,
-          name: d.plan.name,
-          plan_type: d.plan.plan_type,
-          price_cents: d.plan.price_cents,
-          interval_prices: d.plan.interval_prices,
-          description: d.plan.description,
-          benefits: d.plan.benefits,
-          trial_days: d.plan.trial_days,
-        };
-        bi = resolvedInterval;
-        uc = Math.max(1, d.users_count || 1);
-        setPlan(planLocal);
-        setBillingInterval(bi);
-        setUsersCount(uc);
         setCompany({
           company_name: d.company_name,
           email: d.email,
@@ -642,6 +712,24 @@ export default function PlanCheckout() {
         const cpfDigits = String(d.cpf_cnpj ?? '').replace(/\D/g, '');
         setBillingCpf(cpfDigits ? formatCpfCnpjDigits(cpfDigits) : '');
         setResumeBillingDocUnlocked(!cpfDigits || !isValidCpfOrCnpj(cpfDigits));
+
+        if (!planLocal) {
+          planLocal = {
+            id: d.plan.id,
+            name: d.plan.name,
+            plan_type: d.plan.plan_type,
+            price_cents: d.plan.price_cents,
+            interval_prices: d.plan.interval_prices,
+            description: d.plan.description,
+            benefits: d.plan.benefits,
+            trial_days: d.plan.trial_days,
+          };
+          bi = resolvedInterval;
+          uc = Math.max(1, d.users_count || 1);
+          setPlan(planLocal);
+          setBillingInterval(bi);
+          setUsersCount(uc);
+        }
       }
 
       if (!planLocal || cancelled) return;
@@ -651,25 +739,14 @@ export default function PlanCheckout() {
       setPlan(planLocal);
       setBillingInterval(bi);
       setUsersCount(Math.max(1, uc));
-      setEnteredWithPlanFromContext(true);
-      setStep(isSeatAddonMode ? 3 : 4);
-      navigate('.', { replace: true, state: {} });
-
-      const res = await apiClient.get<PlanCheckoutPendingApi>(
-        `/api/me/tenant/plan-checkout-pending?billing_id=${encodeURIComponent(fid)}`
-      );
-      if (cancelled) return;
-      if (res.error || !res.data?.pending) {
-        toast.error(
-          res.error ||
-            'Não foi possível abrir esta cobrança no checkout. Use o fluxo principal ou o pagamento na central Meu plano.'
-        );
-        setStep(isSeatAddonMode ? 3 : 2);
-        blockAutoHydrateRef.current = false;
-        meuPlanoBillingFocusHandledRef.current = false;
-        return;
+      setEnteredWithPlanFromContext(!seatLikeFlow);
+      setStep(seatLikeFlow ? 3 : 4);
+      if (isSeatBilling && !isSeatAddonMode) {
+        navigate(`/checkout?mode=seat_addon&billing_id=${encodeURIComponent(fid)}`, { replace: true, state: {} });
+      } else {
+        navigate('.', { replace: true, state: {} });
       }
-      const p = res.data.pending;
+
       setResult({
         ...p,
         tenant_id: p.tenant_id || user.tenant_id || '',
@@ -683,9 +760,9 @@ export default function PlanCheckout() {
         billingInterval: bi,
         usersCount: Math.max(1, uc),
         focusBillingId: fid,
-        checkoutMode: isSeatAddonMode ? 'seat_addon' : undefined,
+        checkoutMode: seatLikeFlow ? 'seat_addon' : undefined,
         seatAddonQuote: quoteFromNav ?? undefined,
-        wizard_step: isSeatAddonMode ? 3 : 4,
+        wizard_step: seatLikeFlow ? 3 : 4,
       });
     })();
 
@@ -710,8 +787,8 @@ export default function PlanCheckout() {
   /** Logado: reapresenta cobrança já gerada (GET) sem novo POST — alinhado ao fluxo maduro de faturas. */
   useEffect(() => {
     if (step !== 4) return;
-    /** seat_addon usa sempre billing_id da URL/contexto; não misturar com pending genérico por intervalo. */
-    if (seatAddonFlowActive) return;
+    /** seat_addon: nunca hidratar pelo pending genérico (intervalo/usuários) — sobrescreveria a fatura correta. */
+    if (seatAddonBillingContextActive) return;
     if (!plan?.id || !user?.tenant_id) return;
     if (result) return;
     if (loading) return;
@@ -754,7 +831,7 @@ export default function PlanCheckout() {
     isResumeMode,
     resumeContextLoading,
     resumePaymentOnly,
-    seatAddonFlowActive,
+    seatAddonBillingContextActive,
   ]);
 
   useEffect(() => {
@@ -877,8 +954,12 @@ export default function PlanCheckout() {
     const checkStatus = async () => {
       const res = await apiClient.get<BillingStatusResponse>(`/api/billing/${billingId}/status`);
       if (res.error || !res.data) return;
-      const { status, tenant_status } = res.data;
-      if (status === 'paid' || tenant_status === 'active') {
+      const { status } = res.data;
+      /**
+       * NÃO usar `tenant_status === 'active'`: em `seat_addon` o tenant já está ativo com a cobrança ainda em aberto.
+       * O backend envia `tenants.status` no JOIN; isso disparava confirmação falsa e redirect (dashboard/meu-plano).
+       */
+      if (status === 'paid') {
         await onPaymentConfirmed();
       }
     };
@@ -902,12 +983,22 @@ export default function PlanCheckout() {
 
   useEffect(() => {
     if (!paymentConfirmed) return;
-    const target = seatAddonFlowActive ? '/meu-plano' : '/dashboard';
+    const paidSeatAddonContext =
+      result?.billing_reason === 'seat_addon' ||
+      (isSeatAddonMode && !!seatAddonBillingIdQuery?.trim());
+    const target = seatAddonFlowActive || paidSeatAddonContext ? '/meu-plano' : '/dashboard';
     const t = setTimeout(() => {
       navigate(target, { replace: true });
     }, 1500);
     return () => clearTimeout(t);
-  }, [paymentConfirmed, navigate, seatAddonFlowActive]);
+  }, [
+    paymentConfirmed,
+    navigate,
+    seatAddonFlowActive,
+    result?.billing_reason,
+    isSeatAddonMode,
+    seatAddonBillingIdQuery,
+  ]);
 
   const validateStep2 = (): boolean => {
     if (isCheckoutUpgrade) return true;
@@ -989,7 +1080,7 @@ export default function PlanCheckout() {
     !isCheckoutUpgrade &&
     !resumePaymentOnly &&
     !isResumeMode &&
-    !seatAddonFlowActive &&
+    !seatAddonBillingContextActive &&
     plan != null &&
     planHasCheckoutTrial(plan);
 
@@ -1038,7 +1129,7 @@ export default function PlanCheckout() {
       return;
     }
     if (seatAddonFlowActive && step === 4 && !paymentConfirmed) {
-      setStep(3);
+      navigate('/meu-plano', { replace: true });
       return;
     }
     if (seatAddonFlowActive && step === 3) {
@@ -1067,6 +1158,49 @@ export default function PlanCheckout() {
   const hasChargeReady = Boolean(result?.billing_id);
 
   /**
+   * seat_addon: preview fresco como fonte de verdade antes de qualquer ação que conclui/concretiza pagamento
+   * (troca de método via plan-purchase, cartão). Cobrança existente deve bater com o pró-rata atual (±2 centavos).
+   */
+  const ensureFreshSeatAddonPreviewBeforePay = useCallback(async (): Promise<boolean> => {
+    const additional =
+      seatAddonQuote?.additional_seats ?? result?.seat_addon_additional_seats ?? null;
+    if (additional == null || additional < 1) {
+      toast.error(
+        'Não foi possível identificar a quantidade de assentos desta cobrança. Volte ao Meu plano e inicie o fluxo novamente.'
+      );
+      return false;
+    }
+    const res = await apiClient.post<SeatAddonPreviewResponse>('/api/me/tenant/seat-addon/preview', {
+      additional_seats: additional,
+    });
+    if (res.error || !res.data) {
+      toast.error(res.error ?? 'Não foi possível recalcular o valor proporcional. Tente novamente.');
+      return false;
+    }
+    const quote = seatAddonPreviewToQuote(res.data);
+    setSeatAddonQuote(quote);
+    if (result?.billing_id && Math.abs(quote.amount_cents_now - result.amount_cents) > 2) {
+      toast.error(
+        'O valor proporcional mudou em relação a esta cobrança. Volte ao Meu plano e gere novamente a cobrança de assentos.'
+      );
+      return false;
+    }
+    return true;
+  }, [seatAddonQuote?.additional_seats, result?.seat_addon_additional_seats, result?.amount_cents, result?.billing_id]);
+
+  const handleSeatAddonGoToPayment = useCallback(async () => {
+    blockAutoHydrateRef.current = false;
+    setSeatAddonPayPrimingLoading(true);
+    try {
+      const ok = await ensureFreshSeatAddonPreviewBeforePay();
+      if (!ok) return;
+      setStep(4);
+    } finally {
+      setSeatAddonPayPrimingLoading(false);
+    }
+  }, [ensureFreshSeatAddonPreviewBeforePay]);
+
+  /**
    * Prepara cobrança (reuso ou POST). Antes da primeira cobrança, o usuário escolhe o método e confirma em
    * "Gerar cobrança"; depois que existe `billing_id`, trocar o método dispara nova preparação aqui.
    */
@@ -1092,6 +1226,45 @@ export default function PlanCheckout() {
       (!pmOnResult || pmOnResult === method) &&
       hasRenderablePayloadForMethod(result, method)
     ) {
+      return;
+    }
+
+    /**
+     * seat_addon: nunca chama POST /api/plan-purchase ao trocar método — isso recalculava valor cheio do plano.
+     * Usa prepare na fatura existente (valor pró-rata já na linha).
+     */
+    if (seatAddonFlowActive) {
+      const ok = await ensureFreshSeatAddonPreviewBeforePay();
+      if (!ok) return;
+      blockAutoHydrateRef.current = false;
+      setPaymentMethod(method);
+      setLoading(true);
+      try {
+        const prep = await apiClient.post<PurchaseResult>('/api/me/tenant/plan-checkout-prepare-payment', {
+          billing_id: result!.billing_id,
+          payment_method: method,
+        });
+        if (prep.error) {
+          toastFromPlanPurchaseCode(prep.code, prep.error);
+          if (prep.field === 'cpf_cnpj') {
+            setCpfCnpjError(prep.error);
+            setStep(4);
+          }
+          return;
+        }
+        if (prep.data) {
+          setResult((prev) => ({
+            ...prep.data,
+            tenant_id: prep.data.tenant_id || user?.tenant_id || '',
+            billing_reason: prep.data.billing_reason ?? prev?.billing_reason,
+            seat_addon_additional_seats:
+              prep.data.seat_addon_additional_seats ?? prev?.seat_addon_additional_seats,
+          }));
+          toast.success('Pagamento preparado. Siga as instruções abaixo.');
+        }
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -1151,6 +1324,10 @@ export default function PlanCheckout() {
       if (!result.inline_pay_token && !user?.tenant_id) {
         toast.error('Atualize a página e gere a cobrança novamente para liberar o pagamento com cartão.');
         return;
+      }
+      if (seatAddonFlowActive) {
+        const ok = await ensureFreshSeatAddonPreviewBeforePay();
+        if (!ok) return;
       }
       setPayingPlanCard(true);
       try {
@@ -1215,7 +1392,7 @@ export default function PlanCheckout() {
             const st = await apiClient.get<BillingStatusResponse>(
               `/api/billing/${result.billing_id}/status`
             );
-            if (st.data?.status === 'paid' || st.data?.tenant_status === 'active') {
+            if (st.data?.status === 'paid') {
               toast.success('Pagamento confirmado!');
               await runFinalizeAfterPaid();
               return;
@@ -1233,7 +1410,7 @@ export default function PlanCheckout() {
         if (res.data?.ok) {
           toast.success('Pagamento enviado. Aguardando confirmação…');
           const st = await apiClient.get<BillingStatusResponse>(`/api/billing/${result.billing_id}/status`);
-          if (st.data?.status === 'paid' || st.data?.tenant_status === 'active') {
+          if (st.data?.status === 'paid') {
             toast.success('Pagamento confirmado!');
             await runFinalizeAfterPaid();
           }
@@ -1242,21 +1419,36 @@ export default function PlanCheckout() {
         setPayingPlanCard(false);
       }
     },
-    [result, payingPlanCard, user?.tenant_id, planCardForm, signIn, navigate, company.email, flushCheckoutSessionAfterPaid]
+    [
+      result,
+      payingPlanCard,
+      user?.tenant_id,
+      planCardForm,
+      signIn,
+      navigate,
+      company.email,
+      flushCheckoutSessionAfterPaid,
+      seatAddonFlowActive,
+      ensureFreshSeatAddonPreviewBeforePay,
+    ]
   );
 
-  const visibleSteps = STEP_DEFS.filter((s) => {
-    if (isResumeMode && s.id < 4) return false;
-    if (seatAddonFlowActive && (s.id === 1 || s.id === 2)) return false;
-    if (s.id === 1 && skipPlanStep) return false;
-    return true;
-  });
+  const visibleSteps = useMemo(() => {
+    if (seatAddonBillingContextActive) {
+      return SEAT_ADDON_STEP_DEFS;
+    }
+    return STEP_DEFS.filter((s) => {
+      if (isResumeMode && s.id < 4) return false;
+      if (s.id === 1 && skipPlanStep) return false;
+      return true;
+    });
+  }, [seatAddonBillingContextActive, isResumeMode, skipPlanStep]);
 
   const displayStepIndex = (s: number) => {
-    if (seatAddonFlowActive) {
-      if (s <= 2) return 0;
-      if (s === 3) return 1;
-      return 2;
+    if (seatAddonBillingContextActive) {
+      if (s === 3) return 0;
+      if (s === 4) return 1;
+      return 0;
     }
     if (isResumeMode || resumePaymentOnly) {
       if (s <= 3) return 0;
@@ -1668,7 +1860,7 @@ export default function PlanCheckout() {
       seatAddonQuote.billing_interval);
 
   const renderSummary = () => {
-    if (seatAddonFlowActive) {
+    if (seatAddonBillingContextActive) {
       if (seatAddonQuote) {
       return (
         <div className="space-y-4">
@@ -1719,12 +1911,17 @@ export default function PlanCheckout() {
             </Button>
             <Button
               type="button"
-              onClick={() => {
-                blockAutoHydrateRef.current = false;
-                setStep(4);
-              }}
+              disabled={seatAddonPayPrimingLoading}
+              onClick={() => void handleSeatAddonGoToPayment()}
             >
-              Ir para pagamento
+              {seatAddonPayPrimingLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Atualizando valores…
+                </>
+              ) : (
+                'Ir para pagamento'
+              )}
             </Button>
           </div>
         </div>
@@ -1752,13 +1949,17 @@ export default function PlanCheckout() {
             </Button>
             <Button
               type="button"
-              disabled={!result}
-              onClick={() => {
-                blockAutoHydrateRef.current = false;
-                setStep(4);
-              }}
+              disabled={!result || seatAddonPayPrimingLoading}
+              onClick={() => void handleSeatAddonGoToPayment()}
             >
-              Ir para pagamento
+              {seatAddonPayPrimingLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Atualizando valores…
+                </>
+              ) : (
+                'Ir para pagamento'
+              )}
             </Button>
           </div>
         </div>
@@ -1866,7 +2067,7 @@ export default function PlanCheckout() {
     const payTrialBadge = plan ? freeAccessDaysBadge(plan.is_free, plan.free_access_days) : null;
     const billingDocDigits = billingCpf.replace(/\D/g, '');
     const resumeBillingDocLocked =
-      (resumePaymentOnly || seatAddonFlowActive) &&
+      (resumePaymentOnly || seatAddonBillingContextActive) &&
       !resumeBillingDocUnlocked &&
       billingDocDigits.length > 0 &&
       isValidCpfOrCnpj(billingDocDigits);
@@ -1882,26 +2083,33 @@ export default function PlanCheckout() {
           <div className="rounded-lg border bg-muted/25 px-4 py-3 text-sm space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <p className="font-semibold text-foreground">
-                {seatAddonFlowActive ? 'Assentos adicionais' : plan.name}
+                {seatAddonBillingContextActive ? 'Assentos adicionais' : plan.name}
               </p>
-              {!seatAddonFlowActive && payTrialBadge && (
+              {!seatAddonBillingContextActive && payTrialBadge && (
                 <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
                   {payTrialBadge}
                 </span>
               )}
             </div>
             <p className="text-muted-foreground">
-              {seatAddonFlowActive && result ? (
-                <>
-                  <span className="font-medium text-foreground">{formatPrice(result.amount_cents)}</span>
-                  <span className="text-muted-foreground/80"> — cobrança proporcional (pró-rata)</span>
-                  {seatAddonQuote && (
-                    <span className="block mt-1 text-xs">
-                      Após o pagamento: {seatAddonQuote.new_total} assentos · novo valor por período:{' '}
-                      {formatPrice(seatAddonQuote.new_recurring_period_cents)}
-                    </span>
-                  )}
-                </>
+              {seatAddonBillingContextActive ? (
+                seatAddonPayNowCents != null ? (
+                  <>
+                    <span className="font-medium text-foreground">{formatPrice(seatAddonPayNowCents)}</span>
+                    <span className="text-muted-foreground/80"> — a pagar agora (pró-rata dos assentos extras)</span>
+                    {seatAddonQuote ? (
+                      <span className="block mt-1 text-xs text-muted-foreground">
+                        A partir da próxima renovação ({seatAddonIntervalLabel ?? 'período'}):{' '}
+                        <span className="font-medium text-foreground">
+                          {formatPrice(seatAddonQuote.new_recurring_period_cents)}
+                        </span>{' '}
+                        com {seatAddonQuote.new_total} assentos contratados
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="text-sm">Carregando valor proporcional…</span>
+                )
               ) : (
                 <>
                   {formatPrice(amountCents)} <span className="text-muted-foreground/80">/ {periodLabel}</span>
@@ -1917,16 +2125,26 @@ export default function PlanCheckout() {
             </p>
           </div>
         )}
-        {!seatAddonFlowActive && (
+        {!seatAddonBillingContextActive && (
           <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
             <span className="text-muted-foreground">Empresa: </span>
             <span className="font-medium">{company.company_name || '—'}</span>
           </div>
         )}
-        {seatAddonFlowActive && company.company_name?.trim() && (
-          <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-            <span className="text-muted-foreground">Conta: </span>
-            <span className="font-medium">{company.company_name}</span>
+        {seatAddonBillingContextActive && (company.company_name?.trim() || company.email?.trim()) && (
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm space-y-1">
+            {company.company_name?.trim() ? (
+              <p className="mb-0">
+                <span className="text-muted-foreground">Conta: </span>
+                <span className="font-medium">{company.company_name}</span>
+              </p>
+            ) : null}
+            {company.email?.trim() ? (
+              <p className="mb-0">
+                <span className="text-muted-foreground">E-mail: </span>
+                <span className="font-medium">{company.email}</span>
+              </p>
+            ) : null}
           </div>
         )}
 
@@ -1934,9 +2152,13 @@ export default function PlanCheckout() {
           <div>
             <Label className="text-sm font-medium">Forma de pagamento</Label>
             <p className="mt-1 text-xs text-muted-foreground">
-              {hasChargeReady
-                ? 'Troque o método se precisar; geramos ou reutilizamos a cobrança compatível com o mesmo contexto.'
-                : 'Escolha o método e clique em Gerar cobrança para ver os dados de pagamento na própria tela.'}
+              {seatAddonBillingContextActive
+                ? hasChargeReady
+                  ? 'Troque o método se precisar; o valor continua sendo só o proporcional desta cobrança de assentos.'
+                  : 'Escolha o método para ver os dados de pagamento.'
+                : hasChargeReady
+                  ? 'Troque o método se precisar; geramos ou reutilizamos a cobrança compatível com o mesmo contexto.'
+                  : 'Escolha o método e clique em Gerar cobrança para ver os dados de pagamento na própria tela.'}
             </p>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
               {PAYMENT_METHODS.map((pm) => {
@@ -1978,7 +2200,7 @@ export default function PlanCheckout() {
               </Label>
               {resumeBillingDocLocked && (
                 <p className="mb-1.5 text-xs text-muted-foreground">
-                  {seatAddonFlowActive
+                  {seatAddonBillingContextActive
                     ? 'CPF/CNPJ já cadastrado na sua conta. Use "Alterar documento" só se precisar corrigir.'
                     : 'Documento já cadastrado na conta. Use "Alterar documento" só se precisar corrigir.'}
                 </p>
@@ -2066,9 +2288,17 @@ export default function PlanCheckout() {
             hasRenderablePayloadForMethod(result, 'PIX') && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className="font-medium text-foreground">{plan.name}</span>
+                <span className="font-medium text-foreground">
+                  {seatAddonBillingContextActive ? 'Assentos adicionais' : plan.name}
+                </span>
                 <span className="text-muted-foreground">
-                  {formatPrice(result.amount_cents)} / {periodLabel}
+                  {seatAddonBillingContextActive ? (
+                    <>{formatPrice(result.amount_cents)} — proporcional neste ciclo</>
+                  ) : (
+                    <>
+                      {formatPrice(result.amount_cents)} / {periodLabel}
+                    </>
+                  )}
                 </span>
               </div>
               <div className="flex items-center gap-2 rounded-lg border bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
@@ -2125,7 +2355,17 @@ export default function PlanCheckout() {
             hasRenderablePayloadForMethod(result, 'BOLETO') && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> — {formatPrice(result.amount_cents)}
+                {seatAddonBillingContextActive ? (
+                  <>
+                    Assentos adicionais — <strong>{formatPrice(result.amount_cents)}</strong> proporcional neste ciclo
+                    <span className="block text-xs mt-1">Fatura {result.invoice_number ?? result.billing_id}</span>
+                  </>
+                ) : (
+                  <>
+                    Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
+                    {formatPrice(result.amount_cents)}
+                  </>
+                )}
               </p>
               <p className="text-sm font-medium">Aguardando pagamento do boleto</p>
               {result.bank_slip_digitable_line?.trim() && (
@@ -2176,7 +2416,17 @@ export default function PlanCheckout() {
             hasRenderablePayloadForMethod(result, 'CREDIT_CARD') && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> — {formatPrice(result.amount_cents)}
+                {seatAddonBillingContextActive ? (
+                  <>
+                    Assentos adicionais — <strong>{formatPrice(result.amount_cents)}</strong> proporcional neste ciclo
+                    <span className="block text-xs mt-1">Fatura {result.invoice_number ?? result.billing_id}</span>
+                  </>
+                ) : (
+                  <>
+                    Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
+                    {formatPrice(result.amount_cents)}
+                  </>
+                )}
               </p>
               <div className="flex items-center gap-2 rounded-lg border bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
                 <span className="text-lg" aria-hidden>
@@ -2200,12 +2450,27 @@ export default function PlanCheckout() {
         </div>
 
         <p className="text-base font-semibold">
-          {formatPrice(result?.amount_cents ?? (seatAddonQuote?.amount_cents_now ?? amountCents))}
+          {formatPrice(
+            seatAddonBillingContextActive
+              ? (seatAddonPayNowCents ?? result?.amount_cents ?? 0)
+              : (result?.amount_cents ?? (seatAddonQuote?.amount_cents_now ?? amountCents))
+          )}
         </p>
         <div className="flex gap-2 justify-end">
-          <Button variant="outline" onClick={handleBack} disabled={loading}>
-            Voltar
-          </Button>
+          {seatAddonBillingContextActive && !paymentConfirmed ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate('/meu-plano', { replace: true })}
+              disabled={loading}
+            >
+              Cancelar — Meu plano
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={handleBack} disabled={loading}>
+              Voltar
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -2214,7 +2479,7 @@ export default function PlanCheckout() {
   const currentStepTitle =
     step === 4 && paymentConfirmed
       ? 'Pagamento confirmado'
-      : seatAddonFlowActive && step === 3
+      : seatAddonBillingContextActive && step === 3
         ? 'Resumo — assentos adicionais'
         : STEP_DEFS[step - 1]?.title ?? '';
   const checkoutDisplayPm = effectivePaymentDisplayMethod(result, paymentMethod);
@@ -2224,7 +2489,7 @@ export default function PlanCheckout() {
       : step === 2
       ? 'Dados da empresa e do administrador.'
       : step === 3
-        ? seatAddonFlowActive
+        ? seatAddonBillingContextActive
           ? 'Confira os valores da contratação incremental antes de pagar.'
           : 'Confira antes de pagar.'
         : step === 4
@@ -2249,7 +2514,7 @@ export default function PlanCheckout() {
             <h1 className="text-2xl font-bold">
               {isResumeMode
                 ? 'Retomada — conclua o pagamento'
-                : seatAddonFlowActive
+                : seatAddonBillingContextActive
                   ? 'Checkout — assentos adicionais'
                   : plan
                     ? `Checkout — ${plan.name}`

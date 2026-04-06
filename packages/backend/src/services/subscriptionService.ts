@@ -74,6 +74,32 @@ function mapAsaasChargeError(err: unknown): Error {
 }
 
 /**
+ * YYYY-MM-DD para createCharge no gateway: prioriza `tenant_billing.due_date`, depois `period_end`;
+ * fallback UTC +7 dias se ausente ou inválido (evita Asaas `invalid_dueDate`).
+ */
+export function resolveTenantBillingDueDateIso10(billingRow: TenantBillingRow): string {
+  const tryYmd = (raw: unknown): string | null => {
+    if (raw == null || raw === '') return null;
+    if (typeof raw === 'string') {
+      const s = raw.trim().slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    }
+    if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+      return raw.toISOString().slice(0, 10);
+    }
+    return null;
+  };
+
+  const fromDue = tryYmd(billingRow.due_date);
+  if (fromDue) return fromDue;
+  const fromEnd = tryYmd(billingRow.period_end);
+  if (fromEnd) return fromEnd;
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 7);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
  * Adiciona intervalo à data (monthly, quarterly, semi_annual, yearly).
  * Usado para calcular plan_period_end no backend (fonte de verdade).
  * Atenção: em datas como 31/01, setMonth(+1) pode gerar 03/03 (rollover JS); para próximo ciclo de cobrança use calculateNextBillingDate.
@@ -595,7 +621,22 @@ export type PlanCheckoutPendingPayload = {
   pix_copy_paste?: string;
   /** Token para POST /api/billing/:id/pay-with-card no checkout sem JWT. */
   inline_pay_token?: string;
+  /** Só `seat_addon`: assentos adicionais da cobrança (metadata), para o checkout recalcular preview sem state da navegação. */
+  seat_addon_additional_seats?: number;
+  /** Motivo da fatura no checkout (ex.: `seat_addon` vs `plan_purchase`). */
+  billing_reason?: string;
 };
+
+function seatAddonAdditionalSeatsFromGatewayMetadata(
+  gatewayMetadata: Record<string, unknown> | null | undefined
+): number | undefined {
+  if (!gatewayMetadata || typeof gatewayMetadata !== 'object') return undefined;
+  const raw = gatewayMetadata['seat_addon_breakdown'];
+  if (!raw || typeof raw !== 'object' || raw === null) return undefined;
+  const n = Number((raw as Record<string, unknown>)['additional_seats']);
+  if (!Number.isInteger(n) || n < 1) return undefined;
+  return n;
+}
 
 /**
  * Para GET /api/me/tenant/plan-checkout-pending: reapresenta cobrança compatível já gerada (sem POST).
@@ -656,6 +697,7 @@ export async function getPendingSaasPlanCheckoutPresentation(
     status: b.status,
     tenant_id: tenantId,
     payment_method: b.payment_method ?? undefined,
+    billing_reason: b.billing_reason ?? 'plan_purchase',
     invoice_url: u?.invoiceUrl,
     bank_slip_url: u?.bankSlipUrl,
     bank_slip_digitable_line: u?.bankSlipDigitableLine,
@@ -720,6 +762,8 @@ export async function getSaasBillingCheckoutPresentation(
   } catch {
     /* ignore */
   }
+  const seatAddonSeats =
+    reason === 'seat_addon' ? seatAddonAdditionalSeatsFromGatewayMetadata(b.gateway_metadata) : undefined;
   return {
     billing_id: b.id,
     invoice_number: b.invoice_number,
@@ -727,13 +771,67 @@ export async function getSaasBillingCheckoutPresentation(
     status: b.status,
     tenant_id: tenantId,
     payment_method: b.payment_method ?? undefined,
+    billing_reason: reason,
     invoice_url: u?.invoiceUrl,
     bank_slip_url: u?.bankSlipUrl,
     bank_slip_digitable_line: u?.bankSlipDigitableLine,
     pix_qr_code: u?.pixQrCode,
     pix_copy_paste: u?.pixCopyPaste,
     inline_pay_token,
+    ...(seatAddonSeats != null ? { seat_addon_additional_seats: seatAddonSeats } : {}),
   };
+}
+
+/**
+ * Troca / prepara método de pagamento em uma fatura SaaS já existente, usando `amount_cents` da linha
+ * (não recalcula pelo plano). Essencial para `seat_addon`: evita POST plan-purchase que geraria valor cheio.
+ */
+export async function prepareSaasCheckoutPaymentMethodForBilling(
+  tenantId: string,
+  billingId: string,
+  paymentMethod: PaymentMethod
+): Promise<PlanCheckoutPendingPayload | null> {
+  const billingRow = await getInvoiceById(billingId);
+  if (!billingRow || billingRow.tenant_id !== tenantId) return null;
+
+  const reason = billingRow.billing_reason ?? 'plan_purchase';
+  if (!COMMERCIAL_SAAS_BILLING_REASONS.has(reason)) return null;
+  if (
+    !CHECKOUT_PRESENTABLE_BILLING_STATUSES.includes(
+      billingRow.status as (typeof CHECKOUT_PRESENTABLE_BILLING_STATUSES)[number]
+    )
+  ) {
+    return null;
+  }
+
+  if (!(await hasTenantBillingPaymentAttemptsTable())) {
+    return null;
+  }
+
+  const config = await getActiveConfig('saas');
+  const gatewayKey = config?.gateway_key ?? 'asaas';
+  const gateway = await getActiveGateway({ billingType: 'saas', tenantId });
+  if (!gateway) return null;
+
+  const dueDateStr = resolveTenantBillingDueDateIso10(billingRow);
+
+  try {
+    await ensureSaasPlanCheckoutPaymentAttemptForSwitch({
+      billing: billingRow,
+      tenantId,
+      requestedMethod: paymentMethod,
+      gateway,
+      gatewayKey,
+      amountCents: billingRow.amount_cents,
+      dueDateStr,
+      invoiceNumber: billingRow.invoice_number ?? '',
+    });
+  } catch (e) {
+    console.error('[prepareSaasCheckoutPaymentMethodForBilling]', e);
+    throw e;
+  }
+
+  return getSaasBillingCheckoutPresentation(tenantId, billingId);
 }
 
 /**

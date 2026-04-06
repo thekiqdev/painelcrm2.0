@@ -77,6 +77,7 @@ const SuperAdminNotifications = lazy(() => import("./pages/superadmin/SuperAdmin
 const SuperAdminPagamentos = lazy(() => import("./pages/superadmin/SuperAdminPagamentos"));
 
 const MeuPlano = lazy(() => import("./pages/MeuPlano"));
+const InternalBillingCheckout = lazy(() => import("./pages/InternalBillingCheckout"));
 const PlanCheckout = lazy(() => import("./pages/PlanCheckout"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 
@@ -462,6 +463,15 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <MeuPlano />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/saas-billing/:billingId/pay" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <InternalBillingCheckout />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>

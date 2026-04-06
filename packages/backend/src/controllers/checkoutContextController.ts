@@ -10,7 +10,11 @@ import { effectiveCheckoutTrialDays } from '../utils/checkoutTrialPlan.js';
 
 export async function getCheckoutContext(req: AuthRequest, res: Response): Promise<void> {
   try {
-    if (!isCheckoutResumeV1Enabled()) {
+    const purpose = String((req.query as { purpose?: string }).purpose ?? '').trim();
+    /** Checkout de assentos adicionais: conta já ativa; não é “retomada” — libera mesmo com CHECKOUT_RESUME_V1 off. */
+    const forSeatAddonCheckout = purpose === 'seat_addon';
+
+    if (!isCheckoutResumeV1Enabled() && !forSeatAddonCheckout) {
       res.status(403).json({
         error:
           'Retomada de checkout está desligada no servidor. Defina CHECKOUT_RESUME_V1=true no .env da API e reinicie.',
@@ -65,7 +69,9 @@ export async function getCheckoutContext(req: AuthRequest, res: Response): Promi
       t.status === 'payment_pending' ||
       trialActivePayEarly;
 
-    if (!canResume) {
+    const canSeatAddonProfile = forSeatAddonCheckout && t.status === 'active';
+
+    if (!canResume && !canSeatAddonProfile) {
       res.status(400).json({
         error: 'Retomada de checkout não aplicável a este estado da conta.',
         code: 'CHECKOUT_RESUME_NOT_APPLICABLE',

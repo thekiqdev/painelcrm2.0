@@ -3,7 +3,10 @@ import { tenantAuth, tenantAuthCommercialHub } from '../middleware/auth.js';
 import * as myTenantPlanController from '../controllers/myTenantPlanController.js';
 import * as myTenantPaymentGatewayController from '../controllers/myTenantPaymentGatewayController.js';
 import * as myTenantSubscriptionController from '../controllers/myTenantSubscriptionController.js';
-import { getPlanCheckoutPending } from '../controllers/planPurchaseController.js';
+import {
+  getPlanCheckoutPending,
+  postPlanCheckoutPreparePayment,
+} from '../controllers/planPurchaseController.js';
 
 const router = Router();
 
@@ -14,6 +17,11 @@ router.post('/seat-addon/preview', ...tenantAuthCommercialHub, myTenantPlanContr
 router.post('/seat-addon/checkout', ...tenantAuthCommercialHub, myTenantPlanController.postSeatAddonCheckout);
 router.put('/seats/schedule-next-cycle', ...tenantAuthCommercialHub, myTenantPlanController.putSeatsScheduleNextCycle);
 router.get('/plan-checkout-pending', ...tenantAuthCommercialHub, getPlanCheckoutPending);
+router.post(
+  '/plan-checkout-prepare-payment',
+  ...tenantAuthCommercialHub,
+  postPlanCheckoutPreparePayment
+);
 router.get('/commercial-billings', ...tenantAuthCommercialHub, myTenantPlanController.getMyTenantCommercialBillings);
 
 // Demais rotas: CRM comercial + período ativo

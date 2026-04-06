@@ -12,7 +12,9 @@ import {
   ASAAS_CPF_CNPJ_USER_MESSAGE,
   getPendingSaasPlanCheckoutPresentation,
   getSaasBillingCheckoutPresentation,
+  prepareSaasCheckoutPaymentMethodForBilling,
 } from '../services/subscriptionService.js';
+import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import { ensureTenantBillingInlinePayToken } from '../services/invoiceService.js';
 import { createTenantAdminUser } from '../services/tenantAdminService.js';
 import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
@@ -30,6 +32,7 @@ import {
 import { generateToken } from '../utils/jwt.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
 import { effectiveCheckoutTrialDays } from '../utils/checkoutTrialPlan.js';
+import { getMyTenantAndPrimary } from './myTenantPlanController.js';
 
 const validateCheckoutAdminBodySchema = z.object({
   email: z.string().email(),
@@ -77,6 +80,80 @@ function jsonError(
   res.status(status).json(body);
 }
 
+function checkoutTenantIdentityMismatchError(): Error {
+  const err = new Error(
+    'Os dados informados não correspondem a esta conta. Confirme o e-mail e o documento ou faça login.'
+  );
+  (err as Error & { code?: string }).code = 'CHECKOUT_TENANT_IDENTITY_MISMATCH';
+  return err;
+}
+
+/** Compara telefones já normalizados (somente dígitos), tolerando prefixo 55. */
+function brazilPhoneDigitsComparable(a: string, b: string): boolean {
+  const strip = (d: string) => {
+    let x = d.replace(/\D/g, '');
+    if (x.startsWith('55') && x.length > 11) x = x.slice(2);
+    return x;
+  };
+  const sa = strip(a);
+  const sb = strip(b);
+  return sa === sb || sa.endsWith(sb) || sb.endsWith(sa);
+}
+
+/**
+ * Quando o checkout anônimo reutiliza `body.tenant_id` (trial / payment_pending), exige coerência com o cadastro
+ * existente para impedir reuso indevido de outro tenant em status permitido.
+ */
+async function assertBodyMatchesTenantForCheckoutReuse(
+  body: z.infer<typeof planPurchaseBodySchema>,
+  tenantId: string
+): Promise<void> {
+  const row = await pool.query<{
+    billing_email: string | null;
+    cpf_cnpj: string | null;
+    billing_phone: string | null;
+    primary_email: string | null;
+  }>(
+    `SELECT t.billing_email, t.cpf_cnpj, t.billing_phone,
+            (SELECT u.email FROM users u WHERE u.tenant_id = t.id ORDER BY u.created_at ASC LIMIT 1) AS primary_email
+     FROM tenants t WHERE t.id = $1`,
+    [tenantId]
+  );
+  const t = row.rows[0];
+  if (!t) return;
+
+  const bodyEmailNorm = body.email?.trim() ? normalizeEmailForUniqueness(body.email.trim()) : null;
+  const tenantEmailCandidates: string[] = [];
+  if (t.billing_email?.trim()) tenantEmailCandidates.push(normalizeEmailForUniqueness(t.billing_email.trim()));
+  if (t.primary_email?.trim()) tenantEmailCandidates.push(normalizeEmailForUniqueness(t.primary_email.trim()));
+  const distinctTenantEmails = [...new Set(tenantEmailCandidates)];
+  if (distinctTenantEmails.length > 0) {
+    if (!bodyEmailNorm || !distinctTenantEmails.some((e) => e === bodyEmailNorm)) {
+      throw checkoutTenantIdentityMismatchError();
+    }
+  }
+
+  const tenantDoc = onlyDigits(t.cpf_cnpj ?? '');
+  if (tenantDoc.length >= 11) {
+    const bodyDoc = onlyDigits(body.cpf_cnpj ?? '');
+    if (!bodyDoc || bodyDoc !== tenantDoc) {
+      throw checkoutTenantIdentityMismatchError();
+    }
+  }
+
+  const tenantPhoneDigits = (t.billing_phone ?? '').replace(/\D/g, '');
+  if (tenantPhoneDigits.length >= 8) {
+    const wa = normalizeWhatsappDigits(body.whatsapp ?? null);
+    const phoneRaw = body.phone?.replace(/\D/g, '') ?? '';
+    const bodyPhoneDigits = wa ?? (phoneRaw.length >= 8 ? phoneRaw : null);
+    if (bodyPhoneDigits) {
+      if (!brazilPhoneDigitsComparable(bodyPhoneDigits, tenantPhoneDigits)) {
+        throw checkoutTenantIdentityMismatchError();
+      }
+    }
+  }
+}
+
 /**
  * Resolve tenant: req.tenantId (logado), body.tenant_id (se existir) ou cria novo com status payment_pending.
  */
@@ -97,6 +174,7 @@ async function resolveTenantId(
       [body.tenant_id, 'trial', 'payment_pending']
     );
     if (row.rows.length > 0) {
+      await assertBodyMatchesTenantForCheckoutReuse(body, body.tenant_id);
       return { tenantId: body.tenant_id, isNewTenant: false };
     }
   }
@@ -396,6 +474,15 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
       );
       return;
     }
+    if (errCode === 'CHECKOUT_TENANT_IDENTITY_MISMATCH') {
+      jsonError(
+        res,
+        400,
+        'Os dados informados não correspondem a esta conta. Confirme o e-mail e o documento ou faça login.',
+        'CHECKOUT_TENANT_IDENTITY_MISMATCH'
+      );
+      return;
+    }
     if (message.includes('não encontrado') || message.includes('inativo') || message.includes('exigem')) {
       res.status(400).json({ error: message, code: 'INVALID_CHECKOUT_CONTEXT' });
       return;
@@ -427,6 +514,14 @@ export async function getPlanCheckoutPending(req: AuthRequest, res: Response): P
     }
     const { billing_interval, users_count, billing_id } = parsed.data;
     if (billing_id) {
+      const ctx = await getMyTenantAndPrimary(req);
+      if (!ctx || ctx.primaryUserId !== req.userId) {
+        res.status(403).json({
+          error: 'Apenas o administrador principal da conta pode acessar o pagamento desta cobrança.',
+          code: 'PLAN_COMMERCE_PRIMARY_ONLY',
+        });
+        return;
+      }
       const pending = await getSaasBillingCheckoutPresentation(tenantId, billing_id);
       res.json({ pending });
       return;
@@ -435,6 +530,82 @@ export async function getPlanCheckoutPending(req: AuthRequest, res: Response): P
     res.json({ pending });
   } catch (e) {
     console.error('getPlanCheckoutPending', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+const planCheckoutPrepareBodySchema = z.object({
+  billing_id: z.string().uuid(),
+  payment_method: z.enum(['PIX', 'BOLETO', 'CREDIT_CARD']),
+});
+
+/**
+ * POST /api/me/tenant/plan-checkout-prepare-payment — troca/prepara método em fatura SaaS existente
+ * (ex.: seat_addon) sem recalcular valor pelo plano.
+ */
+export async function postPlanCheckoutPreparePayment(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant obrigatório', code: 'TENANT_REQUIRED' });
+      return;
+    }
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({
+        error: 'Apenas o administrador principal da conta pode preparar ou alterar o pagamento desta cobrança.',
+        code: 'PLAN_COMMERCE_PRIMARY_ONLY',
+      });
+      return;
+    }
+    const body = planCheckoutPrepareBodySchema.parse(req.body || {});
+    const pending = await prepareSaasCheckoutPaymentMethodForBilling(
+      tenantId,
+      body.billing_id,
+      body.payment_method as PaymentMethod
+    );
+    if (!pending) {
+      jsonError(
+        res,
+        400,
+        'Não foi possível preparar o pagamento para esta cobrança. Atualize a página ou tente outro método.',
+        'CHECKOUT_PREPARE_PAYMENT_FAILED'
+      );
+      return;
+    }
+    const response: Record<string, unknown> = {
+      billing_id: pending.billing_id,
+      invoice_number: pending.invoice_number,
+      amount_cents: pending.amount_cents,
+      status: pending.status,
+      tenant_id: tenantId,
+      payment_method: pending.payment_method,
+    };
+    if (pending.billing_reason) response.billing_reason = pending.billing_reason;
+    if (pending.seat_addon_additional_seats != null) {
+      response.seat_addon_additional_seats = pending.seat_addon_additional_seats;
+    }
+    if (pending.invoice_url) response.invoice_url = pending.invoice_url;
+    if (pending.bank_slip_url) response.bank_slip_url = pending.bank_slip_url;
+    if (pending.bank_slip_digitable_line) response.bank_slip_digitable_line = pending.bank_slip_digitable_line;
+    if (pending.pix_qr_code) response.pix_qr_code = pending.pix_qr_code;
+    if (pending.pix_copy_paste) response.pix_copy_paste = pending.pix_copy_paste;
+    try {
+      response.inline_pay_token = await ensureTenantBillingInlinePayToken(pending.billing_id);
+    } catch (e) {
+      console.warn('[plan-checkout-prepare-payment] ensureTenantBillingInlinePayToken', e);
+    }
+    res.status(200).json(response);
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: e.errors, code: 'INVALID_CHECKOUT_CONTEXT' });
+      return;
+    }
+    if (e instanceof Error && e.message === ASAAS_CPF_CNPJ_USER_MESSAGE) {
+      jsonError(res, 400, e.message, 'CPF_CNPJ_REQUIRED_FOR_PAYMENT_METHOD', 'cpf_cnpj');
+      return;
+    }
+    console.error('postPlanCheckoutPreparePayment', e);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

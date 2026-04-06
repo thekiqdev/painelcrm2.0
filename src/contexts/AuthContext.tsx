@@ -94,13 +94,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const path = location.pathname || '';
-    // Hub comercial primeiro: trial expirado / retomada → /meu-plano (CTA leva ao /checkout?mode=resume).
-    if (user?.requires_checkout_resume === true && !path.startsWith('/checkout') && path !== '/meu-plano') {
+    const commercialPayPath = path.startsWith('/checkout') || path.startsWith('/saas-billing');
+    // Hub comercial primeiro: trial expirado / retomada → /meu-plano (CTA leva ao /checkout ou /saas-billing/...).
+    if (user?.requires_checkout_resume === true && !commercialPayPath && path !== '/meu-plano') {
       navigate('/meu-plano', { replace: true });
       return;
     }
-    /** Plano grátis com trial vencido: hub em /meu-plano, mas /checkout (ex.: ?mode=resume) deve poder abrir — senão o 2º if desfaz a navegação que o 1º já permitiu. */
-    if (user?.plan_expired && path !== '/meu-plano' && !path.startsWith('/checkout')) {
+    /** Plano grátis com trial vencido: hub em /meu-plano, mas rotas de pagamento comercial devem poder abrir. */
+    if (user?.plan_expired && path !== '/meu-plano' && !commercialPayPath) {
       navigate('/meu-plano', { replace: true });
     }
   }, [user?.requires_checkout_resume, user?.plan_expired, navigate, location.pathname]);

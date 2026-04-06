@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { SeatAddonCheckoutQuote } from '@/pages/PlanCheckout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -503,36 +502,12 @@ export default function MeuPlano() {
     navigate('/checkout', { state });
   }, [navigate, buildCheckoutState]);
 
-  /**
-   * Abre checkout em uma cobrança pai já gerada.
-   * `seat_addon`: fluxo dedicado (resumo + pagamento), sem etapa Empresa/Admin — use para assentos adicionais.
-   */
-  const goOpenBillingInCheckout = useCallback(
-    (
-      billingId: string,
-      opts?: { flow?: 'seat_addon'; seatAddonQuote?: SeatAddonCheckoutQuote }
-    ) => {
-      const ctx = buildCheckoutState();
-      if (!ctx) return;
-      if (opts?.flow === 'seat_addon') {
-        navigate(
-          `/checkout?mode=seat_addon&billing_id=${encodeURIComponent(billingId)}`,
-          {
-            state: {
-              ...ctx,
-              focusBillingId: billingId,
-              checkoutMode: 'seat_addon',
-              seatAddonQuote: opts.seatAddonQuote,
-            },
-          }
-        );
-        return;
-      }
-      navigate(`/checkout?billing_id=${encodeURIComponent(billingId)}`, {
-        state: { ...ctx, focusBillingId: billingId },
-      });
+  /** Pagamento de cobrança interna SaaS (tenant_billing) — fluxo dedicado, fora do PlanCheckout. */
+  const goOpenSaasBillingPay = useCallback(
+    (billingId: string) => {
+      navigate(`/saas-billing/${encodeURIComponent(billingId)}/pay`);
     },
-    [navigate, buildCheckoutState]
+    [navigate]
   );
 
   const goToCheckoutResume = useCallback(() => {
@@ -540,21 +515,13 @@ export default function MeuPlano() {
   }, [navigate]);
 
   /**
-   * Concluir pagamento / ver link: se já existe cobrança interna pendente (GET plan), abre checkout com
-   * `focusBillingId` + `plan-checkout-pending?billing_id=` — sem refazer plano nem cadastro.
+   * Concluir pagamento: cobrança interna pendente → `/saas-billing/:id/pay`.
    * `?mode=resume` só quando não há cobrança reapresentável (retomada trial/checkout-context).
    */
   const goToPaymentOrResume = useCallback(() => {
     const pendingId = myPlan?.pending_billing?.billing_id?.trim();
     if (pendingId) {
-      const isSeatAddonBilling =
-        myPlan?.pending_seat_addon_billing?.billing_id &&
-        pendingId === myPlan.pending_seat_addon_billing.billing_id;
-      if (isSeatAddonBilling) {
-        goOpenBillingInCheckout(pendingId, { flow: 'seat_addon' });
-      } else {
-        goOpenBillingInCheckout(pendingId);
-      }
+      goOpenSaasBillingPay(pendingId);
       return;
     }
     if (checkoutResumeEnabled) {
@@ -564,8 +531,7 @@ export default function MeuPlano() {
     goToCheckoutWithPlan();
   }, [
     myPlan?.pending_billing?.billing_id,
-    myPlan?.pending_seat_addon_billing?.billing_id,
-    goOpenBillingInCheckout,
+    goOpenSaasBillingPay,
     goToCheckoutResume,
     goToCheckoutWithPlan,
   ]);
@@ -612,23 +578,10 @@ export default function MeuPlano() {
       toast.error(res.error ?? 'Não foi possível gerar a cobrança');
       return;
     }
-    const quote: SeatAddonCheckoutQuote = {
-      current_contracted: freshPreview.current_contracted,
-      new_total: freshPreview.new_total,
-      additional_seats: freshPreview.breakdown.additional_seats,
-      price_per_user_full_period_cents: freshPreview.breakdown.price_per_user_full_period_cents,
-      remaining_period_days: freshPreview.breakdown.remaining_period_days,
-      amount_cents_now: freshPreview.breakdown.amount_cents,
-      new_recurring_period_cents:
-        freshPreview.new_total * freshPreview.breakdown.price_per_user_full_period_cents,
-      period_start: freshPreview.breakdown.period_start,
-      period_end: freshPreview.breakdown.period_end,
-      billing_interval: freshPreview.billing_interval,
-    };
     setSeatAddonInlineExpanded(false);
     setSeatAddonPreview(null);
     toast.success('Abrindo a tela de pagamento para concluir.');
-    goOpenBillingInCheckout(res.data.billing_id, { flow: 'seat_addon', seatAddonQuote: quote });
+    goOpenSaasBillingPay(res.data.billing_id);
     await refreshAfterMutation();
   };
 
@@ -1255,9 +1208,7 @@ export default function MeuPlano() {
                 size="sm"
                 className="mt-3"
                 variant="secondary"
-                onClick={() =>
-                  goOpenBillingInCheckout(myPlan.pending_seat_addon_billing!.billing_id, { flow: 'seat_addon' })
-                }
+                onClick={() => goOpenSaasBillingPay(myPlan.pending_seat_addon_billing!.billing_id)}
               >
                 Continuar para pagamento
               </Button>
@@ -1621,7 +1572,7 @@ export default function MeuPlano() {
                               type="button"
                               size="sm"
                               variant="secondary"
-                              onClick={() => goOpenBillingInCheckout(b.id)}
+                              onClick={() => goOpenSaasBillingPay(b.id)}
                             >
                               Pagar agora
                             </Button>
@@ -1631,11 +1582,7 @@ export default function MeuPlano() {
                               type="button"
                               size="sm"
                               variant="outline"
-                              onClick={() =>
-                                b.billing_reason === 'seat_addon'
-                                  ? goOpenBillingInCheckout(b.id, { flow: 'seat_addon' })
-                                  : goOpenBillingInCheckout(b.id)
-                              }
+                              onClick={() => goOpenSaasBillingPay(b.id)}
                             >
                               Abrir pagamento
                             </Button>

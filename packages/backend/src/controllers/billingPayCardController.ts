@@ -9,6 +9,7 @@ import {
   payTenantBillingWithCard,
   PayWithCardError,
 } from '../services/customerBillingService.js';
+import { getMyTenantAndPrimary } from './myTenantPlanController.js';
 
 const payWithCardBodySchema = z.object({
   inline_pay_token: z.string().uuid().optional(),
@@ -59,6 +60,19 @@ export async function postTenantBillingPayWithCard(req: AuthRequest, res: Respon
       code: 'forbidden',
     });
     return;
+  }
+
+  /** Cobrança SaaS com JWT: só o administrador principal (mesma regra do hub Meu plano). Checkout anônimo usa token. */
+  if (tenantId && !inlinePayToken && req.userId) {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({
+        ok: false,
+        error: 'Apenas o administrador principal da conta pode concluir este pagamento com cartão.',
+        code: 'PRIMARY_USER_REQUIRED',
+      });
+      return;
+    }
   }
 
   try {
