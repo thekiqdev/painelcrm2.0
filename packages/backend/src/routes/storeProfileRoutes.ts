@@ -1,17 +1,18 @@
 import { Router } from 'express';
 import * as storeProfileController from '../controllers/storeProfileController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
 
-// Protected routes
-router.get('/', authenticateToken, storeProfileController.getStoreProfile);
-router.post('/', authenticateToken, storeProfileController.createStoreProfile);
-router.patch('/', authenticateToken, storeProfileController.updateStoreProfile);
-
-// Public routes
+// Public routes (sem auth)
 router.get('/public/:userId', storeProfileController.getPublicStoreProfile);
 router.get('/public/slug/:slug', storeProfileController.getPublicStoreBySlug);
+
+// Protected routes (auth + tenant)
+router.use(...tenantAuthCrm);
+router.get('/', storeProfileController.getStoreProfile);
+router.post('/', storeProfileController.createStoreProfile);
+router.patch('/', storeProfileController.updateStoreProfile);
 
 export default router;
 

@@ -25,41 +25,42 @@ const invoiceSchema = z.object({
 // GET /api/invoices
 export const getInvoices = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Não autenticado' });
+    const tenantId = (req as any).tenantId as string | null | undefined;
+    if (!tenantId) {
+      return res.json([]);
     }
 
     const { status, client_id, project_id } = req.query;
 
     let query = `
-      SELECT id, client_id, project_id, invoice_number, issue_date, due_date,
-             status, items, total, notes, created_at, updated_at
-      FROM invoices
-      WHERE user_id = $1
+      SELECT i.id, i.client_id, i.project_id, i.invoice_number, i.issue_date, i.due_date,
+             i.status, i.items, i.total, i.notes, i.created_at, i.updated_at
+      FROM invoices i
+      INNER JOIN users u ON u.id = i.user_id AND u.tenant_id = $1
+      WHERE 1=1
     `;
-    const params: any[] = [userId];
-    let paramCount = 1;
+    const params: any[] = [tenantId];
+    let paramCount = 2;
 
     if (status) {
-      paramCount++;
-      query += ` AND status = $${paramCount}`;
+      query += ` AND i.status = $${paramCount}`;
       params.push(status);
+      paramCount++;
     }
 
     if (client_id) {
-      paramCount++;
-      query += ` AND client_id = $${paramCount}`;
+      query += ` AND i.client_id = $${paramCount}`;
       params.push(client_id);
+      paramCount++;
     }
 
     if (project_id) {
-      paramCount++;
-      query += ` AND project_id = $${paramCount}`;
+      query += ` AND i.project_id = $${paramCount}`;
       params.push(project_id);
+      paramCount++;
     }
 
-    query += ` ORDER BY issue_date DESC, created_at DESC`;
+    query += ` ORDER BY i.issue_date DESC, i.created_at DESC`;
 
     const result = await pool.query(query, params);
 
@@ -83,10 +84,11 @@ export const getInvoiceById = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT id, client_id, project_id, invoice_number, issue_date, due_date,
-              status, items, total, notes, created_at, updated_at
-       FROM invoices
-       WHERE id = $1 AND user_id = $2`,
+      `SELECT i.id, i.client_id, i.project_id, i.invoice_number, i.issue_date, i.due_date,
+              i.status, i.items, i.total, i.notes, i.created_at, i.updated_at
+       FROM invoices i
+       INNER JOIN users u ON u.id = i.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE i.id = $1`,
       [id, userId]
     );
 
@@ -212,7 +214,7 @@ export const updateInvoice = async (req: Request, res: Response) => {
     const result = await pool.query(
       `UPDATE invoices
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+       WHERE id = $${paramCount} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
        RETURNING id, client_id, project_id, invoice_number, issue_date, due_date,
                  status, items, total, notes, created_at, updated_at`,
       values
@@ -246,7 +248,7 @@ export const deleteInvoice = async (req: Request, res: Response) => {
 
     const result = await pool.query(
       `DELETE FROM invoices
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
        RETURNING id`,
       [id, userId]
     );

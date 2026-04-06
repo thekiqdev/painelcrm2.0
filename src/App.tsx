@@ -1,54 +1,125 @@
+import { Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
-import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
-import Dashboard from "./pages/Dashboard";
-import Clients from "./pages/Clients";
-import Leads from "./pages/Leads";
-import Funnel from "./pages/Funnel";
-import Tasks from "./pages/Tasks";
-import Projects from "./pages/Projects";
-import ProjectTemplates from "./pages/ProjectTemplates";
-import Products from "./pages/Products";
-import Proposals from "./pages/Proposals";
-import Contracts from "./pages/Contracts";
-import NewContract from "./pages/NewContract";
-import ContractDetails from "./pages/ContractDetails";
-import Billing from "./pages/Billing";
-import Finance from "./pages/Finance";
-import Settings from "./pages/Settings";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import Chat from "./pages/Chat";
-import AppLayout from "./layouts/AppLayout";
+import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
 import AuthLayout from "./layouts/AuthLayout";
 import AuthWhatsApp from "./pages/AuthWhatsApp";
+import Register from "./pages/Register";
 import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
-import FunnelDetails from "./pages/FunnelDetails";
-import ProposalDetails from "./pages/ProposalDetails";
-import { PublicStore } from "./pages/PublicStore";
-import { PublicProduct } from "./pages/PublicProduct";
-import ProductForm from "./pages/ProductForm";
-import Orders from "./pages/Orders";
-import Tickets from "./pages/Tickets";
-import NewTicket from "./pages/NewTicket";
+import SuperAdminGuard from "./components/SuperAdminGuard";
+import AppLayout from "./layouts/AppLayout";
+import SuperAdminLayout from "./layouts/SuperAdminLayout";
+import SettingsLayout from "./layouts/SettingsLayout";
+import NotFound from "./pages/NotFound";
+import HomeOrRedirect from "./components/HomeOrRedirect";
 
-const queryClient = new QueryClient();
+// Lazy load todas as rotas protegidas para otimizar carregamento inicial
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Clients = lazy(() => import("./pages/Clients"));
+const ClientProfile = lazy(() => import("./pages/ClientProfile"));
+const Leads = lazy(() => import("./pages/Leads"));
+const Funnel = lazy(() => import("./pages/Funnel"));
+const Tasks = lazy(() => import("./pages/Tasks"));
+const Projects = lazy(() => import("./pages/Projects"));
+const ProjectWizardPage = lazy(() => import("./pages/ProjectWizardPage"));
+const ProjectAreaPage = lazy(() => import("./pages/ProjectAreaPage"));
+const ProjectTemplates = lazy(() => import("./pages/ProjectTemplates"));
+const Products = lazy(() => import("./pages/Products"));
+const Proposals = lazy(() => import("./pages/Proposals"));
+const Contracts = lazy(() => import("./pages/Contracts"));
+const NewContract = lazy(() => import("./pages/NewContract"));
+const ContractDetails = lazy(() => import("./pages/ContractDetails"));
+const CustomerInvoices = lazy(() => import("./pages/CustomerInvoices"));
+const CustomerInvoiceNew = lazy(() => import("./pages/CustomerInvoiceNew"));
+const CustomerInvoiceDetail = lazy(() => import("./pages/CustomerInvoiceDetail"));
+const CustomerInvoicePay = lazy(() => import("./pages/CustomerInvoicePay"));
+const CustomerCharges = lazy(() => import("./pages/CustomerCharges"));
+const CustomerChargeDetail = lazy(() => import("./pages/CustomerChargeDetail"));
+const Finance = lazy(() => import("./pages/Finance"));
+const Settings = lazy(() => import("./pages/Settings"));
+const PaymentsPanelPage = lazy(() => import("./pages/settings/PaymentsPanelPage"));
+const GatewayConfigPage = lazy(() => import("./pages/settings/GatewayConfigPage"));
+const Chat = lazy(() => import("./pages/Chat"));
+const FunnelDetails = lazy(() => import("./pages/FunnelDetails"));
+const ProposalDetails = lazy(() => import("./pages/ProposalDetails"));
+const PublicStore = lazy(() => import("./pages/PublicStore").then(m => ({ default: m.PublicStore })));
+const PublicProduct = lazy(() => import("./pages/PublicProduct").then(m => ({ default: m.PublicProduct })));
+const ProductForm = lazy(() => import("./pages/ProductForm"));
+const Orders = lazy(() => import("./pages/Orders"));
+const Tickets = lazy(() => import("./pages/Tickets"));
+const NewTicket = lazy(() => import("./pages/NewTicket"));
+const SuperAdminDashboard = lazy(() => import("./pages/superadmin/SuperAdminDashboard"));
+const SuperAdminPlans = lazy(() => import("./pages/superadmin/SuperAdminPlans"));
+const SuperAdminClients = lazy(() => import("./pages/superadmin/SuperAdminClients"));
+const SuperAdminClientLayout = lazy(() => import("./pages/superadmin/SuperAdminClientLayout"));
+const SuperAdminClientResumo = lazy(() => import("./pages/superadmin/SuperAdminClientResumo"));
+const SuperAdminClientConfiguracoes = lazy(() => import("./pages/superadmin/SuperAdminClientConfiguracoes"));
+const SuperAdminClientFaturamento = lazy(() => import("./pages/superadmin/SuperAdminClientFaturamento"));
+const SuperAdminClientUsuarios = lazy(() => import("./pages/superadmin/SuperAdminClientUsuarios"));
+const SuperAdminClientPlaceholder = lazy(() => import("./pages/superadmin/SuperAdminClientPlaceholder"));
+const SuperAdminClientRecursos = lazy(() => import("./pages/superadmin/SuperAdminClientRecursos"));
+const SuperAdminClientLimites = lazy(() => import("./pages/superadmin/SuperAdminClientLimites"));
+const SuperAdminClientObservacoes = lazy(() => import("./pages/superadmin/SuperAdminClientObservacoes"));
+const SuperAdminClientLogs = lazy(() => import("./pages/superadmin/SuperAdminClientLogs"));
+const SuperAdminClientNew = lazy(() => import("./pages/superadmin/SuperAdminClientNew"));
+const SuperAdminFeatures = lazy(() => import("./pages/superadmin/SuperAdminFeatures"));
+const SuperAdminPlanFeatures = lazy(() => import("./pages/superadmin/SuperAdminPlanFeatures"));
+const SuperAdminTenantFeatures = lazy(() => import("./pages/superadmin/SuperAdminTenantFeatures"));
+const SuperAdminAudit = lazy(() => import("./pages/superadmin/SuperAdminAudit"));
+const SuperAdminReports = lazy(() => import("./pages/superadmin/SuperAdminReports"));
+const SuperAdminUsers = lazy(() => import("./pages/superadmin/SuperAdminUsers"));
+const SuperAdminNotifications = lazy(() => import("./pages/superadmin/SuperAdminNotifications"));
+const SuperAdminPagamentos = lazy(() => import("./pages/superadmin/SuperAdminPagamentos"));
+
+const MeuPlano = lazy(() => import("./pages/MeuPlano"));
+const PlanCheckout = lazy(() => import("./pages/PlanCheckout"));
+const Onboarding = lazy(() => import("./pages/Onboarding"));
+
+const LandingPage = lazy(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
+
+// Loading fallback simples
+const LoadingFallback = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <div className="text-center">
+      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-crm-primary"></div>
+      <p className="mt-4 text-muted-foreground">Carregando...</p>
+    </div>
+  </div>
+);
+
+// Cache agressivo: dados na hora ao voltar; menos refetch e retentativas para evitar lentidão
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,       // 5 min – não refetch ao focar/montar
+      gcTime: 15 * 60 * 1000,        // 15 min – dados mantidos em cache
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,          // nunca refetch só por montar – só invalidação manual
+      refetchOnReconnect: false,
+      retry: 1,                      // no máximo 1 retry (evita 3x em 401 e duplicatas)
+      retryDelay: 1000,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <BrowserRouter>
         <AuthProvider>
+          <ModulePermissionsProvider>
           <Toaster />
           <Sonner />
+          <Suspense fallback={<LoadingFallback />}>
           <Routes>
-            <Route path="/" element={<AuthWhatsApp />} />
+            <Route path="/" element={<HomeOrRedirect />} />
+            <Route path="/landing" element={<Suspense fallback={<LoadingFallback />}><LandingPage /></Suspense>} />
+            <Route path="/landingpage" element={<Navigate to="/" replace />} />
             
             {/* Alterado: a página de registro não precisa de AuthGuard */}
             <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
@@ -61,149 +132,404 @@ const App = () => (
               </AuthGuard>
             } />
             <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
-            
-            {/* Protected routes */}
+            <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
+            <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
+            <Route path="/pay/:token" element={<Suspense fallback={<LoadingFallback />}><CustomerInvoicePay /></Suspense>} />
+
+              {/* Protected routes - lazy loaded */}
             <Route path="/dashboard" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Dashboard /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Dashboard />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             
             <Route path="/clients" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Clients /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Clients />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+              <Route path="/clients/:id" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ClientProfile />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+              <Route path="/clients/:id/:tab" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ClientProfile />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/leads" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Leads /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Leads />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Funnel /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Funnel />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel/:funnelId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><FunnelDetails /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <FunnelDetails />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel/:funnelId/stage/:stageId/proposal/:proposalId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProposalDetails /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProposalDetails />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/projects" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Projects /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Projects />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projects/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProjectWizardPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projects/:projectId/area/:areaId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProjectAreaPage />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/tasks" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Tasks /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Tasks />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/project-templates" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProjectTemplates /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProjectTemplates />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             {/* Admin Products Routes */}
             <Route path="/admin/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Products /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Products />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/admin/products/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/admin/products/:id/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             
             {/* Legacy routes - redirect to admin */}
             <Route path="/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Products /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Products />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/products/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/products/edit/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/orders" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Orders /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Orders />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/proposals" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Proposals /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Proposals />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/contracts" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Contracts /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Contracts />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/contracts/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><NewContract /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <NewContract />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+              <Route path="/contracts/:id/edit" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <NewContract />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/contracts/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ContractDetails /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ContractDetails />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/billing" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Billing /></AppLayout>
+                <Navigate to="/customer-invoices" replace />
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerInvoices />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerInvoiceNew />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerInvoiceDetail />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-charges" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerCharges />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-charges/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerChargeDetail />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/finance" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Finance /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Finance />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/chat" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Chat /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Chat />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/settings" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Settings /></AppLayout>
+                  <AppLayout>
+                    <SettingsLayout />
+                  </AppLayout>
+              </AuthGuard>
+            }>
+              <Route index element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <Settings />
+                </Suspense>
+              } />
+              <Route path="payments" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PaymentsPanelPage />
+                </Suspense>
+              } />
+              <Route path="payments/:gatewayKey" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <GatewayConfigPage />
+                </Suspense>
+              } />
+            </Route>
+            <Route path="/meu-plano" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <MeuPlano />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/support/tickets" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Tickets /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Tickets />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/support/tickets/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><NewTicket /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <NewTicket />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             
+            {/* Super Admin - apenas para usuários com is_super_admin */}
+            <Route path="/superadmin" element={<AuthGuard requireAuth={true} redirectTo="/"><SuperAdminGuard /></AuthGuard>}>
+              <Route element={<SuperAdminLayout />}>
+                <Route index element={<Suspense fallback={<LoadingFallback />}><SuperAdminDashboard /></Suspense>} />
+                <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
+                <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />
+                <Route path="clients" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClients /></Suspense>} />
+                <Route path="clients/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientNew /></Suspense>} />
+                <Route path="clients/:id" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientLayout /></Suspense>}>
+                  <Route index element={<Navigate to="resumo" replace />} />
+                  <Route path="resumo" element={<SuperAdminClientResumo />} />
+                  <Route path="configuracoes" element={<SuperAdminClientConfiguracoes />} />
+                  <Route path="faturamento" element={<SuperAdminClientFaturamento />} />
+                  <Route path="usuarios" element={<SuperAdminClientUsuarios />} />
+                  <Route path="recursos" element={<SuperAdminClientRecursos />} />
+                  <Route path="limites" element={<SuperAdminClientLimites />} />
+                  <Route path="observacoes" element={<SuperAdminClientObservacoes />} />
+                  <Route path="logs" element={<SuperAdminClientLogs />} />
+                </Route>
+                <Route path="tenants/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminTenantFeatures /></Suspense>} />
+                <Route path="features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminFeatures /></Suspense>} />
+                <Route path="audit" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAudit /></Suspense>} />
+                <Route path="reports" element={<Suspense fallback={<LoadingFallback />}><SuperAdminReports /></Suspense>} />
+                <Route path="users" element={<Suspense fallback={<LoadingFallback />}><SuperAdminUsers /></Suspense>} />
+                <Route path="notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotifications /></Suspense>} />
+                <Route path="pagamentos" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPagamentos /></Suspense>} />
+              </Route>
+            </Route>
+            
             {/* Public store routes */}
-            <Route path="/:storeSlug/loja" element={<PublicStore />} />
-            <Route path="/:storeSlug/loja/produto/:productId" element={<PublicProduct />} />
+              <Route path="/:storeSlug/loja" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicStore />
+                </Suspense>
+              } />
+              <Route path="/:storeSlug/loja/produto/:productId" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicProduct />
+                </Suspense>
+              } />
             
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
+          </ModulePermissionsProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

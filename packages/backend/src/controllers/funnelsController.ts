@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
-
 const funnelSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
@@ -14,18 +13,26 @@ const funnelSchema = z.object({
 
 export async function getFunnels(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const { profileId } = req.query;
 
-    let query = 'SELECT * FROM sales_funnels WHERE user_id = $1';
-    const params: any[] = [userId];
+    let query = `
+      SELECT sf.* FROM sales_funnels sf
+      INNER JOIN users u ON u.id = sf.user_id AND u.tenant_id = $1
+      WHERE 1=1
+    `;
+    const params: any[] = [tenantId];
 
     if (profileId) {
-      query += ' AND profile_id = $2';
+      query += ' AND sf.profile_id = $2';
       params.push(profileId);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY sf.created_at DESC';
 
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -40,9 +47,11 @@ export async function getFunnelById(req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!;
     const { id } = req.params;
 
-    // Get funnel with stages
+    // Get funnel with stages (funnel must belong to user's tenant)
     const funnelResult = await pool.query(
-      'SELECT * FROM sales_funnels WHERE id = $1 AND user_id = $2',
+      `SELECT sf.* FROM sales_funnels sf
+       INNER JOIN users u ON u.id = sf.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE sf.id = $1`,
       [id, userId]
     );
 
@@ -168,13 +177,13 @@ export async function updateFunnel(req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
       `UPDATE sales_funnels 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
-      values
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -199,7 +208,9 @@ export async function deleteFunnel(req: AuthRequest, res: Response): Promise<voi
     const { id } = req.params;
 
     const result = await pool.query(
-      'DELETE FROM sales_funnels WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM sales_funnels WHERE id = $1
+       AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
+       RETURNING id`,
       [id, userId]
     );
 

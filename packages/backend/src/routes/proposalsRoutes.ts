@@ -6,12 +6,12 @@ import {
   updateProposal,
   deleteProposal,
 } from '../controllers/proposalsController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
 
-// Todas as rotas requerem autenticação
-router.use(authenticateToken);
+// Todas as rotas requerem autenticação e tenant atual
+router.use(...tenantAuthCrm);
 
 // Rotas de proposals
 router.get('/', getProposals);

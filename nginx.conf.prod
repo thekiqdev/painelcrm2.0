@@ -17,32 +17,56 @@ server {
     gzip_min_length 1024;
     gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
 
-    # Frontend routes - servir arquivos estáticos
-    location / {
-        root /usr/share/nginx/html;
-        try_files $uri $uri/ /index.html;
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-        add_header Pragma "no-cache";
-        add_header Expires "0";
-    }
-    
-    # Servir arquivos estáticos (JS, CSS, imagens, etc)
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        root /usr/share/nginx/html;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
+    # WebSocket/Socket.IO proxy - DEVE VIR ANTES DE / PARA NÃO SER CAPTURADO
+    # Use o mesmo host do backend (ex.: painelcrm-backend:3001)
+    location ~ ^/socket\.io(/.*)?$ {
+        set $backend "painelcrm-backend:3001";
+        # Definir Connection header baseado em Upgrade (necessário para WebSocket)
+        set $connection_upgrade "upgrade";
+        if ($http_upgrade = '') {
+            set $connection_upgrade "close";
+        }
+        
+        # Preservar o path completo incluindo query string
+        proxy_pass http://$backend$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400s;  # 24 horas para WebSocket
+        proxy_send_timeout 86400s;
+        proxy_connect_timeout 75s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        
+        # Permitir CORS para Socket.IO - deixar backend controlar CORS para evitar conflitos
+        # Não adicionar headers CORS aqui, deixar o Socket.IO fazer isso
+        
+        # Logs para debug
+        access_log /var/log/nginx/socketio_access.log;
+        error_log /var/log/nginx/socketio_error.log debug;
+        
+        # Tratar OPTIONS para CORS - passar para backend ao invés de retornar 204
+        # O Socket.IO precisa processar OPTIONS para configurar CORS corretamente
     }
 
-    # API proxy - Use o nome do serviço backend no Easypanel
-    # IMPORTANTE: O nome deve corresponder EXATAMENTE ao nome do serviço no Easypanel
-    # Se o serviço se chama "sistemas_painelcrm", use "sistemas_painelcrm:3001"
-    # Se o serviço se chama "painelcrm", use "painelcrm:3001"
+    # API proxy - Nome do serviço backend no Easypanel/Docker
+    # Se der 502: confira o hostname interno do backend (ex.: painelcrm-backend ou painelcrm_painelcrm-backend)
     location /api {
-        set $backend "sistemas_painelcrm:3001";
+        set $backend "painelcrm-backend:3001";
+        # Definir Connection header baseado em Upgrade (para suporte a WebSocket via API se necessário)
+        set $connection_upgrade "upgrade";
+        if ($http_upgrade = '') {
+            set $connection_upgrade "close";
+        }
+        
         proxy_pass http://$backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -60,6 +84,45 @@ server {
         # Tratamento de erros do proxy
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
         proxy_intercept_errors off;
+    }
+
+    # Webhooks proxy - Use o mesmo host do backend
+    location /webhooks {
+        set $backend "painelcrm-backend:3001";
+        proxy_pass http://$backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        
+        # Logs para debug de webhooks
+        access_log /var/log/nginx/webhooks_access.log;
+        error_log /var/log/nginx/webhooks_error.log;
+        
+        # Tratamento de erros do proxy
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+        proxy_intercept_errors off;
+    }
+
+    # Servir arquivos estáticos (JS, CSS, imagens, etc)
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        root /usr/share/nginx/html;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Frontend routes - servir arquivos estáticos (DEVE VIR POR ÚLTIMO)
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
     }
 
     # Health check

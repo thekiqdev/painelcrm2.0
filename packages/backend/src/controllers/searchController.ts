@@ -4,9 +4,9 @@ import { pool } from '../utils/db.js';
 // GET /api/search?q=termo&types=clients,leads,contracts,products
 export const searchGlobal = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Não autenticado' });
+    const tenantId = (req as any).tenantId as string | null | undefined;
+    if (!tenantId) {
+      return res.json([]);
     }
 
     const { q, types } = req.query;
@@ -20,55 +20,55 @@ export const searchGlobal = async (req: Request, res: Response) => {
     
     const results: any[] = [];
 
-    // Buscar clientes
+    // Buscar clientes (escopo tenant)
     if (typeFilter.includes('clients')) {
       const clientsResult = await pool.query(
-        `SELECT id, name, email, company, 'Cliente' as type, '/clients' as route
-         FROM clients
-         WHERE user_id = $1
-         AND (name ILIKE $2 OR email ILIKE $2 OR company ILIKE $2)
+        `SELECT c.id, c.name, c.email, c.company, 'Cliente' as type, '/clients' as route
+         FROM clients c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+         WHERE (c.name ILIKE $2 OR c.email ILIKE $2 OR c.company ILIKE $2)
          LIMIT 5`,
-        [userId, searchTerm]
+        [tenantId, searchTerm]
       );
       results.push(...clientsResult.rows);
     }
 
-    // Buscar leads
+    // Buscar leads (escopo tenant)
     if (typeFilter.includes('leads')) {
       const leadsResult = await pool.query(
-        `SELECT id, name, email, company, 'Lead' as type, '/leads' as route
-         FROM leads
-         WHERE user_id = $1
-         AND (name ILIKE $2 OR email ILIKE $2 OR company ILIKE $2)
+        `SELECT l.id, l.name, l.email, l.company, 'Lead' as type, '/leads' as route
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+         WHERE (l.name ILIKE $2 OR l.email ILIKE $2 OR l.company ILIKE $2)
          LIMIT 5`,
-        [userId, searchTerm]
+        [tenantId, searchTerm]
       );
       results.push(...leadsResult.rows);
     }
 
-    // Buscar contratos
+    // Buscar contratos (escopo tenant)
     if (typeFilter.includes('contracts')) {
       const contractsResult = await pool.query(
-        `SELECT id, title as name, contract_number, 'Contrato' as type, 
-                CONCAT('/contracts/', id) as route
-         FROM contracts
-         WHERE user_id = $1
-         AND (title ILIKE $2 OR contract_number ILIKE $2)
+        `SELECT c.id, c.title as name, c.contract_number, 'Contrato' as type, 
+                CONCAT('/contracts/', c.id) as route
+         FROM contracts c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+         WHERE (c.title ILIKE $2 OR c.contract_number ILIKE $2)
          LIMIT 5`,
-        [userId, searchTerm]
+        [tenantId, searchTerm]
       );
       results.push(...contractsResult.rows);
     }
 
-    // Buscar produtos
+    // Buscar produtos (escopo tenant)
     if (typeFilter.includes('products')) {
       const productsResult = await pool.query(
-        `SELECT id, name, description, 'Produto' as type, '/products' as route
-         FROM products
-         WHERE user_id = $1
-         AND (name ILIKE $2 OR description ILIKE $2)
+        `SELECT p.id, p.name, p.description, 'Produto' as type, '/products' as route
+         FROM products p
+         INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+         WHERE (p.name ILIKE $2 OR p.description ILIKE $2)
          LIMIT 5`,
-        [userId, searchTerm]
+        [tenantId, searchTerm]
       );
       results.push(...productsResult.rows);
     }

@@ -24,7 +24,29 @@ const orderSchema = z.object({
 export async function createOrder(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      return;
+    }
     const orderData = orderSchema.parse(req.body);
+
+    // Validar que todos os product_ids pertencem ao tenant atual (evita vazamento multi-tenant)
+    const productIds = orderData.items.map(item => item.product_id);
+    const uniqueProductIds = [...new Set(productIds)];
+    const productsResult = await pool.query(
+      `SELECT id, name, type FROM products
+       WHERE id = ANY($1::uuid[])
+         AND user_id IN (SELECT id FROM users WHERE tenant_id = $2)`,
+      [uniqueProductIds, tenantId]
+    );
+    if (productsResult.rows.length !== uniqueProductIds.length) {
+      res.status(400).json({
+        error: 'Um ou mais produtos não existem ou não pertencem à sua conta. Verifique os itens do pedido.',
+      });
+      return;
+    }
+    const productsMap = new Map(productsResult.rows.map((p: { id: string; name: string; type: string }) => [p.id, p]));
 
     // Start transaction
     await pool.query('BEGIN');
@@ -56,14 +78,6 @@ export async function createOrder(req: AuthRequest, res: Response): Promise<void
       );
 
       const order = orderResult.rows[0];
-
-      // Get product names
-      const productIds = orderData.items.map(item => item.product_id);
-      const productsResult = await pool.query(
-        `SELECT id, name, type FROM products WHERE id = ANY($1::uuid[])`,
-        [productIds]
-      );
-      const productsMap = new Map(productsResult.rows.map(p => [p.id, p]));
 
       // Create order items
       const orderItems = orderData.items.map(item => {

@@ -1,0 +1,3 @@
+[33mc949f81[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdeploy-v1.1.2.1[m[33m)[m fix: move map para Connection header antes do server block
+[33md4dedee[m[33m ([m[1;31morigin/deploy-v1.1.2.1[m[33m)[m fix: melhora configuração WebSocket no Nginx e Socket.IO client - Adiciona map para Connection header no Nginx - Melhora timeouts e headers do proxy WebSocket - Tenta polling primeiro antes de websocket - Adiciona opções de upgrade no Socket.IO client
+[33m5599e90[m fix: melhora tratamento de erros na sincronização de conversas

@@ -30,6 +30,8 @@ export interface Task {
   tags?: string[];
   labels?: string[];
   checklist?: ChecklistItem[];
+  /** Campos customizados (ex.: tagColors para cores das etiquetas). */
+  customFields?: Record<string, unknown>;
 }
 
 export interface ChecklistItem {
@@ -56,6 +58,19 @@ export interface ProjectFinanceItem {
 // Interface Project
 import { Member } from "@/components/shared/types";
 
+export interface ProjectArea {
+  id: string;
+  project_id: string;
+  name: string;
+  sort_order: number;
+  responsible_ids?: string[];
+  team_ids?: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type ProjectType = "simple" | "areas" | "advanced" | "template";
+
 export interface Project {
   id: string;
   name: string;
@@ -68,4 +83,13 @@ export interface Project {
   files?: ProjectFile[];
   financeItems: ProjectFinanceItem[];
   kanbanStage?: string;
+  project_type?: ProjectType;
+  areas?: ProjectArea[];
+  /** Equipe responsável (opcional). */
+  team_id?: string | null;
+  teamName?: string | null;
+  /** IDs dos responsáveis selecionados no projeto (disponíveis para áreas). */
+  responsible_ids?: string[];
+  /** IDs das equipes selecionadas no projeto (disponíveis para áreas). */
+  team_ids?: string[];
 }

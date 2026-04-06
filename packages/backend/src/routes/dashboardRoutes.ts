@@ -1,17 +1,20 @@
 import { Router } from 'express';
 import * as dashboardController from '../controllers/dashboardController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuthCrm);
 
 // Endpoints do Dashboard
-router.get('/stats', authenticateToken, dashboardController.getDashboardStats);
-router.get('/kpis', authenticateToken, dashboardController.getKPIs);
-router.get('/charts/sales', authenticateToken, dashboardController.getSalesChart);
-router.get('/charts/leads', authenticateToken, dashboardController.getLeadsChart);
-router.get('/funnel', authenticateToken, dashboardController.getFunnelData);
-router.get('/activities', authenticateToken, dashboardController.getRecentActivities);
-router.get('/tasks', authenticateToken, dashboardController.getUpcomingTasks);
+router.get('/stats', dashboardController.getDashboardStats);
+router.get('/kpis', dashboardController.getKPIs);
+router.get('/charts/sales', dashboardController.getSalesChart);
+router.get('/charts/leads', dashboardController.getLeadsChart);
+router.get('/funnel', dashboardController.getFunnelData);
+router.get('/activities', dashboardController.getRecentActivities);
+router.get('/tasks', dashboardController.getUpcomingTasks);
+router.get('/activation-checklist', dashboardController.getActivationChecklist);
+router.post('/activation-checklist/dismiss', dashboardController.postDismissActivationChecklist);
 
 export default router;
 

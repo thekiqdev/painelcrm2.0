@@ -1,5 +1,25 @@
 import { apiClient } from '@/integrations/api/client';
 
+export interface ProjectArea {
+  id: string;
+  project_id: string;
+  name: string;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AreaComment {
+  id: string;
+  area_id: string;
+  user_id: string;
+  body: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  author_name: string;
+  author_email?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -10,6 +30,16 @@ export interface Project {
   kanban_stage: string | null;
   created_at: string;
   updated_at: string;
+  project_type?: 'simple' | 'areas' | 'advanced' | 'template';
+  template_id?: string | null;
+  source_template_id?: string | null;
+  client_id?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  responsible_ids?: string[];
+  team_id?: string | null;
+  team_ids?: string[];
+  areas?: ProjectArea[];
 }
 
 export interface ProjectList {
@@ -25,6 +55,7 @@ export interface ProjectTask {
   id: string;
   list_id: string;
   project_id: string;
+  area_id?: string | null;
   title: string;
   description: string | null;
   status: string;
@@ -60,9 +91,10 @@ export interface ProjectTask {
 }
 
 export class ProjectsService {
-  // Projetos
-  async getProjects(): Promise<Project[]> {
-    const response = await apiClient.get<Project[]>('/api/projects');
+  // Projetos (teamId opcional: filtra por equipe)
+  async getProjects(teamId?: string | null): Promise<Project[]> {
+    const url = teamId ? `/api/projects?team_id=${encodeURIComponent(teamId)}` : '/api/projects';
+    const response = await apiClient.get<Project[]>(url);
     if (response.error) throw new Error(response.error);
     return response.data || [];
   }
@@ -80,6 +112,18 @@ export class ProjectsService {
     due_date?: string | null;
     tags?: string[];
     kanban_stage?: string | null;
+    project_type?: 'simple' | 'areas' | 'advanced' | 'template';
+    template_id?: string | null;
+    client_id?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    responsible_ids?: string[];
+    team_id?: string | null;
+    team_ids?: string[];
+    initial_areas?: string[];
+    create_first_version?: boolean;
+    first_version_name?: string | null;
+    first_version_date?: string | null;
   }): Promise<Project> {
     const response = await apiClient.post<Project>('/api/projects', data);
     if (response.error) throw new Error(response.error);
@@ -95,6 +139,8 @@ export class ProjectsService {
       due_date?: string | null;
       tags?: string[];
       kanban_stage?: string | null;
+      team_id?: string | null;
+      team_ids?: string[];
     }
   ): Promise<Project> {
     const response = await apiClient.patch<Project>(`/api/projects/${id}`, data);
@@ -104,6 +150,54 @@ export class ProjectsService {
 
   async deleteProject(id: string): Promise<void> {
     const response = await apiClient.delete(`/api/projects/${id}`);
+    if (response.error) throw new Error(response.error);
+  }
+
+  // Áreas do projeto (tipos areas e advanced)
+  async getProjectAreas(projectId: string): Promise<ProjectArea[]> {
+    const response = await apiClient.get<ProjectArea[]>(`/api/projects/${projectId}/areas`);
+    if (response.error) throw new Error(response.error);
+    return response.data || [];
+  }
+
+  async createProjectArea(
+    projectId: string,
+    data: { name: string; sort_order?: number }
+  ): Promise<ProjectArea> {
+    const response = await apiClient.post<ProjectArea>(`/api/projects/${projectId}/areas`, data);
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async updateProjectArea(
+    areaId: string,
+    data: { name?: string; sort_order?: number; responsible_ids?: string[]; team_ids?: string[] }
+  ): Promise<ProjectArea> {
+    const response = await apiClient.patch<ProjectArea>(`/api/projects/areas/${areaId}`, data);
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async deleteProjectArea(areaId: string): Promise<void> {
+    const response = await apiClient.delete(`/api/projects/areas/${areaId}`);
+    if (response.error) throw new Error(response.error);
+  }
+
+  /** Comentários da área (estilo rede social). */
+  async getAreaComments(projectId: string, areaId: string): Promise<AreaComment[]> {
+    const response = await apiClient.get<AreaComment[]>(`/api/projects/${projectId}/areas/${areaId}/comments`);
+    if (response.error) throw new Error(response.error);
+    return response.data ?? [];
+  }
+
+  async createAreaComment(projectId: string, areaId: string, body: string): Promise<AreaComment> {
+    const response = await apiClient.post<AreaComment>(`/api/projects/${projectId}/areas/${areaId}/comments`, { body });
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async deleteAreaComment(projectId: string, areaId: string, commentId: string): Promise<void> {
+    const response = await apiClient.delete(`/api/projects/${projectId}/areas/${areaId}/comments/${commentId}`);
     if (response.error) throw new Error(response.error);
   }
 
@@ -144,8 +238,17 @@ export class ProjectsService {
   }
 
   // Tarefas de Projetos
-  async getProjectTasks(listId: string): Promise<ProjectTask[]> {
-    const response = await apiClient.get<ProjectTask[]>(`/api/projects/lists/${listId}/tasks`);
+  async getProjectTasks(listId: string, options?: { areaId?: string }): Promise<ProjectTask[]> {
+    const url = options?.areaId
+      ? `/api/projects/lists/${listId}/tasks?areaId=${encodeURIComponent(options.areaId)}`
+      : `/api/projects/lists/${listId}/tasks`;
+    const response = await apiClient.get<ProjectTask[]>(url);
+    if (response.error) throw new Error(response.error);
+    return response.data || [];
+  }
+
+  async getProjectTasksByArea(projectId: string, areaId: string): Promise<ProjectTask[]> {
+    const response = await apiClient.get<ProjectTask[]>(`/api/projects/${projectId}/areas/${areaId}/tasks`);
     if (response.error) throw new Error(response.error);
     return response.data || [];
   }
@@ -165,6 +268,7 @@ export class ProjectsService {
       priority?: string;
       due_date?: string | null;
       assignee_id?: string | null;
+      area_id?: string | null;
       tags?: string[];
       start_date?: string | null;
       start_time?: string | null;
@@ -199,6 +303,7 @@ export class ProjectsService {
   async updateProjectTask(
     taskId: string,
     data: {
+      list_id?: string;
       title?: string;
       description?: string | null;
       status?: string;

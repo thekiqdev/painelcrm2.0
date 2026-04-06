@@ -41,10 +41,10 @@ export class CartService {
 
   async updateCartItemQuantity(itemId: string, quantity: number): Promise<void> {
     try {
-      if (quantity <= 0) {
-        await this.removeFromCart(itemId);
-        return;
-      }
+    if (quantity <= 0) {
+      await this.removeFromCart(itemId);
+      return;
+    }
 
       const response = await apiClient.patch(`/api/cart/items/${itemId}`, { quantity });
       if (response.error) throw new Error(response.error);
@@ -102,9 +102,9 @@ export class CartService {
         customer_email: orderData.customerEmail,
         customer_phone: orderData.customerPhone || null,
         items: orderData.items.map(item => ({
-          product_id: item.productId,
-          quantity: item.quantity,
-          unit_price: item.unitPrice,
+        product_id: item.productId,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
           selected_variation: item.selectedVariation || null,
         })),
         payment_method: orderData.paymentMethod || null,

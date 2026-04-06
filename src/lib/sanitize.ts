@@ -9,8 +9,9 @@ export function sanitizeHtml(html: string): string {
   
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [
-      'p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li', 
-      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'b', 'i'
+      'p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'b', 'i',
+      'blockquote', 'pre', 'code'
     ],
     ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i

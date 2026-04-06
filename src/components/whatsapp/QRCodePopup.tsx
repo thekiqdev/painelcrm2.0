@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,16 +9,15 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, RefreshCw, CheckCircle2, InfoIcon, AlertTriangle, Settings } from "lucide-react";
-import { connectionDatabaseService } from "@/services/whatsapp/connectionDatabaseService";
-import { evolutionQRService } from "@/services/whatsapp/evolutionQRService";
-import { evolutionApi } from "@/services/evolutionApi";
+import { Loader2, RefreshCw, CheckCircle2, InfoIcon, AlertTriangle } from "lucide-react";
+import { chatService } from "@/services/chat";
 import { toast } from "sonner";
 
 interface QRCodePopupProps {
   isOpen: boolean;
   onClose: () => void;
   connectionId: string;
+  qrCode?: string | null;
   onConnect: () => void;
 }
 
@@ -26,24 +25,40 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
   isOpen,
   onClose,
   connectionId,
+  qrCode: qrCodeProp,
   onConnect,
 }) => {
-  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [qrCode, setQrCode] = useState<string | null>(qrCodeProp || null);
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [instanceStatus, setInstanceStatus] = useState<any>(null);
-  const [diagnosticInfo, setDiagnosticInfo] = useState<string>("");
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [isRestarting, setIsRestarting] = useState(false);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (isOpen && connectionId) {
-      console.log("QRCodePopup aberto para conexão:", connectionId);
+    // Limpar polling anterior
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    
+    if (isOpen && qrCodeProp) {
+      setQrCode(qrCodeProp);
+      // Iniciar polling para verificar conexão
+      pollIntervalRef.current = startConnectionPolling();
+    } else if (isOpen && connectionId && !qrCodeProp) {
+      // Se não tem QR code mas tem connectionId, tentar gerar
       generateQRCode();
     }
-  }, [isOpen, connectionId]);
+    
+    // Cleanup: parar polling quando fechar ou mudar
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, [isOpen, connectionId, qrCodeProp]);
 
   // Função para processar o base64 do QR Code
   const processQRCodeBase64 = (base64Data: string): string => {
@@ -145,200 +160,6 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     return '';
   };
 
-  const runDiagnostics = async (instanceName: string) => {
-    try {
-      console.log("Executando diagnósticos para:", instanceName);
-      
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) {
-        throw new Error("Configuração não encontrada");
-      }
-
-      let diagnostics = `=== DIAGNÓSTICO DA INSTÂNCIA ===\n`;
-      diagnostics += `Instância: ${instanceName}\n`;
-      diagnostics += `API URL: ${config.api_url}\n`;
-      diagnostics += `Hora: ${new Date().toLocaleString()}\n\n`;
-
-      // Teste 1: Verificar conectividade com a API
-      try {
-        const connectivityTest = await evolutionApi.testApiConnectivity();
-        diagnostics += `${connectivityTest.success ? '✓' : '✗'} Conectividade com API: ${connectivityTest.success ? 'OK' : connectivityTest.error}\n`;
-        
-        if (!connectivityTest.success) {
-          diagnostics += `  Erro: API não está respondendo corretamente\n`;
-          diagnostics += `  Verificar se a URL ${config.api_url} está correta\n`;
-        }
-      } catch (error) {
-        diagnostics += `✗ Erro de conectividade: ${error}\n`;
-      }
-
-      // Teste 2: Verificar se consegue listar instâncias
-      try {
-        const instances = await evolutionApi.fetchInstances();
-        console.log("🔍 DIAGNÓSTICO: Todas as instâncias encontradas:", instances);
-        
-        // Logs detalhados de cada instância
-        instances.forEach((instance, index) => {
-          console.log(`🔍 DIAGNÓSTICO: Instância ${index + 1}:`, {
-            instanceName: instance.instance?.instanceName || instance.instanceName,
-            name: instance.name,
-            state: instance.instance?.state || instance.state,
-            status: instance.status,
-            objetoCompleto: instance
-          });
-        });
-        
-        const instanceExists = instances.some((instance: any) => {
-          const instanceName1 = instance.instance?.instanceName;
-          const instanceName2 = instance.instanceName;
-          const instanceName3 = instance.name;
-          
-          console.log(`🔍 DIAGNÓSTICO: Comparando '${instanceName}' com:`, {
-            instanceName1,
-            instanceName2,
-            instanceName3,
-            match1: instanceName1 === instanceName,
-            match2: instanceName2 === instanceName,
-            match3: instanceName3 === instanceName
-          });
-          
-          return instanceName1 === instanceName || 
-                 instanceName2 === instanceName || 
-                 instanceName3 === instanceName;
-        });
-        
-        diagnostics += `${instanceExists ? '✓' : '✗'} Instância encontrada na lista: ${instanceExists ? 'SIM' : 'NÃO'}\n`;
-        diagnostics += `  Total de instâncias na API: ${instances.length}\n`;
-        
-        if (instanceExists) {
-          const instanceData = instances.find((instance: any) => 
-            instance.instance?.instanceName === instanceName || 
-            instance.instanceName === instanceName ||
-            instance.name === instanceName
-          );
-          diagnostics += `  Estado: ${instanceData?.instance?.state || instanceData?.state || 'indefinido'}\n`;
-          diagnostics += `  Status: ${instanceData?.status || 'indefinido'}\n`;
-        } else {
-          diagnostics += `  ⚠️  A instância '${instanceName}' não foi encontrada!\n`;
-          diagnostics += `  Verificar se o nome está correto ou se precisa ser criada\n`;
-          diagnostics += `  Nomes encontrados na API:\n`;
-          instances.forEach((instance) => {
-            diagnostics += `    - ${instance.instance?.instanceName || instance.instanceName || instance.name || 'sem nome'}\n`;
-          });
-        }
-      } catch (error) {
-        diagnostics += `✗ Erro ao listar instâncias: ${error}\n`;
-        if (error instanceof Error && error.message.includes('404')) {
-          diagnostics += `  ⚠️  Endpoint de listagem não encontrado\n`;
-          diagnostics += `  Verificar se a URL da API está correta\n`;
-        }
-      }
-
-      // Teste 3: Verificar status específico da instância
-      try {
-        const status = await evolutionApi.getInstanceStatus(instanceName);
-        diagnostics += `✓ Status específico obtido:\n`;
-        diagnostics += `  Estado: ${status?.instance?.state || 'indefinido'}\n`;
-        diagnostics += `  Status geral: ${status?.status || 'indefinido'}\n`;
-        setInstanceStatus(status);
-      } catch (error) {
-        diagnostics += `✗ Erro ao obter status: ${error}\n`;
-        if (error instanceof Error && error.message.includes('404')) {
-          diagnostics += `  ⚠️  Instância não responde - pode estar inativa\n`;
-        }
-      }
-
-      // Teste 4: Verificar se consegue gerar QR Code (usando endpoint correto)
-      try {
-        console.log("🔍 DIAGNÓSTICO: ===== TESTANDO GERAÇÃO DE QR CODE =====");
-        const qrResult = await evolutionApi.getQRCode(instanceName);
-        console.log("🔍 DIAGNÓSTICO: Resultado completo do QR Code:", qrResult);
-        
-        if (qrResult.success) {
-          diagnostics += `✓ QR Code (endpoint /instance/connect): ${qrResult.status === 'connected' ? 'Já conectado' : 'Gerado com sucesso'}\n`;
-          
-          // IMPORTANTE: Se o QR Code foi gerado com sucesso, a instância DEVE existir
-          if (qrResult.status !== 'connected') {
-            diagnostics += `  ⚠️  INCONSISTÊNCIA DETECTADA!\n`;
-            diagnostics += `  ⚠️  QR Code gerado com sucesso, mas instância não foi encontrada na listagem\n`;
-            diagnostics += `  ⚠️  Isso indica que:\n`;
-            diagnostics += `  ⚠️  1. A instância existe e está funcionando\n`;
-            diagnostics += `  ⚠️  2. O endpoint de listagem pode estar retornando dados incompletos\n`;
-            diagnostics += `  ⚠️  3. O nome da instância pode estar em formato diferente na listagem\n`;
-          }
-          
-          if (qrResult.pairingCode) {
-            diagnostics += `  Código de Emparelhamento: ${qrResult.pairingCode}\n`;
-          }
-        } else {
-          diagnostics += `✗ QR Code: ${qrResult.error || 'Erro desconhecido'}\n`;
-        }
-      } catch (error) {
-        diagnostics += `✗ Erro ao obter QR Code: ${error}\n`;
-      }
-
-      setDiagnosticInfo(diagnostics);
-      setShowDiagnostics(true);
-
-    } catch (error) {
-      console.error("Erro nos diagnósticos:", error);
-      setDiagnosticInfo(`Erro ao executar diagnósticos: ${error}`);
-      setShowDiagnostics(true);
-    }
-  };
-
-  const restartInstance = async (instanceName: string) => {
-    try {
-      setIsRestarting(true);
-      
-      const config = await evolutionApi.getActiveConfig();
-      if (!config) {
-        throw new Error("Configuração não encontrada");
-      }
-
-      console.log("Reiniciando instância:", instanceName);
-      
-      // Usar URL normalizada para evitar problemas de barras duplas
-      const url = `${config.api_url.replace(/\/+$/, '')}/instance/restart/${instanceName}`;
-      
-      const restartResponse = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': config.global_key || ''
-        }
-      });
-
-      if (restartResponse.ok) {
-        const result = await restartResponse.json();
-        console.log("Instância reiniciada:", result);
-        
-        toast.success("Instância reiniciada", {
-          description: "Aguardando reinicialização completa...",
-        });
-
-        // Aguardar alguns segundos antes de tentar novamente
-        setTimeout(() => {
-          setIsRestarting(false);
-          setErrorMessage("");
-          setShowDiagnostics(false);
-          generateQRCode();
-        }, 5000);
-        
-      } else {
-        const errorText = await restartResponse.text();
-        throw new Error(`Erro ao reiniciar: ${restartResponse.status} - ${errorText}`);
-      }
-      
-    } catch (error) {
-      console.error("Erro ao reiniciar instância:", error);
-      setIsRestarting(false);
-      
-      toast.error("Erro ao reiniciar", {
-        description: error instanceof Error ? error.message : "Erro desconhecido"
-      });
-    }
-  };
 
   const generateQRCode = async () => {
     if (!connectionId) {
@@ -353,31 +174,16 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     setShowDiagnostics(false);
     
     try {
-      console.log("Gerando QR code para conexão:", connectionId);
+      console.log("Gerando QR code para instância:", connectionId);
       
-      // Buscar a conexão no banco de dados
-      const connections = await connectionDatabaseService.getConnections();
-      const connection = connections.find(c => c.id === connectionId);
+      // Conectar instância e obter QR Code via backend
+      const connectResponse = await chatService.connectInstance(connectionId);
       
-      if (!connection) {
-        throw new Error("Conexão não encontrada no banco de dados");
-      }
+      // O backend retorna o payload da UazAPI
+      const qrData = connectResponse?.qrcode?.base64 || connectResponse?.code || connectResponse?.qrcode;
+      const pairingCodeData = connectResponse?.pairingCode;
       
-      console.log("Dados da conexão encontrada:", connection);
-      
-      // Verificar se tem instance_name
-      if (!connection.instance_name) {
-        throw new Error("Nome da instância não encontrado na conexão. Verifique se a instância foi criada corretamente na Evolution API.");
-      }
-      
-      console.log("Chamando evolutionQRService com instance_name:", connection.instance_name);
-      
-      const result = await evolutionQRService.getEvolutionQRCode(connection.instance_name);
-      
-      console.log("Resultado completo do evolutionQRService:", result);
-      
-      if (result.success) {
-        if (result.qrCode === "already_connected" || result.status === "connected") {
+      if (connectResponse?.status === "open" || connectResponse?.instance?.state === "open") {
           setIsConnected(true);
           toast.success("Já conectado!", {
             description: "Esta instância já estava conectada",
@@ -385,23 +191,18 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           return;
         }
         
-        if (result.qrCode) {
-          console.log("QR Code recebido do service:", result.qrCode);
-          
+      if (qrData) {
           // Processar o base64 corretamente
-          const processedQRCode = processQRCodeBase64(result.qrCode);
+        const processedQRCode = processQRCodeBase64(typeof qrData === 'string' ? qrData : JSON.stringify(qrData));
           
           if (!processedQRCode || processedQRCode.trim() === '') {
             throw new Error("QR Code processado está vazio");
           }
           
-          console.log("QR Code processado para exibição:", processedQRCode.substring(0, 100) + "...");
-          
           setQrCode(processedQRCode);
           
-          // Definir o código de emparelhamento se disponível
-          if (result.pairingCode) {
-            setPairingCode(result.pairingCode);
+        if (pairingCodeData) {
+          setPairingCode(pairingCodeData);
           }
           
           toast.success("QR Code gerado", {
@@ -409,12 +210,12 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           });
           
           // Iniciar verificação de conexão
-          startConnectionPolling(connection.instance_name);
-        } else {
-          throw new Error("QR Code não foi retornado pela API");
-        }
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+          }
+          pollIntervalRef.current = startConnectionPolling();
       } else {
-        throw new Error(result.message || "Erro ao gerar QR code");
+        throw new Error("QR Code não foi retornado pela API");
       }
       
     } catch (error) {
@@ -430,59 +231,59 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     }
   };
 
-  const startConnectionPolling = async (instanceName: string) => {
+  const startConnectionPolling = (): NodeJS.Timeout | null => {
+    if (!connectionId) return null;
+    
+    let pollCount = 0;
+    const maxPolls = 120; // Máximo de 6 minutos (120 * 3s)
+    
     const pollInterval = setInterval(async () => {
+      pollCount++;
+      
+      // Parar após máximo de tentativas
+      if (pollCount > maxPolls) {
+        clearInterval(pollInterval);
+        if (!isConnected) {
+          setErrorMessage("QR Code expirou. Tente gerar novamente.");
+          toast.error("QR Code expirado", {
+            description: "O QR Code expirou após 6 minutos. Gere um novo."
+          });
+        }
+        return;
+      }
+      
       try {
-        console.log("Verificando status da conexão para:", instanceName);
+        const statusResponse = await chatService.getInstanceStatus(connectionId);
+        const instanceData = statusResponse?.instance || statusResponse;
+        const state = instanceData?.state || instanceData?.status || statusResponse?.status;
+        const connected = statusResponse?.connected || instanceData?.connected;
+        const loggedIn = statusResponse?.loggedIn || instanceData?.loggedIn;
         
-        const result = await evolutionQRService.getEvolutionQRCode(instanceName);
-        
-        if (result.success && result.status === "connected") {
-          console.log("Conexão estabelecida!");
+        // Verificar se está conectado
+        if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
           setIsConnected(true);
           clearInterval(pollInterval);
-          
-          // Atualizar status no banco
-          const connections = await connectionDatabaseService.getConnections();
-          const connection = connections.find(c => c.instance_name === instanceName);
-          
-          if (connection) {
-            await connectionDatabaseService.updateConnection(connection.id, {
-              status: "connected",
-              qr_code: null
-            });
-          }
           
           toast.success("Conectado com sucesso!", {
             description: "WhatsApp foi conectado com sucesso",
           });
           
-          // Auto-conectar após 2 segundos
+          // Auto-fechar após 1 segundo
           setTimeout(() => {
             onConnect();
-          }, 2000);
+          }, 1000);
         }
       } catch (error) {
-        console.error("Erro ao verificar conexão:", error);
+        // Silenciar erros - não logar para reduzir spam
       }
-    }, 3000);
+    }, 3000); // Manter 3s para QR code (mais crítico)
     
-    // Timeout após 5 minutos
-    setTimeout(() => {
-      clearInterval(pollInterval);
-      if (!isConnected) {
-        setErrorMessage("QR Code expirou. Tente gerar novamente.");
-        toast.error("QR Code expirado", {
-          description: "O QR Code expirou após 5 minutos. Gere um novo."
-        });
-      }
-    }, 300000);
+    return pollInterval;
   };
 
   const handleRetry = () => {
     setErrorMessage("");
     setIsConnected(false);
-    setShowDiagnostics(false);
     generateQRCode();
   };
 
@@ -490,27 +291,9 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
     setQrCode(null);
     setIsConnected(false);
     setErrorMessage("");
-    setShowDiagnostics(false);
     onClose();
   };
 
-  const handleDiagnostics = async () => {
-    const connections = await connectionDatabaseService.getConnections();
-    const connection = connections.find(c => c.id === connectionId);
-    
-    if (connection?.instance_name) {
-      await runDiagnostics(connection.instance_name);
-    }
-  };
-
-  const handleRestart = async () => {
-    const connections = await connectionDatabaseService.getConnections();
-    const connection = connections.find(c => c.id === connectionId);
-    
-    if (connection?.instance_name) {
-      await restartInstance(connection.instance_name);
-    }
-  };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
@@ -528,20 +311,10 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
         </DialogHeader>
         
         <div className="flex flex-col items-center py-6 space-y-4">
-          {isLoading && !isRestarting && (
+          {isLoading && (
             <div className="flex flex-col items-center gap-4">
               <Loader2 className="h-16 w-16 animate-spin text-primary" />
               <p className="text-center">Gerando QR code...</p>
-            </div>
-          )}
-
-          {isRestarting && (
-            <div className="flex flex-col items-center gap-4">
-              <Loader2 className="h-16 w-16 animate-spin text-orange-500" />
-              <p className="text-center">Reiniciando instância...</p>
-              <p className="text-sm text-muted-foreground text-center">
-                Aguarde enquanto a instância é reiniciada
-              </p>
             </div>
           )}
           
@@ -588,12 +361,12 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           
           {isConnected && (
             <div className="flex flex-col items-center gap-4">
-              <CheckCircle2 className="h-16 w-16 text-green-500" />
+              <CheckCircle2 className="h-16 w-16 text-green-500 animate-in fade-in zoom-in duration-300" />
               <p className="text-center text-lg font-medium">WhatsApp Conectado!</p>
-              <Alert>
-                <InfoIcon className="h-4 w-4 mr-2" />
-                <AlertDescription>
-                  A conexão será finalizada automaticamente em alguns segundos.
+              <Alert className="bg-green-50 border-green-200">
+                <InfoIcon className="h-4 w-4 mr-2 text-green-600" />
+                <AlertDescription className="text-green-800">
+                  Conexão estabelecida com sucesso. Fechando...
                 </AlertDescription>
               </Alert>
             </div>
@@ -607,56 +380,12 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
                   {errorMessage}
                 </AlertDescription>
               </Alert>
-              
-              <div className="flex flex-col gap-2 w-full">
-                <p className="text-sm text-muted-foreground text-center">
-                  Opções de recuperação disponíveis:
-                </p>
-                
-                <div className="flex flex-wrap gap-2 justify-center">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleDiagnostics}
-                  >
-                    <Settings className="h-4 w-4 mr-2" />
-                    Diagnóstico
-                  </Button>
-                  
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleRestart}
-                    disabled={isRestarting}
-                  >
-                    {isRestarting ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                    )}
-                    Reiniciar
-                  </Button>
-                </div>
-              </div>
-
-              {showDiagnostics && (
-                <div className="w-full">
-                  <Alert>
-                    <InfoIcon className="h-4 w-4" />
-                    <AlertDescription>
-                      <pre className="whitespace-pre-wrap text-xs mt-2 max-h-40 overflow-y-auto">
-                        {diagnosticInfo}
-                      </pre>
-                    </AlertDescription>
-                  </Alert>
-                </div>
-              )}
             </div>
           )}
         </div>
         
         <DialogFooter>
-          {!isConnected && !isLoading && !isRestarting && (
+          {!isConnected && !isLoading && (
             <Button variant="outline" onClick={handleRetry}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Tentar Novamente
@@ -664,8 +393,8 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           )}
           
           {isConnected ? (
-            <Button onClick={onConnect} className="w-full">
-              Finalizar Conexão
+            <Button onClick={onConnect} className="w-full" disabled>
+              Fechando automaticamente...
             </Button>
           ) : (
             <Button variant="outline" onClick={handleClose}>

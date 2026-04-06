@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { financeService, Invoice as ApiInvoice, Expense as ApiExpense } from "@/services/finance";
+import { financeService, Invoice as ApiInvoice, Expense as ApiExpense, BillingReceipt } from "@/services/finance";
 import { projectsService } from "@/services/projects";
 import { clientsService } from "@/services/clients";
 
@@ -21,6 +21,7 @@ const Finance = () => {
   const [expenseFormOpen, setExpenseFormOpen] = useState(false);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [billingReceipts, setBillingReceipts] = useState<BillingReceipt[]>([]);
   const [availableProjects, setAvailableProjects] = useState<{ id: string; name: string }[]>([]);
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
 
@@ -28,9 +29,10 @@ const Finance = () => {
     const loadData = async () => {
       try {
         setLoading(true);
-        const [invoicesData, expensesData, projectsData, clientsData] = await Promise.all([
+        const [invoicesData, expensesData, billingReceiptsData, projectsData, clientsData] = await Promise.all([
           financeService.getInvoices(),
           financeService.getExpenses(),
+          financeService.getBillingReceipts(),
           projectsService.getProjects(),
           clientsService.getClients(),
         ]);
@@ -71,6 +73,7 @@ const Finance = () => {
 
         setInvoices(convertedInvoices);
         setExpenses(convertedExpenses);
+        setBillingReceipts(billingReceiptsData);
         setAvailableProjects(projectsData.map(p => ({ id: p.id, name: p.name })));
         setClients(clientsData.map(c => ({ id: c.id, name: c.name })));
       } catch (error) {
@@ -86,15 +89,15 @@ const Finance = () => {
   
   const handleCreateInvoice = async (formData: FormData) => {
     try {
-      const clientName = formData.get('clientName') as string;
-      const invoiceNumber = formData.get('invoiceNumber') as string;
-      const issueDate = formData.get('issueDate') as string;
-      const dueDate = formData.get('dueDate') as string;
-      const status = formData.get('status') as "draft" | "pending" | "paid" | "overdue";
-      const items = JSON.parse(formData.get('items') as string);
-      const total = parseFloat(formData.get('total') as string);
-      const projectId = formData.get('projectId') as string;
-
+    const clientName = formData.get('clientName') as string;
+    const invoiceNumber = formData.get('invoiceNumber') as string;
+    const issueDate = formData.get('issueDate') as string;
+    const dueDate = formData.get('dueDate') as string;
+    const status = formData.get('status') as "draft" | "pending" | "paid" | "overdue";
+    const items = JSON.parse(formData.get('items') as string);
+    const total = parseFloat(formData.get('total') as string);
+    const projectId = formData.get('projectId') as string;
+    
       // Encontrar client_id pelo nome
       const client = clients.find(c => c.name === clientName);
       
@@ -104,14 +107,14 @@ const Finance = () => {
         invoice_number: invoiceNumber,
         issue_date: issueDate.split('T')[0],
         due_date: dueDate.split('T')[0],
-        status,
+      status,
         items: items.map((item: any) => ({
           description: item.description,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           total: item.total,
         })),
-        total,
+      total,
         notes: null,
       });
 
@@ -135,8 +138,8 @@ const Finance = () => {
       };
       
       setInvoices([...invoices, convertedInvoice]);
-      setInvoiceFormOpen(false);
-      toast.success("Fatura criada com sucesso");
+    setInvoiceFormOpen(false);
+    toast.success("Fatura criada com sucesso");
     } catch (error) {
       console.error("Erro ao criar fatura:", error);
       toast.error("Erro ao criar fatura");
@@ -145,18 +148,18 @@ const Finance = () => {
   
   const handleCreateExpense = async (formData: FormData) => {
     try {
-      const description = formData.get('description') as string;
-      const amount = parseFloat(formData.get('amount') as string);
-      const date = formData.get('date') as string;
-      const category = formData.get('category') as string;
-      const isPaid = formData.get('isPaid') === 'true';
-      const notes = formData.get('notes') as string;
-      const projectId = formData.get('projectId') as string;
-      
+    const description = formData.get('description') as string;
+    const amount = parseFloat(formData.get('amount') as string);
+    const date = formData.get('date') as string;
+    const category = formData.get('category') as string;
+    const isPaid = formData.get('isPaid') === 'true';
+    const notes = formData.get('notes') as string;
+    const projectId = formData.get('projectId') as string;
+    
       const newExpense = await financeService.createExpense({
         project_id: projectId || null,
-        description,
-        amount,
+      description,
+      amount,
         date: date.split('T')[0],
         category: category || null,
         is_paid: isPaid,
@@ -176,8 +179,8 @@ const Finance = () => {
       };
       
       setExpenses([...expenses, convertedExpense]);
-      setExpenseFormOpen(false);
-      toast.success("Despesa registrada com sucesso");
+    setExpenseFormOpen(false);
+    toast.success("Despesa registrada com sucesso");
     } catch (error) {
       console.error("Erro ao criar despesa:", error);
       toast.error("Erro ao criar despesa");
@@ -205,7 +208,7 @@ const Finance = () => {
       : <Badge variant="secondary">Pendente</Badge>;
   };
 
-  // Financial data for the summary component
+  // Financial data for the summary component (faturas do finance + receitas de cobrança pagas)
   const financialData = {
     invoices: invoices.map(inv => ({
       id: inv.id,
@@ -213,6 +216,11 @@ const Finance = () => {
       amount: inv.total,
       date: inv.issueDate,
       status: inv.status
+    })),
+    billingReceipts: billingReceipts.map(r => ({
+      id: r.id,
+      amount: r.amount_cents / 100,
+      date: r.paid_at.slice(0, 10)
     })),
     expenses: expenses.map(exp => ({
       id: exp.id,

@@ -1,13 +1,15 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { apiClient } from '@/integrations/api/client';
 import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
+import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 
 interface User {
   id: string;
   email: string;
+  tenant_id?: string | null;
   whatsapp_number?: string;
   first_name?: string;
   last_name?: string;
@@ -15,6 +17,29 @@ interface User {
   whatsapp_connected?: boolean;
   registration_complete?: boolean;
   created_at?: string;
+  default_profile_id?: string | null;
+  is_super_admin?: boolean;
+  /** Se true, o usuário é o administrador da conta (primary user do tenant) e pode acessar a tela de planos. */
+  can_manage_plan?: boolean;
+  /** Se true, o plano grátis expirou e o usuário deve ser direcionado para contratação. */
+  plan_expired?: boolean;
+  /** Status do tenant (active, trial, payment_pending, suspended). */
+  tenant_status?: string | null;
+  /** Se false e tenant_status === 'active', redirecionar para /onboarding. */
+  onboarding_completed?: boolean;
+  /** Fase 2: trial expirou ou suspenso por trial — retomar pagamento no /checkout. */
+  requires_checkout_resume?: boolean;
+  trial_ends_at?: string | null;
+  suspension_reason?: string | null;
+}
+
+interface SignUpParams {
+  identifier: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  whatsapp?: string;
 }
 
 type AuthContextType = {
@@ -23,11 +48,20 @@ type AuthContextType = {
   loading: boolean;
   profile: any | null;
   registrationComplete: boolean;
-  signIn: (identifier: string, password: string) => Promise<void>;
-  signUp: (identifier: string, password: string) => Promise<void>;
+  /** Lista de feature keys habilitadas para o usuário (plano/tenant). Super admin tem todas. */
+  features: string[];
+  /** Retorna rota para redirecionar após login (ex.: /superadmin ou /dashboard). */
+  signIn: (identifier: string, password: string) => Promise<string>;
+  signUp: (params: SignUpParams) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: any) => Promise<void>;
   updateRegistrationStep: (step: string, completed: boolean) => Promise<void>;
+  /** Recarrega as features do usuário (ex.: após troca de tenant/plano). */
+  refreshFeatures: () => Promise<void>;
+  /** Define token e usuário (ex.: após onboarding create-admin) e recarrega features. */
+  setTokenAndUser: (token: string, user: User) => Promise<void>;
+  /** Recarrega dados do usuário (ex.: após concluir onboarding). */
+  refreshUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,31 +72,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<any | null>(null);
   const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [features, setFeatures] = useState<string[]>([]);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
-    // Check for existing token
+    // Suporte a "Acessar como" (impersonation): token na URL aplicado antes de carregar
+    const params = new URLSearchParams(window.location.search);
+    const impToken = params.get('impersonation_token');
+    if (impToken) {
+      apiClient.setToken(impToken);
+      window.history.replaceState({}, '', (window.location.pathname || '/') + (window.location.hash || ''));
+    }
     const token = apiClient.getToken();
     if (token) {
-      // Verify token by fetching user
       fetchCurrentUser();
     } else {
       setLoading(false);
     }
   }, []);
 
-  const fetchCurrentUser = async () => {
+  useEffect(() => {
+    const path = location.pathname || '';
+    // Hub comercial primeiro: trial expirado / retomada → /meu-plano (CTA leva ao /checkout?mode=resume).
+    if (user?.requires_checkout_resume === true && !path.startsWith('/checkout') && path !== '/meu-plano') {
+      navigate('/meu-plano', { replace: true });
+      return;
+    }
+    /** Plano grátis com trial vencido: hub em /meu-plano, mas /checkout (ex.: ?mode=resume) deve poder abrir — senão o 2º if desfaz a navegação que o 1º já permitiu. */
+    if (user?.plan_expired && path !== '/meu-plano' && !path.startsWith('/checkout')) {
+      navigate('/meu-plano', { replace: true });
+    }
+  }, [user?.requires_checkout_resume, user?.plan_expired, navigate, location.pathname]);
+
+  const fetchCurrentUser = async (): Promise<User | null> => {
     try {
       const response = await apiClient.get<User>('/api/auth/me');
       if (response.error) {
-        // Token invalid, clear it
-        apiClient.setToken(null);
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        setRegistrationComplete(false);
+        // Só sessão realmente inválida (401) deve zerar o token; outros erros não deslogam o trial expirado por engano.
+        const status = (response.details as { status?: number } | undefined)?.status;
+        if (status === 401) {
+          apiClient.setToken(null);
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setFeatures([]);
+          setRegistrationComplete(false);
+        }
         setLoading(false);
-        return;
+        return null;
       }
 
       if (response.data) {
@@ -70,11 +128,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession({ token: apiClient.getToken() || '' });
         setProfile(response.data);
         setRegistrationComplete(response.data.registration_complete || false);
+        await fetchMeFeatures();
+        setLoading(false);
+        return response.data;
       }
       setLoading(false);
+      return null;
     } catch (error) {
       console.error('Error fetching user:', error);
       setLoading(false);
+      return null;
+    }
+  };
+
+  const fetchMeFeatures = async () => {
+    try {
+      const res = await apiClient.get<{ features: string[] }>('/api/auth/me/features');
+      if (res.data?.features) {
+        setFeatures(res.data.features);
+      } else {
+        setFeatures([]);
+      }
+    } catch {
+      setFeatures([]);
     }
   };
 
@@ -101,7 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signIn = async (identifier: string, password: string) => {
+  const signIn = async (identifier: string, password: string): Promise<string> => {
     try {
       const response = await apiClient.post<{ user: User; token: string }>('/api/auth/login', {
         identifier: identifier.trim(),
@@ -110,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (response.error) {
         toast.error(response.error || 'Falha no login');
-        return;
+        return '/login';
       }
 
       if (response.data) {
@@ -119,27 +195,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(response.data.user.registration_complete || false);
+        const fresh = await fetchCurrentUser();
+        await fetchMeFeatures();
+        if (!apiClient.getToken()) {
+          toast.error('Sessão inválida. Faça login novamente.');
+          return '/login';
+        }
         toast.success('Login realizado com sucesso!');
+        return getPostAuthHomePath(fresh ?? response.data.user);
       }
+      return '/login';
     } catch (error: any) {
       toast.error(error.message || 'Erro desconhecido');
+      return '/login';
     }
   };
 
-  const signUp = async (identifier: string, password: string) => {
+  const signUp = async ({
+    identifier,
+    password,
+    firstName,
+    lastName,
+    companyName,
+    whatsapp,
+  }: SignUpParams) => {
     try {
-      // Determine if identifier is email or phone
-      const isEmail = identifier.includes('@');
-      const email = isEmail ? identifier.trim().toLowerCase() : null;
-      const whatsapp = isEmail ? null : identifier.replace(/\D/g, '');
+      const trimmedIdentifier = identifier.trim();
+      const isEmail = trimmedIdentifier.includes('@');
+      const normalizedWhatsapp = whatsapp
+        ? whatsapp.replace(/\D/g, '')
+        : !isEmail
+          ? trimmedIdentifier.replace(/\D/g, '')
+          : undefined;
+      const email = isEmail ? trimmedIdentifier.toLowerCase() : null;
       
-      // If phone, create email from phone number (temporary until we update backend)
-      const registerEmail = email || `${whatsapp}@multicrm.app`;
+      const registerEmail = email || `${normalizedWhatsapp}@painelcrm.app`;
       
-      const response = await apiClient.post<{ user: User; token: string }>('/api/auth/register', {
+      const payload = {
         email: registerEmail,
         password,
-        whatsapp: whatsapp || null,
+        whatsapp: normalizedWhatsapp || null,
+        first_name: firstName,
+        last_name: lastName,
+        company_name: companyName,
+      };
+      
+      const response = await apiClient.post<{ user: User; token: string }>('/api/auth/register', {
+        ...payload,
       });
 
       if (response.error) {
@@ -153,6 +255,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(false);
+        await fetchCurrentUser();
         toast.success('Cadastro realizado com sucesso!');
       }
     } catch (error: any) {
@@ -162,27 +265,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
-      // Limpar estado local primeiro
+      // Call logout endpoint primeiro (enquanto ainda temos o token)
+      // Ignorar erros, pois o logout é principalmente client-side com JWT
+      try {
+        await apiClient.post('/api/auth/logout');
+      } catch (logoutError) {
+        // Ignorar erros do endpoint de logout
+      }
+      
+      // Limpar estado local
       setProfile(null);
       setRegistrationComplete(false);
       setUser(null);
       setSession(null);
+      setFeatures([]);
       
       // Limpar armazenamento local relacionado à autenticação
       await clearAuthState();
       apiClient.setToken(null);
       
-      // Call logout endpoint (optional, mainly for server-side cleanup)
-      await apiClient.post('/api/auth/logout');
-      
       toast.success('Logout realizado com sucesso!');
-      navigate('/');
+      navigate('/login');
     } catch (error: any) {
-      console.error('Erro durante o logout:', error);
-      // Even if logout fails, clear local state
+      // Se algo der errado, garantir que o estado local seja limpo
+      setProfile(null);
+      setRegistrationComplete(false);
+      setUser(null);
+      setSession(null);
+      setFeatures([]);
+      await clearAuthState();
       apiClient.setToken(null);
       toast.success('Logout realizado com sucesso!');
-      navigate('/');
+      navigate('/login');
     }
   };
 
@@ -209,6 +323,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Error updating profile:', error);
       toast.error(error.message || 'Erro desconhecido');
     }
+  };
+
+  const setTokenAndUser = async (token: string, newUser: User) => {
+    apiClient.setToken(token);
+    setSession({ token });
+    setUser(newUser);
+    setProfile(newUser);
+    setRegistrationComplete(newUser.registration_complete ?? false);
+    await fetchMeFeatures();
+  };
+
+  const refreshUser = async () => {
+    await fetchCurrentUser();
   };
 
   const updateRegistrationStep = async (step: string, completed: boolean) => {
@@ -245,11 +372,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loading,
     profile,
     registrationComplete,
+    features,
     signIn,
     signUp,
     signOut,
     updateProfile,
-    updateRegistrationStep
+    updateRegistrationStep,
+    refreshFeatures: fetchMeFeatures,
+    setTokenAndUser,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,8 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Calendar as CalendarIcon, Clock, Plus, CheckCircle, User, Circle, CheckSquare, MoreHorizontal, X, Edit } from "lucide-react";
+import { Calendar as CalendarIcon, Clock, Plus, CheckCircle, User, Circle, CheckSquare, MoreHorizontal, X, Edit, FileText, ChevronDown, ChevronUp, Settings2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar } from "@/components/ui/avatar";
@@ -19,18 +19,54 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { clientsService, Client } from "@/services/clients";
+import { UnifiedTaskCard, TaskSummaryPopover, TaskFullView } from "@/components/tasks";
+import { globalTaskToUnified, type UnifiedTask } from "@/lib/taskUnified";
+import { SystemRichEditor, SystemRichEditorReadOnly } from "@/components/editor";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
+
+const TASKS_QUERY_KEY = ["tasks", "list"] as const;
 
 const Tasks = () => {
+  const queryClient = useQueryClient();
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [date, setDate] = useState<Date>();
   const [clients, setClients] = useState<Client[]>([]);
+
+  const { data: tasksData, isPending: loading } = useQuery({
+    queryKey: ["tasks", "list"],
+    queryFn: async () => {
+      const [tasksRes, clientsRes] = await Promise.all([
+        tasksService.getTasks(),
+        clientsService.getClients(),
+      ]);
+      const formatted = (tasksRes || []).map((t: Task) => ({ ...t, date: t.date || "" }));
+      return { tasks: formatted, clients: clientsRes || [] };
+    },
+  });
+  useEffect(() => {
+    if (tasksData) {
+      setTasks(tasksData.tasks);
+      setClients(tasksData.clients);
+    }
+  }, [tasksData]);
   
   // Estados para o modal de detalhes e gerenciamento de checklist
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [newChecklistItem, setNewChecklistItem] = useState("");
+  const [isEditingTask, setIsEditingTask] = useState(false);
+  const [editTaskFields, setEditTaskFields] = useState({
+    title: "",
+    description: "",
+    dueDate: undefined as Date | undefined,
+    time: "",
+    priority: "medium" as "low" | "medium" | "high",
+    status: "pending" as "pending" | "completed",
+    assignee: "",
+    deal: "",
+  });
 
   // Estados do formulário
   const [formTitle, setFormTitle] = useState("");
@@ -40,35 +76,9 @@ const Tasks = () => {
   const [formClient, setFormClient] = useState("");
   const [formDeal, setFormDeal] = useState("");
   const [formAssignee, setFormAssignee] = useState("");
+  const [formAdvancedOpen, setFormAdvancedOpen] = useState(false);
+  const [fullViewTask, setFullViewTask] = useState<UnifiedTask | null>(null);
 
-  // Carregar tarefas e clientes
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setLoading(true);
-        const [tasksData, clientsData] = await Promise.all([
-          tasksService.getTasks(),
-          clientsService.getClients(),
-        ]);
-        
-        // Converter tarefas para o formato esperado
-        const formattedTasks = (tasksData || []).map(task => ({
-          ...task,
-          date: task.date || "",
-        }));
-        
-        setTasks(formattedTasks);
-        setClients(clientsData || []);
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error);
-        toast.error("Erro ao carregar tarefas");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, []);
 
   const handleToggleTaskStatus = async (taskId: string) => {
     try {
@@ -102,7 +112,17 @@ const Tasks = () => {
     }
 
     try {
-      const selectedClient = clients.find(c => c.id === formClient);
+      let clientId: string | undefined;
+      let clientName: string | undefined;
+      if (formClient) {
+        clientId = formClient;
+        try {
+          const c = await clientsService.getClientById(formClient);
+          clientName = c?.name || c?.company || undefined;
+        } catch {
+          clientName = undefined;
+        }
+      }
       const newTask = await tasksService.createTask({
         title: formTitle,
         description: formDescription || undefined,
@@ -110,13 +130,15 @@ const Tasks = () => {
         time: formTime || undefined,
         status: "pending",
         priority: formPriority,
-        client: selectedClient?.name || formClient || undefined,
+        clientId,
+        client: clientName,
         deal: formDeal || undefined,
         assignee: formAssignee || undefined,
         checklist: [],
       });
 
       setTasks(prev => [...prev, { ...newTask, date: newTask.date || "" }]);
+      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
       
       // Reset form
       setFormTitle("");
@@ -137,9 +159,31 @@ const Tasks = () => {
   };
 
   // Função para abrir o modal de detalhes da tarefa
+  const resetEditTaskFields = (task: Task) => {
+    setEditTaskFields({
+      title: task.title || "",
+      description: task.description || "",
+      dueDate: task.date ? new Date(task.date) : undefined,
+      time: task.time || "",
+      priority: task.priority || "medium",
+      status: task.status,
+      assignee: task.assignee || "",
+      deal: task.deal || "",
+    });
+  };
+
   const openTaskDetail = (task: Task) => {
     setSelectedTask(task);
+    setIsEditingTask(false);
+    resetEditTaskFields(task);
     setTaskDetailOpen(true);
+  };
+
+const closeTaskDetail = () => {
+    setTaskDetailOpen(false);
+    setSelectedTask(null);
+    setNewChecklistItem("");
+    setIsEditingTask(false);
   };
 
   // Função para alternar status de um item no checklist
@@ -225,6 +269,29 @@ const Tasks = () => {
     }
   };
 
+  const saveTaskEdits = async () => {
+    if (!selectedTask) return;
+    try {
+      const updatedTask = await tasksService.updateTask(selectedTask.id, {
+        title: editTaskFields.title,
+        description: editTaskFields.description || undefined,
+        date: editTaskFields.dueDate ? format(editTaskFields.dueDate, "yyyy-MM-dd") : null,
+        time: editTaskFields.time || null,
+        priority: editTaskFields.priority,
+        status: editTaskFields.status,
+        assignee: editTaskFields.assignee || null,
+        deal: editTaskFields.deal || null,
+      });
+      setTasks(prev => prev.map(task => (task.id === updatedTask.id ? updatedTask : task)));
+    setSelectedTask(updatedTask);
+      setIsEditingTask(false);
+      toast.success("Tarefa atualizada com sucesso!");
+    } catch (error) {
+      console.error("Erro ao atualizar tarefa:", error);
+      toast.error("Não foi possível atualizar a tarefa");
+    }
+  };
+
   const getTodayTasks = () => {
     const today = format(new Date(), "yyyy-MM-dd");
     return tasks.filter(task => task.date === today && task.status === "pending");
@@ -246,6 +313,50 @@ const Tasks = () => {
     }
   };
 
+  const handleFullViewUpdate = async (
+    taskId: string,
+    updates: Record<string, unknown>
+  ) => {
+    if (!fullViewTask || fullViewTask.id !== taskId) return;
+    try {
+      const payload: Partial<Task> = {
+        title: (updates.title as string) ?? fullViewTask.title,
+        description: (updates.description as string) ?? fullViewTask.description ?? undefined,
+        date: (updates.due_date as string) ?? fullViewTask.dueDate ?? null,
+        time: (updates.due_time as string) ?? fullViewTask.dueTime ?? null,
+        status: (updates.status as "pending" | "completed") ?? (fullViewTask.status === "completed" ? "completed" : "pending"),
+        priority: (updates.priority as "low" | "medium" | "high") ?? fullViewTask.priority,
+        client: (updates.client_name as string) ?? fullViewTask.clientName ?? null,
+        deal: (updates.deal as string) ?? fullViewTask.deal ?? null,
+        assignee: (updates.assignee_name as string) ?? fullViewTask.assigneeName ?? null,
+        checklist: (updates.checklist as ChecklistItem[]) ?? fullViewTask.checklist ?? [],
+      };
+      const updatedTask = await tasksService.updateTask(taskId, payload);
+      const normalized = { ...updatedTask, date: updatedTask.date || "" };
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? normalized : t)));
+      setFullViewTask(globalTaskToUnified(updatedTask));
+      if (selectedTask?.id === taskId) setSelectedTask(normalized);
+      toast.success("Tarefa atualizada");
+    } catch (error) {
+      console.error("Erro ao atualizar tarefa:", error);
+      toast.error("Não foi possível atualizar a tarefa");
+    }
+  };
+
+  const handleFullViewDelete = async (taskId: string) => {
+    try {
+      await tasksService.deleteTask(taskId);
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY });
+      setFullViewTask(null);
+      if (selectedTask?.id === taskId) closeTaskDetail();
+      toast.success("Tarefa excluída");
+    } catch (error) {
+      console.error("Erro ao excluir tarefa:", error);
+      toast.error("Não foi possível excluir a tarefa");
+    }
+  };
+
   // Cálculo do progresso do checklist
   const getChecklistProgress = (task: Task) => {
     if (!task.checklist || task.checklist.length === 0) return 0;
@@ -253,7 +364,7 @@ const Tasks = () => {
     return Math.round((completedItems / task.checklist.length) * 100);
   };
 
-  if (loading) {
+  if (loading && tasks.length === 0) {
     return (
       <div className="flex items-center justify-center p-10">
         <div className="text-center">
@@ -300,11 +411,12 @@ const Tasks = () => {
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="description">Descrição</Label>
-                      <Textarea 
-                        id="description" 
-                        placeholder="Detalhes da tarefa..."
+                      <SystemRichEditor
+                        id="description"
                         value={formDescription}
-                        onChange={(e) => setFormDescription(e.target.value)}
+                        onChange={setFormDescription}
+                        placeholder="Detalhes da tarefa..."
+                        className="min-h-[120px] rounded-md border"
                       />
                     </div>
                   </div>
@@ -341,56 +453,62 @@ const Tasks = () => {
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="priority">Prioridade</Label>
-                      <Select value={formPriority} onValueChange={(value: "low" | "medium" | "high") => setFormPriority(value)}>
-                        <SelectTrigger id="priority">
-                          <SelectValue placeholder="Selecione" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="high">Alta</SelectItem>
-                          <SelectItem value="medium">Média</SelectItem>
-                          <SelectItem value="low">Baixa</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="assignee">Responsável</Label>
-                      <Input 
-                        id="assignee" 
-                        placeholder="Nome do responsável"
-                        value={formAssignee}
-                        onChange={(e) => setFormAssignee(e.target.value)}
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="priority">Prioridade</Label>
+                    <Select value={formPriority} onValueChange={(value: "low" | "medium" | "high") => setFormPriority(value)}>
+                      <SelectTrigger id="priority">
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="high">Alta</SelectItem>
+                        <SelectItem value="medium">Média</SelectItem>
+                        <SelectItem value="low">Baixa</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="client">Cliente (Opcional)</Label>
-                      <Select value={formClient} onValueChange={setFormClient}>
-                        <SelectTrigger id="client">
-                          <SelectValue placeholder="Selecione um cliente" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {clients.map(client => (
-                            <SelectItem key={client.id} value={client.id}>
-                              {client.name} {client.company ? `(${client.company})` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="deal">Negócio (Opcional)</Label>
-                      <Input 
-                        id="deal" 
-                        placeholder="Nome do negócio"
-                        value={formDeal}
-                        onChange={(e) => setFormDeal(e.target.value)}
-                      />
-                    </div>
-                  </div>
+                  <Collapsible open={formAdvancedOpen} onOpenChange={setFormAdvancedOpen} className="space-y-2">
+                    <CollapsibleTrigger asChild>
+                      <Button type="button" variant="outline" className="w-full justify-between">
+                        <span className="flex items-center gap-2">
+                          <Settings2 className="h-4 w-4" />
+                          {formAdvancedOpen ? "Ocultar" : "Expandir"} configurações avançadas
+                        </span>
+                        {formAdvancedOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border rounded-md p-4 bg-muted/30 space-y-4">
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor="assignee">Responsável</Label>
+                          <Input
+                            id="assignee"
+                            placeholder="Nome do responsável"
+                            value={formAssignee}
+                            onChange={(e) => setFormAssignee(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <ClientSearchCombobox
+                            id="task-form-client"
+                            label="Cliente (opcional)"
+                            placeholderTrigger="Buscar cliente..."
+                            remoteSearch
+                            value={formClient || null}
+                            onChange={(id) => setFormClient(id ?? "")}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="deal">Negócio (Opcional)</Label>
+                          <Input
+                            id="deal"
+                            placeholder="Nome do negócio"
+                            value={formDeal}
+                            onChange={(e) => setFormDeal(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setIsAddTaskDialogOpen(false)}>
@@ -418,6 +536,7 @@ const Tasks = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
 
@@ -427,6 +546,7 @@ const Tasks = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
 
@@ -436,6 +556,7 @@ const Tasks = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
 
@@ -445,14 +566,36 @@ const Tasks = () => {
             onToggleTaskStatus={handleToggleTaskStatus}
             getPriorityColor={getPriorityColor}
             onTaskClick={openTaskDetail}
+            onOpenFull={setFullViewTask}
           />
         </TabsContent>
       </Tabs>
 
+      <TaskFullView
+        task={fullViewTask}
+        open={!!fullViewTask}
+        onOpenChange={(open) => !open && setFullViewTask(null)}
+        clients={clients.map((c) => ({ id: c.id, name: c.name }))}
+        onUpdate={handleFullViewUpdate}
+        onDelete={handleFullViewDelete}
+        onToggleStatus={
+          fullViewTask
+            ? (taskId) => {
+                handleToggleTaskStatus(taskId);
+                setFullViewTask((prev) =>
+                  prev && prev.id === taskId
+                    ? { ...prev, status: prev.status === "completed" ? "pending" : "completed" }
+                    : prev
+                );
+              }
+            : undefined
+        }
+      />
+
       {/* Modal de Detalhes da Tarefa */}
-      <Dialog open={taskDetailOpen} onOpenChange={setTaskDetailOpen}>
+      <Dialog open={taskDetailOpen} onOpenChange={(open) => (open ? setTaskDetailOpen(true) : closeTaskDetail())}>
         {selectedTask && (
-          <DialogContent className="sm:max-w-[600px]">
+          <DialogContent className="w-[95vw] max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <div className="flex items-center gap-2">
                 <Checkbox 
@@ -479,11 +622,139 @@ const Tasks = () => {
               </div>
             </DialogHeader>
             <div className="grid gap-6">
+              {isEditingTask ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3">
+                    <Label>Título</Label>
+                    <Input
+                      value={editTaskFields.title}
+                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, title: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid gap-3">
+                    <Label>Descrição</Label>
+                    <SystemRichEditor
+                      value={editTaskFields.description}
+                      onChange={(v) => setEditTaskFields(prev => ({ ...prev, description: v }))}
+                      placeholder="Descrição da tarefa..."
+                      className="min-h-[120px] rounded-md border"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Data de vencimento</Label>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className="w-full justify-start text-left font-normal"
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {editTaskFields.dueDate ? format(editTaskFields.dueDate, "dd/MM/yyyy") : <span>Selecionar data</span>}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0">
+                          <Calendar
+                            mode="single"
+                            selected={editTaskFields.dueDate}
+                            onSelect={(date) => setEditTaskFields(prev => ({ ...prev, dueDate: date || undefined }))}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Horário</Label>
+                      <Input
+                        type="time"
+                        value={editTaskFields.time}
+                        onChange={(e) => setEditTaskFields(prev => ({ ...prev, time: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Prioridade</Label>
+                      <Select
+                        value={editTaskFields.priority}
+                        onValueChange={(value: "low" | "medium" | "high") => setEditTaskFields(prev => ({ ...prev, priority: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="high">Alta</SelectItem>
+                          <SelectItem value="medium">Média</SelectItem>
+                          <SelectItem value="low">Baixa</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Status</Label>
+                      <Select
+                        value={editTaskFields.status}
+                        onValueChange={(value: "pending" | "completed") => setEditTaskFields(prev => ({ ...prev, status: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pending">Pendente</SelectItem>
+                          <SelectItem value="completed">Concluída</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Responsável</Label>
+                    <Input
+                      value={editTaskFields.assignee}
+                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, assignee: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Negócio</Label>
+                    <Input
+                      value={editTaskFields.deal}
+                      onChange={(e) => setEditTaskFields(prev => ({ ...prev, deal: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
               {selectedTask.description && (
                 <div>
                   <h4 className="text-sm font-semibold mb-1">Descrição</h4>
-                  <p className="text-sm text-muted-foreground">{selectedTask.description}</p>
+                  <SystemRichEditorReadOnly html={selectedTask.description} className="text-sm" />
                 </div>
+              )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                    {selectedTask.date && (
+                      <div className="flex gap-2">
+                        <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                        <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
+                      </div>
+                    )}
+                    {selectedTask.time && (
+                      <div className="flex gap-2">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <span>Horário: {selectedTask.time}</span>
+                      </div>
+                    )}
+                    {selectedTask.assignee && (
+                      <div className="flex gap-2 items-center">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        <span>Responsável: {selectedTask.assignee}</span>
+                      </div>
+                    )}
+                    {selectedTask.deal && (
+                      <div className="flex gap-2 items-center">
+                        <FileText className="h-4 w-4 text-muted-foreground" />
+                        <span>Negócio: {selectedTask.deal}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
               
               <div>
@@ -550,53 +821,54 @@ const Tasks = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Detalhes</h4>
-                  <div className="space-y-2 text-sm">
-                    {selectedTask.date && (
-                    <div className="flex gap-2">
-                      <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                      <span>Data: {format(new Date(selectedTask.date), "dd/MM/yyyy")}</span>
-                    </div>
-                    )}
-                    {selectedTask.time && (
-                      <div className="flex gap-2">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <span>Horário: {selectedTask.time}</span>
-                      </div>
-                    )}
-                    {selectedTask.assignee && (
-                      <div className="flex gap-2 items-center">
-                        <User className="h-4 w-4 text-muted-foreground" />
-                        <span>Responsável: {selectedTask.assignee}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Ações</h4>
-                  <div className="space-y-2">
-                    <Button variant="outline" size="sm" className="w-full justify-start">
-                      <Edit className="mr-2 h-4 w-4" />
+              <div className="flex flex-col sm:flex-row gap-2">
+                {isEditingTask ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => {
+                        if (selectedTask) {
+                          resetEditTaskFields(selectedTask);
+                        }
+                        setIsEditingTask(false);
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button className="flex-1" onClick={saveTaskEdits}>
+                      Salvar alterações
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setIsEditingTask(true)}
+                    >
                       Editar tarefa
                     </Button>
                     <Button 
-                      variant={selectedTask.status === "completed" ? "default" : "secondary"} 
-                      size="sm" 
-                      className="w-full justify-start"
+                      variant="outline"
+                      className="flex-1"
                       onClick={() => handleToggleTaskStatus(selectedTask.id)}
                     >
-                      <CheckSquare className="mr-2 h-4 w-4" />
                       {selectedTask.status === "completed" ? "Marcar como pendente" : "Marcar como concluída"}
                     </Button>
-                  </div>
-                </div>
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={() => handleDeleteTask(selectedTask.id)}
+                    >
+                      Excluir tarefa
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
             <DialogFooter>
-              <Button onClick={() => setTaskDetailOpen(false)}>Fechar</Button>
+              <Button onClick={closeTaskDetail}>Fechar</Button>
             </DialogFooter>
           </DialogContent>
         )}
@@ -610,9 +882,10 @@ type TaskListProps = {
   onToggleTaskStatus: (taskId: string) => void;
   getPriorityColor: (priority: string) => string;
   onTaskClick: (task: Task) => void;
+  onOpenFull?: (task: UnifiedTask) => void;
 };
 
-const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick }: TaskListProps) => {
+const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick, onOpenFull }: TaskListProps) => {
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return format(date, "dd/MM/yyyy");
@@ -631,6 +904,31 @@ const TaskList = ({ tasks, onToggleTaskStatus, getPriorityColor, onTaskClick }: 
           </div>
         </CardContent>
       </Card>
+    );
+  }
+
+  if (onOpenFull) {
+    return (
+      <div className="space-y-4">
+        {tasks.map((task) => {
+          const unified = globalTaskToUnified(task);
+          return (
+            <TaskSummaryPopover
+              key={task.id}
+              task={unified}
+              onOpenFull={() => onOpenFull(unified)}
+            >
+              <div>
+                <UnifiedTaskCard
+                  task={unified}
+                  onToggleStatus={() => onToggleTaskStatus(task.id)}
+                  onClick={() => {}}
+                />
+              </div>
+            </TaskSummaryPopover>
+          );
+        })}
+      </div>
     );
   }
 

@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,13 +44,22 @@ interface InvoiceFormProps {
   onOpenChange: (open: boolean) => void;
   onSave: (formData: FormData) => void;
   availableProjects?: Project[];
+  defaultClientName?: string;
 }
 
-export function InvoiceForm({ open, onOpenChange, onSave, availableProjects = [] }: InvoiceFormProps) {
+export function InvoiceForm({ open, onOpenChange, onSave, availableProjects = [], defaultClientName = '' }: InvoiceFormProps) {
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [dueDate, setDueDate] = useState<Date | undefined>(
     new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // Default: 7 days from now
   );
+  const [clientName, setClientName] = useState(defaultClientName);
+
+  // Atualizar o nome do cliente quando defaultClientName mudar ou quando o diálogo abrir
+  useEffect(() => {
+    if (open && defaultClientName) {
+      setClientName(defaultClientName);
+    }
+  }, [open, defaultClientName]);
 
   const addItem = () => {
     const newItem: InvoiceItem = {
@@ -109,6 +118,7 @@ export function InvoiceForm({ open, onOpenChange, onSave, availableProjects = []
     // Reset form
     setItems([]);
     setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    setClientName(defaultClientName || '');
   };
 
   return (
@@ -125,7 +135,14 @@ export function InvoiceForm({ open, onOpenChange, onSave, availableProjects = []
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="clientName">Cliente</Label>
-              <Input id="clientName" name="clientName" placeholder="Nome do cliente" required />
+              <Input 
+                id="clientName" 
+                name="clientName" 
+                placeholder="Nome do cliente" 
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                required 
+              />
             </div>
             
             <div className="space-y-2">

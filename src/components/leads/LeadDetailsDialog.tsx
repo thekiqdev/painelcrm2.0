@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +18,9 @@ import { Edit } from "lucide-react";
 import LeadTasksTab from "./tabs/LeadTasksTab";
 import LeadNotesTab from "./tabs/LeadNotesTab";
 import LeadOpportunitiesTab from "./tabs/LeadOpportunitiesTab";
+import { chatService } from "@/services/chat";
+import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 interface LeadDetailsDialogProps {
   isOpen: boolean;
@@ -48,14 +51,51 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
   onUpdateTaskStatus,
   onSaveNote,
 }) => {
+  const [whatsappAvatarUrl, setWhatsappAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (lead?.id) {
+      setWhatsappAvatarUrl(lead.whatsapp_avatar_url ?? null);
+    }
+  }, [lead?.id, lead?.whatsapp_avatar_url]);
+
+  useEffect(() => {
+    if (!isOpen || !lead?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await chatService.getCrmWhatsappIdentity({ leadId: lead.id });
+        if (!cancelled) {
+          setWhatsappAvatarUrl((prev) => r.avatarUrl ?? prev ?? lead.whatsapp_avatar_url ?? null);
+        }
+      } catch {
+        if (!cancelled) setWhatsappAvatarUrl(lead.whatsapp_avatar_url ?? null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, lead?.id]);
+
   if (!lead) return null;
+
+  const profileAvatar = resolveProfileAvatarUrl(
+    lead,
+    whatsappAvatarUrl ?? lead.whatsapp_avatar_url ?? null
+  );
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {lead.name}
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            <Avatar className="h-10 w-10 shrink-0">
+              {profileAvatar.src ? (
+                <AvatarImage src={profileAvatar.src} alt={lead.name} />
+              ) : null}
+              <AvatarFallback>{profileAvatar.initials}</AvatarFallback>
+            </Avatar>
+            <span className="min-w-0">{lead.name}</span>
             <Badge 
               variant="outline" 
               style={{ 

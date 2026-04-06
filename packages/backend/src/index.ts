@@ -3,6 +3,9 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createServer } from 'http';
 import authRoutes from './routes/authRoutes.js';
 import productsRoutes from './routes/productsRoutes.js';
 import storeProfileRoutes from './routes/storeProfileRoutes.js';
@@ -24,7 +27,9 @@ import contractTemplatesRoutes from './routes/contractTemplatesRoutes.js';
 import projectTemplatesRoutes from './routes/projectTemplatesRoutes.js';
 import projectsRoutes from './routes/projectsRoutes.js';
 import projectListsRoutes from './routes/projectListsRoutes.js';
+import projectAreasRoutes from './routes/projectAreasRoutes.js';
 import projectTasksRoutes from './routes/projectTasksRoutes.js';
+import teamsRoutes from './routes/teamsRoutes.js';
 import userProfilesRoutes from './routes/userProfilesRoutes.js';
 import profileMembersRoutes from './routes/profileMembersRoutes.js';
 import userPermissionsRoutes from './routes/userPermissionsRoutes.js';
@@ -32,15 +37,46 @@ import searchRoutes from './routes/searchRoutes.js';
 import tasksRoutes from './routes/tasksRoutes.js';
 import invoicesRoutes from './routes/invoicesRoutes.js';
 import expensesRoutes from './routes/expensesRoutes.js';
+import financeRoutes from './routes/financeRoutes.js';
 import proposalsRoutes from './routes/proposalsRoutes.js';
 import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
+import chatRoutes from './routes/chatRoutes.js';
+import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
+import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
+import notificationsRoutes from './routes/notificationsRoutes.js';
+import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
+import messagesRoutes from './routes/messagesRoutes.js';
+import superadminRoutes from './routes/superadminRoutes.js';
+import plansRoutes from './routes/plansRoutes.js';
+import * as plansController from './controllers/plansController.js';
+import myTenantPlanRoutes from './routes/myTenantPlanRoutes.js';
+import { authenticateToken, setCurrentTenant, setRequestDb } from './middleware/auth.js';
+import { getCheckoutContext } from './controllers/checkoutContextController.js';
+import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
+import billingRoutes from './routes/billingRoutes.js';
+import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
+import customerChargesRoutes from './routes/customerChargesRoutes.js';
+import publicRoutes from './routes/publicRoutes.js';
+import onboardingRoutes from './routes/onboardingRoutes.js';
+import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
+import { initializeWebSocket } from './services/websocketService.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootEnv = path.resolve(__dirname, '../../../.env');
+dotenv.config({ path: rootEnv });
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
 const PORT = parseInt(process.env.API_PORT || '3001', 10);
+
+// Trust proxy - necessário quando atrás de Nginx/reverse proxy
+// Usar configuração segura para não confiar em qualquer IP arbitrário
+const trustProxySetting =
+  process.env.TRUST_PROXY_SETTING || 'loopback, linklocal, uniquelocal';
+app.set('trust proxy', trustProxySetting);
 
 // Middleware
 app.use(helmet());
@@ -71,11 +107,60 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
+// Rate limiting mais generoso para endpoints de teste
+const testLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 20, // 20 testes por minuto (suficiente para testes)
+  message: 'Muitos testes enviados. Aguarde um momento antes de tentar novamente.',
+  skip: (req) => {
+    return process.env.NODE_ENV === 'development';
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Limite só para login/registro (anti brute-force). Resto da API não conta aqui.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: parseInt(process.env.RATE_LIMIT_AUTH_MAX || '30', 10), // 30 tentativas de login/registro por 15 min por IP
+  message: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
+
+// Rate limiting para APIs (geral) - alto para não bloquear uso normal (dashboard faz muitas req paralelas)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: parseInt(process.env.RATE_LIMIT_MAX || '2000', 10), // 2000 req/15min por IP (configurável)
+  message: 'Muitas requisições. Aguarde um momento antes de tentar novamente.',
+  skip: (req) => {
+    if (process.env.NODE_ENV === 'development') return true;
+    const p = req.path || req.originalUrl || '';
+    // Não contar rotas de auth no limite geral (têm seu próprio authLimiter)
+    return p.startsWith('/api/auth/') || p.startsWith('auth/') ||
+           p.includes('/test') || p.startsWith('/webhooks/') || p.startsWith('webhooks/');
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
+
+// Rate limiting mais generoso para webhooks (podem receber muitos eventos)
+const webhookLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 200, // limit each IP to 200 requests per minute (webhooks podem ser frequentes)
+  message: 'Too many webhook requests, please try again later.',
+});
+
+// Aplicar rate limiting - IMPORTANTE: ordem importa!
+// 1. Webhooks primeiro (mais específico)
+app.use('/webhooks/', webhookLimiter);
+// 2. Limite anti brute-force só em login/registro
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+// 3. Testes (específico)
+app.use('/api/message-templates/:id/test', testLimiter);
+// 4. API geral por último (mais genérico)
 app.use('/api/', limiter);
 
 // Health check - endpoint simples e rápido
@@ -112,8 +197,10 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Routes
+// Routes - IMPORTANTE: Rotas específicas devem vir ANTES do rate limiter geral
+// Mas como o rate limiter já foi aplicado acima, vamos garantir que testes tenham tratamento especial
 app.use('/api/auth', authRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/store-profile', storeProfileRoutes);
 app.use('/api/clients', clientsRoutes);
@@ -134,7 +221,9 @@ app.use('/api/contract-templates', contractTemplatesRoutes);
 app.use('/api/project-templates', projectTemplatesRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/projects', projectListsRoutes);
+app.use('/api/projects', projectAreasRoutes);
 app.use('/api/projects', projectTasksRoutes);
+app.use('/api/teams', teamsRoutes);
 app.use('/api/user-profiles', userProfilesRoutes);
 app.use('/api/user-profiles', profileMembersRoutes);
 app.use('/api/user-profiles', userPermissionsRoutes);
@@ -142,9 +231,33 @@ app.use('/api/search', searchRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/invoices', invoicesRoutes);
 app.use('/api/expenses', expensesRoutes);
+app.use('/api/finance', financeRoutes);
 app.use('/api/proposals', proposalsRoutes);
 app.use('/api/members', membersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/message-templates', messageTemplatesRoutes);
+app.use('/api/messages', messagesRoutes);
+app.get('/api/plans', plansController.listPublicPlans);
+app.use('/api/plan-purchase', planPurchaseRoutes);
+app.use('/api/billing', billingRoutes);
+app.use('/api/customer-invoices', customerInvoicesRoutes);
+app.use('/api/customer-charges', customerChargesRoutes);
+app.use('/api/onboarding', onboardingRoutes);
+app.get(
+  '/api/me/tenant/checkout-context',
+  authenticateToken,
+  setCurrentTenant,
+  setRequestDb,
+  getCheckoutContext
+);
+app.use('/api/me/tenant', myTenantPlanRoutes);
+app.use('/api/superadmin', superadminRoutes);
+app.use('/api/superadmin/plans', plansRoutes);
+app.use('/api/superadmin/tenants', tenantsRoutes);
+app.use('/webhooks/uazapi', uazapiWebhookRoutes);
+app.use('/webhooks/asaas', asaasWebhookRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -168,11 +281,40 @@ pool.query('SELECT NOW()')
     console.error('❌ Failed to connect to PostgreSQL:', err.message);
   });
 
+// Inicializar WebSocket
+initializeWebSocket(httpServer);
+
+// Encerramento graceful: libera a porta antes de sair (nodemon envia SIGTERM e aguarda --delay 2)
+function shutdown(signal: string) {
+  console.log(`\n[${signal}] Encerrando servidor...`);
+  if (typeof (httpServer as any).closeIdleConnections === 'function') {
+    (httpServer as any).closeIdleConnections();
+  }
+  httpServer.close(() => {
+    console.log('Porta liberada. Até logo.');
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 1500);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
 // Start server - escutar em 0.0.0.0 para ser acessível em containers
-app.listen(PORT, '0.0.0.0', () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Listening on 0.0.0.0:${PORT}`);
+  console.log(`📡 WebSocket server initialized`);
+});
+
+httpServer.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ Porta ${PORT} já está em uso. Outra instância do backend pode estar rodando.`);
+    console.error('   Soluções: feche a outra janela do backend ou execute na raiz do projeto: kill-port-3001.bat\n');
+  } else {
+    console.error('Server error:', err);
+  }
+  process.exitCode = 1;
 });
 
 

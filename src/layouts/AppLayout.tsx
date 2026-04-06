@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +20,8 @@ import { Avatar } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
+import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import {
   Command,
   CommandDialog,
@@ -32,16 +34,51 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { searchService } from '@/services/search';
+import { Logo } from '@/components/Logo';
+import { RequireModuleView } from '@/components/RequireModuleView';
+import { routePreload } from '@/routePreload';
 
 interface AppLayoutProps {
   children: React.ReactNode;
 }
 
+// Prefetch dos chunks das rotas mais usadas após o layout carregar (evita espera no primeiro clique)
+const usePrefetchRoutes = () => {
+  useEffect(() => {
+    const t = setTimeout(() => {
+      routePreload.dashboard();
+      routePreload.clients();
+      routePreload.tasks();
+      routePreload.projects();
+      routePreload.products();
+    }, 1500);
+    return () => clearTimeout(t);
+  }, []);
+};
+
 const Nav = () => {
   const location = useLocation();
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  
+  const { canView } = useModulePermissions();
+  usePrefetchRoutes();
+  const hasDashboard = useFeatureFlag('dashboard');
+  const hasClients = useFeatureFlag('clients');
+  const hasLeads = useFeatureFlag('leads');
+  const hasFunnels = useFeatureFlag('funnels');
+  const hasProducts = useFeatureFlag('products');
+  const hasProjects = useFeatureFlag('projects');
+  const hasTasks = useFeatureFlag('tasks');
+  const hasChat = useFeatureFlag('chat');
+  const hasTickets = useFeatureFlag('tickets');
+  const hasProposals = useFeatureFlag('proposals');
+  const hasContracts = useFeatureFlag('contracts');
+  const hasInvoices = useFeatureFlag('invoices');
+  const hasExpenses = useFeatureFlag('expenses');
+  const hasSettings = useFeatureFlag('settings');
+
+  const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
+
   const getNavClass = ({ isActive }: { isActive: boolean }) => 
     isActive ? "bg-crm-primary/10 text-crm-primary font-medium" : "hover:bg-muted/50";
 
@@ -51,11 +88,11 @@ const Nav = () => {
       
       <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-start px-4'} pb-2 mb-6`}>
         {collapsed ? (
-          <div className="w-8 h-8 rounded-md bg-crm-primary text-white flex items-center justify-center font-bold">M</div>
+          <Logo size="sm" variant="crm" />
         ) : (
           <div className="flex items-center">
-            <div className="w-8 h-8 rounded-md bg-crm-primary text-white flex items-center justify-center font-bold mr-3">M</div>
-            <h1 className="text-lg font-bold">MultiCRM</h1>
+            <Logo size="sm" variant="crm" className="mr-3" />
+            <h1 className="text-lg font-bold">PainelCRM</h1>
           </div>
         )}
       </div>
@@ -63,14 +100,16 @@ const Nav = () => {
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <NavLink to="/dashboard" className={getNavClass}>
-                  <LayoutDashboard className="mr-2 h-5 w-5" />
-                  {!collapsed && <span>Dashboard</span>}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {show(hasDashboard, 'dashboard') && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink to="/dashboard" className={getNavClass} onMouseEnter={() => routePreload.dashboard()}>
+                    <LayoutDashboard className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>Dashboard</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
         </SidebarGroup>
         
@@ -78,38 +117,74 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Vendas</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/clients" className={getNavClass}>
-                    <Users className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Clientes</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/leads" className={getNavClass}>
-                    <UserPlus className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Leads</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/funnel" className={getNavClass}>
-                    <List className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Funil de Vendas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/products" className={getNavClass}>
-                    <Briefcase className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Produtos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {show(hasClients, 'clients') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/clients" className={getNavClass} onMouseEnter={() => routePreload.clients()}>
+                      <Users className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Clientes</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasLeads, 'leads') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/leads" className={getNavClass} onMouseEnter={() => routePreload.leads()}>
+                      <UserPlus className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Leads</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasFunnels, 'funnels') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/funnel" className={getNavClass} onMouseEnter={() => routePreload.funnel()}>
+                      <List className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Funil de Vendas</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasProducts, 'products') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/products" className={getNavClass} onMouseEnter={() => routePreload.products()}>
+                      <Briefcase className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Produtos</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {show(hasChat, 'chat') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/chat" className={getNavClass} onMouseEnter={() => routePreload.chat()}>
+                      <MessageSquare className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Chat</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasTickets, 'tickets') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/support/tickets" className={getNavClass} onMouseEnter={() => routePreload.tickets()}>
+                      <Ticket className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Tickets</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -118,78 +193,64 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Projetos</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/projects" className={getNavClass}>
-                    <Calendar className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Projetos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/tasks" className={getNavClass}>
-                    <ClipboardCheck className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Tarefas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/project-templates" className={getNavClass}>
-                    <LayoutTemplate className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Templates</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {show(hasProjects, 'projects') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/projects" className={getNavClass} onMouseEnter={() => routePreload.projects()}>
+                      <Calendar className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Projetos</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasTasks, 'tasks') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/tasks" className={getNavClass} onMouseEnter={() => routePreload.tasks()}>
+                      <ClipboardCheck className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Tarefas</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasTasks, 'project_templates') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/project-templates" className={getNavClass} onMouseEnter={() => routePreload.projectTemplates()}>
+                      <LayoutTemplate className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Templates</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/chat" className={getNavClass}>
-                    <MessageSquare className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Chat</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/support/tickets" className={getNavClass}>
-                    <Ticket className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Tickets</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        
+
         <SidebarGroup>
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Documentação</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/proposals" className={getNavClass}>
-                    <FileText className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Propostas</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/contracts" className={getNavClass}>
-                    <FileSearch className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Contratos</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {show(hasProposals, 'proposals') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/proposals" className={getNavClass} onMouseEnter={() => routePreload.proposals()}>
+                      <FileText className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Propostas</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasContracts, 'contracts') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/contracts" className={getNavClass} onMouseEnter={() => routePreload.contracts()}>
+                      <FileSearch className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Contratos</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -198,36 +259,52 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Financeiro</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/billing" className={getNavClass}>
-                    <DollarSign className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Faturamento</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink to="/finance" className={getNavClass}>
-                    <DollarSign className="mr-2 h-5 w-5" />
-                    {!collapsed && <span>Financeiro</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {show(hasInvoices, 'billing') && (
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/customer-invoices" className={getNavClass} onMouseEnter={() => routePreload.customerInvoices()}>
+                        <FileText className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Faturas de clientes</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/customer-charges" className={getNavClass} onMouseEnter={() => routePreload.customerCharges()}>
+                        <CreditCard className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Cobranças</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
+              )}
+              {show(hasExpenses, 'finance') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/finance" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                      <DollarSign className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Financeiro</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         
         <SidebarGroup>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild>
-                <NavLink to="/settings" className={getNavClass}>
-                  <Settings className="mr-2 h-5 w-5" />
-                  {!collapsed && <span>Configurações</span>}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {show(hasSettings, 'settings') && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink to="/settings" className={getNavClass} onMouseEnter={() => routePreload.settings()}>
+                    <Settings className="mr-2 h-5 w-5" />
+                    {!collapsed && <span>Configurações</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
@@ -237,6 +314,7 @@ const Nav = () => {
 
 const Header = () => {
   const { user, profile, signOut } = useAuth();
+  const { canView } = useModulePermissions();
   const navigate = useNavigate();
   const [commandDialogOpen, setCommandDialogOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -444,6 +522,18 @@ const Header = () => {
               <Settings className="mr-2 h-4 w-4" />
               <span>Configurações</span>
             </DropdownMenuItem>
+            {user?.can_manage_plan && canView('meu_plano') && (
+              <DropdownMenuItem onClick={() => navigate('/meu-plano')}>
+                <CreditCard className="mr-2 h-4 w-4" />
+                <span>Planos</span>
+              </DropdownMenuItem>
+            )}
+            {user?.is_super_admin && (
+              <DropdownMenuItem onClick={() => navigate('/superadmin')}>
+                <ShieldCheck className="mr-2 h-4 w-4" />
+                <span>Super Admin</span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={signOut}>
               <LogOut className="mr-2 h-4 w-4" />
@@ -459,12 +549,12 @@ const Header = () => {
 const AppLayout = ({ children }: AppLayoutProps) => {
   return (
     <SidebarProvider>
-      <div className="flex h-screen w-full overflow-hidden">
+      <div className="flex min-h-screen w-full">
         <Nav />
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col">
           <Header />
-          <main className="flex-1 overflow-auto p-6">
-            {children}
+          <main className="flex-1 min-h-0 p-6">
+            <RequireModuleView>{children}</RequireModuleView>
           </main>
         </div>
       </div>

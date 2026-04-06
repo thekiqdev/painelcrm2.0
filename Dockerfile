@@ -83,6 +83,9 @@ RUN if [ -f package-lock.json ]; then \
 # Verificar se node_modules foi criado
 RUN ls -la node_modules/ || (echo "ERRO: node_modules não foi criado!" && exit 1)
 
+# Copiar script de criação de super admin (para uso no container)
+RUN mkdir -p scripts && cp packages/backend/scripts/create-superadmin.mjs scripts/
+
 # Limpar arquivos temporários
 RUN rm -rf packages
 

@@ -12,7 +12,9 @@ export async function getClientGroups(req: AuthRequest, res: Response): Promise<
     const userId = req.userId!;
 
     const result = await pool.query(
-      'SELECT * FROM client_groups WHERE user_id = $1 ORDER BY name',
+      `SELECT cg.* FROM client_groups cg
+       INNER JOIN users u ON u.id = cg.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $1)
+       ORDER BY cg.name`,
       [userId]
     );
 
@@ -43,7 +45,9 @@ export async function getClientGroupById(req: AuthRequest, res: Response): Promi
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM client_groups WHERE id = $1 AND user_id = $2',
+      `SELECT cg.* FROM client_groups cg
+       INNER JOIN users u ON u.id = cg.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE cg.id = $1`,
       [id, userId]
     );
 
@@ -98,7 +102,9 @@ export async function updateClientGroup(req: AuthRequest, res: Response): Promis
     }
 
     const result = await pool.query(
-      'UPDATE client_groups SET name = $1, updated_at = now() WHERE id = $2 AND user_id = $3 RETURNING *',
+      `UPDATE client_groups SET name = $1, updated_at = now()
+       WHERE id = $2 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $3))
+       RETURNING *`,
       [groupData.name, id, userId]
     );
 
@@ -145,7 +151,9 @@ export async function deleteClientGroup(req: AuthRequest, res: Response): Promis
     }
 
     const result = await pool.query(
-      'DELETE FROM client_groups WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM client_groups WHERE id = $1
+       AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
+       RETURNING id`,
       [id, userId]
     );
 

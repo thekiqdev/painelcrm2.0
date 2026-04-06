@@ -9,10 +9,15 @@ export interface JWTPayload {
 }
 
 export function generateToken(payload: JWTPayload): string {
-  // Pass expiresIn directly without strict typing to avoid TypeScript issues
-  // JWT_EXPIRES_IN is a string like "7d" which is valid for jwt.sign
   return jwt.sign(payload, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN,
+  } as jwt.SignOptions);
+}
+
+/** Token de curta duração para impersonation (1h). */
+export function generateImpersonationToken(payload: JWTPayload): string {
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: '1h',
   } as jwt.SignOptions);
 }
 

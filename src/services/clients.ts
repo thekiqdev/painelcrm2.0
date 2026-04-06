@@ -1,4 +1,5 @@
 import { apiClient } from '@/integrations/api/client';
+import { recordClientTimelineEvent } from './clientTimeline';
 
 export interface Client {
   id: string;
@@ -12,6 +13,9 @@ export interface Client {
   notes?: string;
   group_id?: string;
   profile_id?: string;
+  cpf_cnpj?: string | null;
+  /** Foto WhatsApp derivada da conversa vinculada (API GET /api/clients). */
+  whatsapp_avatar_url?: string | null;
   client_groups?: { id: string; name: string } | null;
   created_at?: string;
   updated_at?: string;
@@ -37,9 +41,65 @@ export interface ClientTask {
   updated_at?: string;
 }
 
+export type ClientTimelineEventName =
+  | 'chat_match_client_success'
+  | 'chat_link_manual'
+  | 'chat_link_auto_effective'
+  | 'chat_link_migrated_lead_to_client'
+  | 'chat_invoice_sent'
+  | 'chat_invoice_created'
+  | 'invoice_paid';
+
+export interface ClientTimelineEvent {
+  id: string;
+  tenant_id: string;
+  client_id: string;
+  event_name: ClientTimelineEventName;
+  source: string;
+  actor_type: 'user' | 'system' | 'integration';
+  actor_id: string | null;
+  reference_type: string | null;
+  reference_id: string | null;
+  event_key: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+/** Parâmetros opcionais de listagem (Fase 2 — busca B1). */
+export interface GetClientsParams {
+  profileId?: string;
+  /** Busca no servidor (nome, empresa, e-mail, telefone, CPF/CNPJ); limita a 50 resultados. */
+  q?: string;
+}
+
+export type CreateClientTimelineEventBody = {
+  event_name: ClientTimelineEventName;
+  source: string;
+  actor_type?: 'user' | 'system' | 'integration';
+  actor_id?: string | null;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  event_key?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
 export class ClientsService {
-  async getClients(profileId?: string): Promise<Client[]> {
-    const url = profileId ? `/api/clients?profileId=${profileId}` : '/api/clients';
+  /**
+   * Lista clientes do tenant.
+   * - `getClients()` — todos (comportamento anterior).
+   * - `getClients('uuid')` — filtro por perfil (string = profileId).
+   * - `getClients({ q, profileId })` — busca e/ou perfil.
+   */
+  async getClients(paramsOrProfileId?: string | GetClientsParams): Promise<Client[]> {
+    const search = new URLSearchParams();
+    if (typeof paramsOrProfileId === 'string') {
+      search.set('profileId', paramsOrProfileId);
+    } else if (paramsOrProfileId && typeof paramsOrProfileId === 'object') {
+      if (paramsOrProfileId.profileId) search.set('profileId', paramsOrProfileId.profileId);
+      if (paramsOrProfileId.q?.trim()) search.set('q', paramsOrProfileId.q.trim());
+    }
+    const qs = search.toString();
+    const url = qs ? `/api/clients?${qs}` : '/api/clients';
     const response = await apiClient.get<Client[]>(url);
     if (response.error) throw new Error(response.error);
     return response.data || [];
@@ -49,6 +109,22 @@ export class ClientsService {
     const response = await apiClient.get<Client>(`/api/clients/${id}`);
     if (response.error) throw new Error(response.error);
     return response.data || null;
+  }
+
+  async getClientTimeline(clientId: string, params?: { limit?: number; offset?: number }): Promise<ClientTimelineEvent[]> {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set('limit', String(params.limit));
+    if (params?.offset != null) search.set('offset', String(params.offset));
+    const qs = search.toString();
+    const response = await apiClient.get<ClientTimelineEvent[]>(
+      `/api/clients/${clientId}/timeline${qs ? `?${qs}` : ''}`
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data || [];
+  }
+
+  async createTimelineEvent(clientId: string, body: CreateClientTimelineEventBody): Promise<void> {
+    return recordClientTimelineEvent(clientId, body);
   }
 
   async createClient(clientData: Omit<Client, 'id' | 'created_at' | 'updated_at'>): Promise<Client> {

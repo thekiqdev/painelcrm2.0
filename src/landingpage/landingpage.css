@@ -1,0 +1,80 @@
+/* Landing page: tema escuro e utilitários scoped para não afetar o restante do app */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+.landing-page {
+  --background: 222 47% 6%;
+  --foreground: 210 40% 96%;
+  --card: 222 44% 9%;
+  --card-foreground: 210 40% 96%;
+  --popover: 222 44% 9%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 199 89% 48%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 222 30% 14%;
+  --secondary-foreground: 210 40% 90%;
+  --muted: 222 30% 14%;
+  --muted-foreground: 215 20% 55%;
+  --accent: 199 89% 48%;
+  --accent-foreground: 0 0% 100%;
+  --border: 222 30% 18%;
+  --input: 222 30% 18%;
+  --ring: 199 89% 48%;
+  --radius: 0.75rem;
+  --gradient-primary: linear-gradient(135deg, hsl(199 89% 48%), hsl(220 90% 56%));
+  --gradient-hero: linear-gradient(180deg, hsl(222 47% 8%) 0%, hsl(222 47% 4%) 100%);
+  --gradient-card: linear-gradient(145deg, hsl(222 44% 11%) 0%, hsl(222 44% 7%) 100%);
+  --gradient-cta: linear-gradient(135deg, hsl(199 89% 48%), hsl(185 80% 45%));
+  --glow-primary: 0 0 40px hsl(199 89% 48% / 0.15);
+  --glow-strong: 0 0 80px hsl(199 89% 48% / 0.25);
+  --shadow-card: 0 4px 24px hsl(222 47% 2% / 0.5);
+}
+
+/* Garantir texto claro na landing (botões e links herdam ou usam foreground) */
+.landing-page {
+  color: hsl(var(--foreground));
+}
+
+.landing-page .text-gradient {
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  background-image: var(--gradient-cta);
+}
+
+.landing-page .bg-grid {
+  background-image:
+    linear-gradient(hsl(var(--border) / 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.3) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+.landing-page .glow-primary {
+  box-shadow: var(--glow-primary);
+}
+
+.landing-page .glow-strong {
+  box-shadow: var(--glow-strong);
+}
+
+.landing-page .card-gradient {
+  background: var(--gradient-card);
+}
+
+.landing-page .animate-fade-up {
+  animation: landing-fade-up 0.7s ease-out forwards;
+}
+
+@keyframes landing-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.landing-page.font-display,
+.landing-page .font-display {
+  font-family: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+}

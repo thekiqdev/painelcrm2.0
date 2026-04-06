@@ -1,5 +1,6 @@
 
 import React from "react";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { 
@@ -14,13 +15,16 @@ import {
   UserCog,
   Users2, 
   MessageSquare, 
-  Globe 
+  Globe,
+  FileText,
+  Shield
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type SettingSection = 
   | "companyData" 
   | "users" 
+  | "teams"
   | "userManagement"
   | "billing" 
   | "notifications" 
@@ -30,7 +34,9 @@ type SettingSection =
   | "clientGroups" 
   | "collaborators" 
   | "whatsapp" 
-  | "domain";
+  | "domain" 
+  | "messageTemplates"
+  | "paymentGateway";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -45,12 +51,17 @@ interface MenuItem {
 }
 
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSelect }) => {
+  const location = useLocation();
+  const isPaymentsRoute = location.pathname.startsWith("/settings/payments");
+
   // Definir itens do menu agrupados por categoria
   const menuItems: MenuItem[] = [
+    // Usuários e Acesso
+    { id: "users", label: "Usuários", icon: <Users className="h-4 w-4" />, category: "Usuários e Acesso" },
+    { id: "teams", label: "Equipes", icon: <Users2 className="h-4 w-4" />, category: "Usuários e Acesso" },
+    { id: "userManagement", label: "Perfis de acesso", icon: <Shield className="h-4 w-4" />, category: "Usuários e Acesso" },
     // Categoria Geral
     { id: "companyData", label: "Dados da Empresa", icon: <Building className="h-4 w-4" />, category: "Geral" },
-    { id: "users", label: "Usuários", icon: <Users className="h-4 w-4" />, category: "Geral" },
-    { id: "userManagement", label: "Gerenciar Perfis", icon: <UserCog className="h-4 w-4" />, category: "Geral" },
     { id: "billing", label: "Cobrança", icon: <CreditCard className="h-4 w-4" />, category: "Geral" },
     
     // Categoria Preferências
@@ -65,7 +76,9 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
     
     // Categoria Integrações
     { id: "whatsapp", label: "WhatsApp", icon: <MessageSquare className="h-4 w-4" />, category: "Integrações" },
-    { id: "domain", label: "Domínio", icon: <Globe className="h-4 w-4" />, category: "Integrações" }
+    { id: "domain", label: "Domínio", icon: <Globe className="h-4 w-4" />, category: "Integrações" },
+    { id: "messageTemplates", label: "Modelos de Mensagens", icon: <FileText className="h-4 w-4" />, category: "Integrações" },
+    { id: "paymentGateway", label: "Pagamentos", icon: <CreditCard className="h-4 w-4" />, category: "Integrações" }
   ];
 
   // Agrupar itens por categoria
@@ -79,7 +92,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
   }, {});
 
   // Ordem das categorias
-  const categoryOrder = ["Geral", "Preferências", "CRM", "Integrações", "Outros"];
+  const categoryOrder = ["Usuários e Acesso", "Geral", "Preferências", "CRM", "Integrações", "Outros"];
 
   return (
     <div className="w-full h-full border rounded-md">
@@ -92,20 +105,42 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
             <div key={category} className="mb-6 last:mb-0">
               <h4 className="text-sm font-medium text-muted-foreground mb-2">{category}</h4>
               <div className="space-y-1">
-                {items.map(item => (
-                  <Button
-                    key={item.id}
-                    variant={activeSection === item.id ? "secondary" : "ghost"}
-                    className={cn(
-                      "w-full justify-start",
-                      activeSection === item.id && "bg-secondary"
-                    )}
-                    onClick={() => onSelect(item.id)}
-                  >
-                    {item.icon}
-                    <span className="ml-2">{item.label}</span>
-                  </Button>
-                ))}
+                {items.map(item => {
+                  const isPaymentLink = item.id === "paymentGateway";
+                  const isActive = isPaymentLink ? isPaymentsRoute : activeSection === item.id;
+                  if (isPaymentLink) {
+                    return (
+                      <Button
+                        key={item.id}
+                        variant={isActive ? "secondary" : "ghost"}
+                        className={cn(
+                          "w-full justify-start",
+                          isActive && "bg-secondary"
+                        )}
+                        asChild
+                      >
+                        <Link to="/settings/payments">
+                          {item.icon}
+                          <span className="ml-2">{item.label}</span>
+                        </Link>
+                      </Button>
+                    );
+                  }
+                  return (
+                    <Button
+                      key={item.id}
+                      variant={activeSection === item.id ? "secondary" : "ghost"}
+                      className={cn(
+                        "w-full justify-start",
+                        activeSection === item.id && "bg-secondary"
+                      )}
+                      onClick={() => onSelect(item.id)}
+                    >
+                      {item.icon}
+                      <span className="ml-2">{item.label}</span>
+                    </Button>
+                  );
+                })}
               </div>
               {category !== categoryOrder[categoryOrder.length - 1] && (
                 <Separator className="my-4" />

@@ -1,8 +1,8 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plus, Calendar } from "lucide-react";
+import { Plus, Calendar, ChevronDown, ChevronUp } from "lucide-react";
 import { ProjectCard } from "./ProjectCard";
 import { Project } from "./types";
 import { Progress } from "@/components/ui/progress";
@@ -14,6 +14,7 @@ interface ProjectsListViewProps {
 }
 
 export function ProjectsListView({ projects, onViewDetails, onNewProject }: ProjectsListViewProps) {
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
   // Helper function to calculate project progress
   const calculateProgress = (project: Project): number => {
     if (!project.lists || project.lists.length === 0) return 0;
@@ -48,11 +49,39 @@ export function ProjectsListView({ projects, onViewDetails, onNewProject }: Proj
                 )}
               </div>
               
-              <p className="text-sm text-muted-foreground mb-3">
-                {project.description.length > 80 
-                  ? project.description.substring(0, 80) + "..."
-                  : project.description}
-              </p>
+              {project.description && (
+                <div className="mb-3">
+                  <p className={`text-sm text-muted-foreground ${expandedDescriptions[project.id] ? '' : 'line-clamp-2'}`}>
+                    {project.description}
+                  </p>
+                  {project.description.length > 100 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-1 h-auto p-0 text-xs text-primary hover:text-primary/80"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedDescriptions(prev => ({
+                          ...prev,
+                          [project.id]: !prev[project.id]
+                        }));
+                      }}
+                    >
+                      {expandedDescriptions[project.id] ? (
+                        <>
+                          <ChevronUp className="h-3 w-3 mr-1" />
+                          Ler menos
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="h-3 w-3 mr-1" />
+                          Ler mais
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              )}
               
               <div className="flex items-center text-xs text-muted-foreground mb-3">
                 <Calendar className="h-3.5 w-3.5 mr-1" />
@@ -77,11 +106,17 @@ export function ProjectsListView({ projects, onViewDetails, onNewProject }: Proj
           </Card>
         ))}
         
-        <Card className="flex items-center justify-center p-6 border-dashed border-2">
-          <Button variant="ghost" onClick={onNewProject}>
+        <Card
+          className="flex items-center justify-center p-6 border-dashed border-2 cursor-pointer transition-colors hover:bg-muted/50"
+          onClick={onNewProject}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onNewProject(); } }}
+        >
+          <span className="flex items-center text-muted-foreground hover:text-foreground">
             <Plus className="h-6 w-6 mr-2" />
             Novo Projeto
-          </Button>
+          </span>
         </Card>
       </div>
     </div>

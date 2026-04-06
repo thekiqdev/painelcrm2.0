@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
-
 const taskSchema = z.object({
   title: z.string().min(1, 'Título é obrigatório'),
   description: z.string().optional().nullable(),
@@ -24,36 +23,42 @@ const taskSchema = z.object({
 // GET /api/tasks
 export const getTasks = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Não autenticado' });
+    const tenantId = (req as any).tenantId ?? null;
+    if (!tenantId) {
+      return res.json([]);
     }
-
-    const { status, date } = req.query;
+    const { status, date, clientId } = req.query;
 
     let query = `
-      SELECT id, title, description, due_date, due_time, status, priority,
-             client_id, client_name, deal, assignee_id, assignee_name,
-             checklist, created_at, updated_at
-      FROM tasks
-      WHERE user_id = $1
+      SELECT t.id, t.title, t.description, t.due_date, t.due_time, t.status, t.priority,
+             t.client_id, t.client_name, t.deal, t.assignee_id, t.assignee_name,
+             t.checklist, t.created_at, t.updated_at
+      FROM tasks t
+      INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+      WHERE 1=1
     `;
-    const params: any[] = [userId];
+    const params: any[] = [tenantId];
     let paramCount = 1;
 
     if (status) {
       paramCount++;
-      query += ` AND status = $${paramCount}`;
+      query += ` AND t.status = $${paramCount}`;
       params.push(status);
     }
 
     if (date) {
       paramCount++;
-      query += ` AND due_date = $${paramCount}`;
+      query += ` AND t.due_date = $${paramCount}`;
       params.push(date);
     }
 
-    query += ` ORDER BY due_date ASC NULLS LAST, created_at DESC`;
+    if (clientId) {
+      paramCount++;
+      query += ` AND t.client_id = $${paramCount}`;
+      params.push(clientId);
+    }
+
+    query += ` ORDER BY t.due_date ASC NULLS LAST, t.created_at DESC`;
 
     const result = await pool.query(query, params);
 
@@ -81,11 +86,12 @@ export const getTaskById = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT id, title, description, due_date, due_time, status, priority,
-              client_id, client_name, deal, assignee_id, assignee_name,
-              checklist, created_at, updated_at
-       FROM tasks
-       WHERE id = $1 AND user_id = $2`,
+      `SELECT t.id, t.title, t.description, t.due_date, t.due_time, t.status, t.priority,
+              t.client_id, t.client_name, t.deal, t.assignee_id, t.assignee_name,
+              t.checklist, t.created_at, t.updated_at
+       FROM tasks t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE t.id = $1`,
       [id, userId]
     );
 
@@ -231,15 +237,15 @@ export const updateTask = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Nenhum campo para atualizar' });
     }
 
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
       `UPDATE tasks
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+       WHERE id = $${paramCount} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
        RETURNING id, title, description, due_date, due_time, status, priority,
                  client_id, client_name, deal, assignee_id, assignee_name,
                  checklist, created_at, updated_at`,
-      values
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -274,7 +280,7 @@ export const deleteTask = async (req: Request, res: Response) => {
 
     const result = await pool.query(
       `DELETE FROM tasks
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
        RETURNING id`,
       [id, userId]
     );

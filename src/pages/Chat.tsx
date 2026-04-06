@@ -1,621 +1,2881 @@
-import React, { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { UserCheck, Clock, Send, Phone, Filter, Users, RefreshCw } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
-import { useEvolutionChatCache } from "@/hooks/useEvolutionChatCache";
-import { EvolutionMessage } from "@/services/evolutionApi";
-import { connectionDatabaseService } from "@/services/whatsapp/connectionDatabaseService";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import {
+  RefreshCw,
+  Send,
+  Search,
+  MessageSquare,
+  ChevronDown,
+  Plus,
+  MoreVertical,
+  UserPlus,
+  FileText,
+  CheckSquare,
+  Ticket,
+  Receipt,
+  FileSignature,
+  User,
+  ExternalLink,
+  Trash2,
+  Users,
+  DollarSign,
+  CalendarIcon,
+} from 'lucide-react';
 
-interface ChatConversation {
-  id: string;
-  remoteJid: string;
-  pushName?: string;
-  profilePictureUrl?: string;
-  lastMessage?: string;
-  unreadCount?: number;
-  updatedAt: Date;
-  status: "active" | "pending" | "closed";
-  attendant?: string;
-}
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { RichTextEditor } from '@/components/shared/RichTextEditor';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Calendar } from '@/components/ui/calendar';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { chatService, ChatConversation, ChatInstance, ChatMessage } from '@/services/chat';
+import { useAuth } from '@/contexts/AuthContext';
+import { io, Socket } from 'socket.io-client';
+import { apiClient } from '@/integrations/api/client';
+import { proposalsService } from '@/services/proposals';
+import { tasksService } from '@/services/tasks';
+import { ticketsService } from '@/services/tickets';
+import { contractsService } from '@/services/contracts';
+import { clientsService } from '@/services/clients';
+import { recordClientTimelineEvent } from '@/services/clientTimeline';
+import { messagesService } from '@/services/messages';
+import { customerInvoicesService } from '@/services/customerInvoices';
+import { buildInvoiceLink } from '@/services/chatFinancialAdapter';
+import CustomerInvoiceNew from '@/pages/CustomerInvoiceNew';
+import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
+import { CrmIdentityListRow } from '@/components/crm/CrmIdentityListRow';
+import {
+  buildClientProfileStateFromChat,
+  buildClientProfileToFromChat,
+  resolveRestoreConversationId,
+} from '@/utils/clientProfileNavigation';
 
+const formatHour = (value?: string | null) => {
+  if (!value) return '--:--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return date.toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatRelativeDate = (value?: string | null) => {
+  if (!value) return 'Sem data';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Sem data';
+  
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diff = now.getTime() - date.getTime();
+  const daysDiff = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
+
+  // Menos de 1 minuto
+  if (diff < 60_000) return 'Agora mesmo';
+  
+  // Menos de 1 hora
+  if (diff < 3_600_000) {
+    const minutes = Math.floor(diff / 60_000);
+    return `${minutes} min atrás`;
+  }
+  
+  // Hoje
+  if (daysDiff === 0) {
+    return `Hoje ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  
+  // Ontem
+  if (daysDiff === 1) {
+    return `Ontem ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  
+  // Esta semana (últimos 7 dias)
+  if (daysDiff < 7) {
+    return date.toLocaleDateString('pt-BR', { 
+      weekday: 'short', 
+      day: '2-digit', 
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+  
+  // Este ano
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString('pt-BR', { 
+      day: '2-digit', 
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+  
+  // Outro ano
+  return date.toLocaleDateString('pt-BR', { 
+    day: '2-digit', 
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+const statusBadgeClass = (status?: string | null) => {
+  if (!status) return 'bg-gray-100 text-gray-700 border-gray-200';
+  if (status === 'connected' || status === 'open') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  if (status === 'connecting') return 'bg-amber-100 text-amber-800 border-amber-200';
+  if (status === 'disconnected' || status === 'closed') return 'bg-rose-100 text-rose-800 border-rose-200';
+  return 'bg-gray-100 text-gray-700 border-gray-200';
+};
 
 const Chat = () => {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const navigate = useNavigate();
-  const [conversations, setConversations] = useState<ChatConversation[]>([]);
-  const [activeConversation, setActiveConversation] = useState<string | null>(null);
-  const [newMessage, setNewMessage] = useState("");
-  const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
-  const [contactFilter, setContactFilter] = useState("");
-  const [connectedNumber, setConnectedNumber] = useState<string>("");
-  const [activeInstanceName, setActiveInstanceName] = useState<string>("");
+  const location = useLocation();
+  const queryClient = useQueryClient();
 
-  const {
-    chats,
-    messages,
-    isLoading,
-    isSending,
-    sendMessage,
-    refreshChats
-  } = useEvolutionChatCache({
-    instanceName: activeInstanceName,
-    enabled: connectionStatus === "connected" && !!activeInstanceName
-  });
+  const [instances, setInstances] = useState<ChatInstance[]>([]);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [enabledInstanceIds, setEnabledInstanceIds] = useState<Set<string>>(new Set());
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [newMessage, setNewMessage] = useState('');
+  const [newInstanceName, setNewInstanceName] = useState('');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'read' | 'leads' | 'clients'>('all');
+
+  const [loadingInstances, setLoadingInstances] = useState(false);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [syncingConversations, setSyncingConversations] = useState(false);
+  const [syncingMessages, setSyncingMessages] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [creatingInstance, setCreatingInstance] = useState(false);
+  const [currentLead, setCurrentLead] = useState<any | null>(null);
+  const [currentClient, setCurrentClient] = useState<any | null>(null);
+  const [loadingLead, setLoadingLead] = useState(false);
+  const [loadingClient, setLoadingClient] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
+  // Refs para evitar closure stale nos handlers do Socket.IO
+  const selectedConversationIdRef = useRef<string | null>(null);
+  const enabledInstanceIdsRef = useRef<Set<string>>(new Set());
+  type PendingConversationRestore = {
+    internalId?: string;
+    externalChatId?: string;
+    instanceId?: string;
+  };
+  /** Conversa a reabrir após voltar do perfil (evita race com reload de `enabledInstanceIds`). */
+  const pendingConversationRestoreRef = useRef<PendingConversationRestore | null>(null);
+  /** Evita restaurar no primeiro paint com lista vazia e loading=false (race antes do primeiro setLoading(true) aplicar). */
+  const conversationsHydratedRef = useRef(false);
+
+  // Estados para dialogs
+  const [contractDialogOpen, setContractDialogOpen] = useState(false);
+  const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [ticketDialogOpen, setTicketDialogOpen] = useState(false);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [linkTab, setLinkTab] = useState<'clients' | 'leads'>('clients');
+  const [linkSearch, setLinkSearch] = useState('');
+  const [leads, setLeads] = useState<any[]>([]);
+  const [loadingLeads, setLoadingLeads] = useState(false);
+  const [selectedLinkTarget, setSelectedLinkTarget] = useState<{ type: 'client' | 'lead'; id: string } | null>(null);
+  const [linkPage, setLinkPage] = useState(1);
+  const [viewMode, setViewMode] = useState<'conversation' | 'invoice-create'>('conversation');
+  const [unlinkConfirmOpen, setUnlinkConfirmOpen] = useState(false);
+  
+  // Estados para formulários
+  const [clients, setClients] = useState<any[]>([]);
+  const [ticketCategories, setTicketCategories] = useState<any[]>([]);
+  
+  // Estados para formulário de contrato
+  const [contractTitle, setContractTitle] = useState('');
+  const [contractContent, setContractContent] = useState('');
+  const [contractStartDate, setContractStartDate] = useState<string>('');
+  const [contractEndDate, setContractEndDate] = useState<string>('');
+  const [contractTotalValue, setContractTotalValue] = useState('');
+  const [contractCurrency, setContractCurrency] = useState('BRL');
+  const [contractAutoRenew, setContractAutoRenew] = useState(false);
+  const [contractRenewalPeriod, setContractRenewalPeriod] = useState('12');
+  const [contractSigners, setContractSigners] = useState<Array<{ name: string; email: string; role: 'CLIENT' | 'INTERNAL' }>>([]);
+  const [contractInvitationMessage, setContractInvitationMessage] = useState('Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.');
+  const [contractRequireOtp, setContractRequireOtp] = useState(false);
+  const [contractRequireTerms, setContractRequireTerms] = useState(false);
+
+  const loadInstances = useCallback(async () => {
+    setLoadingInstances(true);
+    try {
+      const data = await chatService.listInstances();
+      setInstances(data);
+    } catch (error) {
+      console.error('Erro ao carregar instâncias:', error);
+      toast.error('Erro ao carregar instâncias do WhatsApp', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setLoadingInstances(false);
+    }
+  }, []);
+
+  const loadConversations = useCallback(async (instanceIds: string | string[]) => {
+    conversationsHydratedRef.current = false;
+    setLoadingConversations(true);
+    try {
+      const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
+      const allConversations: ChatConversation[] = [];
+      
+      // Carregar conversas de todas as instâncias habilitadas
+      for (const instanceId of ids) {
+        try {
+          const data = await chatService.getConversations({ instanceId });
+          allConversations.push(...data);
+        } catch (error) {
+          console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
+        }
+      }
+      
+      // Remover duplicatas baseado no external_chat_id e ordenar por última mensagem
+      const uniqueConversations = Array.from(
+        new Map(allConversations.map((conv) => [conv.external_chat_id, conv])).values()
+      ).sort((a, b) => {
+        const dateA = a.lastMessageAt || a.created_at || a.updated_at;
+        const dateB = b.lastMessageAt || b.created_at || b.updated_at;
+        if (!dateA && !dateB) return 0;
+        if (!dateA) return 1;
+        if (!dateB) return -1;
+        return new Date(dateB).getTime() - new Date(dateA).getTime();
+      });
+      
+      setConversations(uniqueConversations);
+    } catch (error) {
+      console.error('Erro ao carregar conversas:', error);
+      toast.error('Erro ao carregar conversas', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setLoadingConversations(false);
+      conversationsHydratedRef.current = true;
+    }
+  }, []);
+
+  const loadMessages = useCallback(async (conversationId: string) => {
+    setLoadingMessages(true);
+    try {
+      const data = await chatService.getConversationMessages(conversationId);
+      setMessages(data);
+    } catch (error) {
+      console.error('Erro ao carregar mensagens:', error);
+      toast.error('Erro ao carregar mensagens', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setLoadingMessages(false);
+    }
+  }, []);
+
+  // Atualizar refs quando valores mudarem
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
 
   useEffect(() => {
-    const checkConnectionStatus = async () => {
-      try {
-        if (!user) return;
+    enabledInstanceIdsRef.current = enabledInstanceIds;
+  }, [enabledInstanceIds]);
+
+  /** Retorno do perfil: guardar chaves de restauração; aplicação após lista hidratada (ver `conversationsHydratedRef`). */
+  useEffect(() => {
+    const st = location.state as
+      | {
+          openConversationId?: string;
+          openExternalChatId?: string;
+          openInstanceId?: string;
+        }
+      | null
+      | undefined;
+    const hasContext =
+      (st?.openConversationId && st.openConversationId.length > 0) ||
+      (st?.openExternalChatId && st.openExternalChatId.length > 0);
+    if (!hasContext) return;
+    pendingConversationRestoreRef.current = {
+      internalId: st?.openConversationId,
+      externalChatId: st?.openExternalChatId,
+      instanceId: st?.openInstanceId,
+    };
+    navigate('/chat', { replace: true, state: {} });
+  }, [location.state, navigate]);
+
+  const goToClientProfileFromChat = useCallback((clientId: string, conversation: ChatConversation) => {
+    const keys = {
+      id: conversation.id,
+      external_chat_id: conversation.external_chat_id,
+      instance_id: conversation.instance_id,
+    };
+    navigate(buildClientProfileToFromChat(clientId, keys), {
+      state: buildClientProfileStateFromChat(keys),
+    });
+  }, [navigate]);
+
+  // Carregar mensagens quando uma conversa é selecionada
+  // Nota: Não usamos polling automático pois os webhooks atualizam em tempo real
+  useEffect(() => {
+    if (!selectedConversationId) {
+      setMessages([]);
+          return;
+        }
         
-        console.log("Verificando status de conexão do usuário:", user.id);
+    loadMessages(selectedConversationId);
+  }, [selectedConversationId, loadMessages]);
+
+  // WebSocket para atualização em tempo real de conversas
+  useEffect(() => {
+    if (!session?.token) {
+      console.log('[Chat] WebSocket: No token available');
+      return;
+    }
+
+    // Se já existe uma conexão, não criar nova
+    if (socketRef.current?.connected) {
+      console.log('[Chat] WebSocket: Already connected');
+      return;
+    }
+
+    const isDev = import.meta.env.DEV;
+    // Em produção usamos URL relativa para garantir mesmo host e sticky session no proxy
+    const socketUrl = isDev
+      ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+      : window.location.origin;
+
+    console.log('[Chat] WebSocket: Connecting to', socketUrl, 'with token:', session.token ? 'present' : 'missing');
+    console.log('[Chat] WebSocket: Token length', session.token.length);
+    console.log('[Chat] WebSocket: Full URL will be', `${socketUrl}/socket.io/`);
+
+    // Testar endpoint antes de conectar para verificar se está acessível
+    const testUrl = `${socketUrl}/socket.io/?EIO=4&transport=polling`;
+    console.log('[Chat] Testing endpoint accessibility:', testUrl);
+    
+    fetch(testUrl, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        'Authorization': `Bearer ${session.token}`,
+      },
+    })
+      .then(async (res) => {
+        const text = await res.text();
+        console.log('[Chat] Endpoint test response:', {
+          status: res.status,
+          statusText: res.statusText,
+          contentType: res.headers.get('content-type'),
+          bodyPreview: text.substring(0, 100),
+          bodyLength: text.length,
+        });
         
-        // Usar whatsapp_connected do user do contexto (vem de /api/auth/me)
-        if (user.whatsapp_connected === true) {
-          setConnectionStatus("connected");
-          
-          try {
-            const connections = await connectionDatabaseService.getConnections();
-            console.log("Conexões do banco de dados:", connections);
-            
-            const activeConnection = connections.find(c => c.status === "connected");
-            
-            if (activeConnection && activeConnection.instance_name) {
-              console.log("Conexão ativa encontrada:", activeConnection);
-              setActiveInstanceName(activeConnection.instance_name);
-              setConnectedNumber(activeConnection.phone_number || "Número não identificado");
-            } else {
-              console.log("Nenhuma conexão ativa encontrada no banco");
-              setConnectionStatus("disconnected");
-            }
-          } catch (dbError) {
-            console.error("Erro ao buscar conexões do banco:", dbError);
-            setConnectionStatus("disconnected");
+        // Se a resposta não começa com "0{" (handshake do Socket.IO), há problema
+        if (!text.startsWith('0{')) {
+          console.error('[Chat] Invalid Socket.IO handshake response:', text);
+        }
+      })
+      .catch((err) => {
+        console.error('[Chat] Endpoint test failed:', err);
+      });
+
+    // Configuração: usar apenas WebSocket para evitar o caminho de XHR/polling do engine.io,
+    // que depende de polyfills de URL e pode quebrar em alguns ambientes.
+    const socketOptions: any = {
+      auth: { token: session.token },
+      transports: ['websocket'], // Forçar apenas WebSocket
+      reconnection: true,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+      reconnectionAttempts: 3, // Limitar tentativas
+      timeout: 10000, // 10 segundos para timeout
+      forceNew: true,
+      path: '/socket.io/',
+      query: {
+        token: session.token,
+      },
+      withCredentials: true,
+      // Com apenas 'websocket' como transporte, o upgrade é desnecessário
+      upgrade: false,
+      // Remover transportOptions que podem causar problemas de parse
+    };
+
+    const socket: Socket = io(socketUrl, socketOptions);
+    socketRef.current = socket;
+
+    // Logs detalhados para debug
+    socket.on('connect', () => {
+      console.log('[Chat] WebSocket connected successfully', {
+        id: socket.id,
+        transport: socket.io.engine.transport.name,
+        url: socketUrl,
+      });
+    });
+
+    socket.on('connect_error', (error) => {
+      // Log completo do erro
+      console.error('[Chat] WebSocket connection error:', error);
+      
+      // Capturar detalhes do erro XHR se disponível
+      const xhrError = (error as any).xhr || (error as any).req;
+      const errorDetails: any = {
+        message: error.message,
+        type: (error as any).type,
+        description: (error as any).description,
+        context: (error as any).context,
+        transport: socket.io.engine?.transport?.name || 'unknown',
+        url: socketUrl,
+        errorString: String(error),
+        errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+        stack: (error as any).stack,
+      };
+      
+      // Adicionar detalhes do XHR se disponível
+      if (xhrError) {
+        errorDetails.xhr = {
+          status: xhrError.status,
+          statusText: xhrError.statusText,
+          response: xhrError.response,
+          responseText: xhrError.responseText,
+          readyState: xhrError.readyState,
+        };
+      }
+      
+      // Verificar se há erro de rede
+      if ((error as any).code === 'ECONNREFUSED' || (error as any).code === 'ENOTFOUND') {
+        errorDetails.networkError = true;
+        errorDetails.networkCode = (error as any).code;
+      }
+      
+      console.error('[Chat] WebSocket connection error details:', errorDetails);
+      
+      // Tentar forçar polling se websocket falhar
+      if (socket.io.engine && socket.io.engine.transport.name === 'websocket') {
+        console.log('[Chat] WebSocket failed, will retry with polling');
+        socket.io.opts.transports = ['polling'];
+      }
+    });
+
+    socket.on('error', (error) => {
+      console.error('[Chat] WebSocket error:', {
+        message: error.message || error,
+        type: (error as any).type,
+      });
+    });
+
+    // Listener para erros do engine (mais detalhado)
+    socket.io.on('error', (error) => {
+      console.error('[Chat] Socket.IO engine error:', error);
+      
+      const errorDetails: any = {
+        message: (error as any).message || String(error),
+        type: (error as any).type,
+        description: (error as any).description,
+        errorString: String(error),
+        errorJSON: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+        stack: (error as any).stack,
+      };
+      
+      // Capturar detalhes do transporte se disponível
+      if (socket.io.engine) {
+        errorDetails.engine = {
+          transport: socket.io.engine.transport?.name,
+          readyState: socket.io.engine.readyState,
+        };
+      }
+      
+      // Capturar detalhes do XHR se disponível
+      const xhrError = (error as any).xhr || (error as any).req;
+      if (xhrError) {
+        errorDetails.xhr = {
+          status: xhrError.status,
+          statusText: xhrError.statusText,
+          response: xhrError.response,
+          responseText: xhrError.responseText,
+          readyState: xhrError.readyState,
+        };
+      }
+      
+      console.error('[Chat] Socket.IO engine error details:', errorDetails);
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log('[Chat] WebSocket disconnected:', {
+        reason,
+        wasConnected: socket.connected,
+      });
+    });
+
+    socket.on('reconnect', (attemptNumber) => {
+      console.log('[Chat] WebSocket reconnected after', attemptNumber, 'attempts');
+    });
+
+    socket.on('reconnect_attempt', (attemptNumber) => {
+      console.log('[Chat] WebSocket reconnect attempt', attemptNumber);
+    });
+
+    socket.on('reconnect_error', (error) => {
+      console.error('[Chat] WebSocket reconnect error:', error);
+    });
+
+    socket.on('reconnect_failed', () => {
+      console.error('[Chat] WebSocket reconnect failed - giving up');
+    });
+
+    // Escutar atualizações de conversa
+    socket.on('conversation_updated', (raw: any) => {
+      console.log('[Chat] Conversation updated via WebSocket (raw):', raw);
+      console.log('[Chat] Conversation updated - parsed fields:', {
+        id: raw?.id,
+        lastMessagePreview: raw?.last_message_preview,
+        lastMessageAt: raw?.last_message_at,
+        updatedAt: raw?.updated_at,
+        contactName: raw?.contact_name,
+        phoneNumber: raw?.phone_number,
+        unreadCount: raw?.unread_count,
+        hasLastMessagePreview: !!raw?.last_message_preview,
+        hasLastMessageAt: !!raw?.last_message_at,
+      });
+
+      // Normalizar payload do backend usando a mesma lógica do chatService
+      const metadata = raw.metadata || {};
+      const avatarUrl =
+        raw.image ||
+        raw.image_preview ||
+        raw.imagePreview ||
+        metadata.image ||
+        metadata.image_preview ||
+        metadata.imagePreview ||
+        (typeof metadata.whatsapp_profile_photo === 'string' ? metadata.whatsapp_profile_photo : null) ||
+        null;
+
+      const updatedConversation: ChatConversation = {
+        id: raw.id,
+        user_id: raw.user_id,
+        instance_id: raw.instance_id,
+        instance_name: raw.instance_name,
+        client_id: raw.client_id ?? null,
+        leadId: raw.lead_id ?? null,
+        external_chat_id: raw.external_chat_id,
+        contactName: raw.contact_name ?? null,
+        profileName: raw.profile_name ?? null,
+        phoneNumber: raw.phone_number ?? null,
+        avatarUrl,
+        status: raw.status ?? null,
+        lastMessagePreview: raw.last_message_preview ?? null,
+        lastMessageAt: raw.last_message_at ?? null,
+        unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
+        link_state: raw.link_state ?? metadata.link_state ?? null,
+        link_source: raw.link_source ?? metadata.link_source ?? null,
+        link_confidence: raw.link_confidence ?? metadata.link_confidence ?? null,
+        metadata: metadata ?? null,
+        created_at: raw.created_at,
+        updated_at: raw.updated_at,
+      };
+      
+      console.log('[Chat] Normalized conversation:', {
+        id: updatedConversation.id,
+        lastMessagePreview: updatedConversation.lastMessagePreview,
+        lastMessageAt: updatedConversation.lastMessageAt,
+      });
+      
+      setConversations((prev) => {
+        const existingIndex = prev.findIndex(c => c.id === updatedConversation.id);
+        console.log('[Chat] Updating conversations list:', {
+          conversationId: updatedConversation.id,
+          existingIndex,
+          currentListSize: prev.length,
+        });
+        
+        if (existingIndex >= 0) {
+          // Atualizar conversa existente
+          const updated = [...prev];
+          updated[existingIndex] = updatedConversation;
+          // Mover para o topo (conversa mais recente) baseado em lastMessageAt
+          const sorted = updated.sort((a, b) => {
+            const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            return dateB - dateA; // Mais recente primeiro
+          });
+          console.log('[Chat] Conversation updated and sorted', {
+            conversationId: updatedConversation.id,
+            lastMessageAt: updatedConversation.lastMessageAt,
+            lastMessagePreview: updatedConversation.lastMessagePreview,
+            position: sorted.findIndex(c => c.id === updatedConversation.id),
+            newListSize: sorted.length,
+          });
+          return sorted;
+        }
+        // Adicionar nova conversa no topo
+        const newList = [updatedConversation, ...prev];
+        // Ordenar por lastMessageAt
+        const sorted = newList.sort((a, b) => {
+          const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+          const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+          return dateB - dateA; // Mais recente primeiro
+        });
+        console.log('[Chat] New conversation added and sorted', {
+          conversationId: updatedConversation.id,
+          newListSize: sorted.length,
+        });
+        return sorted;
+      });
+
+      // Se a conversa atualizada é a selecionada, recarregar mensagens
+      // Usar ref para evitar closure stale
+      if (selectedConversationIdRef.current === updatedConversation.id) {
+        loadMessages(updatedConversation.id);
+      }
+    });
+
+    // Escutar novas mensagens
+    socket.on('new_message', (data: { message: any; conversationId: string }) => {
+      console.log('[Chat] New message via WebSocket (raw):', data.message);
+      
+      // Normalizar mensagem recebida (formato semelhante ao usado no chatService)
+      const normalizedMessage: ChatMessage = {
+        id: data.message.id,
+        conversation_id: data.message.conversation_id || data.conversationId,
+        direction: data.message.direction === 'outgoing' ? 'outgoing' : 'incoming',
+        external_message_id: data.message.external_message_id ?? null,
+        body: data.message.body ?? null,
+        status: data.message.status ?? null,
+        sentAt: data.message.sent_at ?? data.message.created_at ?? null,
+        metadata: data.message.metadata ?? null,
+        created_at: data.message.created_at,
+      };
+      
+      // Usar ref para evitar closure stale
+      const currentSelectedId = selectedConversationIdRef.current;
+      
+      // Se a mensagem é da conversa selecionada, adicionar à lista
+      if (currentSelectedId === data.conversationId) {
+        setMessages((prev) => {
+          // Verificar se a mensagem já existe
+          if (prev.some(m => m.id === normalizedMessage.id || m.external_message_id === normalizedMessage.external_message_id)) {
+            return prev;
           }
+          return [...prev, normalizedMessage];
+        });
+      }
+
+      // Atualizar preview da conversa na lista quando recebe nova mensagem
+      setConversations((prev) => {
+        const index = prev.findIndex(c => c.id === data.conversationId);
+        console.log('[Chat] Updating conversation from new_message event:', {
+          conversationId: data.conversationId,
+          foundIndex: index,
+          messageBody: normalizedMessage.body,
+          sentAt: normalizedMessage.sentAt,
+          isSelected: currentSelectedId === data.conversationId,
+        });
+        
+        if (index >= 0) {
+          const updated = [...prev];
+          const conv = updated[index];
+          const messagePreview = (normalizedMessage.body || '').trim() || '[Mídia]';
+          const updatedConv = {
+            ...conv,
+            lastMessagePreview: messagePreview,
+            lastMessageAt: normalizedMessage.sentAt || conv.lastMessageAt || conv.created_at || conv.updated_at || null,
+            unreadCount: currentSelectedId === data.conversationId 
+              ? conv.unreadCount 
+              : (conv.unreadCount || 0) + 1,
+            updated_at: normalizedMessage.sentAt || conv.updated_at || new Date().toISOString(),
+          };
+          
+          updated[index] = updatedConv;
+          
+          // Ordenar por lastMessageAt (mais recente primeiro)
+          const sorted = updated.sort((a, b) => {
+            const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            return dateB - dateA;
+          });
+          
+          console.log('[Chat] Conversation updated from new_message, sorted list:', {
+            conversationId: data.conversationId,
+            newPosition: sorted.findIndex(c => c.id === data.conversationId),
+            lastMessagePreview: updatedConv.lastMessagePreview,
+            lastMessageAt: updatedConv.lastMessageAt,
+          });
+          
+          return sorted;
         } else {
-          setConnectionStatus("disconnected");
+          console.warn('[Chat] Conversation not found in list for new_message:', {
+            conversationId: data.conversationId,
+            currentListSize: prev.length,
+          });
+        }
+        return prev;
+      });
+    });
+
+    return () => {
+      // Limpar socket quando token mudar ou componente desmontar
+      if (socketRef.current) {
+        console.log('[Chat] WebSocket: Cleaning up socket');
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, [session?.token, loadMessages]); // Reconectar se token ou loadMessages mudar
+
+  const loadClients = useCallback(async () => {
+    try {
+      const data = await clientsService.getClients();
+      setClients(data);
+    } catch (error) {
+      console.error('Erro ao carregar clientes:', error);
+    }
+  }, []);
+
+  const loadLeads = useCallback(async () => {
+    setLoadingLeads(true);
+    try {
+      const response = await apiClient.get<any[]>('/api/leads');
+      if (response.error) throw new Error(response.error);
+      setLeads(response.data || []);
+    } catch (error) {
+      console.error('Erro ao carregar leads:', error);
+      setLeads([]);
+    } finally {
+      setLoadingLeads(false);
+    }
+  }, []);
+
+  const loadTicketCategories = useCallback(async () => {
+    try {
+      const data = await ticketsService.getTicketCategories();
+      setTicketCategories(data);
+    } catch (error) {
+      console.error('Erro ao carregar categorias de ticket:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadInstances();
+    loadClients();
+    loadLeads();
+    loadTicketCategories();
+  }, [loadInstances, loadClients, loadLeads, loadTicketCategories]);
+
+  // Ref para rastrear IDs das instâncias para detectar mudanças
+  const previousInstancesRef = useRef<string>('');
+
+  useEffect(() => {
+    const instancesIds = instances.map(i => i.id).join(',');
+    
+    // Se não há instâncias, limpar tudo
+    if (instances.length === 0) {
+      setSelectedInstanceId(null);
+      setEnabledInstanceIds(new Set());
+      setConversations([]);
+      setSelectedConversationId(null);
+      setMessages([]);
+      previousInstancesRef.current = '';
+          return;
+        }
+        
+    // Se as instâncias mudaram, reconfigurar apenas se necessário
+    if (instancesIds !== previousInstancesRef.current) {
+      previousInstancesRef.current = instancesIds;
+      
+      // Verificar se precisa habilitar uma instância
+      setEnabledInstanceIds((prev) => {
+        if (prev.size === 0) {
+          const connected = instances.find((instance) => instance.status === 'connected');
+          const firstInstance = connected || instances[0];
+          if (firstInstance) {
+            // Usar setTimeout para evitar atualização durante render
+            setTimeout(() => {
+              setSelectedInstanceId(firstInstance.id);
+            }, 0);
+            return new Set([firstInstance.id]);
+          }
+        }
+        return prev;
+      });
+    }
+  }, [instances]);
+
+  // Separar a lógica de validação de selectedInstanceId em outro useEffect
+  useEffect(() => {
+    if (enabledInstanceIds.size > 0) {
+      const enabledArray = Array.from(enabledInstanceIds);
+      setSelectedInstanceId((currentSelected) => {
+        if (!currentSelected || !enabledInstanceIds.has(currentSelected)) {
+          return enabledArray[0] || null;
+        }
+        return currentSelected;
+      });
+    }
+  }, [enabledInstanceIds]);
+
+  useEffect(() => {
+    if (enabledInstanceIds.size === 0) {
+      setConversations([]);
+      return;
+    }
+    if (!pendingConversationRestoreRef.current) {
+      setSelectedConversationId(null);
+    }
+    setMessages([]);
+    // Carregar conversas de todas as instâncias habilitadas
+    // Nota: Não usamos polling automático pois os webhooks atualizam em tempo real
+    loadConversations(Array.from(enabledInstanceIds));
+  }, [enabledInstanceIds, loadConversations]);
+
+  useEffect(() => {
+    if (pendingConversationRestoreRef.current) {
+      return;
+    }
+    if (
+      selectedConversationId &&
+      !conversations.some((conversation) => conversation.id === selectedConversationId)
+    ) {
+      setSelectedConversationId(null);
+      setMessages([]);
+    }
+  }, [conversations, selectedConversationId]);
+
+  // Scroll automático para o final quando mensagens são carregadas ou nova mensagem é enviada
+  useEffect(() => {
+    if (messages.length > 0 && !loadingMessages) {
+      // Pequeno delay para garantir que o DOM foi atualizado
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          // Encontrar o viewport do ScrollArea e fazer scroll
+          const viewport = messagesEndRef.current.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
+          if (viewport) {
+            viewport.scrollTop = viewport.scrollHeight;
+            } else {
+            // Fallback para scrollIntoView
+            messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+          }
+        }
+      }, 100);
+    }
+  }, [messages, selectedConversationId, loadingMessages]);
+
+  const filteredConversations = useMemo(() => {
+    if (!searchTerm.trim()) return conversations;
+    return conversations.filter((conversation) => {
+      const term = searchTerm.toLowerCase();
+      return (
+        conversation.contactName?.toLowerCase().includes(term) ||
+        conversation.profileName?.toLowerCase().includes(term) ||
+        conversation.phoneNumber?.toLowerCase().includes(term) ||
+        conversation.external_chat_id.toLowerCase().includes(term)
+      );
+    });
+  }, [conversations, searchTerm]);
+
+  // Filtros de conversas
+  const unreadConversations = useMemo(
+    () =>
+      filteredConversations.filter(
+        (conversation) => (conversation.unreadCount ?? 0) > 0,
+      ),
+    [filteredConversations],
+  );
+
+  const readConversations = useMemo(
+    () =>
+      filteredConversations.filter(
+        (conversation) => (conversation.unreadCount ?? 0) === 0,
+      ),
+    [filteredConversations],
+  );
+
+  // Função auxiliar para ordenar conversas por última mensagem (mais recente primeiro)
+  const sortConversationsByLastMessage = (convs: ChatConversation[]) => {
+    return [...convs].sort((a, b) => {
+      // Priorizar lastMessageAt, depois updated_at, depois created_at
+      const dateA = a.lastMessageAt
+        ? new Date(a.lastMessageAt).getTime()
+        : (a.created_at ? new Date(a.created_at).getTime() : (a.updated_at ? new Date(a.updated_at).getTime() : 0));
+      const dateB = b.lastMessageAt
+        ? new Date(b.lastMessageAt).getTime()
+        : (b.created_at ? new Date(b.created_at).getTime() : (b.updated_at ? new Date(b.updated_at).getTime() : 0));
+      
+      // Se ambas têm data, ordenar por mais recente primeiro
+      if (dateA > 0 && dateB > 0) {
+        return dateB - dateA;
+      }
+      // Se apenas uma tem data, ela vem primeiro
+      if (dateA > 0) return -1;
+      if (dateB > 0) return 1;
+      // Se nenhuma tem data, manter ordem original
+      return 0;
+    });
+  };
+
+  // Filtros de leads e clientes
+  const leadConversations = useMemo(() => {
+    const filtered = filteredConversations.filter((conversation) => {
+      // Deve ter lead_id
+      if (!conversation.leadId) return false;
+      // Não deve ter client_id
+      if (conversation.client_id) return false;
+      // O lead não deve estar convertido
+      if (conversation.lead_status === 'Convertido') return false;
+      return true;
+    });
+    return sortConversationsByLastMessage(filtered);
+  }, [filteredConversations]);
+
+  const clientConversations = useMemo(() => {
+    const filtered = filteredConversations.filter((conversation) => {
+      // Deve ter client_id OU ser um lead convertido
+      if (conversation.client_id) return true;
+      if (conversation.leadId && conversation.lead_status === 'Convertido') return true;
+      return false;
+    });
+    return sortConversationsByLastMessage(filtered);
+  }, [filteredConversations]);
+
+  // Determinar quais conversas mostrar baseado na aba ativa
+  const conversationsToShow = useMemo(() => {
+    let result: ChatConversation[];
+    switch (activeTab) {
+      case 'all':
+        result = filteredConversations;
+        break;
+      case 'unread':
+        result = unreadConversations;
+        break;
+      case 'read':
+        result = readConversations;
+        break;
+      case 'leads':
+        result = leadConversations;
+        break;
+      case 'clients':
+        result = clientConversations;
+        break;
+      default:
+        result = filteredConversations;
+    }
+    // Garantir que está ordenado por última mensagem (mais recente primeiro)
+    return sortConversationsByLastMessage(result);
+  }, [activeTab, unreadConversations, readConversations, filteredConversations, leadConversations, clientConversations]);
+  const selectedConversation = conversations.find(
+    (conversation) => conversation.id === selectedConversationId,
+  );
+  const linkPageSize = 8;
+  const filteredLinkClients = useMemo(() => {
+    const q = linkSearch.trim().toLowerCase();
+    if (!q) return clients;
+    return clients.filter((c) =>
+      [c.name, c.email, c.phone, c.company]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
+    );
+  }, [clients, linkSearch]);
+  const filteredLinkLeads = useMemo(() => {
+    const q = linkSearch.trim().toLowerCase();
+    if (!q) return leads;
+    return leads.filter((l) =>
+      [l.name, l.email, l.phone, l.company]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
+    );
+  }, [leads, linkSearch]);
+  const pagedLinkClients = useMemo(
+    () => filteredLinkClients.slice(0, linkPage * linkPageSize),
+    [filteredLinkClients, linkPage]
+  );
+  const pagedLinkLeads = useMemo(
+    () => filteredLinkLeads.slice(0, linkPage * linkPageSize),
+    [filteredLinkLeads, linkPage]
+  );
+  const suggestedCandidates = useMemo(() => {
+    const raw = (selectedConversation?.metadata as any)?.match_sugerido?.candidates;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((c) => c && typeof c.id === 'string' && (c.type === 'client' || c.type === 'lead'));
+  }, [selectedConversation?.metadata]);
+
+  const clientsById = useMemo(() => {
+    const m = new Map<string, (typeof clients)[number]>();
+    for (const c of clients) m.set(c.id, c);
+    return m;
+  }, [clients]);
+
+  const leadsById = useMemo(() => {
+    const m = new Map<string, (typeof leads)[number]>();
+    for (const l of leads) m.set(l.id, l);
+    return m;
+  }, [leads]);
+
+  const selectedIdentity = useMemo(() => {
+    if (!selectedConversation) return null;
+    return resolveConversationIdentity(
+      selectedConversation,
+      selectedConversation.client_id ? currentClient : null,
+      selectedConversation.leadId && !selectedConversation.client_id ? currentLead : null,
+    );
+  }, [selectedConversation, currentClient, currentLead]);
+  const activeInstance =
+    instances.find((instance) => instance.id === selectedInstanceId) ||
+    instances.find((instance) => instance.status === 'connected') ||
+    null;
+  const connectionStatus = activeInstance?.status || 'disconnected';
+
+  const handleSelectConversation = async (conversationId: string) => {
+    // Sincronizar mensagens automaticamente ao selecionar conversa
+    try {
+      await chatService.syncConversationMessages(conversationId, { limit: 100 });
+    } catch (error) {
+      console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
+      // Continuar mesmo se a sincronização falhar
+    }
+    setSelectedConversationId(conversationId);
+    await loadMessages(conversationId);
+
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (conversation && (conversation.unreadCount ?? 0) > 0) {
+      try {
+        await chatService.markConversationRead(conversationId);
+        if (enabledInstanceIds.size > 0) {
+          loadConversations(Array.from(enabledInstanceIds));
         }
       } catch (error) {
-        console.error("Error checking WhatsApp connection:", error);
-        setConnectionStatus("disconnected");
+        console.error('Erro ao marcar conversa como lida:', error);
+      }
+    }
+
+    // Buscar perfil (cliente ou lead) vinculado à conversa
+    await loadConversationProfile(conversationId);
+  };
+
+  const loadConversationProfile = useCallback(async (conversationId: string) => {
+    setLoadingClient(true);
+    setLoadingLead(true);
+    try {
+      const profile = await chatService.getConversationProfile(conversationId);
+      if (profile.type === 'client' && profile.profile) {
+        setCurrentClient(profile.profile);
+        setCurrentLead(null);
+      } else if (profile.type === 'lead' && profile.profile) {
+        setCurrentLead(profile.profile);
+        setCurrentClient(null);
+      } else {
+        setCurrentClient(null);
+        setCurrentLead(null);
+      }
+      } catch (error) {
+      console.error('Erro ao carregar perfil da conversa:', error);
+      setCurrentClient(null);
+      setCurrentLead(null);
+    } finally {
+      setLoadingClient(false);
+      setLoadingLead(false);
+    }
+  }, []);
+
+  const handleSelectConversationRef = useRef(handleSelectConversation);
+  handleSelectConversationRef.current = handleSelectConversation;
+
+  /** Após lista hidratada, resolve uuid (incl. após deduplicação) e aplica o mesmo fluxo do clique na conversa. */
+  useEffect(() => {
+    const pending = pendingConversationRestoreRef.current;
+    if (!pending) return;
+    if (loadingConversations) return;
+    if (enabledInstanceIds.size === 0) return;
+    if (!conversationsHydratedRef.current) return;
+
+    const resolved = resolveRestoreConversationId(conversations, pending);
+    if (!resolved) {
+      pendingConversationRestoreRef.current = null;
+      setSelectedConversationId(null);
+      setMessages([]);
+      return;
+    }
+    pendingConversationRestoreRef.current = null;
+    void handleSelectConversationRef.current(resolved);
+  }, [conversations, loadingConversations, enabledInstanceIds.size]);
+
+  const handleSendMessage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedConversationId || !newMessage.trim()) {
+      return;
+    }
+
+    try {
+      setSendingMessage(true);
+      await chatService.sendMessage(selectedConversationId, newMessage.trim());
+      setNewMessage('');
+      await loadMessages(selectedConversationId);
+      if (enabledInstanceIds.size > 0) {
+        loadConversations(Array.from(enabledInstanceIds));
+      }
+      // Removido toast de sucesso para evitar notificação a cada envio
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error);
+      toast.error('Não foi possível enviar a mensagem', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
+  const handleSyncConversations = async () => {
+    if (!selectedInstanceId) return;
+    try {
+      setSyncingConversations(true);
+      const summary = await chatService.syncConversations(selectedInstanceId, { limit: 200 }) as { total?: number; upserted?: number };
+      if (enabledInstanceIds.size > 0) {
+        loadConversations(Array.from(enabledInstanceIds));
+      }
+      toast.success('Conversas sincronizadas com o WhatsApp', {
+        description: `Total encontrado: ${summary?.total ?? 0}`,
+      });
+    } catch (error) {
+      console.error('Erro ao sincronizar conversas:', error);
+      toast.error('Não foi possível sincronizar as conversas', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setSyncingConversations(false);
+    }
+  };
+
+  /** Um único ícone: mensagens remotas + dados do contato (nome/foto) na UazAPI, depois recarrega lista. */
+  const handleSyncConversation = async () => {
+    if (!selectedConversationId) return;
+    try {
+      setSyncingMessages(true);
+      await chatService.syncConversationMessages(selectedConversationId, { limit: 100 });
+      const identityResult = await chatService.refreshConversationIdentity(selectedConversationId);
+      if (identityResult.conversation) {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === selectedConversationId ? identityResult.conversation! : c))
+        );
+      }
+      await loadMessages(selectedConversationId);
+      if (enabledInstanceIds.size > 0) {
+        await loadConversations(Array.from(enabledInstanceIds));
+      }
+      void queryClient.invalidateQueries({ queryKey: ['clients', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
+      toast.success('Conversa sincronizada');
+    } catch (error) {
+      console.error('Erro ao sincronizar conversa:', error);
+      toast.error('Não foi possível sincronizar a conversa', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setSyncingMessages(false);
+    }
+  };
+
+  const handleMarkConversationRead = async () => {
+    if (!selectedConversationId) return;
+    try {
+      await chatService.markConversationRead(selectedConversationId, true);
+      toast.success('Conversa marcada como lida');
+      if (enabledInstanceIds.size > 0) {
+        loadConversations(Array.from(enabledInstanceIds));
+      }
+    } catch (error) {
+      console.error('Erro ao marcar conversa como lida:', error);
+      toast.error('Não foi possível marcar como lida', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const openLinkDialog = () => {
+    if (!selectedConversation) return;
+    setLinkSearch('');
+    setLinkPage(1);
+    setSelectedLinkTarget(null);
+    if (selectedConversation.link_state === 'review_required') {
+      const suggestedType = (selectedConversation.metadata as any)?.match_sugerido?.type;
+      if (suggestedType === 'lead') setLinkTab('leads');
+      else setLinkTab('clients');
+      const candidates = (selectedConversation.metadata as any)?.match_sugerido?.candidates;
+      if (Array.isArray(candidates) && candidates.length > 0) {
+        const first = candidates[0];
+        if (first && typeof first.id === 'string' && (first.type === 'client' || first.type === 'lead')) {
+          setSelectedLinkTarget({ type: first.type, id: first.id });
+        }
+      }
+    } else {
+      setLinkTab(selectedConversation.client_id ? 'clients' : selectedConversation.leadId ? 'leads' : 'clients');
+    }
+    setLinkDialogOpen(true);
+  };
+
+  const handleConfirmLink = async () => {
+    if (!selectedConversation || !selectedLinkTarget) return;
+    try {
+      const updated = await chatService.linkConversation(selectedConversation.id, selectedLinkTarget);
+      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      if (selectedConversationId === updated.id) {
+        await loadConversationProfile(updated.id);
+      }
+      setLinkDialogOpen(false);
+      toast.success('Conversa vinculada com sucesso');
+    } catch (error) {
+      console.error('Erro ao vincular conversa:', error);
+      toast.error('Não foi possível vincular a conversa', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleConfirmUnlink = async () => {
+    if (!selectedConversation) return;
+    try {
+      const updated = await chatService.unlinkConversation(selectedConversation.id);
+      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setCurrentClient(null);
+      setCurrentLead(null);
+      if (selectedConversationId === updated.id) {
+        await loadConversationProfile(updated.id);
+      }
+      setUnlinkConfirmOpen(false);
+      toast.success('Vínculo da conversa removido');
+      void queryClient.invalidateQueries({ queryKey: ['clients'] });
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
+    } catch (error) {
+      console.error('Erro ao remover vínculo:', error);
+      toast.error('Não foi possível remover o vínculo', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleAddLead = async () => {
+    if (!selectedConversation) return;
+    
+    try {
+      const leadData: any = {
+        name: selectedConversation.contactName || 
+              selectedConversation.profileName || 
+              selectedConversation.phoneNumber || 
+              selectedConversation.external_chat_id || 
+              'Contato WhatsApp',
+        source: 'WhatsApp',
+      };
+
+      if (selectedConversation.phoneNumber) {
+        leadData.phone = selectedConversation.phoneNumber;
+      }
+
+      const response = await apiClient.post('/api/leads', leadData);
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      const createdLead = response.data as { id: string } | undefined;
+      if (!createdLead?.id) {
+        throw new Error('Lead criado sem ID retornado');
+      }
+
+      await chatService.linkConversation(selectedConversation.id, {
+        type: 'lead',
+        id: createdLead.id,
+      });
+
+      // Atualizar lista/perfil da conversa após criar lead + vínculo
+      if (selectedConversationId) {
+        if (enabledInstanceIds.size > 0) {
+          await loadConversations(Array.from(enabledInstanceIds));
+        }
+        await loadConversationProfile(selectedConversationId);
+      }
+
+      toast.success('Lead adicionado com sucesso!');
+    } catch (error) {
+      console.error('Erro ao adicionar lead:', error);
+      toast.error('Não foi possível adicionar o lead', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleConvertToClient = async () => {
+    if (!currentLead || !selectedConversation) return;
+
+    try {
+      // Importar helper de clientes
+      const { addClient } = await import('@/utils/clients-helpers');
+      
+      // Criar cliente a partir do lead
+      const clientResult = await addClient({
+        name: currentLead.name,
+        company: currentLead.company || undefined,
+        email: currentLead.email || undefined,
+        phone: currentLead.phone || selectedConversation.phoneNumber || undefined,
+        notes: currentLead.notes || undefined,
+        status: 'Ativo',
+      });
+
+      if (!clientResult.success || !clientResult.data) {
+        throw new Error('Erro ao criar cliente');
+      }
+
+      await apiClient.patch(`/api/leads/${currentLead.id}`, {
+        status: 'Convertido',
+        migrated_client_id: clientResult.data.id,
+      });
+
+      void queryClient.invalidateQueries({ queryKey: ['clients', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
+
+      // Atualizar o perfil da conversa após converter lead para cliente
+      if (selectedConversationId) {
+        if (enabledInstanceIds.size > 0) {
+          await loadConversations(Array.from(enabledInstanceIds));
+        }
+        await loadConversationProfile(selectedConversationId);
+      }
+
+      toast.success('Lead convertido para cliente com sucesso!');
+    } catch (error) {
+      console.error('Erro ao converter lead:', error);
+      toast.error('Não foi possível converter o lead para cliente', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleSendProposal = () => {
+    setProposalDialogOpen(true);
+  };
+
+  // Função auxiliar para enviar notificação
+  const sendNotification = async (
+    resourceType: string,
+    action: string,
+    variables: Record<string, string>,
+    resourceId?: string
+  ): Promise<boolean> => {
+    try {
+      const client = currentClient || currentLead;
+      if (!client) return false;
+
+      const phone = client.phone || selectedConversation?.phoneNumber;
+      const email = client.email;
+
+      if (!phone && !email) {
+        console.warn('Cliente sem telefone ou email para enviar notificação');
+        return false;
+      }
+
+      const result = await messagesService.send({
+        resourceType,
+        action,
+        recipientPhone: phone || undefined,
+        recipientEmail: email || undefined,
+        channel: phone ? 'whatsapp' : 'email',
+        variables,
+        metadata: {
+          resource_id: resourceId,
+          client_id: client.id,
+          created_from: 'chat_quick_action',
+        },
+      });
+
+      // Se a mensagem foi enviada via WhatsApp, sincronizar a conversa
+      if (result && result.conversationId && phone) {
+        try {
+          // Pequeno delay para garantir que a mensagem foi salva no backend
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Sincronizar mensagens da conversa
+          await chatService.syncConversationMessages(result.conversationId, { limit: 100 });
+          
+          // Se esta é a conversa selecionada, recarregar mensagens
+          if (selectedConversationId === result.conversationId) {
+            await loadMessages(result.conversationId);
+          } else {
+            // Se não é a conversa selecionada, atualizar a lista de conversas
+            if (enabledInstanceIds.size > 0) {
+              loadConversations(Array.from(enabledInstanceIds));
+            }
+          }
+        } catch (error) {
+          console.error('Erro ao sincronizar mensagens após enviar notificação:', error);
+        }
+      }
+      return true;
+    } catch (error) {
+      console.error('Erro ao enviar notificação:', error);
+      // Não mostrar erro ao usuário, apenas logar
+      return false;
+    }
+  };
+
+  const handleSaveProposal = async (formData: FormData) => {
+    try {
+      const title = formData.get('title') as string;
+      const description = formData.get('description') as string;
+      const amount = parseFloat(formData.get('amount') as string);
+
+      const proposal = await proposalsService.createProposal({
+        title,
+        description: description || null,
+        amount,
+        status: 'draft',
+        client_id: currentClient?.id || currentLead?.id || null,
+        items: [],
+      });
+
+      toast.success('Proposta criada com sucesso!');
+      setProposalDialogOpen(false);
+
+      // Enviar notificação
+      const client = currentClient || currentLead;
+      if (client) {
+        await sendNotification('proposals', 'created', {
+          client_name: client.name || 'Cliente',
+          proposal_title: title,
+          proposal_amount: amount.toFixed(2),
+          proposal_link: `${window.location.origin}/proposals/${proposal.id}`,
+        }, proposal.id);
+      }
+    } catch (error) {
+      console.error('Erro ao criar proposta:', error);
+      toast.error('Não foi possível criar a proposta', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleCreateTask = () => {
+    setTaskDialogOpen(true);
+  };
+
+  const handleSaveTask = async (formData: FormData) => {
+    try {
+      const title = formData.get('title') as string;
+      const description = formData.get('description') as string;
+      const date = formData.get('date') as string;
+      const time = formData.get('time') as string;
+      const priority = formData.get('priority') as string;
+
+      const task = await tasksService.createTask({
+        title,
+        description: description || null,
+        date: date || null,
+        time: time || null,
+        status: 'pending',
+        priority: (priority === 'low' || priority === 'high' ? priority : 'medium') as 'low' | 'medium' | 'high',
+        clientId: currentClient?.id || currentLead?.id || null,
+        client: currentClient?.name || currentLead?.name || null,
+        checklist: [],
+      });
+
+      toast.success('Tarefa criada com sucesso!');
+      setTaskDialogOpen(false);
+
+      // Enviar notificação
+      const client = currentClient || currentLead;
+      if (client) {
+        const dueDate = date ? format(new Date(date), 'dd/MM/yyyy', { locale: ptBR }) : 'Não definido';
+        await sendNotification('tasks', 'created', {
+          client_name: client.name || 'Cliente',
+          task_title: title,
+          task_description: description || '',
+          task_due_date: dueDate,
+          task_link: `${window.location.origin}/tasks/${task.id}`,
+        }, task.id);
+      }
+    } catch (error) {
+      console.error('Erro ao criar tarefa:', error);
+      toast.error('Não foi possível criar a tarefa', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleOpenTicket = () => {
+    setTicketDialogOpen(true);
+  };
+
+  const handleSaveTicket = async (formData: FormData) => {
+    try {
+      const subject = formData.get('subject') as string;
+      const description = formData.get('description') as string;
+      const categoryId = formData.get('categoryId') as string;
+      const priority = formData.get('priority') as string;
+
+      const contactName = currentClient?.name || currentLead?.name || selectedConversation?.contactName || 'Contato WhatsApp';
+      const contactEmail = currentClient?.email || currentLead?.email || '';
+      const contactPhone = currentClient?.phone || currentLead?.phone || selectedConversation?.phoneNumber || '';
+
+      const ticket = await ticketsService.createTicket({
+        contact_name: contactName,
+        contact_email: contactEmail,
+        contact_phone: contactPhone || undefined,
+        subject,
+        description,
+        category_id: categoryId || undefined,
+        priority: priority as any,
+        client_id: currentClient?.id || undefined,
+        channel: 'whatsapp',
+        status: 'new',
+      });
+
+      toast.success('Ticket criado com sucesso!');
+      setTicketDialogOpen(false);
+
+      // Enviar notificação
+      if (contactPhone || contactEmail) {
+        await sendNotification('tickets', 'created', {
+          contact_name: contactName,
+          ticket_number: ticket.id.substring(0, 8).toUpperCase(),
+          ticket_subject: subject,
+          ticket_link: `${window.location.origin}/tickets/${ticket.id}`,
+        }, ticket.id);
+      }
+    } catch (error) {
+      console.error('Erro ao criar ticket:', error);
+      toast.error('Não foi possível criar o ticket', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleCreateInvoice = () => {
+    if (!selectedConversation?.client_id) return;
+    setViewMode('invoice-create');
+  };
+
+  const handleBackFromInvoiceCreate = () => {
+    setViewMode('conversation');
+  };
+
+  const handleInvoiceCreatedInChat = async (invoiceId: string) => {
+    setViewMode('conversation');
+    try {
+      const invoice = await customerInvoicesService.getById(invoiceId);
+      const clientIdForTimeline = selectedConversation?.client_id ?? invoice?.client_id ?? null;
+      if (clientIdForTimeline) {
+        await recordClientTimelineEvent(clientIdForTimeline, {
+          event_name: 'chat_invoice_created',
+          source: 'chat',
+          actor_type: 'user',
+          reference_type: 'customer_invoice',
+          reference_id: invoiceId,
+          event_key: `chat_invoice_created:${invoiceId}`,
+          metadata: {
+            conversation_id: selectedConversation?.id ?? null,
+          },
+        });
+      }
+      if (invoice?.payment_token) {
+        const dueDate = new Date(invoice.due_date).toLocaleDateString('pt-BR');
+        const sent = await sendNotification('invoices', 'created', {
+          client_name: currentClient?.name || 'Cliente',
+          invoice_number: invoice.invoice_number || invoice.id.slice(0, 8).toUpperCase(),
+          invoice_total: (invoice.amount_cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 }),
+          due_date: dueDate,
+          invoice_link: buildInvoiceLink(invoice.payment_token),
+        }, invoice.id);
+        if (sent && clientIdForTimeline) {
+          await recordClientTimelineEvent(clientIdForTimeline, {
+            event_name: 'chat_invoice_sent',
+            source: 'chat',
+            actor_type: 'user',
+            reference_type: 'customer_invoice',
+            reference_id: invoice.id,
+            event_key: `chat_invoice_sent:${invoice.id}:${selectedConversation?.id ?? 'unknown'}`,
+            metadata: {
+              channel: 'whatsapp',
+              conversation_id: selectedConversation?.id ?? null,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao enviar fatura criada no chat:', error);
+    }
+    toast.success('Fatura criada com sucesso');
+  };
+
+  const handleCreateContract = () => {
+    if (!currentClient && !currentLead) return;
+    // Preencher assinante com dados do cliente/lead
+    const defaultSigner = {
+      name: currentClient?.name || currentLead?.name || '',
+      email: currentClient?.email || currentLead?.email || '',
+      role: 'CLIENT' as const,
+    };
+    setContractSigners([defaultSigner]);
+    setContractDialogOpen(true);
+  };
+
+  const handleSaveContract = async () => {
+    try {
+      if (!contractTitle) {
+        toast.error('O título do contrato é obrigatório');
+        return;
+      }
+
+      if (contractSigners.length === 0) {
+        toast.error('Adicione pelo menos um assinante');
+        return;
+      }
+
+      // Validar assinantes
+      for (const signer of contractSigners) {
+        if (!signer.name || !signer.email) {
+          toast.error('Todos os assinantes devem ter nome e e-mail');
+          return;
+        }
+      }
+
+      const contract = await contractsService.createContract({
+        title: contractTitle,
+        client_id: currentClient?.id || currentLead?.id || '',
+        content_html: contractContent,
+        start_date: contractStartDate || null,
+        end_date: contractEndDate || null,
+        total_value: contractTotalValue ? parseFloat(contractTotalValue) : undefined,
+        currency: contractCurrency,
+        auto_renew: contractAutoRenew,
+        renewal_period: contractAutoRenew ? parseInt(contractRenewalPeriod) : 12,
+        signature_settings: {
+          require_otp: contractRequireOtp,
+          require_terms: contractRequireTerms,
+          invitation_message: contractInvitationMessage,
+        },
+        status: 'DRAFT',
+      });
+
+      // Criar assinantes
+      for (const signer of contractSigners) {
+        await contractsService.createContractSigner(contract.id, {
+          name: signer.name,
+          email: signer.email,
+          role: signer.role,
+        });
+      }
+
+      // Criar evento
+      await contractsService.createContractEvent(contract.id, {
+        event_type: 'CREATED',
+        description: 'Contrato criado como rascunho',
+      });
+
+      toast.success('Contrato criado com sucesso!');
+      setContractDialogOpen(false);
+      
+      // Reset form
+      setContractTitle('');
+      setContractContent('');
+      setContractStartDate('');
+      setContractEndDate('');
+      setContractTotalValue('');
+      setContractCurrency('BRL');
+      setContractAutoRenew(false);
+      setContractRenewalPeriod('12');
+      setContractSigners([]);
+      setContractInvitationMessage('Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.');
+      setContractRequireOtp(false);
+      setContractRequireTerms(false);
+
+      // Enviar notificação
+      const client = currentClient || currentLead;
+      if (client) {
+        await sendNotification('contracts', 'created', {
+          client_name: client.name || 'Cliente',
+          contract_title: contractTitle,
+          contract_number: contract.id.substring(0, 8).toUpperCase(),
+          contract_link: `${window.location.origin}/contracts/${contract.id}`,
+        }, contract.id);
+      }
+    } catch (error) {
+      console.error('Erro ao criar contrato:', error);
+      toast.error('Não foi possível criar o contrato', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleAddContractSigner = () => {
+    setContractSigners([
+      ...contractSigners,
+      { name: '', email: '', role: 'CLIENT' },
+    ]);
+  };
+
+  const handleRemoveContractSigner = (index: number) => {
+    setContractSigners(contractSigners.filter((_, i) => i !== index));
+  };
+
+  const handleContractSignerChange = (index: number, field: 'name' | 'email' | 'role', value: string) => {
+    const updated = [...contractSigners];
+    updated[index] = { ...updated[index], [field]: value };
+    setContractSigners(updated);
+  };
+
+  const handleCreateInstance = async () => {
+    if (!newInstanceName.trim()) return;
+    try {
+      setCreatingInstance(true);
+      const instance = await chatService.createInstance({
+        name: newInstanceName.trim(),
+        metadata: { createdFrom: 'painelcrm' },
+      });
+      toast.success('Instância criada. Gere o QR Code para conectar.');
+      setNewInstanceName('');
+      await loadInstances();
+      setSelectedInstanceId(instance.id);
+    } catch (error) {
+      console.error('Erro ao criar instância:', error);
+      toast.error('Não foi possível criar a instância', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setCreatingInstance(false);
+    }
+  };
+
+  const handleNavigateToSettings = () => {
+    navigate('/settings?tab=whatsapp');
+  };
+
+  const handleToggleInstance = (instanceId: string) => {
+    setEnabledInstanceIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(instanceId)) {
+        newSet.delete(instanceId);
+        // Se a conexão desabilitada era a selecionada, seleciona outra
+        if (selectedInstanceId === instanceId && newSet.size > 0) {
+          setSelectedInstanceId(Array.from(newSet)[0]);
+        }
+      } else {
+        newSet.add(instanceId);
+        // Se não há conexão selecionada, seleciona esta
+        if (!selectedInstanceId) {
+          setSelectedInstanceId(instanceId);
+        }
+      }
+      return newSet;
+    });
+  };
+
+  const handleAddConnection = () => {
+    setPopoverOpen(false);
+    handleNavigateToSettings();
+  };
+
+  const enabledInstances = useMemo(() => {
+    return instances.filter((instance) => enabledInstanceIds.has(instance.id));
+  }, [instances, enabledInstanceIds]);
+
+  const renderConversationItem = (conversation: ChatConversation) => {
+    const isActive = selectedConversationId === conversation.id;
+    const unread = conversation.unreadCount ?? 0;
+    const linkedClient = conversation.client_id ? clientsById.get(conversation.client_id) ?? null : null;
+    const linkedLead = conversation.leadId ? leadsById.get(conversation.leadId) ?? null : null;
+    const identity = resolveConversationIdentity(conversation, linkedClient, linkedLead);
+    const hasProfile = !!(conversation.client_id || conversation.leadId);
+    const showPhoneRow =
+      Boolean(identity.phoneLine) && identity.displayName.trim() !== identity.phoneLine.trim();
+
+    const handleAvatarClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (conversation.client_id) {
+        goToClientProfileFromChat(conversation.client_id, conversation);
+      } else if (conversation.leadId) {
+        toast.info('Visualização de perfil de lead em desenvolvimento');
       }
     };
 
-    if (user) {
-      checkConnectionStatus();
-    }
-  }, [user]);
+    const handleNameClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (conversation.client_id) {
+        goToClientProfileFromChat(conversation.client_id, conversation);
+      } else if (conversation.leadId) {
+        toast.info('Visualização de perfil de lead em desenvolvimento');
+      }
+    };
 
-  // Converter chats do cache para conversações
-  useEffect(() => {
-    if (chats.length > 0) {
-      const convertedConversations: ChatConversation[] = chats.map(chat => ({
-        id: chat.id,
-        remoteJid: chat.remoteJid,
-        pushName: chat.pushName,
-        profilePictureUrl: chat.profilePictureUrl,
-        lastMessage: "Conversa ativa",
-        unreadCount: chat.unreadMessages || 0,
-        updatedAt: new Date(),
-        status: "pending" as const
-      }));
-      
-      setConversations(convertedConversations);
-    }
-  }, [chats]);
-
-  const getMessageText = (message: EvolutionMessage) => {
-    return message.message?.conversation || 
-           message.message?.extendedTextMessage?.text || 
-           "Mensagem sem texto";
-  };
-
-  const handleAttendConversation = (conversationId: string) => {
-    setConversations(prev => 
-      prev.map(conv => 
-        conv.id === conversationId 
-          ? { ...conv, status: "active", attendant: user?.email || "Você" }
-          : conv
-      )
-    );
-    
-    setActiveConversation(conversationId);
-    
-    toast.success("Conversa atendida!", {
-      description: "Você agora está atendendo esta conversa"
-    });
-  };
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!newMessage.trim() || !activeConversation || !activeInstanceName) return;
-    
-    const conversation = conversations.find(c => c.id === activeConversation);
-    if (!conversation) return;
-    
-    try {
-      await sendMessage(conversation.remoteJid, newMessage);
-      setNewMessage("");
-    } catch (error) {
-      console.error("Erro ao enviar mensagem:", error);
-    }
-  };
-
-  const formatTime = (timestamp: number) => {
-    return new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false
-    });
-  };
-
-  const formatDate = (date: Date) => {
-    const now = new Date();
-    const isToday = date.getDate() === now.getDate() && 
-                    date.getMonth() === now.getMonth() && 
-                    date.getFullYear() === now.getFullYear();
-    
-    if (isToday) {
-      return date.toLocaleTimeString('pt-BR', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: false
-      });
-    }
-    
-    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-  };
-
-  const filteredConversations = conversations.filter(conv =>
-    (conv.pushName && conv.pushName.toLowerCase().includes(contactFilter.toLowerCase())) ||
-    conv.remoteJid.includes(contactFilter)
-  );
-
-  const pendingConversations = filteredConversations.filter(conv => conv.status === "pending");
-  const activeConversations = filteredConversations.filter(conv => conv.status === "active");
-
-  const handleNavigateToSettings = () => {
-    navigate("/settings?tab=whatsapp");
-  };
-
-  const renderConversationItem = (conversation: ChatConversation, showAttendButton = false) => (
-    <li 
+    return (
+      <button
       key={conversation.id}
-      className={`px-4 py-3 hover:bg-muted cursor-pointer ${
-        activeConversation === conversation.id ? "bg-muted" : ""
-      }`}
-      onClick={() => !showAttendButton && setActiveConversation(conversation.id)}
-    >
+        type="button"
+        onClick={() => handleSelectConversation(conversation.id)}
+        className={`w-full text-left px-4 py-3 border-b transition-colors ${
+          isActive ? 'bg-muted' : 'hover:bg-muted/60'
+        }`}
+      >
       <div className="flex items-start gap-3">
-        <Avatar className="h-10 w-10 flex-shrink-0">
-          {conversation.profilePictureUrl ? (
-            <img src={conversation.profilePictureUrl} alt={conversation.pushName || conversation.remoteJid} />
-          ) : (
-            <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-              {(conversation.pushName || conversation.remoteJid).charAt(0)}
-            </div>
-          )}
+          <Avatar 
+            className={`h-10 w-10 ${hasProfile ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+            onClick={hasProfile ? handleAvatarClick : undefined}
+          >
+            {identity.avatarUrl ? (
+              <AvatarImage
+                src={identity.avatarUrl}
+                alt={identity.displayName || 'Contato'}
+              />
+            ) : (
+              <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
+              {identity.initials}
+              </AvatarFallback>
+            )}
         </Avatar>
-        <div className="flex-grow min-w-0">
-          <div className="flex items-baseline justify-between">
-            <h3 className="font-medium text-sm truncate">
-              {conversation.pushName || conversation.remoteJid}
-            </h3>
-            <span className="text-xs text-muted-foreground whitespace-nowrap ml-1">
-              {formatDate(conversation.updatedAt)}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground truncate">
-            {conversation.lastMessage}
-          </p>
-          <div className="flex items-center gap-2 mt-1">
-            {conversation.status === "pending" && (
-              <Badge variant="destructive" className="text-xs">
-                Não atendido
-              </Badge>
-            )}
-            {conversation.attendant && conversation.status === "active" && (
-              <Badge variant="secondary" className="text-xs">
-                {conversation.attendant}
-              </Badge>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          {(conversation.unreadCount || 0) > 0 && (
-            <span className="bg-primary text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-              {conversation.unreadCount}
-            </span>
-          )}
-          {showAttendButton && conversation.status === "pending" && (
-            <Button 
-              size="sm" 
-              onClick={(e) => {
-                e.stopPropagation();
-                handleAttendConversation(conversation.id);
-              }}
-              className="h-6 text-xs px-2"
-            >
-              Atender
-            </Button>
-          )}
-        </div>
-      </div>
-    </li>
-  );
-
-  const activeConversationData = conversations.find(c => c.id === activeConversation);
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Chat</h1>
-      </div>
-
-      {connectionStatus === "disconnected" ? (
-        <Card>
-          <CardContent className="pt-6 text-center">
-            <div className="mb-4">
-              <div className="bg-orange-100 text-orange-800 p-3 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                  <line x1="12" y1="9" x2="12" y2="13"/>
-                  <line x1="12" y1="17" x2="12.01" y2="17"/>
-                </svg>
-              </div>
-              <h2 className="text-xl font-semibold mb-2">WhatsApp não conectado</h2>
-              <p className="text-muted-foreground mb-6">
-                Você precisa conectar sua conta WhatsApp antes de poder usar o chat.
-              </p>
-              <Button 
-                onClick={handleNavigateToSettings}
-                className="px-8"
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <div 
+                className={`font-medium truncate ${hasProfile ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                onClick={hasProfile ? handleNameClick : undefined}
               >
-                Ir para Configurações
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-          {/* Cabeçalho compacto com número conectado */}
-          <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-3">
-            <div className="flex items-center gap-2">
-              <div className="bg-green-100 p-1.5 rounded-full">
-                <Phone className="h-4 w-4 text-green-600" />
-              </div>
-              <div>
-                <span className="text-sm font-medium text-green-800">WhatsApp Conectado:</span>
-                <span className="text-sm text-green-700 ml-1">{connectedNumber}</span>
-                {activeInstanceName && (
-                  <span className="text-xs text-green-600 ml-2">({activeInstanceName})</span>
+                {identity.displayName}
+                {hasProfile && (
+                  <ExternalLink className="inline-block h-3 w-3 ml-1 text-muted-foreground" />
                 )}
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
-                Online
-              </Badge>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={refreshChats}
-                disabled={isLoading}
-                className="h-8 w-8 p-0"
-              >
-                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-              </Button>
-            </div>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
+            </span>
           </div>
+          {showPhoneRow && (
+            <p className="text-xs text-muted-foreground truncate">{identity.phoneLine}</p>
+          )}
+          <p className="text-xs text-muted-foreground truncate">
+              {conversation.lastMessagePreview || 'Sem mensagens recentes'}
+          </p>
+          <div className="flex items-center gap-2 mt-1">
+              {conversation.client_id && (
+                <Badge variant="default" className="text-[10px]">
+                  Cliente
+                </Badge>
+              )}
+              {!conversation.client_id && conversation.leadId && (
+                <Badge variant="secondary" className="text-[10px]">
+                  Lead
+                </Badge>
+              )}
+              {conversation.status && (
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${statusBadgeClass(conversation.status)}`}
+                >
+                  {conversation.status}
+              </Badge>
+            )}
+              {unread > 0 && (
+                <Badge className="text-[10px] bg-primary text-primary-foreground px-2">
+                  {unread} novas
+              </Badge>
+            )}
+          </div>
+        </div>
+        </div>
+      </button>
+  );
+  };
 
-          {/* Filtro de contatos */}
-          <Card>
-            <CardContent className="pt-4">
-              <div className="relative">
-                <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Filtrar por nome ou telefone..."
-                  value={contactFilter}
-                  onChange={(e) => setContactFilter(e.target.value)}
-                  className="pl-10"
-                />
+  return (
+    <div className="flex flex-col h-screen max-h-screen -m-6">
+      {/* Header Único - 10vh: Conexão e Filtros na mesma linha */}
+      <div className="flex-shrink-0 h-[10vh] min-h-[80px] max-h-[10vh] px-6 pt-6 pb-4 overflow-hidden">
+        <div className="flex items-center gap-4 h-full">
+          {/* Card da Instância - Compacto (mesma altura dos filtros) */}
+          {instances.length > 0 && (
+            <div className="flex-shrink-0">
+              <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+                <PopoverTrigger asChild>
+              <Button 
+                    variant="outline"
+                    className="h-9 px-3 border-2 hover:border-primary/50 transition-colors justify-between gap-2 min-w-[200px]"
+                  >
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {activeInstance ? (
+                        <>
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            activeInstance.status === 'connected' ? 'bg-emerald-500'
+                            : activeInstance.status === 'connecting' ? 'bg-amber-500'
+                            : 'bg-gray-400'
+                          }`} />
+                          <span className="text-sm font-medium truncate">{activeInstance.name}</span>
+                          {enabledInstanceIds.size > 1 && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-1">
+                              +{enabledInstanceIds.size - 1}
+                            </Badge>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Selecione uma instância</span>
+                      )}
+                    </div>
+                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+              </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 p-0" align="start">
+                  <div className="p-2">
+                    <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground border-b">
+                      Conexões WhatsApp
+            </div>
+                    <div className="max-h-[300px] overflow-y-auto">
+                      {instances.map((instance) => {
+                        const isEnabled = enabledInstanceIds.has(instance.id);
+                        return (
+                          <div
+                            key={instance.id}
+                            className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors"
+                            onClick={() => {
+                              handleToggleInstance(instance.id);
+                              if (!isEnabled) {
+                                setSelectedInstanceId(instance.id);
+                              }
+                            }}
+                          >
+                            <Checkbox
+                              checked={isEnabled}
+                              onCheckedChange={() => {
+                                handleToggleInstance(instance.id);
+                                if (!isEnabled) {
+                                  setSelectedInstanceId(instance.id);
+                                }
+                              }}
+                            />
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                instance.status === 'connected' ? 'bg-emerald-500'
+                                : instance.status === 'connecting' ? 'bg-amber-500'
+                                : 'bg-gray-400'
+                              }`} />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium truncate">{instance.name}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {instance.status === 'connected' ? 'Conectado' 
+                                    : instance.status === 'connecting' ? 'Conectando'
+                                    : 'Desconectado'}
               </div>
-            </CardContent>
-          </Card>
+              </div>
+            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="border-t mt-1">
+                      <div
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors"
+                        onClick={handleAddConnection}
+                      >
+                        <div className="h-4 w-4 rounded border-2 border-dashed border-muted-foreground/50 flex items-center justify-center">
+                          <Plus className="h-3 w-3 text-muted-foreground" />
+            </div>
+                        <span className="text-sm text-muted-foreground">Adicionar conexão</span>
+          </div>
+              </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          )}
 
-          <Tabs defaultValue="conversations" className="w-full">
-            <TabsList className="mb-4">
-              <TabsTrigger value="conversations">Conversas</TabsTrigger>
-              <TabsTrigger value="pending">
-                Não atendidos
-                {pendingConversations.length > 0 && (
-                  <Badge variant="destructive" className="ml-2 h-5 text-xs">
-                    {pendingConversations.length}
+          {/* Filtros (Tabs) */}
+          {enabledInstanceIds.size > 0 && (
+            <div className="flex-1 flex items-center">
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'all' | 'unread' | 'read' | 'leads' | 'clients')} className="w-full">
+                <TabsList className="h-9">
+                  <TabsTrigger value="all" className="text-sm">Todos</TabsTrigger>
+                  <TabsTrigger value="unread" className="text-sm">
+                    Não lidos
+                    {unreadConversations.length > 0 && (
+                      <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0 h-4">
+                        {unreadConversations.length}
                   </Badge>
                 )}
               </TabsTrigger>
+                  <TabsTrigger value="read" className="text-sm">Lidos</TabsTrigger>
+                  <TabsTrigger value="leads" className="text-sm">Leads</TabsTrigger>
+                  <TabsTrigger value="clients" className="text-sm">Clientes</TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="conversations">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-20rem)]">
-                <Card className="md:col-span-1 flex flex-col">
-                  <CardHeader className="px-4 py-3 border-b">
-                    <CardTitle className="text-base font-medium flex items-center gap-2">
-                      <Users className="h-4 w-4" />
-                      Conversas Ativas ({activeConversations.length})
-                    </CardTitle>
+              </Tabs>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {enabledInstanceIds.size > 0 ? (
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden" style={{ height: 'calc(100vh - 10vh)' }}>
+          {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
+          <div className="flex-1 flex flex-col min-h-0 px-6 pb-6 overflow-hidden">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
+                <Card className="md:col-span-1 flex flex-col min-h-0">
+                  <CardHeader className="px-4 py-3 border-b flex-shrink-0">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        placeholder="Buscar conversas..."
+                        className="pl-9 h-9"
+                      />
+                    </div>
                   </CardHeader>
-                  <CardContent className="p-0 flex-grow overflow-hidden">
-                    <ScrollArea className="flex-grow">
-                      {isLoading && activeConversations.length === 0 ? (
-                        <div className="p-4 text-center text-muted-foreground">
-                          <div className="flex items-center justify-center gap-2">
+                  <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
+                    <ScrollArea className="h-full [&>div>div[data-radix-scroll-area-viewport]]:!block [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
+                      {loadingConversations ? (
+                        <div className="p-4 text-center text-muted-foreground flex items-center justify-center gap-2">
                             <RefreshCw className="h-4 w-4 animate-spin" />
                             Carregando conversas...
                           </div>
-                        </div>
-                      ) : activeConversations.length === 0 ? (
+                      ) : conversationsToShow.length === 0 ? (
                         <div className="p-4 text-center text-muted-foreground">
-                          Nenhuma conversa ativa
+                          Nenhuma conversa encontrada
                         </div>
                       ) : (
-                        <ul className="divide-y">
-                          {activeConversations.map((conversation) => 
-                            renderConversationItem(conversation, false)
-                          )}
-                        </ul>
+                        <div>{conversationsToShow.map(renderConversationItem)}</div>
                       )}
                     </ScrollArea>
                   </CardContent>
                 </Card>
 
-                <Card className="md:col-span-2 flex flex-col">
-                  {activeConversation && activeConversationData ? (
+                <Card className="md:col-span-2 flex flex-col min-h-0">
+                  {selectedConversation ? (
                     <>
-                      <CardHeader className="px-4 py-3 border-b flex-shrink-0">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Avatar className="h-8 w-8">
-                              {activeConversationData.profilePictureUrl ? (
-                                <img src={activeConversationData.profilePictureUrl} alt={activeConversationData.pushName || activeConversationData.remoteJid} />
+                      {viewMode === 'invoice-create' ? (
+                        <CardContent className="p-4 flex-1 min-h-0 overflow-auto">
+                          <div className="mb-3">
+                            <Button variant="ghost" size="sm" onClick={handleBackFromInvoiceCreate}>
+                              Voltar para conversa
+                            </Button>
+                          </div>
+                          <CustomerInvoiceNew
+                            embedded
+                            initialClientId={selectedConversation.client_id ?? null}
+                            onBack={handleBackFromInvoiceCreate}
+                            onCreated={(invoiceId) => {
+                              void handleInvoiceCreatedInChat(invoiceId);
+                            }}
+                          />
+                        </CardContent>
+                      ) : (
+                        <>
+                      <CardHeader className="px-4 py-3 border-b space-y-2 flex-shrink-0">
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-3">
+                            <Avatar 
+                              className={`h-10 w-10 ${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                              onClick={() => {
+                                if (currentClient && selectedConversation) {
+                                  goToClientProfileFromChat(currentClient.id, selectedConversation);
+                                } else if (currentLead) {
+                                  toast.info('Visualização de perfil de lead em desenvolvimento');
+                                }
+                              }}
+                            >
+                              {selectedIdentity?.avatarUrl ? (
+                                <AvatarImage
+                                  src={selectedIdentity.avatarUrl}
+                                  alt={selectedIdentity.displayName || 'Contato'}
+                                />
                               ) : (
-                                <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                  {(activeConversationData.pushName || activeConversationData.remoteJid).charAt(0)}
-                                </div>
+                                <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
+                                {(selectedIdentity?.initials || '?')}
+                                </AvatarFallback>
                               )}
                             </Avatar>
-                            <div>
-                              <h3 className="font-medium text-sm">
-                                {activeConversationData.pushName || activeConversationData.remoteJid}
+                            <div 
+                              className={`${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                              onClick={() => {
+                                if (currentClient && selectedConversation) {
+                                  goToClientProfileFromChat(currentClient.id, selectedConversation);
+                                } else if (currentLead) {
+                                  toast.info('Visualização de perfil de lead em desenvolvimento');
+                                }
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                              <h3 className="font-semibold">
+                                {selectedIdentity?.displayName ?? '—'}
                               </h3>
+                                {selectedConversation.client_id && (
+                                  <Badge variant="default" className="text-xs">
+                                    Cliente
+                                  </Badge>
+                                )}
+                                {!selectedConversation.client_id && selectedConversation.leadId && (
+                                  <Badge className="text-xs bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100">
+                                    Lead
+                                  </Badge>
+                                )}
+                                {!selectedConversation.client_id &&
+                                  !selectedConversation.leadId &&
+                                  selectedConversation.link_state === 'review_required' && (
+                                    <Badge className="text-xs bg-amber-100 text-amber-900 border-amber-200 hover:bg-amber-100">
+                                      Revisar vínculo
+                                    </Badge>
+                                  )}
+                                {!selectedConversation.client_id &&
+                                  !selectedConversation.leadId &&
+                                  (!selectedConversation.link_state ||
+                                    selectedConversation.link_state === 'unlinked') && (
+                                    <Badge variant="outline" className="text-xs bg-muted text-muted-foreground">
+                                      Sem vínculo
+                                    </Badge>
+                                  )}
+                              </div>
+                              {selectedIdentity?.waSubtitle && (
+                                <p className="text-xs text-muted-foreground/90 truncate max-w-[280px]">
+                                  WhatsApp: {selectedIdentity.waSubtitle}
+                                </p>
+                              )}
+                              {selectedIdentity?.phoneLine &&
+                                selectedIdentity.displayName.trim() !== selectedIdentity.phoneLine.trim() && (
                               <p className="text-xs text-muted-foreground">
-                                {activeConversationData.remoteJid}
+                                  {selectedIdentity.phoneLine}
                               </p>
+                              )}
                             </div>
                           </div>
-                          <div className="flex gap-2">
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <UserCheck className="h-4 w-4" />
+                          <div className="flex flex-wrap gap-2 items-center">
+                            {(currentClient || currentLead) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  if (currentClient && selectedConversation) {
+                                    goToClientProfileFromChat(currentClient.id, selectedConversation);
+                                  } else if (currentLead) {
+                                    toast.info('Visualização de perfil de lead em desenvolvimento');
+                                  }
+                                }}
+                                className="h-8 w-8"
+                                title={currentClient ? 'Ver perfil do cliente' : 'Ver perfil do lead'}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => void handleSyncConversation()}
+                              disabled={syncingMessages}
+                              className="h-8 w-8"
+                              title="Sincronizar mensagens e identidade do contato (UazAPI)"
+                            >
+                              <RefreshCw className={`h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`} />
                             </Button>
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <Clock className="h-4 w-4" />
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreVertical className="h-4 w-4" />
                             </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {selectedConversation.client_id ? (
+                                  <>
+                                    <DropdownMenuItem onClick={handleCreateInvoice}>
+                                      <Receipt className="mr-2 h-4 w-4" />
+                                      Criar fatura
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={handleCreateContract}>
+                                      <FileSignature className="mr-2 h-4 w-4" />
+                                      Criar contrato
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={handleSendProposal}>
+                                      <FileText className="mr-2 h-4 w-4" />
+                                      Enviar proposta
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={handleCreateTask}>
+                                      <CheckSquare className="mr-2 h-4 w-4" />
+                                      Criar tarefa
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={handleOpenTicket}>
+                                      <Ticket className="mr-2 h-4 w-4" />
+                                      Abrir ticket
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : selectedConversation.leadId ? (
+                                  <>
+                                    <DropdownMenuItem onClick={handleConvertToClient} disabled={loadingLead || !currentLead}>
+                                      <UserPlus className="mr-2 h-4 w-4" />
+                                      Converter para cliente
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={handleSendProposal}>
+                                      <FileText className="mr-2 h-4 w-4" />
+                                      Enviar proposta
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={handleCreateTask}>
+                                      <CheckSquare className="mr-2 h-4 w-4" />
+                                      Criar tarefa
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={handleOpenTicket}>
+                                      <Ticket className="mr-2 h-4 w-4" />
+                                      Abrir ticket
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : (
+                                  <>
+                                    <DropdownMenuItem onClick={openLinkDialog}>
+                                      <Users className="mr-2 h-4 w-4" />
+                                      {selectedConversation.link_state === 'review_required'
+                                        ? 'Escolher vínculo'
+                                        : 'Vincular conversa'}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={handleAddLead} disabled={loadingLead}>
+                                      <UserPlus className="mr-2 h-4 w-4" />
+                                      Adicionar lead
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                                {(selectedConversation.client_id || selectedConversation.leadId) && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => setUnlinkConfirmOpen(true)}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Remover vínculo com CRM
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
-                        <ScrollArea className="flex-grow p-4">
-                          <div className="space-y-4">
+                      <CardContent className="p-0 flex-1 flex flex-col min-h-0">
+                        <ScrollArea className="flex-1 min-h-0 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
+                          <div className="p-4">
+                            {loadingMessages ? (
+                              <div className="text-center text-muted-foreground flex items-center justify-center gap-2 py-8">
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                                Carregando mensagens...
+                          </div>
+                            ) : messages.length === 0 ? (
+                              <div className="text-center text-muted-foreground text-sm py-8">
+                                Nenhuma mensagem disponível para esta conversa
+                        </div>
+                      ) : (
+                              <div className="space-y-4 pb-4">
                             {messages.map((message) => (
                               <div 
-                                key={message.key.id} 
-                                className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
+                                    key={message.id}
+                                    className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                               >
                                 <div 
-                                  className={`max-w-[70%] rounded-lg p-3 ${
-                                    message.key.fromMe 
+                                      className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                                        message.direction === 'outgoing'
                                       ? 'bg-primary text-primary-foreground' 
                                       : 'bg-muted'
                                   }`}
                                 >
-                                  <p className="text-sm">{getMessageText(message)}</p>
-                                  <div className={`text-xs mt-1 ${
-                                    message.key.fromMe 
-                                      ? 'text-primary-foreground/70' 
+                                      <p className="break-words whitespace-pre-wrap">
+                                        {message.body || '(mensagem sem texto)'}
+                                      </p>
+                                      <span
+                                        className={`text-[10px] mt-1 block ${
+                                          message.direction === 'outgoing'
+                                            ? 'text-primary-foreground/80'
                                       : 'text-muted-foreground'
-                                  }`}>
-                                    {formatTime(message.messageTimestamp)}
-                                  </div>
+                                        }`}
+                                      >
+                                        {formatHour(message.sentAt)}
+                                      </span>
                                 </div>
                               </div>
                             ))}
+                              </div>
+                            )}
+                            {/* Elemento invisível no final para scroll automático */}
+                            <div ref={messagesEndRef} />
                           </div>
                         </ScrollArea>
-                        <div className="p-3 border-t">
-                          <form onSubmit={handleSendMessage} className="flex gap-2">
+                        <form onSubmit={handleSendMessage} className="border-t p-3 flex gap-2 flex-shrink-0">
                             <Input 
-                              type="text"
-                              placeholder="Digite sua mensagem..."
+                            placeholder="Digite uma mensagem..."
                               value={newMessage}
-                              onChange={(e) => setNewMessage(e.target.value)}
-                              disabled={isSending}
-                              className="flex-grow"
+                            onChange={(event) => setNewMessage(event.target.value)}
+                            disabled={sendingMessage}
                             />
                             <Button 
                               type="submit" 
                               size="icon"
-                              disabled={isSending || !newMessage.trim()}
+                            disabled={sendingMessage || !newMessage.trim()}
                             >
                               <Send className="h-4 w-4" />
                             </Button>
                           </form>
-                        </div>
                       </CardContent>
+                        </>
+                      )}
                     </>
                   ) : (
-                    <div className="flex items-center justify-center h-full p-6 text-center">
+                    <div className="flex-1 flex items-center justify-center text-center text-muted-foreground px-6">
                       <div>
-                        <div className="bg-muted rounded-full p-6 mx-auto mb-4 w-20 h-20 flex items-center justify-center">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                          </svg>
+                        <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-muted flex items-center justify-center">
+                          <MessageSquare className="h-6 w-6 text-muted-foreground" />
                         </div>
-                        <h3 className="font-medium mb-1">Nenhuma conversa selecionada</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Selecione uma conversa para começar a responder
+                        <p className="font-medium">Selecione uma conversa</p>
+                        <p className="text-sm">
+                          Escolha um contato na lista ao lado para carregar o histórico e responder via
+                          WhatsApp
                         </p>
                       </div>
                     </div>
                   )}
                 </Card>
               </div>
-            </TabsContent>
-            
-            <TabsContent value="pending">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-20rem)]">
-                <Card className="md:col-span-1 flex flex-col">
-                  <CardHeader className="px-4 py-3 border-b">
-                    <CardTitle className="text-base font-medium flex items-center gap-2">
-                      <Clock className="h-4 w-4" />
-                      Não Atendidos ({pendingConversations.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0 flex-grow overflow-hidden">
-                    <ScrollArea className="flex-grow">
-                      {isLoading && pendingConversations.length === 0 ? (
-                        <div className="p-4 text-center text-muted-foreground">
-                          <div className="flex items-center justify-center gap-2">
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                            Carregando conversas...
                           </div>
                         </div>
-                      ) : pendingConversations.length === 0 ? (
-                        <div className="p-4 text-center text-muted-foreground">
-                          Nenhuma conversa não atendida
-                        </div>
-                      ) : (
-                        <ul className="divide-y">
-                          {pendingConversations.map((conversation) => 
-                            renderConversationItem(conversation, true)
-                          )}
-                        </ul>
-                      )}
-                    </ScrollArea>
+      ) : (
+        <Card className="flex-shrink-0">
+          <CardContent className="py-10 text-center text-muted-foreground">
+            Configure sua primeira instância para começar a usar o chat.
                   </CardContent>
                 </Card>
+      )}
 
-                <Card className="md:col-span-2 flex flex-col">
-                  {activeConversation && activeConversationData ? (
-                    <>
-                      <CardHeader className="px-4 py-3 border-b flex-shrink-0">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Avatar className="h-8 w-8">
-                              {activeConversationData.profilePictureUrl ? (
-                                <img src={activeConversationData.profilePictureUrl} alt={activeConversationData.pushName || activeConversationData.remoteJid} />
-                              ) : (
-                                <div className="bg-primary text-white h-full w-full flex items-center justify-center font-medium">
-                                  {(activeConversationData.pushName || activeConversationData.remoteJid).charAt(0)}
-                                </div>
-                              )}
-                            </Avatar>
-                            <div>
-                              <h3 className="font-medium text-sm">
-                                {activeConversationData.pushName || activeConversationData.remoteJid}
-                              </h3>
-                              <p className="text-xs text-muted-foreground">
-                                {activeConversationData.remoteJid}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <UserCheck className="h-4 w-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <Clock className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="p-0 flex-grow overflow-hidden flex flex-col">
-                        <ScrollArea className="flex-grow p-4">
-                          <div className="space-y-4">
-                            {messages.map((message) => (
-                              <div 
-                                key={message.key.id} 
-                                className={`flex ${message.key.fromMe ? 'justify-end' : 'justify-start'}`}
-                              >
-                                <div 
-                                  className={`max-w-[70%] rounded-lg p-3 ${
-                                    message.key.fromMe 
-                                      ? 'bg-primary text-primary-foreground' 
-                                      : 'bg-muted'
-                                  }`}
-                                >
-                                  <p className="text-sm">{getMessageText(message)}</p>
-                                  <div className={`text-xs mt-1 ${
-                                    message.key.fromMe 
-                                      ? 'text-primary-foreground/70' 
-                                      : 'text-muted-foreground'
-                                  }`}>
-                                    {formatTime(message.messageTimestamp)}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                        <div className="p-3 border-t">
-                          <form onSubmit={handleSendMessage} className="flex gap-2">
-                            <Input 
-                              type="text"
-                              placeholder="Digite sua mensagem..."
-                              value={newMessage}
-                              onChange={(e) => setNewMessage(e.target.value)}
-                              disabled={isSending}
-                              className="flex-grow"
-                            />
-                            <Button 
-                              type="submit" 
-                              size="icon"
-                              disabled={isSending || !newMessage.trim()}
-                            >
-                              <Send className="h-4 w-4" />
-                            </Button>
-                          </form>
-                        </div>
-                      </CardContent>
-                    </>
+      <Dialog open={unlinkConfirmOpen} onOpenChange={setUnlinkConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remover vínculo com o CRM?</DialogTitle>
+            <DialogDescription>
+              A conversa permanece no WhatsApp, mas deixa de estar associada a este cliente ou lead no
+              painel. Você pode vincular novamente depois pelo menu da conversa.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setUnlinkConfirmOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void handleConfirmUnlink()}>
+              Remover vínculo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialogs para ações rápidas */}
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="sm:max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle>Vincular conversa</DialogTitle>
+            <DialogDescription>
+              Escolha um cliente ou lead para definir o vínculo efetivo desta conversa.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedConversation?.link_state === 'review_required' && suggestedCandidates.length > 0 && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Revisão necessária: foram encontrados múltiplos candidatos para este telefone.
+            </div>
+          )}
+          <div className="space-y-3">
+            <Tabs value={linkTab} onValueChange={(v) => { setLinkTab(v as 'clients' | 'leads'); setLinkPage(1); }}>
+              <TabsList className="grid grid-cols-2 w-full">
+                <TabsTrigger value="clients">Clientes</TabsTrigger>
+                <TabsTrigger value="leads">Leads</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <Input
+              placeholder="Buscar por nome, e-mail ou telefone..."
+              value={linkSearch}
+              onChange={(e) => { setLinkSearch(e.target.value); setLinkPage(1); }}
+            />
+            <div className="max-h-64 overflow-auto rounded-md border">
+              {linkTab === 'clients' ? (
+                <div className="divide-y">
+                  {pagedLinkClients.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 ${
+                        selectedLinkTarget?.type === 'client' && selectedLinkTarget?.id === c.id ? 'bg-muted' : ''
+                      }`}
+                      onClick={() => setSelectedLinkTarget({ type: 'client', id: c.id })}
+                    >
+                      <CrmIdentityListRow
+                        entity={c}
+                        whatsappAvatarUrl={c.whatsapp_avatar_url}
+                        className="min-w-0 flex-1"
+                      />
+                    </button>
+                  ))}
+                  {pagedLinkClients.length === 0 && (
+                    <div className="px-3 py-6 text-sm text-muted-foreground text-center">Nenhum cliente encontrado</div>
+                  )}
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {loadingLeads ? (
+                    <div className="px-3 py-6 text-sm text-muted-foreground text-center">Carregando leads...</div>
+                  ) : pagedLinkLeads.length > 0 ? (
+                    pagedLinkLeads.map((l) => (
+                      <button
+                        key={l.id}
+                        type="button"
+                        className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 ${
+                          selectedLinkTarget?.type === 'lead' && selectedLinkTarget?.id === l.id ? 'bg-muted' : ''
+                        }`}
+                        onClick={() => setSelectedLinkTarget({ type: 'lead', id: l.id })}
+                      >
+                        <CrmIdentityListRow
+                          entity={l}
+                          whatsappAvatarUrl={l.whatsapp_avatar_url}
+                          className="min-w-0 flex-1"
+                        />
+                      </button>
+                    ))
                   ) : (
-                    <div className="flex items-center justify-center h-full p-6 text-center">
+                    <div className="px-3 py-6 text-sm text-muted-foreground text-center">Nenhum lead encontrado</div>
+                  )}
+                </div>
+              )}
+            </div>
+            {((linkTab === 'clients' && filteredLinkClients.length > pagedLinkClients.length) ||
+              (linkTab === 'leads' && filteredLinkLeads.length > pagedLinkLeads.length)) && (
+              <Button variant="ghost" size="sm" onClick={() => setLinkPage((p) => p + 1)}>
+                Carregar mais
+              </Button>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>Cancelar</Button>
+            <Button onClick={handleConfirmLink} disabled={!selectedLinkTarget}>
+              Confirmar vínculo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Contrato */}
+      <Dialog open={contractDialogOpen} onOpenChange={setContractDialogOpen}>
+        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Criar Contrato</DialogTitle>
+            <DialogDescription>
+              Crie um novo contrato para {currentClient?.name || currentLead?.name || 'o cliente'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Tabs defaultValue="editor" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="editor">
+                <FileText className="mr-2 h-4 w-4" />
+                Editor
+              </TabsTrigger>
+              <TabsTrigger value="signers">
+                <Users className="mr-2 h-4 w-4" />
+                Assinantes
+              </TabsTrigger>
+              <TabsTrigger value="financial">
+                <DollarSign className="mr-2 h-4 w-4" />
+                Datas & Financeiro
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="editor" className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <Label htmlFor="contractTitle">Título do Contrato *</Label>
+                <Input 
+                  id="contractTitle" 
+                  value={contractTitle}
+                  onChange={(e) => setContractTitle(e.target.value)}
+                  placeholder="Ex: Contrato de Prestação de Serviços" 
+                  required 
+                />
+                                </div>
+              <div className="space-y-2">
+                <Label htmlFor="contractContent">Conteúdo do Contrato</Label>
+                <RichTextEditor
+                  value={contractContent}
+                  onChange={setContractContent}
+                  placeholder="Digite o conteúdo do contrato..."
+                />
+                            </div>
+            </TabsContent>
+
+            <TabsContent value="signers" className="space-y-4 mt-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Assinantes</Label>
+                    <p className="text-sm text-muted-foreground">Adicione as partes que devem assinar o contrato</p>
+                  </div>
+                  <Button type="button" onClick={handleAddContractSigner} size="sm">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Adicionar
+                  </Button>
+                </div>
+                
+                {contractSigners.map((signer, index) => (
+                  <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
+                    <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
-                        <div className="bg-muted rounded-full p-6 mx-auto mb-4 w-20 h-20 flex items-center justify-center">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                          </svg>
-                        </div>
-                        <h3 className="font-medium mb-1">Nenhuma conversa selecionada</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Selecione uma conversa para começar a responder
-                        </p>
+                        <Label>Nome *</Label>
+                        <Input
+                          value={signer.name}
+                          onChange={(e) => handleContractSignerChange(index, 'name', e.target.value)}
+                          placeholder="Nome completo"
+                        />
+                      </div>
+                      <div>
+                        <Label>E-mail *</Label>
+                        <Input
+                          type="email"
+                          value={signer.email}
+                          onChange={(e) => handleContractSignerChange(index, 'email', e.target.value)}
+                          placeholder="email@exemplo.com"
+                        />
+                      </div>
+                      <div>
+                        <Label>Tipo</Label>
+                        <Select
+                          value={signer.role}
+                          onValueChange={(value) => handleContractSignerChange(index, 'role', value as 'CLIENT' | 'INTERNAL')}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CLIENT">Cliente</SelectItem>
+                            <SelectItem value="INTERNAL">Interno</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
-                  )}
-                </Card>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveContractSigner(index)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+
+                {contractSigners.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    Nenhum assinante adicionado. Clique em "Adicionar" para começar.
+                  </div>
+                )}
+
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <Label>Mensagem de Convite</Label>
+                    <Textarea
+                      value={contractInvitationMessage}
+                      onChange={(e) => setContractInvitationMessage(e.target.value)}
+                      rows={3}
+                      placeholder="Mensagem enviada aos assinantes..."
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="require_otp"
+                      checked={contractRequireOtp}
+                      onCheckedChange={(checked) => setContractRequireOtp(checked as boolean)}
+                    />
+                    <Label htmlFor="require_otp" className="font-normal">
+                      Exigir OTP por e-mail
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="require_terms"
+                      checked={contractRequireTerms}
+                      onCheckedChange={(checked) => setContractRequireTerms(checked as boolean)}
+                    />
+                    <Label htmlFor="require_terms" className="font-normal">
+                      Exigir aceite de termos
+                    </Label>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="financial" className="space-y-4 mt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="contractStartDate">Data de Início</Label>
+                  <Input 
+                    id="contractStartDate" 
+                    type="date" 
+                    value={contractStartDate}
+                    onChange={(e) => setContractStartDate(e.target.value)}
+                  />
+                          </div>
+                <div className="space-y-2">
+                  <Label htmlFor="contractEndDate">Data de Término</Label>
+                  <Input 
+                    id="contractEndDate" 
+                    type="date" 
+                    value={contractEndDate}
+                    onChange={(e) => setContractEndDate(e.target.value)}
+                  />
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="auto_renew"
+                  checked={contractAutoRenew}
+                  onCheckedChange={(checked) => setContractAutoRenew(checked as boolean)}
+                />
+                <Label htmlFor="auto_renew" className="font-normal">
+                  Renovação automática
+                </Label>
+              </div>
+
+              {contractAutoRenew && (
+                <div className="space-y-2">
+                  <Label htmlFor="renewalPeriod">Período de Renovação (meses)</Label>
+                  <Input
+                    id="renewalPeriod"
+                    type="number"
+                    value={contractRenewalPeriod}
+                    onChange={(e) => setContractRenewalPeriod(e.target.value)}
+                    placeholder="12"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="contractValue">Valor Total</Label>
+                  <Input 
+                    id="contractValue" 
+                    type="number" 
+                    step="0.01" 
+                    value={contractTotalValue}
+                    onChange={(e) => setContractTotalValue(e.target.value)}
+                    placeholder="0.00" 
+                  />
+              </div>
+                <div className="space-y-2">
+                  <Label htmlFor="contractCurrency">Moeda</Label>
+                  <Select value={contractCurrency} onValueChange={setContractCurrency}>
+                    <SelectTrigger id="contractCurrency">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="BRL">BRL (R$)</SelectItem>
+                      <SelectItem value="USD">USD ($)</SelectItem>
+                      <SelectItem value="EUR">EUR (€)</SelectItem>
+                    </SelectContent>
+                  </Select>
+            </div>
               </div>
             </TabsContent>
           </Tabs>
-        </>
-      )}
+
+          <DialogFooter className="mt-6">
+              <Button type="button" variant="outline" onClick={() => setContractDialogOpen(false)}>
+                Cancelar
+                            </Button>
+            <Button type="button" onClick={handleSaveContract}>
+              Criar Contrato
+            </Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Proposta */}
+      <Dialog open={proposalDialogOpen} onOpenChange={setProposalDialogOpen}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader>
+            <DialogTitle>Criar Proposta</DialogTitle>
+            <DialogDescription>
+              Crie uma nova proposta para {currentClient?.name || currentLead?.name || 'o cliente'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            handleSaveProposal(formData);
+          }}>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="proposalTitle">Título</Label>
+                <Input id="proposalTitle" name="title" placeholder="Ex: Proposta de Serviços" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="proposalDescription">Descrição</Label>
+                <Textarea id="proposalDescription" name="description" placeholder="Descrição da proposta..." />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="proposalAmount">Valor</Label>
+                <Input id="proposalAmount" name="amount" type="number" step="0.01" placeholder="0.00" required />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setProposalDialogOpen(false)}>
+                Cancelar
+                            </Button>
+              <Button type="submit">Criar Proposta</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Tarefa */}
+      <Dialog open={taskDialogOpen} onOpenChange={setTaskDialogOpen}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader>
+            <DialogTitle>Criar Tarefa</DialogTitle>
+            <DialogDescription>
+              Crie uma nova tarefa relacionada a {currentClient?.name || currentLead?.name || 'o contato'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            handleSaveTask(formData);
+          }}>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="taskTitle">Título</Label>
+                <Input id="taskTitle" name="title" placeholder="Ex: Reunião com cliente" required />
+                          </div>
+              <div className="space-y-2">
+                <Label htmlFor="taskDescription">Descrição</Label>
+                <Textarea id="taskDescription" name="description" placeholder="Detalhes da tarefa..." />
+                        </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="taskDate">Data</Label>
+                  <Input id="taskDate" name="date" type="date" />
+                                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="taskTime">Horário</Label>
+                  <Input id="taskTime" name="time" type="time" />
+                                </div>
+                              </div>
+              <div className="space-y-2">
+                <Label htmlFor="taskPriority">Prioridade</Label>
+                <Select name="priority" defaultValue="medium">
+                  <SelectTrigger id="taskPriority">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Baixa</SelectItem>
+                    <SelectItem value="medium">Média</SelectItem>
+                    <SelectItem value="high">Alta</SelectItem>
+                  </SelectContent>
+                </Select>
+                          </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setTaskDialogOpen(false)}>
+                Cancelar
+                            </Button>
+              <Button type="submit">Criar Tarefa</Button>
+            </DialogFooter>
+                          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Ticket */}
+      <Dialog open={ticketDialogOpen} onOpenChange={setTicketDialogOpen}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader>
+            <DialogTitle>Abrir Ticket</DialogTitle>
+            <DialogDescription>
+              Crie um novo ticket de suporte para {currentClient?.name || currentLead?.name || selectedConversation?.contactName || 'o contato'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            handleSaveTicket(formData);
+          }}>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="ticketSubject">Assunto</Label>
+                <Input id="ticketSubject" name="subject" placeholder="Ex: Problema com produto" required />
+                        </div>
+              <div className="space-y-2">
+                <Label htmlFor="ticketDescription">Descrição</Label>
+                <Textarea id="ticketDescription" name="description" placeholder="Descreva o problema ou solicitação..." required />
+                        </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="ticketCategory">Categoria</Label>
+                  <Select name="categoryId">
+                    <SelectTrigger id="ticketCategory">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ticketCategories.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                      </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ticketPriority">Prioridade</Label>
+                  <Select name="priority" defaultValue="normal">
+                    <SelectTrigger id="ticketPriority">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Baixa</SelectItem>
+                      <SelectItem value="normal">Normal</SelectItem>
+                      <SelectItem value="high">Alta</SelectItem>
+                      <SelectItem value="urgent">Urgente</SelectItem>
+                    </SelectContent>
+                  </Select>
+                    </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setTicketDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit">Criar Ticket</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

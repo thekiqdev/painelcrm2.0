@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -45,6 +47,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
+import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
+import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -57,7 +64,15 @@ const taskSchema = z.object({
   status: z.string().default("Pendente"),
 });
 
+const MODULE_CLIENTS = 'clients';
+
+const CLIENTS_QUERY_KEY = ["clients", "list"] as const;
+
 const Clients = () => {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const { canCreate, canEdit, canDelete } = useModulePermissions();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -72,13 +87,21 @@ const Clients = () => {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [newClientGroup, setNewClientGroup] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [isLoading, setIsLoading] = useState(true);
-  const [noteContent, setNoteContent] = useState("");
+  const [notes, setNotes] = useState<StickyNoteData[]>([]);
   const [clientTasks, setClientTasks] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [tabSelected, setTabSelected] = useState("details");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setIsAddDialogOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("new");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -88,7 +111,8 @@ const Clients = () => {
     phone: "",
     status: "Ativo",
     group_id: "",
-    notes: ""
+    notes: "",
+    cpf_cnpj: ""
   });
   
   // Edited client state (for edit mode)
@@ -99,7 +123,8 @@ const Clients = () => {
     phone: "",
     status: "",
     group_id: "",
-    notes: ""
+    notes: "",
+    cpf_cnpj: ""
   });
 
   // Form para adicionar nova tarefa
@@ -112,42 +137,37 @@ const Clients = () => {
     },
   });
 
-  // Carregar clientes e grupos
+  // Clientes e grupos em cache – ao voltar na página os dados aparecem na hora
+  const { data: clientsData, isPending: isLoading } = useQuery({
+    queryKey: ["clients", "list"],
+    queryFn: async () => {
+      const [groupsData, clientsData] = await Promise.all([
+        clientsService.getClientGroups(),
+        clientsService.getClients(),
+      ]);
+      const groups = groupsData || [];
+      const formatted = (clientsData || []).map((client: any) => ({
+        id: client.id,
+        name: client.name,
+        company: client.company,
+        email: client.email,
+        phone: client.phone,
+        status: client.status,
+        group: client.client_groups?.name || "",
+        group_id: client.group_id,
+        notes: client.notes,
+        cpf_cnpj: client.cpf_cnpj ?? null,
+        whatsapp_avatar_url: client.whatsapp_avatar_url ?? null,
+      }));
+      return { clients: formatted, groups };
+    },
+  });
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        // Carregar grupos de clientes
-        const groupsData = await clientsService.getClientGroups();
-        setClientGroups(groupsData || []);
-
-        // Carregar clientes
-        const clientsData = await clientsService.getClients();
-        
-        // Formatar os dados dos clientes
-        const formattedClients = clientsData?.map(client => ({
-          id: client.id,
-          name: client.name,
-          company: client.company,
-          email: client.email,
-          phone: client.phone,
-          status: client.status,
-          group: client.client_groups?.name || "",
-          group_id: client.group_id,
-          notes: client.notes
-        }));
-
-        setClients(formattedClients || []);
-      } catch (error: any) {
-        console.error("Erro ao carregar dados:", error);
-        toast.error(error.message || "Erro ao carregar os dados. Tente novamente.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, []);
+    if (clientsData) {
+      setClients(clientsData.clients);
+      setClientGroups(clientsData.groups);
+    }
+  }, [clientsData]);
 
   // Carregar tarefas do cliente selecionado
   useEffect(() => {
@@ -215,12 +235,8 @@ const Clients = () => {
   const paginatedClients = sortedClients.slice(startIndex, startIndex + itemsPerPage);
 
   const handleViewClient = (client: any) => {
-    setSelectedClient(client);
-    setNewClientGroup(client.group_id || "");
-    setNoteContent(client.notes || "");
-    setIsEditMode(false);
-    setIsViewDialogOpen(true);
-    setTabSelected("details");
+    // Navegar para a página de perfil do cliente
+    navigate(`/clients/${client.id}`);
   };
   
   const handleEditClient = () => {
@@ -232,7 +248,8 @@ const Clients = () => {
         phone: selectedClient.phone || "",
         status: selectedClient.status,
         group_id: selectedClient.group_id || "",
-        notes: selectedClient.notes || ""
+        notes: selectedClient.notes || "",
+        cpf_cnpj: selectedClient.cpf_cnpj ?? ""
       });
       setIsEditMode(true);
     }
@@ -246,13 +263,14 @@ const Clients = () => {
     if (selectedClient) {
       try {
         await clientsService.updateClient(selectedClient.id, {
-          name: editedClient.name,
-          company: editedClient.company,
-          email: editedClient.email,
-          phone: editedClient.phone,
-          status: editedClient.status,
+            name: editedClient.name,
+            company: editedClient.company,
+            email: editedClient.email,
+            phone: editedClient.phone,
+            status: editedClient.status,
           group_id: editedClient.group_id || undefined,
-          notes: editedClient.notes
+            notes: editedClient.notes,
+            cpf_cnpj: editedClient.cpf_cnpj?.replace(/\D/g, "").trim() || null
         });
         
         // Atualizar o cliente na lista local
@@ -268,13 +286,15 @@ const Clients = () => {
               status: editedClient.status,
               group_id: editedClient.group_id,
               group: updatedGroupName,
-              notes: editedClient.notes
+              notes: editedClient.notes,
+              cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
             };
           }
           return client;
         });
         
         setClients(updatedClients);
+        queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
         setSelectedClient({
           ...selectedClient,
           name: editedClient.name,
@@ -284,7 +304,8 @@ const Clients = () => {
           status: editedClient.status,
           group_id: editedClient.group_id,
           group: clientGroups.find(g => g.id === editedClient.group_id)?.name || "",
-          notes: editedClient.notes
+          notes: editedClient.notes,
+          cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
         });
         
         setIsEditMode(false);
@@ -341,7 +362,8 @@ const Clients = () => {
         phone: newClient.phone || undefined,
         status: newClient.status || undefined,
         group_id: newClient.group_id || undefined,
-        notes: newClient.notes || undefined
+        notes: newClient.notes || undefined,
+        cpf_cnpj: newClient.cpf_cnpj?.trim() || undefined
       });
       
       if (!result.success) {
@@ -365,12 +387,12 @@ const Clients = () => {
         status: addedClient.status,
         group: clientGroups.find(g => g.id === addedClient.group_id)?.name || "",
         group_id: addedClient.group_id,
-        notes: addedClient.notes
+        notes: addedClient.notes,
+        cpf_cnpj: addedClient.cpf_cnpj ?? null
       };
       
-      // Add the new client to the list
       setClients([...clients, formattedClient]);
-      
+      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
       toast.success("Cliente adicionado com sucesso!");
       setIsAddDialogOpen(false);
       
@@ -382,7 +404,8 @@ const Clients = () => {
         phone: "",
         status: "Ativo",
         group_id: "",
-        notes: ""
+        notes: "",
+        cpf_cnpj: ""
       });
     } catch (error: any) {
       console.error("Erro ao adicionar cliente:", error);
@@ -398,8 +421,6 @@ const Clients = () => {
         // Atualizar o grupo do cliente
         await clientsService.updateClient(selectedClient.id, { group_id: newClientGroup || undefined });
         
-        if (error) throw error;
-        
         // Atualizar o cliente na lista local
         const updatedClients = clients.map(client => {
           if (client.id === selectedClient.id) {
@@ -414,8 +435,7 @@ const Clients = () => {
         });
         
         setClients(updatedClients);
-        
-        // Atualizar o cliente selecionado
+        queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
         setSelectedClient({
           ...selectedClient, 
           group_id: newClientGroup,
@@ -431,32 +451,70 @@ const Clients = () => {
     }
   };
   
-  const handleSaveNote = async () => {
+  const handleAddNote = () => {
+    const newNote: StickyNoteData = {
+      id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      content: "",
+      color: 'bg-yellow-200',
+      created_at: new Date().toISOString(),
+    };
+    setNotes([...notes, newNote]);
+    // Salvar automaticamente quando a nota for criada (mesmo vazia)
+    setTimeout(() => saveNotes([...notes, newNote]), 100);
+  };
+
+  const handleUpdateNote = async (id: string, content: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id 
+        ? { ...note, content, updated_at: new Date().toISOString() }
+        : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    const updatedNotes = notes.filter(note => note.id !== id);
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleColorChange = async (id: string, color: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id ? { ...note, color } : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const saveNotes = async (notesToSave: StickyNoteData[]) => {
     if (!selectedClient) return;
     
     try {
-      await clientsService.updateClient(selectedClient.id, { notes: noteContent });
+      // Salvar como JSON string
+      const notesJson = JSON.stringify(notesToSave);
+      await clientsService.updateClient(selectedClient.id, { notes: notesJson });
       
       // Atualizar o cliente na lista local
       const updatedClients = clients.map(client => {
         if (client.id === selectedClient.id) {
-          return { ...client, notes: noteContent };
+          return { ...client, notes: notesJson };
         }
         return client;
       });
       
       setClients(updatedClients);
-      
+      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
       // Atualizar o cliente selecionado
       setSelectedClient({
         ...selectedClient,
-        notes: noteContent
+        notes: notesJson
       });
       
-      toast.success("Anotação salva com sucesso!");
+      toast.success("Notas salvas com sucesso!");
     } catch (error: any) {
-      console.error("Erro ao salvar anotação:", error);
-      toast.error(`Erro ao salvar anotação: ${error.message}`);
+      console.error("Erro ao salvar notas:", error);
+      toast.error(`Erro ao salvar notas: ${error.message}`);
     }
   };
 
@@ -481,11 +539,18 @@ const Clients = () => {
       }
       
       // Adicionar a nova tarefa à lista
-      setClientTasks([...clientTasks, result.data?.[0]]);
+      // result.data já é o objeto da tarefa, não um array
+      if (result.data) {
+        setClientTasks([...clientTasks, result.data]);
+      }
       
       toast.success("Tarefa adicionada com sucesso!");
       setIsAddTaskDialogOpen(false);
       taskForm.reset();
+      
+      // Recarregar tarefas para garantir sincronização
+      const tasks = await clientsService.getClientTasks(selectedClient.id);
+      setClientTasks(tasks || []);
     } catch (error: any) {
       console.error("Erro ao adicionar tarefa:", error);
       toast.error(`Erro ao adicionar tarefa: ${error.message}`);
@@ -527,10 +592,8 @@ const Clients = () => {
     
     try {
       await clientsService.deleteClient(clientToDelete.id);
-      
-      // Remove the client from the local list
       setClients(clients.filter(client => client.id !== clientToDelete.id));
-      
+      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
       // If the deleted client was selected, clear selection
       if (selectedClient && selectedClient.id === clientToDelete.id) {
         setSelectedClient(null);
@@ -688,6 +751,15 @@ const Clients = () => {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+              <Input 
+                id="cpf_cnpj"
+                placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                value={editedClient.cpf_cnpj}
+                onChange={handleEditInputChange}
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="status">Status</Label>
               <Select
                 value={editedClient.status}
@@ -741,6 +813,10 @@ const Clients = () => {
           <div className="space-y-1">
             <Label>Telefone</Label>
             <p className="text-sm">{selectedClient.phone}</p>
+          </div>
+          <div className="space-y-1">
+            <Label>CPF ou CNPJ</Label>
+            <p className="text-sm">{formatCpfCnpjDisplay(selectedClient.cpf_cnpj)}</p>
           </div>
           <div className="space-y-1">
             <Label>Empresa</Label>
@@ -805,11 +881,14 @@ const Clients = () => {
           </Button>
         </div>
         <div className="space-y-2">
-          {clientTasks.map(task => (
+          {clientTasks && clientTasks.length > 0 ? (
+            clientTasks.map(task => {
+              if (!task || !task.id) return null;
+              return (
             <Card key={task.id} className="p-4">
               <div className="flex justify-between">
                 <div>
-                  <h4 className="font-medium">{task.title}</h4>
+                      <h4 className="font-medium">{task.title || 'Sem título'}</h4>
                   {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
                   {task.due_date && (
                     <div className="flex items-center text-xs text-muted-foreground mt-2">
@@ -820,7 +899,7 @@ const Clients = () => {
                 </div>
                 <div className="flex items-start space-x-2">
                   <Select
-                    value={task.status}
+                        value={task.status || 'Pendente'}
                     onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
                   >
                     <SelectTrigger className="h-8 w-[120px]">
@@ -846,7 +925,11 @@ const Clients = () => {
                 </div>
               </div>
             </Card>
-          ))}
+              );
+            })
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">Nenhuma tarefa cadastrada</p>
+          )}
         </div>
       </div>
     );
@@ -868,6 +951,7 @@ const Clients = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          {canCreate(MODULE_CLIENTS) && (
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -929,6 +1013,17 @@ const Clients = () => {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
+                      <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+                      <Input 
+                        id="cpf_cnpj" 
+                        placeholder="000.000.000-00 ou 00.000.000/0000-00" 
+                        value={newClient.cpf_cnpj}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
                       <Label htmlFor="status">Status</Label>
                       <Select 
                         defaultValue="Ativo"
@@ -979,6 +1074,7 @@ const Clients = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
 
           {/* Dialog para adicionar nova tarefa */}
           <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
@@ -1133,13 +1229,38 @@ const Clients = () => {
                   </TabsContent>
                   <TabsContent value="notes">
                     <div className="space-y-4">
-                      <Textarea 
-                        className="mb-4 min-h-[150px]" 
-                        placeholder="Adicione uma nota sobre este cliente..." 
-                        value={noteContent}
-                        onChange={(e) => setNoteContent(e.target.value)}
-                      />
-                      <Button onClick={handleSaveNote}>Salvar Anotações</Button>
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-medium">Notas Autoadesivas</h3>
+                        <Button onClick={handleAddNote} size="sm">
+                          <Plus className="mr-2 h-4 w-4" />
+                          Nova Nota
+                        </Button>
+                      </div>
+                      <div className="relative min-h-[400px] p-4 bg-gray-50 rounded-lg">
+                        {notes.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {notes.map(note => (
+                              <StickyNote
+                                key={note.id}
+                                note={note}
+                                onUpdate={handleUpdateNote}
+                                onDelete={handleDeleteNote}
+                                onColorChange={handleColorChange}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-[300px] text-center">
+                            <p className="text-muted-foreground mb-4">
+                              Nenhuma nota cadastrada
+                            </p>
+                            <Button onClick={handleAddNote} variant="outline">
+                              <Plus className="mr-2 h-4 w-4" />
+                              Criar Primeira Nota
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </TabsContent>
                 </Tabs>
@@ -1158,9 +1279,11 @@ const Clients = () => {
                       <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
                         Fechar
                       </Button>
+                      {canEdit(MODULE_CLIENTS) && (
                       <Button onClick={handleEditClient}>
                         Editar Cliente
                       </Button>
+                      )}
                     </>
                   )}
                 </DialogFooter>
@@ -1238,7 +1361,7 @@ const Clients = () => {
             </div>
           </div>
           
-          {isLoading ? (
+          {isLoading && clients.length === 0 ? (
             <div className="py-10 text-center">
               <p className="text-muted-foreground">Carregando clientes...</p>
             </div>
@@ -1246,6 +1369,7 @@ const Clients = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-12" aria-label="Avatar" />
                   <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
                     <div className="flex items-center">
                       Nome
@@ -1268,13 +1392,26 @@ const Clients = () => {
               <TableBody>
                 {paginatedClients.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground">
                       Nenhum cliente encontrado com os critérios de busca
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedClients.map((client) => (
+                  paginatedClients.map((client) => {
+                    const listAvatar = resolveProfileAvatarUrl(
+                      client,
+                      client.whatsapp_avatar_url ?? null
+                    );
+                    return (
                     <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
+                      <TableCell className="w-12">
+                        <Avatar className="h-8 w-8">
+                          {listAvatar.src ? (
+                            <AvatarImage src={listAvatar.src} alt={client.name} />
+                          ) : null}
+                          <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                        </Avatar>
+                      </TableCell>
                       <TableCell>{client.name}</TableCell>
                       <TableCell>{client.company || "—"}</TableCell>
                       <TableCell>{client.email || "—"}</TableCell>
@@ -1301,6 +1438,7 @@ const Clients = () => {
                           <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Ações</DropdownMenuLabel>
                             <DropdownMenuSeparator />
+                            {canEdit(MODULE_CLIENTS) && (
                             <DropdownMenuItem onClick={(e) => {
                               e.stopPropagation();
                               setSelectedClient(client);
@@ -1310,6 +1448,7 @@ const Clients = () => {
                               <FileText className="h-4 w-4 mr-2" />
                               Editar Cliente
                             </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem onClick={(e) => {
                               e.stopPropagation();
                               setSelectedClient(client);
@@ -1328,6 +1467,7 @@ const Clients = () => {
                               Gerar Proposta
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            {canDelete(MODULE_CLIENTS) && (
                             <DropdownMenuItem 
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1338,11 +1478,13 @@ const Clients = () => {
                               <Trash2 className="h-4 w-4 mr-2" />
                               Excluir Cliente
                             </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

@@ -34,6 +34,22 @@ export interface UpcomingTask {
   color: string;
 }
 
+export interface ActivationMissionItem {
+  id: string;
+  title: string;
+  description: string;
+  actionLabel: string;
+  actionHref: string;
+}
+
+export interface ActivationChecklistPayload {
+  dismissed: boolean;
+  applicableTotal: number;
+  completedCount: number;
+  progressPercent: number;
+  pendingMissions: ActivationMissionItem[];
+}
+
 export const dashboardService = {
   async getKPIs(): Promise<KPIData> {
     const response = await apiClient.get<KPIData>('/api/dashboard/kpis');
@@ -70,6 +86,21 @@ export const dashboardService = {
     const response = await apiClient.get<UpcomingTask[]>('/api/dashboard/tasks');
     if (response.error) throw new Error(response.error);
     return response.data || [];
+  },
+
+  async getActivationChecklist(): Promise<ActivationChecklistPayload> {
+    const response = await apiClient.get<ActivationChecklistPayload>('/api/dashboard/activation-checklist');
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Erro ao carregar primeiros passos');
+    return response.data;
+  },
+
+  async dismissActivationChecklist(): Promise<void> {
+    const response = await apiClient.post<{ ok: boolean }>(
+      '/api/dashboard/activation-checklist/dismiss',
+      {}
+    );
+    if (response.error) throw new Error(response.error);
   },
 };
 

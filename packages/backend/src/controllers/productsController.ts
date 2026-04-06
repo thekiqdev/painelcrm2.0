@@ -1,6 +1,14 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import {
+  joinUserTenant,
+  joinUserTenantByUserId,
+  whereUserInTenantFromUserId,
+  getTenantIdOrNull,
+  ensureUserIdForInsert,
+} from '../utils/tenantScope.js';
 import { z } from 'zod';
 
 const productSchema = z.object({
@@ -32,11 +40,16 @@ const productSchema = z.object({
 
 export async function getProducts(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
-    
+    const tenantId = getTenantIdOrNull(req.tenantId);
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const result = await pool.query(
-      'SELECT * FROM products WHERE user_id = $1 ORDER BY created_at DESC',
-      [userId]
+      `SELECT p.* FROM products p
+       ${joinUserTenant('p', 'user_id', 1)}
+       ORDER BY p.created_at DESC`,
+      [tenantId]
     );
 
     // Convert DECIMAL fields to numbers
@@ -60,7 +73,9 @@ export async function getProductById(req: AuthRequest, res: Response): Promise<v
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM products WHERE id = $1 AND user_id = $2',
+      `SELECT p.* FROM products p
+       ${joinUserTenantByUserId('p', 'user_id', 2)}
+       WHERE p.id = $1`,
       [id, userId]
     );
 
@@ -87,8 +102,10 @@ export async function getProductById(req: AuthRequest, res: Response): Promise<v
 
 export async function createProduct(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const userId = ensureUserIdForInsert(req);
     const productData = productSchema.parse(req.body);
+
+    await assertModulePermission(userId, 'products', 'create', undefined, req);
 
     const result = await pool.query(
       `INSERT INTO products (
@@ -125,6 +142,14 @@ export async function createProduct(req: AuthRequest, res: Response): Promise<vo
 
     res.status(201).json(formattedProduct);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof Error && error.message === 'Authentication required') {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -139,6 +164,22 @@ export async function updateProduct(req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!;
     const { id } = req.params;
     const productData = productSchema.partial().parse(req.body);
+
+    const existing = await pool.query<{ user_id: string; responsible_id: string | null }>(
+      `SELECT user_id, responsible_id FROM products p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Product not found' });
+      return;
+    }
+    const row = existing.rows[0];
+    await assertModulePermission(userId, 'products', 'edit', {
+      ownerId: row.user_id,
+      assigneeId: row.responsible_id,
+    }, req);
 
     // Build dynamic update query
     const updates: string[] = [];
@@ -167,7 +208,7 @@ export async function updateProduct(req: AuthRequest, res: Response): Promise<vo
     const result = await pool.query(
       `UPDATE products 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND ${whereUserInTenantFromUserId('user_id', paramIndex + 1)}
        RETURNING *`,
       values
     );
@@ -188,6 +229,10 @@ export async function updateProduct(req: AuthRequest, res: Response): Promise<vo
 
     res.json(formattedProduct);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -202,8 +247,24 @@ export async function deleteProduct(req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!;
     const { id } = req.params;
 
+    const existing = await pool.query<{ user_id: string; responsible_id: string | null }>(
+      `SELECT user_id, responsible_id FROM products p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Product not found' });
+      return;
+    }
+    const row = existing.rows[0];
+    await assertModulePermission(userId, 'products', 'delete', {
+      ownerId: row.user_id,
+      assigneeId: row.responsible_id,
+    }, req);
+
     const result = await pool.query(
-      'DELETE FROM products WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM products WHERE id = $1 AND ${whereUserInTenantFromUserId('user_id', 2)} RETURNING id`,
       [id, userId]
     );
 
@@ -214,6 +275,10 @@ export async function deleteProduct(req: AuthRequest, res: Response): Promise<vo
 
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error deleting product:', error);
     res.status(500).json({ error: 'Internal server error' });
   }

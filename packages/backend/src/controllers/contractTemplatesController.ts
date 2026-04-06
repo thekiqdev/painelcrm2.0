@@ -14,17 +14,23 @@ const templateSchema = z.object({
 // Get contract templates
 export async function getContractTemplates(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
     const { activeOnly } = req.query;
 
-    let query = 'SELECT * FROM contract_templates WHERE user_id = $1';
-    const params: any[] = [userId];
+    let query = `SELECT ct.* FROM contract_templates ct
+       INNER JOIN users u ON u.id = ct.user_id AND u.tenant_id = $1
+       WHERE 1=1`;
+    const params: any[] = [tenantId];
 
     if (activeOnly === 'true') {
-      query += ' AND is_active = true';
+      query += ' AND ct.is_active = true';
     }
 
-    query += ' ORDER BY name';
+    query += ' ORDER BY ct.name';
 
     const result = await pool.query(query, params);
     
@@ -116,7 +122,7 @@ export async function updateContractTemplate(req: AuthRequest, res: Response): P
     const result = await pool.query(
       `UPDATE contract_templates 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
       values
     );
@@ -153,9 +159,11 @@ export async function deleteContractTemplate(req: AuthRequest, res: Response): P
     const userId = req.userId!;
     const { id } = req.params;
 
-    // Check if template is used by any contracts
+    // Check if template is used by any contracts (tenant-scoped)
     const contractsResult = await pool.query(
-      'SELECT COUNT(*) FROM contracts WHERE template_id = $1 AND user_id = $2',
+      `SELECT COUNT(*) FROM contracts c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE c.template_id = $1`,
       [id, userId]
     );
 
@@ -165,7 +173,7 @@ export async function deleteContractTemplate(req: AuthRequest, res: Response): P
     }
 
     const result = await pool.query(
-      'DELETE FROM contract_templates WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM contract_templates WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2)) RETURNING id`,
       [id, userId]
     );
 

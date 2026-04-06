@@ -1,13 +1,22 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
+import { insertTenantPlanHistory } from '../services/auditLogService.js';
 import { hashPassword, comparePassword } from '../utils/bcrypt.js';
 import { generateToken } from '../utils/jwt.js';
+import { getEnabledFeaturesForUser } from '../services/featureFlagService.js';
+import { isPhase2TrialCrmGateEnabled } from '../config/checkoutTrialFeatureFlags.js';
+import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
+import { checkTenantUsersLimitForAddOne } from '../services/tenantLimitService.js';
 import { z } from 'zod';
+import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/userIdentity.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
-  whatsapp: z.string().optional(),
+  whatsapp: z.string().nullable().optional(),
+  first_name: z.string().optional(),
+  last_name: z.string().optional(),
+  company_name: z.string().optional(),
 });
 
 const loginSchema = z.object({
@@ -15,42 +24,209 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Senha é obrigatória'),
 });
 
+async function findDefaultProfileId(userId: string): Promise<string | null> {
+  const profileMember = await pool.query(
+    `SELECT profile_id
+     FROM profile_members
+     WHERE user_id = $1
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [userId]
+  );
+
+  if (profileMember.rows.length > 0) {
+    return profileMember.rows[0].profile_id;
+  }
+
+  const ownedProfile = await pool.query(
+    `SELECT id
+     FROM user_profiles
+     WHERE owner_id = $1
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [userId]
+  );
+
+  return ownedProfile.rows[0]?.id || null;
+}
+
 export async function register(req: Request, res: Response): Promise<void> {
+  if (process.env.DISABLE_PUBLIC_AUTH_REGISTER === 'true') {
+    res.status(403).json({
+      error: 'Cadastro público desativado. Utilize o checkout para criar sua conta.',
+      code: 'PUBLIC_REGISTER_DISABLED',
+    });
+    return;
+  }
+  const client = await pool.connect();
+  let transactionStarted = false;
   try {
-    const { email, password, whatsapp } = registerSchema.parse(req.body);
+    const {
+      email,
+      password,
+      whatsapp,
+      first_name,
+      last_name,
+      company_name,
+    } = registerSchema.parse(req.body);
 
-    // Check if user already exists
-    const existingUser = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email]
+    const normalizedEmail = normalizeEmailForUniqueness(email);
+    const normalizedWhatsapp = normalizeWhatsappDigits(whatsapp ?? null);
+    const firstName = first_name?.trim() || null;
+    const lastName = last_name?.trim() || null;
+    const inferredCompanyName =
+      company_name?.trim() ||
+      [firstName, lastName].filter(Boolean).join(' ').trim() ||
+      (normalizedWhatsapp ? `Empresa ${normalizedWhatsapp.slice(-4)}` : normalizedEmail.split('@')[0]);
+
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const existingByEmail = await client.query(
+      'SELECT id FROM users WHERE lower(btrim(email)) = $1',
+      [normalizedEmail]
     );
-
-    if (existingUser.rows.length > 0) {
-      res.status(400).json({ error: 'User already exists' });
+    if (existingByEmail.rows.length > 0) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+      res.status(400).json({ error: 'Este e-mail já está cadastrado na plataforma.' });
       return;
     }
 
-    // Hash password
+    if (normalizedWhatsapp) {
+      const existingByWa = await client.query(
+        `SELECT id FROM users
+         WHERE length(regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g')) >= 8
+           AND regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g') = $1`,
+        [normalizedWhatsapp]
+      );
+      if (existingByWa.rows.length > 0) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        res.status(400).json({ error: 'Este número de WhatsApp já está cadastrado na plataforma.' });
+        return;
+      }
+    }
+
     const passwordHash = await hashPassword(password);
 
-    // Create user
-    const userResult = await pool.query(
+    const userResult = await client.query(
       `INSERT INTO users (email, password_hash, whatsapp_number)
        VALUES ($1, $2, $3)
        RETURNING id, email, created_at`,
-      [email, passwordHash, whatsapp || null]
+      [normalizedEmail, passwordHash, normalizedWhatsapp]
     );
 
     const user = userResult.rows[0];
 
-    // Create profile
-    await pool.query(
-      `INSERT INTO profiles (id, whatsapp_number, registration_complete)
-       VALUES ($1, $2, false)`,
-      [user.id, whatsapp || '']
+    await client.query(
+      `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
+       VALUES ($1, $2, $3, $4, $5, false)`,
+      [
+        user.id,
+        firstName,
+        lastName,
+        inferredCompanyName,
+        normalizedWhatsapp ?? '',
+      ]
     );
 
-    // Generate token
+    const companyResult = await client.query(
+      `INSERT INTO user_profiles (owner_id, name, description, is_admin)
+       VALUES ($1, $2, $3, true)
+       RETURNING id, name`,
+      [user.id, inferredCompanyName, null]
+    );
+
+    const companyProfileId = companyResult.rows[0].id;
+
+    await client.query(
+      `INSERT INTO profile_members (profile_id, user_id, created_by)
+       VALUES ($1, $2, $2)`,
+      [companyProfileId, user.id]
+    );
+
+    await client.query(
+      `INSERT INTO user_roles (user_id, role, profile_id, created_by)
+       VALUES ($1, 'admin', $2, $1)`,
+      [user.id, companyProfileId]
+    );
+
+    await client.query(
+      `INSERT INTO user_permissions (user_id, profile_id, permission, created_by)
+       VALUES ($1, $2, 'all_access', $1)`,
+      [user.id, companyProfileId]
+    );
+
+    // Criar tenant (empresa) e vincular usuário — usa plano padrão (is_default) ou primeiro ativo
+    let planRow = await client.query(
+      `SELECT id FROM plans WHERE is_active = true AND is_default = true LIMIT 1`
+    );
+    if (planRow.rows.length === 0) {
+      planRow = await client.query(
+        `SELECT id FROM plans WHERE is_active = true ORDER BY sort_order ASC, name ASC LIMIT 1`
+      );
+    }
+    if (planRow.rows.length > 0) {
+      const planId = planRow.rows[0].id;
+      const planDetail = await client.query(
+        'SELECT is_free, free_access_days FROM plans WHERE id = $1',
+        [planId]
+      );
+      const isFree = planDetail.rows[0]?.is_free === true;
+      const freeDays = planDetail.rows[0]?.free_access_days;
+      const trialEndsAt =
+        isFree && freeDays != null && freeDays >= 1
+          ? `now() + (${Number(freeDays)} || ' days')::interval`
+          : null;
+      let baseSlug = inferredCompanyName
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'empresa';
+      let slug = baseSlug;
+      let suffix = 0;
+      while (true) {
+        const exists = await client.query('SELECT id FROM tenants WHERE slug = $1', [slug]);
+        if (exists.rows.length === 0) break;
+        suffix += 1;
+        slug = `${baseSlug}-${suffix}`;
+      }
+      const tenantResult = trialEndsAt
+        ? await client.query(
+            `INSERT INTO tenants (name, slug, plan_id, status, created_via, trial_ends_at)
+             VALUES ($1, $2, $3, 'trial', 'registration', now() + ($4::int || ' days')::interval)
+             RETURNING id`,
+            [inferredCompanyName, slug, planId, freeDays]
+          )
+        : await client.query(
+            `INSERT INTO tenants (name, slug, plan_id, status, created_via)
+             VALUES ($1, $2, $3, 'trial', 'registration')
+             RETURNING id`,
+            [inferredCompanyName, slug, planId]
+          );
+      const tenantId = tenantResult.rows[0].id;
+      const usersLimit = await checkTenantUsersLimitForAddOne(tenantId);
+      if (!usersLimit.allowed) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        const msg = usersLimit.limit != null
+          ? `Limite de usuários do plano atingido (${usersLimit.current} de ${usersLimit.limit}).`
+          : 'Limite de usuários atingido.';
+        res.status(403).json({ error: msg });
+        return;
+      }
+      await client.query('UPDATE users SET tenant_id = $1 WHERE id = $2', [tenantId, user.id]);
+      await client.query(
+        'INSERT INTO tenant_plan (tenant_id, plan_id, starts_at) VALUES ($1, $2, now())',
+        [tenantId, planId]
+      );
+      setImmediate(() => notifySuperAdminsNewTenant(inferredCompanyName, tenantId).catch(() => {}));
+    }
+
+    await client.query('COMMIT');
+
     const token = generateToken({
       userId: user.id,
       email: user.email,
@@ -60,16 +236,38 @@ export async function register(req: Request, res: Response): Promise<void> {
       user: {
         id: user.id,
         email: user.email,
+        whatsapp_number: normalizedWhatsapp,
+        first_name: firstName || undefined,
+        last_name: lastName || undefined,
+        company_name: inferredCompanyName,
+        registration_complete: false,
+        default_profile_id: companyProfileId,
       },
       token,
     });
   } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Rollback error:', rollbackError);
+      }
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
     }
+    const pgCode = (error as { code?: string })?.code;
+    if (pgCode === '23505') {
+      res.status(400).json({
+        error: 'E-mail ou WhatsApp já cadastrado. Se o problema persistir, entre em contato com o suporte.',
+      });
+      return;
+    }
     console.error('Register error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 }
 
@@ -83,18 +281,30 @@ export async function login(req: Request, res: Response): Promise<void> {
     
     let userResult;
     if (isEmail) {
-      // Search by email
+      const em = normalizeEmailForUniqueness(identifier);
       userResult = await pool.query(
-        'SELECT id, email, password_hash, whatsapp_number FROM users WHERE email = $1',
-        [identifier.toLowerCase().trim()]
+        `SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin,
+                tenant_id
+         FROM users
+         WHERE lower(btrim(email)) = $1
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [em]
       );
     } else {
-      // Search by WhatsApp number (normalize phone number)
-      // Remove common phone formatting characters
-      const normalizedPhone = identifier.replace(/[\s\-\(\)\+]/g, '');
+      const digits = identifier.replace(/\D/g, '');
+      if (digits.length < 8) {
+        res.status(401).json({ error: 'Credenciais inválidas' });
+        return;
+      }
       userResult = await pool.query(
-        'SELECT id, email, password_hash, whatsapp_number FROM users WHERE whatsapp_number = $1 OR whatsapp_number = $2',
-        [identifier, normalizedPhone]
+        `SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin
+         FROM users
+         WHERE length(regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g')) >= 8
+           AND regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g') = $1
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [digits]
       );
     }
 
@@ -160,6 +370,8 @@ export async function login(req: Request, res: Response): Promise<void> {
       throw tokenError;
     }
 
+    const defaultProfileId = await findDefaultProfileId(user.id);
+
     res.json({
       user: {
         id: user.id,
@@ -169,6 +381,9 @@ export async function login(req: Request, res: Response): Promise<void> {
         first_name: profile.first_name,
         last_name: profile.last_name,
         company_name: profile.company_name,
+        default_profile_id: defaultProfileId,
+        is_super_admin: user.is_super_admin === true,
+        tenant_id: user.tenant_id ?? null,
       },
       token,
     });
@@ -200,9 +415,9 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Get user with profile
+    // Get user with profile and is_super_admin
     const userResult = await pool.query(
-      `SELECT u.id, u.email, u.whatsapp_number, u.created_at,
+      `SELECT u.id, u.email, u.whatsapp_number, u.created_at, u.tenant_id, COALESCE(u.is_super_admin, false) AS is_super_admin,
               p.first_name, p.last_name, p.company_name, 
               p.whatsapp_connected, p.registration_complete
        FROM users u
@@ -217,6 +432,93 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     }
 
     const user = userResult.rows[0];
+    const defaultProfileId = await findDefaultProfileId(user.id);
+
+    let canManagePlan = false;
+    let planExpired = false;
+    let tenantStatus: string | null = null;
+    let onboardingCompleted = false;
+    let trialEndsAt: string | null = null;
+    let suspensionReason: string | null = null;
+    let requiresCheckoutResume = false;
+    const tenantCheck = await pool.query<{
+      tenant_id: string;
+      primary_user_id: string;
+      status: string;
+      onboarding_completed: boolean;
+      trial_ends_at: string | null;
+      activated_billing_id: string | null;
+      suspension_reason: string | null;
+      plan_period_end: string | null;
+    }>(
+      `SELECT u.tenant_id,
+        (SELECT u2.id FROM users u2 WHERE u2.tenant_id = u.tenant_id ORDER BY u2.created_at ASC LIMIT 1) AS primary_user_id,
+        t.status,
+        t.onboarding_completed,
+        t.trial_ends_at,
+        t.activated_billing_id,
+        t.suspension_reason,
+        t.plan_period_end
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.id = $1 AND u.tenant_id IS NOT NULL`,
+      [userId]
+    );
+    if (tenantCheck.rows.length > 0) {
+      const row = tenantCheck.rows[0];
+      tenantStatus = row.status;
+      trialEndsAt = row.trial_ends_at;
+      suspensionReason = row.suspension_reason;
+      const trialEndedUnpaid =
+        row.status === 'trial' &&
+        row.trial_ends_at != null &&
+        new Date(row.trial_ends_at) < new Date() &&
+        row.activated_billing_id == null;
+      const trialEndedWhilePaymentPending =
+        row.status === 'payment_pending' &&
+        row.trial_ends_at != null &&
+        new Date(row.trial_ends_at) < new Date() &&
+        row.activated_billing_id == null;
+      const needsTrialPayment =
+        (row.status === 'suspended' && row.suspension_reason === 'trial_expired') ||
+        trialEndedUnpaid ||
+        trialEndedWhilePaymentPending;
+      requiresCheckoutResume = isPhase2TrialCrmGateEnabled() && needsTrialPayment;
+      if (row.status === 'active' || row.activated_billing_id != null) {
+        requiresCheckoutResume = false;
+      }
+      onboardingCompleted = row.onboarding_completed === true;
+      const primaryUserId = row.primary_user_id;
+      const isPrimaryUser = primaryUserId === userId;
+      const hasAdminProfile = await pool.query(
+        'SELECT 1 FROM user_profiles WHERE owner_id = $1 AND is_admin = true LIMIT 1',
+        [userId]
+      );
+      canManagePlan = isPrimaryUser || hasAdminProfile.rows.length > 0;
+      const planPeriodValid =
+        row.plan_period_end != null && new Date(row.plan_period_end).getTime() >= Date.now();
+      const hasPaidActivationOrActive =
+        row.activated_billing_id != null || row.status === 'active' || planPeriodValid;
+      const expCheck = await pool.query(
+        `SELECT t.trial_ends_at, p.is_free
+         FROM tenants t
+         JOIN plans p ON p.id = t.plan_id
+         WHERE t.id = $1`,
+        [row.tenant_id]
+      );
+      if (
+        !hasPaidActivationOrActive &&
+        expCheck.rows.length > 0 &&
+        expCheck.rows[0].is_free === true &&
+        expCheck.rows[0].trial_ends_at
+      ) {
+        const endsAt = new Date(expCheck.rows[0].trial_ends_at);
+        if (endsAt.getTime() < Date.now()) {
+          planExpired = true;
+        }
+      }
+    }
+
     res.json({
       id: user.id,
       email: user.email,
@@ -227,9 +529,39 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       whatsapp_connected: user.whatsapp_connected,
       registration_complete: user.registration_complete,
       created_at: user.created_at,
+      tenant_id: user.tenant_id ?? null,
+      default_profile_id: defaultProfileId,
+      is_super_admin: user.is_super_admin === true,
+      can_manage_plan: canManagePlan,
+      plan_expired: planExpired,
+      tenant_status: tenantStatus,
+      onboarding_completed: onboardingCompleted,
+      trial_ends_at: trialEndsAt,
+      suspension_reason: suspensionReason,
+      requires_checkout_resume: requiresCheckoutResume,
     });
   } catch (error) {
     console.error('Get me error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * GET /api/auth/me/features
+ * Lista de feature_key habilitadas para o usuário logado (para frontend/mobile em lote).
+ */
+export async function getMeFeatures(req: Request, res: Response): Promise<void> {
+  try {
+    const authReq = req as any;
+    const userId = authReq.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const features = await getEnabledFeaturesForUser(userId);
+    res.json({ features });
+  } catch (error) {
+    console.error('Get me features error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }

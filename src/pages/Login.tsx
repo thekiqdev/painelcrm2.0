@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { getPostAuthHomePath } from "@/utils/superAdminRedirect";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -41,11 +42,9 @@ const Login = () => {
     }
   };
 
-  // Se o usuário já estiver autenticado, redireciona
   useEffect(() => {
     if (user) {
-      console.log('Usuário já autenticado, redirecionando para dashboard');
-      navigate('/dashboard');
+      navigate(getPostAuthHomePath(user), { replace: true });
     }
   }, [user, navigate]);
 
@@ -60,8 +59,10 @@ const Login = () => {
     setIsLoading(true);
     
     try {
-      await signIn(identifier, password);
-      navigate('/dashboard');
+      const dest = await signIn(identifier, password);
+      if (dest && dest !== "/login") {
+        navigate(dest, { replace: true });
+      }
     } catch (error: any) {
       console.error("Erro ao fazer login:", error);
       toast.error(error.message || "Ocorreu um erro desconhecido");
@@ -135,8 +136,8 @@ const Login = () => {
         <div className="mt-6 text-center">
           <span className="text-sm text-muted-foreground">
             Ainda não tem uma conta?{" "}
-            <Link to="/register" className="text-crm-primary font-medium hover:underline">
-              Registre-se
+            <Link to="/checkout" className="text-crm-primary font-medium hover:underline">
+              Cadastrar
             </Link>
           </span>
         </div>

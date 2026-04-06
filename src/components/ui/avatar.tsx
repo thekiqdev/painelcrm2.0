@@ -21,13 +21,32 @@ Avatar.displayName = AvatarPrimitive.Root.displayName
 const AvatarImage = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Image>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
->(({ className, ...props }, ref) => (
-  <AvatarPrimitive.Image
-    ref={ref}
-    className={cn("aspect-square h-full w-full", className)}
-    {...props}
-  />
-))
+>(({ className, onError, ...props }, ref) => {
+  // Tratar erros de imagem silenciosamente (especialmente para imagens do WhatsApp que podem dar 403)
+  const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    // Silenciar erros de imagens do WhatsApp (403 é esperado devido a CORS)
+    const target = e.target as HTMLImageElement;
+    if (target.src && (target.src.includes('whatsapp.net') || target.src.includes('whatsapp.com'))) {
+      // Erro esperado, não logar
+      return;
+    }
+    // Para outras imagens, chamar handler original se fornecido
+    if (onError) {
+      onError(e);
+    }
+  };
+
+  return (
+    <AvatarPrimitive.Image
+      ref={ref}
+      className={cn("aspect-square h-full w-full", className)}
+      crossOrigin="anonymous"
+      referrerPolicy="no-referrer"
+      onError={handleError}
+      {...props}
+    />
+  );
+})
 AvatarImage.displayName = AvatarPrimitive.Image.displayName
 
 const AvatarFallback = React.forwardRef<

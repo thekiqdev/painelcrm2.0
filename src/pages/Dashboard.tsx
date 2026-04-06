@@ -1,5 +1,7 @@
 
-import React, { useState, useEffect } from "react";
+import React from "react";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowUp, ArrowDown, Users, DollarSign, List, FileText, Calendar } from "lucide-react";
@@ -7,6 +9,8 @@ import { Progress } from "@/components/ui/progress";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 import { dashboardService, KPIData, ChartData, FunnelData, Activity, UpcomingTask } from "@/services/dashboard";
 import { toast } from "sonner";
+import { DashboardActivationBlock } from "@/components/dashboard/DashboardActivationBlock";
+import { useAuth } from "@/contexts/AuthContext";
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -20,46 +24,44 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+async function loadDashboardData() {
+  const [kpisData, salesChart, leadsChart, funnel, activitiesData, tasksData] = await Promise.all([
+    dashboardService.getKPIs(),
+    dashboardService.getSalesChart(),
+    dashboardService.getLeadsChart(),
+    dashboardService.getFunnelData(),
+    dashboardService.getRecentActivities(),
+    dashboardService.getUpcomingTasks(),
+  ]);
+  return {
+    kpis: kpisData,
+    salesData: salesChart,
+    leadsData: leadsChart,
+    funnelData: funnel,
+    activities: activitiesData,
+    tasks: tasksData,
+  };
+}
+
 const Dashboard = () => {
-  const [loading, setLoading] = useState(true);
-  const [kpis, setKpis] = useState<KPIData | null>(null);
-  const [salesData, setSalesData] = useState<ChartData[]>([]);
-  const [leadsData, setLeadsData] = useState<ChartData[]>([]);
-  const [funnelData, setFunnelData] = useState<FunnelData[]>([]);
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [tasks, setTasks] = useState<UpcomingTask[]>([]);
+  const { user } = useAuth();
+  const trialEndsAt =
+    user?.tenant_status === 'trial' && user?.trial_ends_at
+      ? new Date(user.trial_ends_at)
+      : null;
+  const trialActive = trialEndsAt != null && !Number.isNaN(trialEndsAt.getTime()) && trialEndsAt.getTime() > Date.now();
 
-  useEffect(() => {
-    const loadDashboardData = async () => {
-      try {
-        setLoading(true);
-        const [kpisData, salesChart, leadsChart, funnel, activitiesData, tasksData] = await Promise.all([
-          dashboardService.getKPIs(),
-          dashboardService.getSalesChart(),
-          dashboardService.getLeadsChart(),
-          dashboardService.getFunnelData(),
-          dashboardService.getRecentActivities(),
-          dashboardService.getUpcomingTasks(),
-        ]);
+  const { data, isPending, error } = useQuery({
+    queryKey: ["dashboard"],
+    queryFn: loadDashboardData,
+  });
 
-        setKpis(kpisData);
-        setSalesData(salesChart);
-        setLeadsData(leadsChart);
-        setFunnelData(funnel);
-        setActivities(activitiesData);
-        setTasks(tasksData);
-      } catch (error) {
-        console.error("Erro ao carregar dados do dashboard:", error);
-        toast.error("Erro ao carregar dados do dashboard");
-      } finally {
-        setLoading(false);
-      }
-    };
+  if (error) {
+    toast.error("Erro ao carregar dados do dashboard");
+  }
 
-    loadDashboardData();
-  }, []);
-
-  if (loading) {
+  // Só mostra loading na primeira vez; com cache os dados aparecem na hora
+  if (isPending && !data) {
     return (
       <div className="flex items-center justify-center p-10">
         <div className="text-center">
@@ -68,6 +70,13 @@ const Dashboard = () => {
       </div>
     );
   }
+
+  const kpis = data?.kpis ?? null;
+  const salesData = data?.salesData ?? [];
+  const leadsData = data?.leadsData ?? [];
+  const funnelData = data?.funnelData ?? [];
+  const activities = data?.activities ?? [];
+  const tasks = data?.tasks ?? [];
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -120,6 +129,21 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-6">
+      {trialActive && (
+        <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+          <p className="font-medium">Período de avaliação ativo</p>
+          <p className="mt-1 text-muted-foreground dark:text-amber-200/90">
+            Acesso de trial até{' '}
+            <strong>{trialEndsAt!.toLocaleDateString('pt-BR')}</strong>. Após essa data será necessário concluir o
+            pagamento para continuar usando o sistema.{' '}
+            <Link to="/meu-plano" className="underline font-medium text-foreground">
+              Plano e pagamento
+            </Link>
+          </p>
+        </div>
+      )}
+      <DashboardActivationBlock />
+
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <div className="flex gap-2">

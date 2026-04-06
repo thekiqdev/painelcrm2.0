@@ -3,6 +3,7 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { CheckCircle } from "lucide-react";
+import { Logo } from "@/components/Logo";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -13,14 +14,14 @@ const Index = () => {
       <header className="bg-white p-4 border-b sticky top-0 z-10">
         <div className="container mx-auto flex justify-between items-center">
           <div className="flex items-center">
-            <div className="h-8 w-8 bg-crm-primary flex items-center justify-center text-white font-bold rounded mr-2">M</div>
-            <span className="font-bold text-xl">MultiCRM</span>
+            <Logo size="sm" variant="crm" className="mr-2" />
+            <span className="font-bold text-xl">PainelCRM</span>
           </div>
           <div className="flex items-center gap-3">
             <Button variant="ghost" onClick={() => navigate("/login")}>
               Login
             </Button>
-            <Button onClick={() => navigate("/register")}>
+            <Button onClick={() => navigate("/checkout")}>
               Começar Agora
             </Button>
           </div>
@@ -37,7 +38,7 @@ const Index = () => {
             Aumente suas vendas, melhore o relacionamento com clientes e impulsione seu negócio com nossa solução completa de CRM
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" className="bg-white hover:bg-gray-100 text-crm-primary" onClick={() => navigate("/register")}>
+            <Button size="lg" className="bg-white hover:bg-gray-100 text-crm-primary" onClick={() => navigate("/checkout")}>
               Comece Gratuitamente
             </Button>
             <Button size="lg" variant="outline" className="text-white border-white hover:bg-white/10" onClick={() => navigate("/login")}>
@@ -136,7 +137,7 @@ const Index = () => {
                   <Button 
                     className={`w-full ${plan.popular ? 'bg-white text-crm-primary hover:bg-gray-100' : ''}`}
                     variant={plan.popular ? "default" : "outline"}
-                    onClick={() => navigate("/register")}
+                    onClick={() => navigate("/checkout")}
                   >
                     {plan.cta}
                   </Button>
@@ -164,12 +165,12 @@ const Index = () => {
             Pronto para transformar seu processo de vendas?
           </h2>
           <p className="text-xl mb-8 max-w-2xl mx-auto opacity-80">
-            Junte-se a milhares de empresas que já estão crescendo com o MultiCRM
+            Junte-se a milhares de empresas que já estão crescendo com o PainelCRM
           </p>
           <Button 
             size="lg" 
             className="bg-crm-accent hover:bg-crm-accent/90"
-            onClick={() => navigate("/register")}
+            onClick={() => navigate("/checkout")}
           >
             Começar Gratuitamente
           </Button>
@@ -181,7 +182,7 @@ const Index = () => {
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             <div>
-              <h4 className="font-bold text-xl mb-4">MultiCRM</h4>
+              <h4 className="font-bold text-xl mb-4">PainelCRM</h4>
               <p className="text-gray-400">
                 A plataforma completa para gestão de relacionamento com clientes.
               </p>
@@ -214,7 +215,7 @@ const Index = () => {
             </div>
           </div>
           <div className="border-t border-gray-800 mt-12 pt-8 text-center text-gray-400">
-            <p>&copy; 2025 MultiCRM. Todos os direitos reservados.</p>
+            <p>&copy; 2025 PainelCRM. Todos os direitos reservados.</p>
           </div>
         </div>
       </footer>

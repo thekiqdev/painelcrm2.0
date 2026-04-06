@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -47,9 +48,15 @@ type LeadFormValues = z.infer<typeof leadFormSchema>;
 type TaskFormValues = z.infer<typeof taskFormSchema>;
 type NoteFormValues = z.infer<typeof noteFormSchema>;
 
+const DEFAULT_LEAD_STATUSES = [
+  { id: "1", name: "Novo", color: "#6E56CF" },
+  { id: "2", name: "Em contato", color: "#F59E0B" },
+  { id: "3", name: "Qualificado", color: "#10B981" },
+  { id: "4", name: "Perdido", color: "#EF4444" },
+];
+
 const Leads = () => {
-  // State variables
-  const [leads, setLeads] = useState<any[]>([]);
+  const queryClient = useQueryClient();
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -74,58 +81,45 @@ const Leads = () => {
     },
   });
 
-  // Fetch lead statuses
-  const fetchLeadStatuses = async () => {
-    if (!user) return;
-    
-    try {
+  // Statuses em cache
+  const { data: statusesData } = useQuery({
+    queryKey: ["leadStatuses"],
+    queryFn: async () => {
       const response = await apiClient.get("/api/lead-statuses");
       if (response.error) throw new Error(response.error);
-      
       const data = response.data || [];
-      
-      if (data && data.length > 0) {
-        setLeadStatuses(data);
-      } else {
-        // Default statuses if none are found
-        setLeadStatuses([
-          { id: "1", name: "Novo", color: "#6E56CF" },
-          { id: "2", name: "Em contato", color: "#F59E0B" },
-          { id: "3", name: "Qualificado", color: "#10B981" },
-          { id: "4", name: "Perdido", color: "#EF4444" }
-        ]);
-      }
-    } catch (error: any) {
-      console.error("Erro ao buscar status:", error.message);
-    }
-  };
+      return data?.length > 0 ? data : DEFAULT_LEAD_STATUSES;
+    },
+    enabled: !!user,
+  });
+  useEffect(() => {
+    setLeadStatuses(statusesData ?? DEFAULT_LEAD_STATUSES);
+  }, [statusesData]);
 
-  // Fetch leads
-  const fetchLeads = async () => {
-    if (!user) return;
-    
-    try {
-      const response = await apiClient.get("/api/leads");
+  // Leads em cache – ao voltar na página os dados aparecem na hora
+  const { data: leadsData, isPending: leadsLoading } = useQuery({
+    queryKey: ["leads", sortField, sortDirection, activeStatusFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (activeStatusFilter === "convertidos") {
+        params.set("onlyConverted", "true");
+      }
+      const qs = params.toString();
+      const response = await apiClient.get(qs ? `/api/leads?${qs}` : "/api/leads");
       if (response.error) throw new Error(response.error);
-      
-      // Sort client-side for now
       let data = response.data || [];
-      data.sort((a: any, b: any) => {
-        const aVal = a[sortField] || '';
-        const bVal = b[sortField] || '';
-        if (sortDirection === "asc") {
-          return aVal > bVal ? 1 : -1;
-        } else {
-          return aVal < bVal ? 1 : -1;
-        }
+      data = [...data].sort((a: any, b: any) => {
+        const aVal = a[sortField] || "";
+        const bVal = b[sortField] || "";
+        if (sortDirection === "asc") return aVal > bVal ? 1 : -1;
+        return aVal < bVal ? 1 : -1;
       });
-      
-      setLeads(data);
-    } catch (error: any) {
-      console.error("Erro ao buscar leads:", error.message);
-      toast.error("Não foi possível carregar os leads");
-    }
-  };
+      return data;
+    },
+    enabled: !!user,
+  });
+  const leads = leadsData ?? [];
+  const fetchLeads = () => queryClient.invalidateQueries({ queryKey: ["leads"] });
 
   // Fetch tasks for a selected lead
   const fetchLeadTasks = async (leadId: string) => {
@@ -154,10 +148,16 @@ const Leads = () => {
   // Filter leads by status and search term
   const getFilteredLeads = () => {
     return leads.filter((lead) => {
-      // Filter by status if not "all"
-      const statusMatches = activeStatusFilter === "all" || lead.status.toLowerCase() === activeStatusFilter;
-      
-      // Filter by search term
+      const st = (lead.status || "").toLowerCase();
+      let statusMatches = false;
+      if (activeStatusFilter === "all") {
+        statusMatches = true;
+      } else if (activeStatusFilter === "convertidos") {
+        statusMatches = st === "convertido";
+      } else {
+        statusMatches = st === activeStatusFilter;
+      }
+
       const searchMatches = 
         lead.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
         (lead.company && lead.company.toLowerCase().includes(searchTerm.toLowerCase())) || 
@@ -168,9 +168,18 @@ const Leads = () => {
     });
   };
 
-  // View lead details
+  // View lead details — alinhar ao perfil do cliente: carregar GET /api/leads/:id para whatsapp_avatar_url atualizado
   const handleViewLead = async (lead: any) => {
-    setSelectedLead(lead);
+    try {
+      const response = await apiClient.get(`/api/leads/${lead.id}`);
+      if (!response.error && response.data) {
+        setSelectedLead(response.data);
+      } else {
+        setSelectedLead(lead);
+      }
+    } catch {
+      setSelectedLead(lead);
+    }
     setIsViewDialogOpen(true);
     setActiveTab("details");
     await fetchLeadTasks(lead.id);
@@ -284,9 +293,7 @@ const Leads = () => {
       const response = await apiClient.delete(`/api/leads/${leadToDelete.id}`);
       if (response.error) throw new Error(response.error);
 
-      // Remove the lead from the local list
-      setLeads(leads.filter(lead => lead.id !== leadToDelete.id));
-      
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
       // If the deleted lead was selected, clear selection
       if (selectedLead && selectedLead.id === leadToDelete.id) {
         setSelectedLead(null);
@@ -386,13 +393,17 @@ const Leads = () => {
         }
       }
 
-      // Mark lead as converted
-      await apiClient.patch(`/api/leads/${selectedLead.id}`, { status: "Convertido" });
+      // Marcar convertido + migrar conversas para o cliente criado (foto WhatsApp no perfil)
+      await apiClient.patch(`/api/leads/${selectedLead.id}`, {
+        status: "Convertido",
+        migrated_client_id: newClient.id,
+      });
 
       toast.success("Lead convertido para cliente com sucesso!");
       setIsConvertDialogOpen(false);
       setIsViewDialogOpen(false);
       fetchLeads();
+      void queryClient.invalidateQueries({ queryKey: ["clients", "list"] });
     } catch (error: any) {
       console.error("Erro ao converter lead:", error.message);
       toast.error("Não foi possível converter o lead para cliente");
@@ -423,13 +434,6 @@ const Leads = () => {
     return foundStatus ? { color: foundStatus.color } : { color: "#6E56CF" };
   };
 
-  // Effect to load leads and statuses on mount or sort criteria change
-  useEffect(() => {
-    if (user) {
-      fetchLeads();
-      fetchLeadStatuses();
-    }
-  }, [sortField, sortDirection, user]);
 
   // Effect to update note form when selected lead changes
   useEffect(() => {
