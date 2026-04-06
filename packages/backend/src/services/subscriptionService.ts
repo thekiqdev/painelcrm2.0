@@ -15,7 +15,7 @@ import {
   setBillingSubscriptionId,
   buildSaasCheckoutChargeIdempotencyKey,
   findReusableSaasPlanCheckoutInvoice,
-  cancelOpenPlanPurchaseBillingsForContext,
+  cancelOpenPlanPurchaseBillingsAllIntervalsForTenant,
   cancelOpenSeatAddonBillingsExcept,
   SAAS_PLAN_CHECKOUT_REUSABLE_STATUSES,
   SAAS_PLAN_SIBLING_OPEN_STATUSES,
@@ -804,11 +804,11 @@ export async function subscribePlan(
   if (reusable) {
     billing = reusable;
   } else {
-    await cancelOpenPlanPurchaseBillingsForContext({
+    // Cancela billings abertas para este plano em QUALQUER billing_interval antes de criar a nova.
+    // Isso evita que uma fatura mensal fique em aberto quando o usuário troca para anual (ou vice-versa).
+    await cancelOpenPlanPurchaseBillingsAllIntervalsForTenant({
       tenantId,
       planId,
-      billingInterval,
-      usersCount: usersCountNorm,
       billingReason,
     });
     billing = await createInvoice(invoiceData);

@@ -403,6 +403,36 @@ export async function cancelOpenPlanPurchaseBillingsForContext(params: {
 }
 
 /**
+ * Cancela faturas de plan_purchase/plan_upgrade abertas para tenant+plano em QUALQUER billing_interval.
+ * Chamado antes de criar nova fatura quando o usuário troca de intervalo (ex: monthly → yearly):
+ * garante que a fatura do intervalo anterior não fique em aberto indefinidamente.
+ * NÃO afeta faturas de seat_addon nem plan_renewal — essas têm seu próprio ciclo de vida.
+ */
+export async function cancelOpenPlanPurchaseBillingsAllIntervalsForTenant(params: {
+  tenantId: string;
+  planId: string;
+  billingReason: BillingReason | null;
+}): Promise<void> {
+  const reasonNorm = params.billingReason ?? 'plan_purchase';
+  // Proteção explícita: nunca cancela seat_addon ou plan_renewal por este caminho
+  if (reasonNorm === 'seat_addon' || reasonNorm === 'plan_renewal') return;
+  await pool.query(
+    `UPDATE tenant_billing
+     SET status = 'cancelled', updated_at = now()
+     WHERE tenant_id = $1
+       AND plan_id = $2
+       AND COALESCE(billing_reason, 'plan_purchase') = $3
+       AND status = ANY($4::text[])`,
+    [
+      params.tenantId,
+      params.planId,
+      reasonNorm,
+      SAAS_PLAN_SIBLING_OPEN_STATUSES,
+    ]
+  );
+}
+
+/**
  * Cancela faturas seat_addon abertas, exceto a indicada (reuso de checkout).
  * Limpa `tenants.seat_addon_pending_billing_id` quando apontava para fatura cancelada.
  */

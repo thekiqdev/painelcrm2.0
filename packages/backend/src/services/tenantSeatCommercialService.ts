@@ -71,15 +71,30 @@ export async function previewSeatAddonPurchase(params: {
     );
   }
 
-  const trow = await pool.query<{ max_users_override: number | null }>(
-    `SELECT max_users_override FROM tenants WHERE id = $1`,
-    [tenantId]
-  );
+  const [trow, planRow] = await Promise.all([
+    pool.query<{ max_users_override: number | null }>(
+      `SELECT max_users_override FROM tenants WHERE id = $1`,
+      [tenantId]
+    ),
+    pool.query<{ max_users: number | null }>(
+      `SELECT max_users FROM plans WHERE id = $1`,
+      [planId]
+    ),
+  ]);
   const currentContracted = effectiveContractedSeats({
     max_users_override: trow.rows[0]?.max_users_override ?? null,
     subscription_users_count: sub.users_count ?? null,
   });
   const newTotal = currentContracted + additionalSeats;
+
+  // Valida limite do plano (max_users NULL = sem limite)
+  const planMaxUsers = planRow.rows[0]?.max_users ?? null;
+  if (planMaxUsers !== null && newTotal > planMaxUsers) {
+    throw new Error(
+      `Este plano suporta no máximo ${planMaxUsers} assentos. ` +
+        `Você possui ${currentContracted} e está tentando adicionar ${additionalSeats} (total: ${newTotal}).`
+    );
+  }
 
   const billingInterval = (sub.billing_interval ?? 'monthly') as BillingInterval;
   const breakdown = await calculateSeatAddonProrata(

@@ -107,7 +107,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     const isOnboardingPage = location.pathname === '/onboarding';
     /** Fase 1 checkout: onboarding de rota não é obrigatório; ativação leve fica no dashboard. */
     const needsLegacyOnboarding =
-      process.env.VITE_FORCE_LEGACY_ONBOARDING_ROUTE === 'true' &&
+      import.meta.env.VITE_FORCE_LEGACY_ONBOARDING_ROUTE === 'true' &&
       !superAdminPlatform &&
       user?.tenant_status === 'active' &&
       user?.onboarding_completed === false;

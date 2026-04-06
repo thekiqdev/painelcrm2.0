@@ -245,7 +245,12 @@ function chunkPlanBenefits<T>(items: T[], size: number): T[][] {
 
 type PersistedCheckout = CheckoutLocationState & {
   wizard_step?: number;
+  /** Timestamp de gravação (ms). Usado para invalidar contexto velho via TTL. */
+  _saved_at?: number;
 };
+
+/** Contexto de checkout no sessionStorage expira em 30 minutos para evitar quote/billingId obsoletos. */
+const CHECKOUT_STORAGE_TTL_MS = 30 * 60 * 1000;
 
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text).then(
@@ -319,9 +324,29 @@ function persistCheckout(ctx: PersistedCheckout | null) {
       sessionStorage.removeItem(CHECKOUT_STORAGE_KEY);
       return;
     }
-    sessionStorage.setItem(CHECKOUT_STORAGE_KEY, JSON.stringify(ctx));
+    sessionStorage.setItem(CHECKOUT_STORAGE_KEY, JSON.stringify({ ...ctx, _saved_at: Date.now() }));
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Lê o contexto persistido validando o TTL.
+ * Retorna null se ausente, corrompido ou mais antigo que CHECKOUT_STORAGE_TTL_MS.
+ * Garante que quotes de seat_addon e focusBillingId obsoletos nunca sejam reutilizados.
+ */
+function loadPersistedCheckout(): PersistedCheckout | null {
+  try {
+    const raw = sessionStorage.getItem(CHECKOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const ctx = JSON.parse(raw) as PersistedCheckout;
+    if (!ctx?._saved_at || Date.now() - ctx._saved_at > CHECKOUT_STORAGE_TTL_MS) {
+      sessionStorage.removeItem(CHECKOUT_STORAGE_KEY);
+      return null;
+    }
+    return ctx;
+  } catch {
+    return null;
   }
 }
 
@@ -471,6 +496,26 @@ export default function PlanCheckout() {
     setResumeContextError(null);
     persistCheckout(null);
   }, [isResumeMode]);
+
+  /**
+   * Guard de isolamento do modo seat_addon:
+   * 1. Exige autenticação — sem login, redireciona para /login.
+   * 2. Exige billing_id explícito na URL — sem ele, o fluxo não tem objeto de pagamento
+   *    e cairia silenciosamente no checkout de plano completo (comportamento errado).
+   *    Neste caso redireciona para /meu-plano onde o usuário pode iniciar o fluxo correto.
+   */
+  useEffect(() => {
+    if (!isSeatAddonMode) return;
+    if (authLoading) return;
+    if (!user?.id) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    if (!seatAddonBillingIdQuery?.trim() && !state?.focusBillingId?.trim()) {
+      toast.error('Acesse a contratação de assentos pela central Meu plano.');
+      navigate('/meu-plano', { replace: true });
+    }
+  }, [isSeatAddonMode, authLoading, user?.id, seatAddonBillingIdQuery, state?.focusBillingId, navigate]);
 
   useEffect(() => {
     if (!isResumeMode) return;

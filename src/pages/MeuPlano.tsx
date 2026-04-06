@@ -564,8 +564,22 @@ export default function MeuPlano() {
   };
 
   const runSeatAddonCheckout = async () => {
-    if (!myPlan || seatAddonExtra < 1 || !seatAddonPreview) return;
+    if (!myPlan || seatAddonExtra < 1) return;
     setSeatAddonLoading(true);
+
+    // Recalcula o preview imediatamente antes de criar a cobrança para garantir que o quote
+    // passado ao checkout reflita os dias proporcionais e o valor atuais, não o cache da tela.
+    const freshPreviewRes = await apiClient.post<SeatAddonPreviewResponse>(
+      '/api/me/tenant/seat-addon/preview',
+      { additional_seats: seatAddonExtra }
+    );
+    if (freshPreviewRes.error || !freshPreviewRes.data) {
+      setSeatAddonLoading(false);
+      toast.error(freshPreviewRes.error ?? 'Não foi possível calcular o valor atualizado.');
+      return;
+    }
+    const freshPreview = freshPreviewRes.data;
+
     const res = await apiClient.post<{ billing_id: string }>('/api/me/tenant/seat-addon/checkout', {
       additional_seats: seatAddonExtra,
     });
@@ -575,17 +589,17 @@ export default function MeuPlano() {
       return;
     }
     const quote: SeatAddonCheckoutQuote = {
-      current_contracted: seatAddonPreview.current_contracted,
-      new_total: seatAddonPreview.new_total,
-      additional_seats: seatAddonPreview.breakdown.additional_seats,
-      price_per_user_full_period_cents: seatAddonPreview.breakdown.price_per_user_full_period_cents,
-      remaining_period_days: seatAddonPreview.breakdown.remaining_period_days,
-      amount_cents_now: seatAddonPreview.breakdown.amount_cents,
+      current_contracted: freshPreview.current_contracted,
+      new_total: freshPreview.new_total,
+      additional_seats: freshPreview.breakdown.additional_seats,
+      price_per_user_full_period_cents: freshPreview.breakdown.price_per_user_full_period_cents,
+      remaining_period_days: freshPreview.breakdown.remaining_period_days,
+      amount_cents_now: freshPreview.breakdown.amount_cents,
       new_recurring_period_cents:
-        seatAddonPreview.new_total * seatAddonPreview.breakdown.price_per_user_full_period_cents,
-      period_start: seatAddonPreview.breakdown.period_start,
-      period_end: seatAddonPreview.breakdown.period_end,
-      billing_interval: seatAddonPreview.billing_interval,
+        freshPreview.new_total * freshPreview.breakdown.price_per_user_full_period_cents,
+      period_start: freshPreview.breakdown.period_start,
+      period_end: freshPreview.breakdown.period_end,
+      billing_interval: freshPreview.billing_interval,
     };
     setSeatAddonInlineExpanded(false);
     setSeatAddonPreview(null);
