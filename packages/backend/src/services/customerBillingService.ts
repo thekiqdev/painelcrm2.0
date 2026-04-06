@@ -18,8 +18,9 @@ import {
 } from './customerInvoiceService.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import { createSubscription } from './billingSubscriptionService.js';
-import { calculateNextBillingDate } from './subscriptionService.js';
+import { calculateNextBillingDate, activatePlanFromBilling } from './subscriptionService.js';
 import type { BillingInterval } from './billingSubscriptionService.js';
+import { isAbortLikeError } from '../modules/gateways/asaas/client/asaasClient.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
 import { getActiveConfig, getConfigForTest, type PaymentGatewayConfigRow } from './paymentGatewayConfigService.js';
@@ -51,6 +52,19 @@ import {
   getPayWithCardIdempotentResponse,
   savePayWithCardIdempotentResponse,
 } from './publicPayCardIdempotencyService.js';
+import { isValidCpfOrCnpj } from '../utils/cpfCnpj.js';
+import {
+  getInvoiceById as getTenantBillingById,
+  updateInvoiceGatewayData,
+  updateInvoiceStatus,
+} from './invoiceService.js';
+import {
+  hasTenantBillingPaymentAttemptsTable,
+  getActiveTenantBillingPaymentAttempt,
+  updateTenantBillingPaymentAttemptStatus,
+  type TenantBillingPaymentAttemptRow,
+  type TbAttemptStatus,
+} from './tenantBillingPaymentAttemptsService.js';
 
 export type { CustomerInvoiceRow };
 export { PreconditionFailedError };
@@ -184,6 +198,13 @@ export async function createManualInvoice(
   const preconditions = await validateInvoicePreconditions(tenantId, body.client_id);
   if (!preconditions.ok) {
     throw new PreconditionFailedError(preconditions.errors);
+  }
+  if (!preconditions.clientHasCpfCnpj) {
+    const invoice = await createManualCustomerInvoice({
+      ...baseInvoiceData,
+      client_id: body.client_id,
+    });
+    return { invoice };
   }
 
   const selectedGatewayKey = body.gateway_key?.trim() || null;
@@ -422,7 +443,7 @@ function normalizeCpfCnpjDigits(value: string | null | undefined): string | null
 export async function completePaymentByToken(
   token: string,
   body: {
-    name: string;
+    name?: string | null;
     email?: string | null;
     phone?: string | null;
     cpf_cnpj?: string | null;
@@ -432,9 +453,6 @@ export async function completePaymentByToken(
   const data = await getByPaymentToken(token);
   if (!data) {
     throw new Error('Fatura não encontrada ou link inválido');
-  }
-  if (data.client_id != null) {
-    throw new Error('Esta fatura já possui cliente vinculado');
   }
   if (data.invoice.status !== 'pending') {
     throw new Error('Só é possível completar fatura pendente');
@@ -454,38 +472,72 @@ export async function completePaymentByToken(
   );
   const resolvedPaymentMethod = resolveChargePaymentMethod(paymentMethod, normalizedAllowedPaymentMethods);
 
-  const userName = (body.name || '').trim();
-  if (!userName) {
-    throw new Error('Nome é obrigatório');
-  }
-
   const cpfCnpj = normalizeCpfCnpjDigits(body.cpf_cnpj);
   if (!cpfCnpj) {
     throw new Error('CPF/CNPJ é obrigatório');
   }
-
-  const userRow = await pool.query<{ id: string }>(
-    `SELECT id FROM users WHERE tenant_id = $1 LIMIT 1`,
-    [tenantId]
-  );
-  const userId = userRow.rows[0]?.id;
-  if (!userId) {
-    throw new Error('Tenant sem usuário para vincular cliente');
+  if (!isValidCpfOrCnpj(cpfCnpj)) {
+    throw new Error('CPF/CNPJ inválido');
   }
 
-  const companyTrim = (body.company || '').trim() || null;
-  const clientResult = await pool.query<{ id: string; name: string; email: string | null; phone: string | null; cpf_cnpj: string | null }>(
-    `INSERT INTO clients (user_id, name, email, phone, company, cpf_cnpj, source)
-     VALUES ($1, $2, $3, $4, $5, $6, 'payment_link')
-     RETURNING id, name, email, phone, cpf_cnpj`,
-    [userId, userName, (body.email || '').trim() || null, (body.phone || '').trim() || null, companyTrim, cpfCnpj]
-  );
-  const client = clientResult.rows[0];
-  if (!client) {
-    throw new Error('Erro ao criar cliente');
+  let client: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    cpf_cnpj: string | null;
+  } | null = null;
+  if (data.client_id) {
+    const existingClient = await pool.query<{
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      cpf_cnpj: string | null;
+    }>(
+      `SELECT c.id, c.name, c.email, c.phone, c.cpf_cnpj
+       FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
+       WHERE c.id = $1
+       LIMIT 1`,
+      [data.client_id, tenantId]
+    );
+    const row = existingClient.rows[0] ?? null;
+    if (!row) throw new Error('Cliente não encontrado');
+    await pool.query(
+      `UPDATE clients
+       SET cpf_cnpj = $1,
+           updated_at = now()
+       WHERE id = $2`,
+      [cpfCnpj, row.id]
+    );
+    client = { ...row, cpf_cnpj: cpfCnpj };
+  } else {
+    const userName = (body.name || '').trim();
+    if (!userName) {
+      throw new Error('Nome é obrigatório');
+    }
+    const userRow = await pool.query<{ id: string }>(
+      `SELECT id FROM users WHERE tenant_id = $1 LIMIT 1`,
+      [tenantId]
+    );
+    const userId = userRow.rows[0]?.id;
+    if (!userId) {
+      throw new Error('Tenant sem usuário para vincular cliente');
+    }
+    const companyTrim = (body.company || '').trim() || null;
+    const clientResult = await pool.query<{ id: string; name: string; email: string | null; phone: string | null; cpf_cnpj: string | null }>(
+      `INSERT INTO clients (user_id, name, email, phone, company, cpf_cnpj, source)
+       VALUES ($1, $2, $3, $4, $5, $6, 'payment_link')
+       RETURNING id, name, email, phone, cpf_cnpj`,
+      [userId, userName, (body.email || '').trim() || null, (body.phone || '').trim() || null, companyTrim, cpfCnpj]
+    );
+    client = clientResult.rows[0] ?? null;
+    if (!client) {
+      throw new Error('Erro ao criar cliente');
+    }
+    await updateCustomerInvoiceClientId(invoiceId, client.id);
   }
-
-  await updateCustomerInvoiceClientId(invoiceId, client.id);
 
   const config = await getActiveConfig('crm', tenantId);
   const gatewayKey = config?.gateway_key ?? 'asaas';
@@ -798,7 +850,7 @@ async function executePayWithCard(
   try {
     gwResult = await gateway.payWithCreditCard!(payInput);
   } catch (e: unknown) {
-    if (e instanceof Error && e.name === 'AbortError') {
+    if (isAbortLikeError(e)) {
       throw new PayWithCardError(
         'A operação demorou demais. Verifique o status da fatura em instantes.',
         504,
@@ -910,6 +962,285 @@ async function executePayWithCard(
   billingLog('invoice', 'public_pay_with_card_success', {
     invoice_id: data.invoice_id,
     attempt_id: attempt.id,
+    gateway_reference_id: gwResult.paymentId,
+  });
+
+  return responseBody;
+}
+
+const POLLABLE_TENANT_BILLING_STATUSES = new Set([
+  'pending',
+  'waiting_payment',
+  'processing',
+  'overdue',
+]);
+
+const tenantBillingPayCardInflight = new Map<string, Promise<Record<string, unknown>>>();
+
+/**
+ * Captura cartão na cobrança SaaS (tenant_billing), mesmo contrato de `executePayWithCard` das faturas CRM:
+ * `gateway.payWithCreditCard` no `gateway_reference_id` da tentativa ativa (ou da linha principal se não houver tabela de tentativas).
+ */
+export async function payTenantBillingWithCard(
+  billingId: string,
+  options: {
+    tenantId: string | null;
+    inlinePayToken: string | null;
+    body: PayWithCardRequestBody;
+  }
+): Promise<Record<string, unknown>> {
+  const idem = options.body.idempotency_key.trim();
+  if (!idem) {
+    throw new PayWithCardError('Chave de idempotência é obrigatória', 400, 'validation_error');
+  }
+
+  const cached = await getPayWithCardIdempotentResponse(billingId, idem);
+  if (cached && cached.ok === true) {
+    return cached;
+  }
+
+  const inflightKey = `tb:${billingId}:${idem}`;
+  const existing = tenantBillingPayCardInflight.get(inflightKey);
+  if (existing) {
+    return existing;
+  }
+
+  const run = (async () => {
+    try {
+      return await executeTenantBillingPayWithCard(billingId, options, idem);
+    } finally {
+      tenantBillingPayCardInflight.delete(inflightKey);
+    }
+  })();
+
+  tenantBillingPayCardInflight.set(inflightKey, run);
+  return run;
+}
+
+async function executeTenantBillingPayWithCard(
+  billingId: string,
+  options: { tenantId: string | null; inlinePayToken: string | null; body: PayWithCardRequestBody },
+  idempotencyKey: string
+): Promise<Record<string, unknown>> {
+  const billing = await getTenantBillingById(billingId);
+  if (!billing) {
+    throw new PayWithCardError('Cobrança não encontrada', 404, 'not_found');
+  }
+
+  if (options.tenantId) {
+    if (billing.tenant_id !== options.tenantId) {
+      throw new PayWithCardError('Acesso negado', 403, 'forbidden');
+    }
+  } else {
+    const meta = (billing.gateway_metadata as Record<string, unknown> | null) ?? {};
+    const expected = meta.checkout_inline_pay_token;
+    if (
+      typeof options.inlinePayToken !== 'string' ||
+      !options.inlinePayToken.trim() ||
+      options.inlinePayToken.trim() !== expected
+    ) {
+      throw new PayWithCardError('Token de pagamento inválido ou ausente', 403, 'forbidden');
+    }
+  }
+
+  if (billing.status === 'paid') {
+    throw new PayWithCardError('Esta cobrança já está paga', 409, 'conflict');
+  }
+  if (!POLLABLE_TENANT_BILLING_STATUSES.has(billing.status)) {
+    throw new PayWithCardError('Não é possível pagar esta cobrança agora', 409, 'conflict');
+  }
+
+  const billingMeta = (billing.gateway_metadata as Record<string, unknown> | null) ?? {};
+
+  let attempt: TenantBillingPaymentAttemptRow | null = null;
+  if (await hasTenantBillingPaymentAttemptsTable()) {
+    attempt = await getActiveTenantBillingPaymentAttempt(billingId);
+  }
+
+  const attemptMeta = (attempt?.gateway_metadata as Record<string, unknown> | null) ?? {};
+  const allowedRaw =
+    (Array.isArray(attemptMeta.allowed_payment_methods)
+      ? attemptMeta.allowed_payment_methods
+      : null) ??
+    (Array.isArray(billingMeta.allowed_payment_methods) ? billingMeta.allowed_payment_methods : null);
+  const allowedPaymentMethods =
+    normalizeAllowedPaymentMethods(Array.isArray(allowedRaw) ? (allowedRaw as string[]) : null) ??
+    ['PIX', 'BOLETO', 'CREDIT_CARD'];
+  if (!allowedPaymentMethods.includes('CREDIT_CARD')) {
+    throw new PayWithCardError('Pagamento com cartão não está disponível para esta cobrança', 409, 'conflict');
+  }
+
+  const cardAttemptOk =
+    attempt?.payment_method === 'CREDIT_CARD' && Boolean(attempt.gateway_reference_id?.trim());
+  const billingRowCardOk =
+    String(billing.payment_method ?? '')
+      .toUpperCase()
+      .trim() === 'CREDIT_CARD' && Boolean(billing.gateway_reference_id?.trim());
+
+  if (!cardAttemptOk && !billingRowCardOk) {
+    throw new PayWithCardError(
+      'Selecione Cartão e aguarde a preparação da cobrança antes de enviar os dados',
+      409,
+      'conflict'
+    );
+  }
+
+  const gatewayKey = (attempt?.gateway ?? billing.gateway ?? 'asaas').trim() || 'asaas';
+  const gateway = await getActiveGateway({ billingType: 'saas', tenantId: billing.tenant_id });
+  if (!gateway) {
+    throw new PayWithCardError('Gateway de pagamento não configurado', 502, 'gateway_error');
+  }
+
+  if (typeof gateway.payWithCreditCard !== 'function') {
+    billingLog('invoice', 'saas_pay_with_card_gateway_unsupported', {
+      billing_id: billingId,
+      gateway: gatewayKey,
+    });
+    throw new PayWithCardError(
+      'Pagamento com cartão inline não está disponível neste provedor.',
+      502,
+      'gateway_error'
+    );
+  }
+
+  const paymentId = (attempt?.gateway_reference_id ?? billing.gateway_reference_id)!.trim();
+  const body = options.body;
+
+  const payInput: PayWithCreditCardInput = {
+    paymentId,
+    creditCard: {
+      holderName: body.credit_card.holder_name.trim(),
+      number: body.credit_card.number,
+      expiryMonth: body.credit_card.expiry_month.trim(),
+      expiryYear: body.credit_card.expiry_year.trim(),
+      ccv: body.credit_card.cvv.trim(),
+    },
+    creditCardHolderInfo: {
+      name: body.cardholder.name.trim(),
+      email: body.cardholder.email.trim(),
+      cpfCnpj: body.cardholder.cpf_cnpj,
+      postalCode: body.cardholder.postal_code,
+      addressNumber: body.cardholder.address_number.trim(),
+      addressComplement: body.cardholder.address_complement ?? null,
+      phone: body.cardholder.phone,
+      mobilePhone: body.cardholder.mobile_phone ?? null,
+    },
+  };
+
+  let gwResult;
+  try {
+    gwResult = await gateway.payWithCreditCard!(payInput);
+  } catch (e: unknown) {
+    if (isAbortLikeError(e)) {
+      throw new PayWithCardError(
+        'A operação demorou demais. Verifique o status da cobrança em instantes.',
+        504,
+        'gateway_timeout'
+      );
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    const httpMatch = msg.match(/Asaas API (\d+):/);
+    const code = httpMatch ? parseInt(httpMatch[1], 10) : 502;
+    if (attempt) {
+      await updateTenantBillingPaymentAttemptStatus({
+        attemptId: attempt.id,
+        status: 'failed',
+        gatewayStatus: `error_${code}`,
+      });
+    }
+    if (code === 400 || code === 402) {
+      throw new PayWithCardError(
+        'Não foi possível processar o cartão. Verifique os dados ou use outro cartão.',
+        400,
+        'invalid_card'
+      );
+    }
+    if (code === 404) {
+      throw new PayWithCardError('Cobrança não encontrada no provedor. Atualize a página.', 422, 'unprocessable');
+    }
+    throw new PayWithCardError('Erro ao comunicar com o provedor de pagamento. Tente novamente.', 502, 'gateway_error');
+  }
+
+  const internalStatus = normalizeGatewayStatus(gatewayKey, gwResult.status);
+  const paidAtDate =
+    internalStatus === 'paid'
+      ? gwResult.paidAt
+        ? new Date(gwResult.paidAt)
+        : new Date()
+      : undefined;
+
+  let attemptRowStatus: TbAttemptStatus = 'waiting_payment';
+  if (internalStatus === 'paid') attemptRowStatus = 'paid';
+  else if (internalStatus === 'processing') attemptRowStatus = 'processing';
+  else if (internalStatus === 'pending') attemptRowStatus = 'pending';
+  else if (internalStatus === 'overdue') attemptRowStatus = 'overdue';
+
+  if (attempt) {
+    await updateTenantBillingPaymentAttemptStatus({
+      attemptId: attempt.id,
+      status: attemptRowStatus,
+      gatewayStatus: gwResult.status,
+      paidAt: internalStatus === 'paid' ? paidAtDate : undefined,
+    });
+  }
+
+  const prevMeta = (
+    attempt ? (attempt.gateway_metadata as Record<string, unknown> | null) : billingMeta
+  ) ?? {};
+  const mergedMeta: Record<string, unknown> = {
+    ...prevMeta,
+    card_capture_channel: 'inline_api',
+  };
+
+  await updateInvoiceGatewayData(billingId, {
+    gateway: gatewayKey,
+    payment_method: 'CREDIT_CARD',
+    gateway_reference_id: gwResult.paymentId,
+    gateway_status: gwResult.status,
+    idempotency_key: attempt?.idempotency_key ?? billing.idempotency_key,
+    gateway_metadata: mergedMeta,
+  });
+
+  await updateInvoiceStatus(
+    billingId,
+    internalStatus as 'pending' | 'paid' | 'overdue' | 'cancelled',
+    internalStatus === 'paid' ? paidAtDate ?? new Date() : undefined,
+    'CREDIT_CARD',
+    gwResult.status
+  );
+
+  if (internalStatus === 'paid') {
+    await activatePlanFromBilling(billingId);
+    if (attempt) {
+      const { supersedeOtherPendingTenantBillingAttemptsAfterPaid } = await import(
+        './billingGatewayChargeService.js'
+      );
+      await supersedeOtherPendingTenantBillingAttemptsAfterPaid(billingId, attempt.id, billing.tenant_id).catch(
+        (err) =>
+          console.error('[executeTenantBillingPayWithCard] supersedeOtherPendingTenantBillingAttemptsAfterPaid:', err)
+      );
+    }
+  }
+
+  const responseBody: Record<string, unknown> = {
+    ok: true,
+    billing_status: internalStatus,
+    attempt: attempt
+      ? {
+          id: attempt.id,
+          payment_method: 'CREDIT_CARD',
+          status: attemptRowStatus,
+          gateway_status: gwResult.status,
+          gateway_reference_id: gwResult.paymentId,
+        }
+      : null,
+  };
+
+  await savePayWithCardIdempotentResponse(billingId, idempotencyKey, responseBody);
+
+  billingLog('invoice', 'saas_pay_with_card_success', {
+    billing_id: billingId,
+    attempt_id: attempt?.id,
     gateway_reference_id: gwResult.paymentId,
   });
 

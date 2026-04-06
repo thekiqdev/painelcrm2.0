@@ -8,6 +8,9 @@ import { cn } from "@/lib/utils";
 import type { Client } from "@/services/clients";
 import { clientsService } from "@/services/clients";
 import { AddClientDialog } from "@/components/clients/AddClientDialog";
+import { CrmIdentityListRow } from "@/components/crm/CrmIdentityListRow";
+import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export interface ClientSearchComboboxProps {
   /** ID do cliente selecionado ou null/"limpar". */
@@ -161,6 +164,20 @@ export function ClientSearchCombobox({
            */
           <PopoverAnchor asChild>
             <div className="relative">
+              {selectedFromLocal && value && query.length === 0 ? (
+                (() => {
+                  const av = resolveProfileAvatarUrl(
+                    selectedFromLocal,
+                    selectedFromLocal.whatsapp_avatar_url ?? null
+                  );
+                  return (
+                    <Avatar className="pointer-events-none absolute left-2 top-1/2 h-7 w-7 -translate-y-1/2">
+                      {av.src ? <AvatarImage src={av.src} alt={selectedFromLocal.name} /> : null}
+                      <AvatarFallback className="text-[10px]">{av.initials}</AvatarFallback>
+                    </Avatar>
+                  );
+                })()
+              ) : null}
               <Input
                 ref={inputRef}
                 id={id}
@@ -181,7 +198,7 @@ export function ClientSearchCombobox({
                 onFocus={() => setOpen(true)}
                 placeholder={!value ? placeholderTrigger : undefined}
                 disabled={disabled}
-                className="pr-8"
+                className={cn("pr-8", selectedFromLocal && value && query.length === 0 && "pl-10")}
                 autoComplete="off"
               />
               <ChevronsUpDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50" />
@@ -196,14 +213,21 @@ export function ClientSearchCombobox({
               role="combobox"
               aria-expanded={open}
               disabled={disabled}
-              className="w-full justify-between font-normal"
+              className="h-auto min-h-10 w-full justify-start gap-2 py-2 font-normal"
             >
-              {triggerText ? (
+              {selectedFromLocal && value ? (
+                <CrmIdentityListRow
+                  entity={selectedFromLocal}
+                  whatsappAvatarUrl={selectedFromLocal.whatsapp_avatar_url}
+                  avatarClassName="h-7 w-7"
+                  className="min-w-0 flex-1"
+                />
+              ) : triggerText ? (
                 <span className="truncate text-left">{triggerText}</span>
               ) : (
                 <span className="text-muted-foreground">{placeholderTrigger}</span>
               )}
-              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              <ChevronsUpDown className="ml-auto h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
         )}
@@ -285,22 +309,19 @@ export function ClientSearchCombobox({
                       setQuery(searchInTrigger ? `${c.name}${c.company ? ` — ${c.company}` : ""}` : "");
                       setRemoteResults([]);
                     }}
-                    className="relative flex w-full cursor-pointer select-none items-start rounded-sm px-2 py-2 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                    className="relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
                   >
                     <Check
                       className={cn(
-                        "mr-2 mt-0.5 h-4 w-4 shrink-0",
+                        "h-4 w-4 shrink-0",
                         value === c.id ? "opacity-100" : "opacity-0"
                       )}
                     />
-                    <div className="flex min-w-0 flex-col">
-                      <span>{c.name}</span>
-                      {(c.company || c.email || c.phone) && (
-                        <span className="text-xs text-muted-foreground">
-                          {[c.company, c.email, c.phone].filter(Boolean).join(" • ")}
-                        </span>
-                      )}
-                    </div>
+                    <CrmIdentityListRow
+                      entity={c}
+                      whatsappAvatarUrl={c.whatsapp_avatar_url}
+                      className="min-w-0 flex-1"
+                    />
                   </button>
                 ))}
               </>

@@ -15,6 +15,7 @@ import { Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/integrations/api/client';
 import { useTenantDetail } from '@/contexts/TenantDetailContext';
+import { datetimeLocalToTrialEndsAtIso, trialEndsAtToDatetimeLocal } from '@/lib/trialEndsAtBrAdmin';
 
 interface Plan {
   id: string;
@@ -42,6 +43,7 @@ const statusLabels: Record<string, string> = {
   active: 'Ativo',
   suspended: 'Desativado',
   trial: 'Trial',
+  payment_pending: 'Aguardando pagamento',
 };
 
 export default function SuperAdminClientConfiguracoes() {
@@ -79,7 +81,7 @@ export default function SuperAdminClientConfiguracoes() {
       domain: tenant.domain || '',
       plan_id: tenant.plan_id,
       status: tenant.status,
-      trial_ends_at: tenant.trial_ends_at ? new Date(tenant.trial_ends_at).toISOString().slice(0, 16) : '',
+      trial_ends_at: trialEndsAtToDatetimeLocal(tenant.trial_ends_at),
       timezone: tenant.timezone ?? '',
       locale: tenant.locale ?? '',
       logo_url: tenant.logo_url ?? '',
@@ -121,7 +123,7 @@ export default function SuperAdminClientConfiguracoes() {
       domain: formTenant.domain || null,
       plan_id: formTenant.plan_id,
       status: formTenant.status,
-      trial_ends_at: formTenant.trial_ends_at ? new Date(formTenant.trial_ends_at).toISOString() : null,
+      trial_ends_at: datetimeLocalToTrialEndsAtIso(formTenant.trial_ends_at),
       timezone: formTenant.timezone || null,
       locale: formTenant.locale || null,
       logo_url: formTenant.logo_url || null,
@@ -323,6 +325,9 @@ export default function SuperAdminClientConfiguracoes() {
             </div>
             <div className="space-y-2">
               <Label>Trial até (opcional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Horário de Brasília (America/Sao_Paulo). Gravado em UTC no servidor.
+              </p>
               <Input
                 type="datetime-local"
                 value={formTenant.trial_ends_at}
@@ -348,6 +353,7 @@ export default function SuperAdminClientConfiguracoes() {
               <SelectItem value="active">Ativo</SelectItem>
               <SelectItem value="suspended">Desativado</SelectItem>
               <SelectItem value="trial">Trial</SelectItem>
+              <SelectItem value="payment_pending">Aguardando pagamento</SelectItem>
             </SelectContent>
           </Select>
           <Button variant="secondary" onClick={saveStatus} disabled={savingStatus}>

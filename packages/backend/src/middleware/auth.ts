@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { verifyToken } from '../utils/jwt.js';
 import { pool, dbRequestStorage } from '../utils/db.js';
 import { userHasFeature } from '../services/featureFlagService.js';
+import { isPhase2TrialCrmGateEnabled } from '../config/checkoutTrialFeatureFlags.js';
 import { getTenantIdForUser } from '../utils/tenant.js';
 import type { ModulePermissionsMap } from '../permissions/permissionTypes.js';
 
@@ -157,6 +158,24 @@ export function requireTenant(
 }
 
 /**
+ * Bloqueia o app CRM (clientes, leads, chat, etc.) quando não há tenant no contexto.
+ * Super admin de plataforma (sem tenant_id) deve usar apenas /api/superadmin.
+ * Não incluir em /api/auth/me, /api/profile, /api/onboarding (exceto onde o fluxo já exige tenant), /api/me/tenant.
+ */
+export function requireTenantForBusinessApp(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  const tid = req.tenantId;
+  if (tid != null && String(tid).length > 0) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: 'TENANT_REQUIRED_FOR_OPERATION' });
+}
+
+/**
  * Middleware que exige que o usuário seja Super Admin.
  * Deve ser usado após authenticateToken nas rotas /api/superadmin.
  */
@@ -248,6 +267,80 @@ export async function setRequestDb(
 }
 
 /**
+ * Bloqueia uso do CRM quando trial acabou sem pagamento ou conta suspensa por trial expirado.
+ * Rotas de cobrança/checkout ficam fora desta cadeia (plan-purchase, billing status, auth/me).
+ */
+export async function requireTenantCommercialAccess(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  if (!req.tenantId) {
+    next();
+    return;
+  }
+  if (req.user?.is_super_admin) {
+    next();
+    return;
+  }
+  if (!isPhase2TrialCrmGateEnabled()) {
+    next();
+    return;
+  }
+  try {
+    const row = await pool.query<{
+      status: string;
+      suspension_reason: string | null;
+      trial_ends_at: string | null;
+      activated_billing_id: string | null;
+    }>(
+      `SELECT status, suspension_reason, trial_ends_at, activated_billing_id
+       FROM tenants WHERE id = $1`,
+      [req.tenantId]
+    );
+    const t = row.rows[0];
+    if (!t) {
+      next();
+      return;
+    }
+
+    if (t.activated_billing_id || t.status === 'active') {
+      next();
+      return;
+    }
+
+    const trialEndedUnpaid =
+      t.status === 'trial' &&
+      t.trial_ends_at != null &&
+      new Date(t.trial_ends_at) < new Date() &&
+      t.activated_billing_id == null;
+
+    const trialEndedWhilePaymentPending =
+      t.status === 'payment_pending' &&
+      t.trial_ends_at != null &&
+      new Date(t.trial_ends_at) < new Date() &&
+      t.activated_billing_id == null;
+
+    if (
+      trialEndedUnpaid ||
+      trialEndedWhilePaymentPending ||
+      (t.status === 'suspended' && t.suspension_reason === 'trial_expired')
+    ) {
+      res.status(403).json({
+        error: 'Período de trial encerrado. Conclua o pagamento para continuar.',
+        code: 'TRIAL_EXPIRED',
+        requires_checkout_resume: true,
+      });
+      return;
+    }
+
+    next();
+  } catch {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
  * Middleware que bloqueia acesso se o período do plano do tenant estiver expirado (plan_period_end < now()).
  * Retorna 402 com code PLAN_EXPIRED para o front redirecionar para /renovar-plano.
  * Se o tenant não tiver plan_period_end (ex.: trial legado), permite.
@@ -286,8 +379,41 @@ export async function requireActivePlanPeriod(
   }
 }
 
+/**
+ * Hub comercial (Meu plano / retomada): auth + tenant + RLS, sem bloquear trial expirado.
+ * Usado em GET/PUT /api/me/tenant/plan para o primary conseguir ver o plano e ir ao checkout.
+ */
+export const tenantAuthCommercialHub = [
+  authenticateToken,
+  setCurrentTenant,
+  requireTenantForBusinessApp,
+  setRequestDb,
+];
+
+/**
+ * Contexto de sessão para /api/auth/me e /me/features: sem gate comercial nem exigência de período ativo.
+ * Trial expirado precisa receber 200 com requires_checkout_resume (o CRM continua bloqueado em outras rotas).
+ */
+export const authSessionContext = [authenticateToken, setCurrentTenant];
+
 /** Cadeia para rotas tenant-scoped: auth + tenant + período ativo + RLS (SET LOCAL). */
-export const tenantAuth = [authenticateToken, setCurrentTenant, requireActivePlanPeriod, setRequestDb];
+export const tenantAuth = [
+  authenticateToken,
+  setCurrentTenant,
+  requireTenantCommercialAccess,
+  requireActivePlanPeriod,
+  setRequestDb,
+];
+
+/** Como tenantAuth, mas exige tenant (bloqueia super admin sem conta CRM). */
+export const tenantAuthCrm = [
+  authenticateToken,
+  setCurrentTenant,
+  requireTenantForBusinessApp,
+  requireTenantCommercialAccess,
+  requireActivePlanPeriod,
+  setRequestDb,
+];
 
 /** Cadeia para rotas superadmin: auth + superadmin + RLS (bypass). */
 export const superadminAuth = [authenticateToken, requireSuperAdmin, setRequestDb];

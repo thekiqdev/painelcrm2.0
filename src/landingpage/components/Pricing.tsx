@@ -4,6 +4,11 @@ import { Check, ArrowRight, ChevronLeft, ChevronRight, Minus, Plus } from "lucid
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/integrations/api/client";
 import {
+  formatVitrinePriceLabel,
+  freeAccessDaysBadge,
+  getCheckoutListPriceCents,
+} from "@/lib/planCheckoutDisplay";
+import {
   Users,
   MessageCircle,
   Mail,
@@ -70,18 +75,10 @@ interface Plan {
   billing_interval: string;
   plan_type: "standard" | "custom";
   is_default: boolean;
+  is_free?: boolean;
+  free_access_days?: number | null;
   benefits?: PlanBenefit[];
   interval_prices?: IntervalPrice[];
-}
-
-function formatPrice(cents: number): string {
-  if (cents === 0) return "Grátis";
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
 }
 
 const Pricing = () => {
@@ -176,15 +173,16 @@ const Pricing = () => {
             const users = usersCount[plan.id] ?? 1;
             const interval = INTERVALS[idx];
             const prices = plan.interval_prices ?? [];
-            const priceRow = prices.find((p) => p.billing_interval === interval.key);
-            const priceCents = isCustom && priceRow
-              ? priceRow.price_per_user_cents * users
-              : plan.price_cents;
+            const vitrineCents = getCheckoutListPriceCents(plan, {
+              usersCount: users,
+              billingInterval: interval.key,
+            });
             const periodLabel = isCustom && interval
               ? interval.short
               : plan.billing_interval === "yearly"
                 ? "ano"
                 : "mês";
+            const trialBadge = freeAccessDaysBadge(plan.is_free, plan.free_access_days);
             const hasIntervalSelector = isCustom && prices.length > 1;
             const canPrev = hasIntervalSelector && idx > 0;
             const canNext = hasIntervalSelector && idx < INTERVALS.length - 1;
@@ -203,9 +201,15 @@ const Pricing = () => {
                     Mais popular
                   </div>
                 )}
-
                 <div className="mb-6">
-                  <h3 className="font-display text-xl font-bold text-foreground">{plan.name}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-display text-xl font-bold text-foreground">{plan.name}</h3>
+                    {trialBadge && (
+                      <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-[11px] font-medium text-primary">
+                        {trialBadge}
+                      </span>
+                    )}
+                  </div>
                   {plan.description && (
                     <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
                   )}
@@ -225,7 +229,7 @@ const Pricing = () => {
                     )}
                     <div className="flex items-baseline gap-1">
                       <span className="font-display text-4xl font-extrabold text-foreground">
-                        {formatPrice(priceCents)}
+                        {formatVitrinePriceLabel(vitrineCents)}
                       </span>
                       <span className="text-muted-foreground">/{periodLabel}</span>
                     </div>
@@ -306,6 +310,8 @@ const Pricing = () => {
                           interval_prices: plan.interval_prices,
                           description: plan.description,
                           benefits: plan.benefits,
+                          is_free: plan.is_free,
+                          free_access_days: plan.free_access_days,
                         },
                         billingInterval: INTERVALS[intervalIndex[plan.id] ?? 0]?.key ?? "monthly",
                         usersCount: usersCount[plan.id] ?? 1,

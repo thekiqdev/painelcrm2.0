@@ -14,6 +14,7 @@ import {
 import { ArrowLeft, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/integrations/api/client';
+import { datetimeLocalToTrialEndsAtIso, trialEndsAtToDatetimeLocal } from '@/lib/trialEndsAtBrAdmin';
 
 interface Plan {
   id: string;
@@ -92,7 +93,7 @@ export default function SuperAdminClientDetail() {
           domain: tRes.data.domain || '',
           plan_id: tRes.data.plan_id,
           status: tRes.data.status,
-          trial_ends_at: tRes.data.trial_ends_at ? new Date(tRes.data.trial_ends_at).toISOString().slice(0, 16) : '',
+          trial_ends_at: trialEndsAtToDatetimeLocal(tRes.data.trial_ends_at),
         });
       }
       if (pRes.data) setPlans(pRes.data);
@@ -124,7 +125,7 @@ export default function SuperAdminClientDetail() {
       domain: formTenant.domain || null,
       plan_id: formTenant.plan_id,
       status: formTenant.status,
-      trial_ends_at: formTenant.trial_ends_at ? new Date(formTenant.trial_ends_at).toISOString() : null,
+      trial_ends_at: datetimeLocalToTrialEndsAtIso(formTenant.trial_ends_at),
     });
     setSavingTenant(false);
     if (res.error) {
@@ -296,6 +297,9 @@ export default function SuperAdminClientDetail() {
             </div>
             <div className="space-y-2">
               <Label>Trial até (opcional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Horário de Brasília (America/Sao_Paulo). Gravado em UTC no servidor.
+              </p>
               <Input
                 type="datetime-local"
                 value={formTenant.trial_ends_at}
@@ -326,6 +330,7 @@ export default function SuperAdminClientDetail() {
               <SelectItem value="active">Ativo</SelectItem>
               <SelectItem value="suspended">Desativado</SelectItem>
               <SelectItem value="trial">Trial</SelectItem>
+              <SelectItem value="payment_pending">Aguardando pagamento</SelectItem>
             </SelectContent>
           </Select>
           <Button variant="secondary" onClick={saveStatus} disabled={savingStatus}>

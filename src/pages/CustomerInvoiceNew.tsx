@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +26,7 @@ import type { Client } from "@/services/clients";
 import { toast } from "sonner";
 import { ArrowLeft, X, ExternalLink, Plus, Trash2, AlertTriangle, Link2, Settings2, ChevronDown, ChevronUp } from "lucide-react";
 import { parseBrl, formatBrlDisplay, sanitizeNumericFieldInput } from "@/lib/brlCurrencyInput";
+import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
 
 function todayLocalYmd(): string {
   const d = new Date();
@@ -35,7 +36,11 @@ function todayLocalYmd(): string {
     String(d.getDate()).padStart(2, "0"),
   ].join("-");
 }
-import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
+
+/** Valor completo emitido pelo input type="date" (yyyy-mm-dd). */
+function isCompleteYmdString(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+}
 
 export type InvoiceLineDiscountKind = "fixed" | "percent";
 type InvoicePaymentMethod = "PIX" | "BOLETO" | "CREDIT_CARD";
@@ -103,8 +108,24 @@ function lineTotalCents(line: InvoiceLineRow): number {
   return Math.max(0, lineSubtotalCents(line) - lineDiscountCents(line));
 }
 
-const CustomerInvoiceNew = () => {
+type CustomerInvoiceNewProps = {
+  embedded?: boolean;
+  initialClientId?: string | null;
+  onBack?: () => void;
+  onCreated?: (invoiceId: string) => void;
+};
+
+const CustomerInvoiceNew = ({
+  embedded = false,
+  initialClientId = null,
+  onBack,
+  onCreated,
+}: CustomerInvoiceNewProps = {}) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const queryClientId = searchParams.get("client_id");
+  const prefillClientId = (initialClientId ?? queryClientId ?? "").trim();
+  const forcedEmbeddedClientId = embedded ? prefillClientId : "";
   const [step, setStep] = useState<"client" | "form">("client");
   const [form, setForm] = useState<CreateCustomerInvoiceBody & { amount?: string }>({
     client_id: "",
@@ -243,6 +264,24 @@ const CustomerInvoiceNew = () => {
   }, [step]);
 
   useEffect(() => {
+    if (embedded && !prefillClientId) {
+      toast.error("Cliente não identificado para criar fatura no chat");
+      onBack?.();
+      return;
+    }
+  }, [embedded, prefillClientId, onBack]);
+
+  useEffect(() => {
+    if (!prefillClientId) return;
+    setInvoiceByLink(false);
+    setForm((f) => {
+      if (f.client_id === prefillClientId) return f;
+      return { ...f, client_id: prefillClientId };
+    });
+    setStep("form");
+  }, [prefillClientId]);
+
+  useEffect(() => {
     setChargeQuery("");
   }, [form.client_id]);
 
@@ -311,6 +350,8 @@ const CustomerInvoiceNew = () => {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const isInvoiceByLink = embedded ? false : invoiceByLink;
+    const resolvedClientId = (forcedEmbeddedClientId || form.client_id || "").trim();
     if (!form.due_date) {
       toast.error("Preencha a data de vencimento");
       return;
@@ -320,7 +361,7 @@ const CustomerInvoiceNew = () => {
       toast.error("A data de vencimento não pode ser anterior a hoje");
       return;
     }
-    if (!invoiceByLink && !form.client_id) {
+    if (!isInvoiceByLink && !resolvedClientId) {
       toast.error("Preencha o cliente ou marque “Fatura por link”");
       return;
     }
@@ -346,9 +387,9 @@ const CustomerInvoiceNew = () => {
                 : null),
         allowed_payment_methods: allowedPaymentMethods.length > 0 ? allowedPaymentMethods : null,
       };
-      if (!invoiceByLink && form.client_id) body.client_id = form.client_id;
-      else if (invoiceByLink) body.client_id = null;
-      if (!invoiceByLink && form.gateway_key) body.gateway_key = form.gateway_key;
+      if (!isInvoiceByLink && resolvedClientId) body.client_id = resolvedClientId;
+      else if (isInvoiceByLink) body.client_id = null;
+      if (!isInvoiceByLink && form.gateway_key) body.gateway_key = form.gateway_key;
       if (useItems) {
         body.items = validLines.map((l) => ({
           description: l.description.trim() || "Item",
@@ -363,7 +404,7 @@ const CustomerInvoiceNew = () => {
       } else {
         body.amount_cents = amountCents;
       }
-      if (recurring && !invoiceByLink) {
+      if (recurring && !isInvoiceByLink) {
         body.recurring = true;
         body.billing_interval = billingInterval;
       }
@@ -372,14 +413,22 @@ const CustomerInvoiceNew = () => {
       toast.success(
         result.subscription_id
           ? "Fatura e assinatura criadas. As próximas faturas serão geradas automaticamente."
-          : invoiceByLink
+          : isInvoiceByLink
             ? "Fatura por link criada. Compartilhe o link de pagamento para o cliente preencher os dados e pagar."
             : "Fatura criada com sucesso"
       );
       if (result.invoice?.id) {
-        navigate(`/customer-invoices/${result.invoice.id}`, { state: { fromNewInvoice: true } });
+        if (embedded) {
+          onCreated?.(result.invoice.id);
+        } else {
+          navigate(`/customer-invoices/${result.invoice.id}`, { state: { fromNewInvoice: true } });
+        }
       } else {
-        navigate("/customer-invoices");
+        if (embedded) {
+          onBack?.();
+        } else {
+          navigate("/customer-invoices");
+        }
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao criar fatura");
@@ -396,12 +445,14 @@ const CustomerInvoiceNew = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h1 className="text-2xl font-bold">Nova fatura</h1>
-      </div>
+      {!embedded && (
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-2xl font-bold">Nova fatura</h1>
+        </div>
+      )}
 
       {crmGatewayActive === false && (
         <Alert className="border-orange-500/60 bg-orange-50 text-orange-950 dark:bg-orange-950/30 dark:text-orange-100 dark:border-orange-500/50">
@@ -428,7 +479,8 @@ const CustomerInvoiceNew = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="rounded-xl border-2 border-primary/45 bg-primary/5 dark:bg-primary/10 p-4 space-y-2 shadow-sm">
+            {!embedded && (
+              <div className="rounded-xl border-2 border-primary/45 bg-primary/5 dark:bg-primary/10 p-4 space-y-2 shadow-sm">
               <div className="flex items-center gap-2 text-sm font-semibold text-primary">
                 <Link2 className="h-4 w-4 shrink-0" aria-hidden />
                 Fatura por link
@@ -449,7 +501,8 @@ const CustomerInvoiceNew = () => {
                   Usar fatura por link (sem selecionar cliente aqui)
                 </Label>
               </div>
-            </div>
+              </div>
+            )}
             {!invoiceByLink && (
               <ClientSearchCombobox
                 id="invoice_client_id"
@@ -479,7 +532,14 @@ const CustomerInvoiceNew = () => {
 
             {invoiceByLink && (
               <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => navigate("/customer-invoices")}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    if (embedded) onBack?.();
+                    else navigate("/customer-invoices");
+                  }}
+                >
                   Cancelar
                 </Button>
                 <Button type="button" onClick={() => setStep("form")}>
@@ -547,7 +607,14 @@ const CustomerInvoiceNew = () => {
                 )}
 
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => navigate("/customer-invoices")}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (embedded) onBack?.();
+                      else navigate("/customer-invoices");
+                    }}
+                  >
                     Cancelar
                   </Button>
                   <Button
@@ -918,20 +985,22 @@ const CustomerInvoiceNew = () => {
                     min={todayLocalYmd()}
                     value={form.due_date}
                     onChange={(e) => {
-                      const v = e.target.value;
+                      setForm((f) => ({ ...f, due_date: e.target.value }));
+                    }}
+                    onBlur={(e) => {
+                      const v = e.currentTarget.value.trim();
                       const t = todayLocalYmd();
-                      if (v && v < t) {
+                      if (!v) {
+                        setForm((f) => ({ ...f, due_date: t }));
+                        return;
+                      }
+                      if (isCompleteYmdString(v) && v < t) {
                         toast.error("A data de vencimento não pode ser anterior a hoje");
                         setForm((f) => ({ ...f, due_date: t }));
                         return;
                       }
                       setForm((f) => ({ ...f, due_date: v }));
                     }}
-                    onBlur={() =>
-                      setForm((f) =>
-                        !f.due_date?.trim() ? { ...f, due_date: todayLocalYmd() } : f
-                      )
-                    }
                     className="mt-1"
                   />
                 </div>

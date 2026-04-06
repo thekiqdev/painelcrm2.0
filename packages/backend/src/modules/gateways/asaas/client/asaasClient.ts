@@ -1,6 +1,7 @@
 /**
  * Cliente HTTP para a API Asaas v3.
- * Timeout 10s, retry 2x em timeout/5xx.
+ * Timeout configurável (padrão 30s — sandbox costuma ser mais lento que 10s).
+ * Retry 2x em timeout/5xx: cada tentativa usa novo AbortController (evita reusar signal já abortado).
  */
 import type {
   AsaasConfig,
@@ -12,7 +13,29 @@ import type {
   AsaasPixQrCodeResponse,
 } from '../asaasTypes.js';
 
-const HTTP_TIMEOUT_MS = 10_000;
+/** Sandbox e sequência de chamadas (ex.: createPayment + getPixQrCode) precisam de folga; timeouts muito baixos geram AbortError. */
+const MIN_HTTP_TIMEOUT_MS = 20_000;
+const DEFAULT_HTTP_TIMEOUT_MS = 40_000;
+
+function defaultHttpTimeoutMs(): number {
+  const raw = process.env.ASAAS_HTTP_TIMEOUT_MS;
+  if (raw != null && raw.trim() !== '') {
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 5_000 && n <= 120_000) {
+      return Math.max(n, MIN_HTTP_TIMEOUT_MS);
+    }
+  }
+  return DEFAULT_HTTP_TIMEOUT_MS;
+}
+
+/** Timeout/abort do fetch (Node DOMException nem sempre passa em instanceof Error). */
+export function isAbortLikeError(e: unknown): boolean {
+  if (e == null || typeof e !== 'object') return false;
+  const name = 'name' in e ? String((e as { name?: string }).name) : '';
+  return name === 'AbortError';
+}
+
+const HTTP_TIMEOUT_MS = defaultHttpTimeoutMs();
 /** Cartão: documentação Asaas recomenda timeout ≥ 60s para evitar duplicidade. */
 const PAY_WITH_CARD_TIMEOUT_MS = 65_000;
 const HTTP_RETRY_ATTEMPTS = 2;
@@ -58,10 +81,10 @@ async function request<T>(
   const url = `${baseUrl}${path}`;
   const timeoutMs = options?.timeoutMs ?? HTTP_TIMEOUT_MS;
   const maxRetries = options?.maxRetries ?? HTTP_RETRY_ATTEMPTS;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(url, {
         method,
@@ -85,7 +108,7 @@ async function request<T>(
       return JSON.parse(text) as T;
     } catch (e: unknown) {
       clearTimeout(timeoutId);
-      const isAbort = e instanceof Error && e.name === 'AbortError';
+      const isAbort = isAbortLikeError(e);
       const isRetryableErr = isAbort || (e instanceof Error && e.message.includes('5'));
       if (attempt < maxRetries && isRetryableErr) {
         lastError = e instanceof Error ? e : new Error(String(e));
@@ -111,6 +134,7 @@ export async function getCustomer(
   try {
     return await request<AsaasCustomerResponse>('GET', `/customers/${customerId}`, undefined, config);
   } catch (e: unknown) {
+    if (isAbortLikeError(e)) return null;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('404')) return null;
     throw e;
@@ -144,6 +168,7 @@ export async function getPayment(
   try {
     return await request<AsaasPaymentResponse>('GET', `/payments/${paymentId}`, undefined, config);
   } catch (e: unknown) {
+    if (isAbortLikeError(e)) return null;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('404')) return null;
     throw e;
@@ -171,6 +196,16 @@ export async function deletePayment(
  * Obtém QR Code PIX para um pagamento (obrigatório para PIX: POST /payments não retorna QR).
  * GET /v3/payments/{id}/pixQrCode
  */
+/**
+ * QR Code PIX pode não existir no instante seguinte ao POST /payments (pixQrCodeId null).
+ * Nesse caso o Asaas costuma responder 400 com code invalid_action até o QR estar pronto.
+ */
+function isPixQrNotYetAvailableError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (!msg.includes('400')) return false;
+  return msg.includes('invalid_action') || msg.includes('not_yet_available');
+}
+
 export async function getPixQrCode(
   paymentId: string,
   config?: AsaasConfig | null
@@ -180,6 +215,7 @@ export async function getPixQrCode(
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('404')) return null;
+    if (isPixQrNotYetAvailableError(e)) return null;
     throw e;
   }
 }

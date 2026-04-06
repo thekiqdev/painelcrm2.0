@@ -2,10 +2,10 @@ import { Router } from 'express';
 import * as contractsController from '../controllers/contractsController.js';
 import * as contractSignersController from '../controllers/contractSignersController.js';
 import * as contractEventsController from '../controllers/contractEventsController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 // Contract routes
 router.get('/', contractsController.getContracts);

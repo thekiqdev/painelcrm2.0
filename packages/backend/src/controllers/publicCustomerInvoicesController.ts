@@ -29,7 +29,7 @@ import {
 } from '../services/customerInvoicePaymentAttemptsService.js';
 
 const completeBodySchema = z.object({
-  name: z.string().min(1, 'Nome é obrigatório'),
+  name: z.string().min(1, 'Nome é obrigatório').optional().nullable(),
   email: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
   cpf_cnpj: z.string().min(11, 'CPF/CNPJ é obrigatório').max(18, 'CPF/CNPJ inválido'),
@@ -222,7 +222,40 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
       ? activeMetadata.allowed_payment_methods
           .filter((m): m is 'PIX' | 'BOLETO' | 'CREDIT_CARD' => m === 'PIX' || m === 'BOLETO' || m === 'CREDIT_CARD')
       : null;
-    const needs_customer = !client_name && invoice.status === 'pending';
+    let clientProfile: {
+      name: string | null;
+      email: string | null;
+      phone: string | null;
+      company: string | null;
+      cpf_cnpj: string | null;
+    } | null = null;
+    if (freshData.client_id) {
+      const clientRow = await pool.query<{
+        name: string | null;
+        email: string | null;
+        phone: string | null;
+        company: string | null;
+        cpf_cnpj: string | null;
+      }>(
+        `SELECT c.name, c.email, c.phone, c.company, c.cpf_cnpj
+         FROM clients c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
+         WHERE c.id = $1
+         LIMIT 1`,
+        [freshData.client_id, freshData.tenant_id]
+      );
+      clientProfile = clientRow.rows[0] ?? null;
+    }
+    const missingLinkedClientCpf =
+      !!freshData.client_id &&
+      !!clientProfile &&
+      (!clientProfile.cpf_cnpj || String(clientProfile.cpf_cnpj).trim() === '');
+    const needs_customer = invoice.status === 'pending' && (!client_name || missingLinkedClientCpf);
+    const needs_customer_reason = !needs_customer
+      ? null
+      : !client_name
+        ? 'missing_client'
+        : 'missing_cpf_cnpj';
     const payloadMeta = buildPublicPayPayloadMeta(payment_urls);
 
     const switchMethodEnabled = isPublicPaySwitchMethodEnabledForTenant(freshData.tenant_id);
@@ -274,6 +307,15 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
       client_name,
       tenant_branding: freshData.tenant_branding,
       needs_customer,
+      needs_customer_reason,
+      client_summary: clientProfile
+        ? {
+            name: clientProfile.name,
+            email: clientProfile.email,
+            phone: clientProfile.phone,
+            company: clientProfile.company,
+          }
+        : null,
       ...payloadMeta,
     });
   } catch (error) {
@@ -410,7 +452,13 @@ export async function postCompletePayByToken(req: Request, res: Response): Promi
       res.status(404).json({ error: msg });
       return;
     }
-    if (msg.includes('já possui') || msg.includes('pendente')) {
+    if (
+      msg.includes('já possui') ||
+      msg.includes('pendente') ||
+      msg.includes('CPF/CNPJ é obrigatório') ||
+      msg.includes('CPF/CNPJ inválido') ||
+      msg.includes('Nome é obrigatório')
+    ) {
       res.status(400).json({ error: msg });
       return;
     }

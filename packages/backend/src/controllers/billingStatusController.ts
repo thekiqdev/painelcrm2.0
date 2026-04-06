@@ -1,15 +1,30 @@
 /**
- * GET /api/billing/:billingId/status — consulta status da cobrança (para polling após PIX).
- * Se status no banco for "paid", retorna { status: "paid" }.
- * Se status for "pending", consulta a API do Asaas pelo payment_id; se RECEIVED/CONFIRMED,
- * atualiza a cobrança para paid, chama ativação do plano (idempotente) e retorna { status: "paid" }.
- * Assim o fluxo funciona mesmo quando o webhook não está disponível (ex.: ambiente local).
+ * GET /api/billing/:billingId/status — consulta status da cobrança (polling no checkout do plano).
+ * - Com `tenant_billing_payment_attempts`: consulta o gateway em TODAS as tentativas abertas (PIX pago com cartão
+ *   selecionado na UI continua sendo detectado).
+ * - Ao detectar RECEIVED/CONFIRMED: consolida como nas faturas CRM (`runPostPaidCleanupForTenantBilling`: linha
+ *   agregada + ativação + supersede das outras tentativas no gateway e no banco).
  */
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
-import { updateInvoiceStatus } from '../services/invoiceService.js';
-import { activatePlanFromBilling } from '../services/subscriptionService.js';
+import { runPostPaidCleanupForTenantBilling } from '../services/billingGatewayChargeService.js';
+import {
+  hasTenantBillingPaymentAttemptsTable,
+  listTenantBillingAttemptsOpenForGatewaySync,
+} from '../services/tenantBillingPaymentAttemptsService.js';
+
+const STATUSES_SYNC_PAYMENT_FROM_GATEWAY = new Set([
+  'pending',
+  'waiting_payment',
+  'processing',
+  'overdue',
+]);
+
+function isGatewayPaidStatus(raw: string): boolean {
+  const u = raw.toUpperCase();
+  return u === 'RECEIVED' || u === 'CONFIRMED';
+}
 
 export async function getBillingStatus(req: Request, res: Response): Promise<void> {
   const billingId = req.params.billingId;
@@ -25,9 +40,10 @@ export async function getBillingStatus(req: Request, res: Response): Promise<voi
       tenant_id: string;
       gateway_reference_id: string | null;
       gateway: string | null;
+      payment_method: string | null;
       tenant_status: string | null;
     }>(
-      `SELECT b.id, b.status, b.tenant_id, b.gateway_reference_id, b.gateway, t.status AS tenant_status
+      `SELECT b.id, b.status, b.tenant_id, b.gateway_reference_id, b.gateway, b.payment_method, t.status AS tenant_status
        FROM tenant_billing b
        LEFT JOIN tenants t ON t.id = b.tenant_id
        WHERE b.id = $1`,
@@ -49,14 +65,49 @@ export async function getBillingStatus(req: Request, res: Response): Promise<voi
       return;
     }
 
-    if (row.status === 'pending' && row.gateway_reference_id && row.gateway) {
-      const gateway = await getActiveGateway({ billingType: 'saas', tenantId: row.tenant_id });
-      if (gateway?.getPayment) {
-        const payment = await gateway.getPayment(row.gateway_reference_id);
-        const gatewayStatus = payment?.status?.toUpperCase?.() ?? '';
-        if (gatewayStatus === 'RECEIVED' || gatewayStatus === 'CONFIRMED') {
-          await updateInvoiceStatus(billingId, 'paid', new Date(), 'PIX', payment?.status ?? null);
-          await activatePlanFromBilling(billingId);
+    if (!STATUSES_SYNC_PAYMENT_FROM_GATEWAY.has(row.status) || !row.gateway) {
+      res.json({
+        billing_id: row.id,
+        status: row.status,
+        tenant_status: row.tenant_status ?? null,
+      });
+      return;
+    }
+
+    const gateway = await getActiveGateway({ billingType: 'saas', tenantId: row.tenant_id });
+    if (!gateway?.getPayment) {
+      res.json({
+        billing_id: row.id,
+        status: row.status,
+        tenant_status: row.tenant_status ?? null,
+      });
+      return;
+    }
+
+    const tryRef = async (ref: string, paidAttemptId: string | null): Promise<boolean> => {
+      const payment = await gateway.getPayment!(ref);
+      const gatewayStatus = payment?.status?.toUpperCase?.() ?? '';
+      if (!isGatewayPaidStatus(gatewayStatus)) return false;
+      await runPostPaidCleanupForTenantBilling({
+        billingId,
+        tenantId: row.tenant_id,
+        paidAttemptId,
+        paidGatewayReferenceId: ref,
+        gatewayStatusRaw: payment?.status ?? null,
+        paidAt: new Date(),
+        paymentMethodFallback: row.payment_method,
+      });
+      return true;
+    };
+
+    if (await hasTenantBillingPaymentAttemptsTable()) {
+      const attempts = await listTenantBillingAttemptsOpenForGatewaySync(billingId);
+      const seenRefs = new Set<string>();
+      for (const att of attempts) {
+        const ref = att.gateway_reference_id?.trim();
+        if (!ref || seenRefs.has(ref)) continue;
+        seenRefs.add(ref);
+        if (await tryRef(ref, att.id)) {
           const updated = await pool.query<{ tenant_status: string | null }>(
             `SELECT t.status AS tenant_status FROM tenant_billing b LEFT JOIN tenants t ON t.id = b.tenant_id WHERE b.id = $1`,
             [billingId]
@@ -68,6 +119,36 @@ export async function getBillingStatus(req: Request, res: Response): Promise<voi
           });
           return;
         }
+      }
+
+      const mainRef = row.gateway_reference_id?.trim();
+      if (mainRef && !seenRefs.has(mainRef)) {
+        if (await tryRef(mainRef, null)) {
+          const updated = await pool.query<{ tenant_status: string | null }>(
+            `SELECT t.status AS tenant_status FROM tenant_billing b LEFT JOIN tenants t ON t.id = b.tenant_id WHERE b.id = $1`,
+            [billingId]
+          );
+          res.json({
+            billing_id: row.id,
+            status: 'paid',
+            tenant_status: updated.rows[0]?.tenant_status ?? 'active',
+          });
+          return;
+        }
+      }
+    } else {
+      const mainRef = row.gateway_reference_id?.trim();
+      if (mainRef && (await tryRef(mainRef, null))) {
+        const updated = await pool.query<{ tenant_status: string | null }>(
+          `SELECT t.status AS tenant_status FROM tenant_billing b LEFT JOIN tenants t ON t.id = b.tenant_id WHERE b.id = $1`,
+          [billingId]
+        );
+        res.json({
+          billing_id: row.id,
+          status: 'paid',
+          tenant_status: updated.rows[0]?.tenant_status ?? 'active',
+        });
+        return;
       }
     }
 

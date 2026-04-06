@@ -27,8 +27,8 @@ export interface ValidateInvoicePreconditionsResult {
 
 /**
  * Valida se o tenant pode emitir fatura manual para o cliente:
- * - Cliente deve possuir CPF/CNPJ cadastrado.
  * - Provedor de pagamentos (CRM) deve estar **ativo** (`getActiveConfig`), não exigindo teste de conexão explícito (A1).
+ * - CPF/CNPJ do cliente é informado como contexto (`clientHasCpfCnpj`) para a jornada pública quando ausente.
  * O cliente deve pertencer ao tenant (chamador deve garantir, ex.: clientBelongsToTenant).
  */
 export async function validateInvoicePreconditions(
@@ -50,10 +50,6 @@ export async function validateInvoicePreconditions(
     client.cpf_cnpj != null &&
     String(client.cpf_cnpj).trim() !== ''
   );
-  if (!clientHasCpfCnpj) {
-    errors.push('Cliente deve possuir CPF ou CNPJ cadastrado.');
-  }
-
   const config = await getActiveConfig('crm', tenantId);
   const gatewayConfigured = config != null;
   if (!gatewayConfigured) {
@@ -61,7 +57,7 @@ export async function validateInvoicePreconditions(
   }
 
   return {
-    ok: clientHasCpfCnpj && gatewayConfigured,
+    ok: gatewayConfigured,
     clientHasCpfCnpj,
     gatewayConfigured,
     errors,

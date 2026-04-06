@@ -18,20 +18,17 @@ import { Logo } from "@/components/Logo";
 const Navbar = () => {
   const [open, setOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState<"login" | "register">("login");
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
-  const openAuthModal = (tab: "login" | "register" = "login") => {
-    setAuthModalTab(tab);
+  const openAuthModal = () => {
     setAuthModalOpen(true);
     setOpen(false);
   };
 
-  const openRegisterModal = () => {
-    setAuthModalTab("register");
-    setAuthModalOpen(true);
+  const goToCheckout = () => {
     setOpen(false);
+    navigate("/checkout");
   };
 
   const displayName =
@@ -115,10 +112,10 @@ const Navbar = () => {
               </>
             ) : (
               <>
-                <Button variant="ghost" size="sm" onClick={() => openAuthModal("login")}>
+                <Button variant="ghost" size="sm" onClick={openAuthModal}>
                   Acessar
                 </Button>
-                <Button size="sm" onClick={openRegisterModal}>
+                <Button size="sm" onClick={goToCheckout}>
                   Começar grátis
                 </Button>
               </>
@@ -173,10 +170,10 @@ const Navbar = () => {
                 </div>
               ) : (
                 <div className="flex gap-3 pt-2">
-                  <Button variant="ghost" size="sm" className="flex-1" onClick={() => openAuthModal("login")}>
+                  <Button variant="ghost" size="sm" className="flex-1" onClick={openAuthModal}>
                     Acessar
                   </Button>
-                  <Button size="sm" className="flex-1" onClick={openRegisterModal}>
+                  <Button size="sm" className="flex-1" onClick={goToCheckout}>
                     Começar grátis
                   </Button>
                 </div>
@@ -186,11 +183,7 @@ const Navbar = () => {
         )}
       </nav>
 
-      <AuthModal
-        open={authModalOpen}
-        onOpenChange={setAuthModalOpen}
-        defaultTab={authModalTab}
-      />
+      <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
     </>
   );
 };

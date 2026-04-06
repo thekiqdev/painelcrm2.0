@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import * as funnelStagesController from '../controllers/funnelStagesController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 router.post('/:funnelId/stages', funnelStagesController.createStage);
 router.patch('/stages/:id', funnelStagesController.updateStage);

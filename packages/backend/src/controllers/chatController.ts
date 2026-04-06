@@ -6,6 +6,16 @@ import { uazapiService } from '../services/uazapi.js';
 import { randomUUID } from 'crypto';
 import * as notificationService from '../services/notifications.js';
 import { emitConversationUpdate, emitNewMessage } from '../services/websocketService.js';
+import {
+  resolveConversationMatch,
+  normalizeConversationPhone,
+  type ConversationMatchResult,
+} from '../services/conversationMatchingService.js';
+import { createClientTimelineEvent } from '../services/clientTimelineEventsService.js';
+import {
+  extractUazapiChatDisplayName,
+  extractUazapiChatImageUrl,
+} from '../utils/uazapiChatIdentity.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -50,6 +60,11 @@ const sendMessageSchema = z.object({
   delay: z.number().optional(),
 });
 
+const linkConversationSchema = z.object({
+  type: z.enum(['client', 'lead']),
+  id: z.string().uuid(),
+});
+
 type ChatInstanceRow = {
   id: string;
   user_id: string;
@@ -64,10 +79,12 @@ type ChatInstanceRow = {
 
 type AnyObject = Record<string, any>;
 
-function ensureAdminToken() {
-  if (!process.env.UAZAPI_ADMIN_TOKEN) {
-    throw new Error('UAZAPI_ADMIN_TOKEN is not configured on the server');
-  }
+/**
+ * Verifica se o token administrativo da UazAPI está configurado no servidor.
+ * Esse valor vem de UAZAPI_ADMIN_TOKEN (env) — não tem relação com JWT do usuário do painel.
+ */
+function isUazapiAdminConfigured(): boolean {
+  return Boolean(process.env.UAZAPI_ADMIN_TOKEN?.trim());
 }
 
 /**
@@ -77,13 +94,39 @@ function ensureAdminToken() {
  * @returns Número normalizado (apenas dígitos) ou null se inválido
  */
 function normalizePhoneNumber(phone: string | null | undefined): string | null {
-  if (!phone || typeof phone !== 'string') {
-    return null;
+  return normalizeConversationPhone(phone);
+}
+
+let hasLeadIdColumnPromise: Promise<boolean> | null = null;
+async function hasLeadIdColumn(): Promise<boolean> {
+  if (!hasLeadIdColumnPromise) {
+    hasLeadIdColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'chat_conversations'
+           AND column_name = 'lead_id'`
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
   }
-  // Remove todos os caracteres não numéricos
-  const normalized = phone.replace(/\D/g, '');
-  // Retorna null se ficar vazio ou muito curto (menos de 10 dígitos)
-  return normalized.length >= 10 ? normalized : null;
+  return hasLeadIdColumnPromise;
+}
+
+type LinkSource = 'auto' | 'manual' | 'system';
+type LinkConfidence = 'high' | 'review' | 'manual';
+
+function buildMatchMetadata(match: ConversationMatchResult): Record<string, unknown> {
+  return {
+    phone_normalized: match.normalizedPhone,
+    match_sugerido: {
+      type: match.suggestedType,
+      id: match.suggestedId,
+      confidence: match.confidence,
+      candidates: match.candidates,
+    },
+  };
 }
 
 /**
@@ -156,8 +199,12 @@ function normalizeChatPayload(raw: any) {
   }
 
   const fastId = raw.wa_fastid || raw.fastId || raw.fast_id || null;
-  const contactName = raw.wa_contactName || raw.contactName || raw.lead_name || raw.name || null;
-  const profileName = raw.wa_name || raw.profileName || null;
+  const contactName = extractUazapiChatDisplayName(raw as Record<string, unknown>);
+  const profileName =
+    (typeof raw.wa_name === 'string' && raw.wa_name.trim()
+      ? raw.wa_name.trim()
+      : null) ||
+    (typeof raw.profileName === 'string' && raw.profileName.trim() ? raw.profileName.trim() : null);
   const phoneNumber =
     raw.phone_number ||
     raw.number ||
@@ -220,6 +267,14 @@ async function loadInstance(userId: string, instanceId: string, res: Response) {
   return result.rows[0];
 }
 
+async function resolveTenantIdForUser(userId: string): Promise<string | null> {
+  const r = await pool.query<{ tenant_id: string }>(
+    `SELECT tenant_id FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  return r.rows[0]?.tenant_id ?? null;
+}
+
 async function upsertConversation(
   instance: ChatInstanceRow,
   chatData: ReturnType<typeof normalizeChatPayload>
@@ -238,36 +293,26 @@ async function upsertConversation(
     lastMessagePreview: chatData.lastMessagePreview?.substring(0, 50),
   });
 
-  // Buscar apenas client_id pelo telefone normalizado
-  // NOTA: Não buscamos lead_id automaticamente - leads devem ser vinculados manualmente
-  let clientId: string | null = null;
-  const normalizedPhone = normalizePhoneNumber(chatData.phoneNumber);
-
-  if (normalizedPhone) {
-  try {
-      // Buscar cliente pelo telefone
-      const clientResult = await pool.query(
-        `
-        SELECT id FROM clients
-        WHERE user_id = $1
-          AND phone IS NOT NULL
-          AND phone <> ''
-          AND regexp_replace(phone, '\\D', '', 'g') = $2
-        LIMIT 1
-        `,
-        [instance.user_id, normalizedPhone]
-      );
-
-      if ((clientResult.rowCount ?? 0) > 0) {
-        clientId = clientResult.rows[0].id;
-        console.log(`[UpsertConversation ${upsertId}] Found client`, { clientId, phone: normalizedPhone });
-      }
-    } catch (linkError: any) {
-      console.error(`[UpsertConversation ${upsertId}] Error linking to client:`, {
-        error: linkError.message,
-        phone: normalizedPhone,
+  let match: ConversationMatchResult = {
+    normalizedPhone: normalizePhoneNumber(chatData.phoneNumber),
+    suggestedType: 'none',
+    suggestedId: null,
+    confidence: 'none',
+    candidates: [],
+  };
+  let autoLinkedClientIdForTimeline: string | null = null;
+  const tenantId = await resolveTenantIdForUser(instance.user_id);
+  if (tenantId) {
+    try {
+      match = await resolveConversationMatch({
+        tenantId,
+        rawPhone: chatData.phoneNumber,
       });
-      // Não falha o upsert se houver erro ao buscar cliente
+    } catch (matchError: any) {
+      console.error(`[UpsertConversation ${upsertId}] Error resolving match:`, {
+        error: matchError.message,
+        phone: chatData.phoneNumber,
+      });
     }
   }
 
@@ -290,10 +335,18 @@ async function upsertConversation(
   }
 
   try {
-  // Verificar se a conversa já existe
-  const existingResult = await pool.query(
+  const leadColumnAvailable = await hasLeadIdColumn();
+  const existingResult = await pool.query<{
+    id: string;
+    client_id: string | null;
+    lead_id?: string | null;
+    metadata: Record<string, unknown> | null;
+  }>(
     `
-    SELECT id FROM chat_conversations
+    SELECT id, client_id,
+           ${leadColumnAvailable ? 'lead_id,' : ''}
+           metadata
+    FROM chat_conversations
     WHERE instance_id = $1 AND external_chat_id = $2
     LIMIT 1
     `,
@@ -302,71 +355,265 @@ async function upsertConversation(
 
   let result;
   if ((existingResult.rowCount ?? 0) > 0) {
-    // Atualizar conversa existente
-    const conversationId = existingResult.rows[0].id;
-    result = await pool.query(
-      `
-      UPDATE chat_conversations SET
-        external_fast_id = COALESCE($1, external_fast_id),
-        contact_name = COALESCE($2, contact_name),
-        profile_name = COALESCE($3, profile_name),
-        phone_number = COALESCE($4, phone_number),
-        status = COALESCE($5, status),
-        last_message_preview = COALESCE($6, last_message_preview),
-        last_message_at = COALESCE($7, last_message_at),
-        unread_count = COALESCE($8, unread_count),
-        metadata = $9::jsonb,
-        client_id = COALESCE($10, client_id),
-        phone_key = COALESCE($11, phone_key),
-        updated_at = now()
-      WHERE id = $12
-      RETURNING *
-      `,
-      [
-        chatData.externalFastId,
-        chatData.contactName,
-        chatData.profileName,
-        chatData.phoneNumber,
-        chatData.status || 'open',
-        chatData.lastMessagePreview,
-        chatData.lastMessageAt,
-        chatData.unreadCount || 0,
-        JSON.stringify(chatData.metadata || {}),
-        clientId,
-        phoneKey,
-        conversationId,
-      ]
+    const current = existingResult.rows[0];
+    const whatsappProfilePhoto = extractUazapiChatImageUrl(
+      chatData.metadata as Record<string, unknown> | null
     );
+    const currentMeta = (current.metadata as Record<string, unknown> | null) ?? {};
+    const currentLeadId = leadColumnAvailable ? (current.lead_id ?? null) : null;
+    const currentSource = (currentMeta.link_source as LinkSource | undefined) ?? 'system';
+    const manualLink = currentSource === 'manual';
+
+    let nextClientId = current.client_id ?? null;
+    let nextLeadId = currentLeadId;
+    let linkSource: LinkSource = manualLink ? 'manual' : 'system';
+    let linkConfidence: LinkConfidence = manualLink ? 'manual' : 'review';
+
+    if (!manualLink && match.confidence === 'high_confidence' && match.suggestedId) {
+      if (match.suggestedType === 'client') {
+        nextClientId = match.suggestedId;
+        nextLeadId = null;
+        linkSource = 'auto';
+        linkConfidence = 'high';
+      } else if (match.suggestedType === 'lead' && leadColumnAvailable) {
+        nextClientId = null;
+        nextLeadId = match.suggestedId;
+        linkSource = 'auto';
+        linkConfidence = 'high';
+      }
+    } else if (!manualLink && nextClientId == null && nextLeadId == null) {
+      linkSource = 'system';
+      linkConfidence = match.confidence === 'ambiguous' ? 'review' : 'high';
+    }
+
+    const linkState =
+      nextClientId != null
+        ? 'client_linked'
+        : nextLeadId != null
+          ? 'lead_linked'
+          : match.confidence === 'ambiguous'
+            ? 'review_required'
+            : 'unlinked';
+
+    const mergedMeta = {
+      ...currentMeta,
+      ...(chatData.metadata || {}),
+      ...buildMatchMetadata(match),
+      ...(whatsappProfilePhoto ? { whatsapp_profile_photo: whatsappProfilePhoto } : {}),
+      link_source: linkSource,
+      link_confidence: linkConfidence,
+      link_state: linkState,
+      updated_by_sync_at: new Date().toISOString(),
+    };
+
+    const conversationId = current.id;
+    if (leadColumnAvailable) {
+      result = await pool.query(
+        `
+        UPDATE chat_conversations SET
+          external_fast_id = COALESCE($1, external_fast_id),
+          contact_name = COALESCE(NULLIF(TRIM($2::text), ''), contact_name),
+          profile_name = COALESCE(NULLIF(TRIM($3::text), ''), profile_name),
+          phone_number = COALESCE($4, phone_number),
+          status = COALESCE($5, status),
+          last_message_preview = CASE
+            WHEN ($7::timestamptz) IS NULL THEN COALESCE($6, last_message_preview)
+            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN COALESCE($6, last_message_preview)
+            ELSE last_message_preview
+          END,
+          last_message_at = CASE
+            WHEN ($7::timestamptz) IS NULL THEN last_message_at
+            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN $7::timestamptz
+            ELSE last_message_at
+          END,
+          unread_count = COALESCE($8, unread_count),
+          metadata = CASE
+            WHEN COALESCE(metadata->>'link_source', 'system') = 'manual'
+              THEN COALESCE(metadata, '{}'::jsonb) || ($9::jsonb - 'link_source' - 'link_confidence' - 'link_state')
+            ELSE $9::jsonb
+          END,
+          client_id = CASE
+            WHEN COALESCE(metadata->>'link_source', 'system') = 'manual' THEN client_id
+            ELSE $10
+          END,
+          lead_id = CASE
+            WHEN COALESCE(metadata->>'link_source', 'system') = 'manual' THEN lead_id
+            ELSE $11
+          END,
+          phone_key = COALESCE($12, phone_key),
+          updated_at = now()
+        WHERE id = $13
+        RETURNING *
+        `,
+        [
+          chatData.externalFastId,
+          chatData.contactName,
+          chatData.profileName,
+          chatData.phoneNumber,
+          chatData.status || 'open',
+          chatData.lastMessagePreview,
+          chatData.lastMessageAt,
+          chatData.unreadCount || 0,
+          JSON.stringify(mergedMeta),
+          nextClientId,
+          nextLeadId,
+          phoneKey,
+          conversationId,
+        ]
+      );
+    } else {
+      result = await pool.query(
+        `
+        UPDATE chat_conversations SET
+          external_fast_id = COALESCE($1, external_fast_id),
+          contact_name = COALESCE(NULLIF(TRIM($2::text), ''), contact_name),
+          profile_name = COALESCE(NULLIF(TRIM($3::text), ''), profile_name),
+          phone_number = COALESCE($4, phone_number),
+          status = COALESCE($5, status),
+          last_message_preview = CASE
+            WHEN ($7::timestamptz) IS NULL THEN COALESCE($6, last_message_preview)
+            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN COALESCE($6, last_message_preview)
+            ELSE last_message_preview
+          END,
+          last_message_at = CASE
+            WHEN ($7::timestamptz) IS NULL THEN last_message_at
+            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN $7::timestamptz
+            ELSE last_message_at
+          END,
+          unread_count = COALESCE($8, unread_count),
+          metadata = CASE
+            WHEN COALESCE(metadata->>'link_source', 'system') = 'manual'
+              THEN COALESCE(metadata, '{}'::jsonb) || ($9::jsonb - 'link_source' - 'link_confidence' - 'link_state')
+            ELSE $9::jsonb
+          END,
+          client_id = CASE
+            WHEN COALESCE(metadata->>'link_source', 'system') = 'manual' THEN client_id
+            ELSE $10
+          END,
+          phone_key = COALESCE($11, phone_key),
+          updated_at = now()
+        WHERE id = $12
+        RETURNING *
+        `,
+        [
+          chatData.externalFastId,
+          chatData.contactName,
+          chatData.profileName,
+          chatData.phoneNumber,
+          chatData.status || 'open',
+          chatData.lastMessagePreview,
+          chatData.lastMessageAt,
+          chatData.unreadCount || 0,
+          JSON.stringify(mergedMeta),
+          nextClientId,
+          phoneKey,
+          conversationId,
+        ]
+      );
+    }
+    if (!manualLink && linkSource === 'auto' && nextClientId && nextClientId !== (current.client_id ?? null)) {
+      autoLinkedClientIdForTimeline = nextClientId;
+    }
   } else {
-    // Inserir nova conversa
-    result = await pool.query(
-    `
-    INSERT INTO chat_conversations (
-      user_id, instance_id, external_chat_id, external_fast_id,
-      contact_name, profile_name, phone_number, status,
-        last_message_preview, last_message_at, unread_count, metadata,
-        client_id, phone_key
-    )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14)
-    RETURNING *
-  `,
-    [
-      instance.user_id,
-      instance.id,
-      chatData.externalChatId,
-      chatData.externalFastId,
-      chatData.contactName,
-      chatData.profileName,
-      chatData.phoneNumber,
-      chatData.status,
-      chatData.lastMessagePreview,
-      chatData.lastMessageAt,
-        chatData.unreadCount,
-      JSON.stringify(chatData.metadata || {}),
-        clientId,
-        phoneKey,
-    ]
-  );
+    let clientId: string | null = null;
+    let leadId: string | null = null;
+    let linkSource: LinkSource = 'system';
+    let linkConfidence: LinkConfidence = 'review';
+    if (match.confidence === 'high_confidence' && match.suggestedId) {
+      if (match.suggestedType === 'client') {
+        clientId = match.suggestedId;
+        linkSource = 'auto';
+        linkConfidence = 'high';
+      } else if (match.suggestedType === 'lead' && leadColumnAvailable) {
+        leadId = match.suggestedId;
+        linkSource = 'auto';
+        linkConfidence = 'high';
+      }
+    }
+    const linkState =
+      clientId != null
+        ? 'client_linked'
+        : leadId != null
+          ? 'lead_linked'
+          : match.confidence === 'ambiguous'
+            ? 'review_required'
+            : 'unlinked';
+    const whatsappProfilePhoto = extractUazapiChatImageUrl(
+      chatData.metadata as Record<string, unknown> | null
+    );
+    const metadata = {
+      ...(chatData.metadata || {}),
+      ...buildMatchMetadata(match),
+      ...(whatsappProfilePhoto ? { whatsapp_profile_photo: whatsappProfilePhoto } : {}),
+      link_source: linkSource,
+      link_confidence: linkConfidence,
+      link_state: linkState,
+      created_by_sync_at: new Date().toISOString(),
+    };
+
+    if (leadColumnAvailable) {
+      result = await pool.query(
+        `
+        INSERT INTO chat_conversations (
+          user_id, instance_id, external_chat_id, external_fast_id,
+          contact_name, profile_name, phone_number, status,
+          last_message_preview, last_message_at, unread_count, metadata,
+          client_id, lead_id, phone_key
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15)
+        RETURNING *
+        `,
+        [
+          instance.user_id,
+          instance.id,
+          chatData.externalChatId,
+          chatData.externalFastId,
+          chatData.contactName,
+          chatData.profileName,
+          chatData.phoneNumber,
+          chatData.status,
+          chatData.lastMessagePreview,
+          chatData.lastMessageAt,
+          chatData.unreadCount,
+          JSON.stringify(metadata),
+          clientId,
+          leadId,
+          phoneKey,
+        ]
+      );
+    } else {
+      result = await pool.query(
+        `
+        INSERT INTO chat_conversations (
+          user_id, instance_id, external_chat_id, external_fast_id,
+          contact_name, profile_name, phone_number, status,
+          last_message_preview, last_message_at, unread_count, metadata,
+          client_id, phone_key
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14)
+        RETURNING *
+        `,
+        [
+          instance.user_id,
+          instance.id,
+          chatData.externalChatId,
+          chatData.externalFastId,
+          chatData.contactName,
+          chatData.profileName,
+          chatData.phoneNumber,
+          chatData.status,
+          chatData.lastMessagePreview,
+          chatData.lastMessageAt,
+          chatData.unreadCount,
+          JSON.stringify(metadata),
+          clientId,
+          phoneKey,
+        ]
+      );
+    }
+    if (linkSource === 'auto' && clientId) {
+      autoLinkedClientIdForTimeline = clientId;
+    }
   }
 
     if (result.rowCount === 0 || !result.rows[0]) {
@@ -381,7 +628,41 @@ async function upsertConversation(
       wasInsert: !result.rows[0].updated_at || new Date(result.rows[0].updated_at).getTime() === new Date(result.rows[0].created_at).getTime(),
     });
 
-  return result.rows[0];
+    const upserted = result.rows[0];
+    if (tenantId && autoLinkedClientIdForTimeline) {
+      const referenceId = String(upserted.id);
+      await createClientTimelineEvent({
+        tenantId,
+        clientId: autoLinkedClientIdForTimeline,
+        eventName: 'chat_match_client_success',
+        source: 'chat',
+        actorType: 'system',
+        actorId: null,
+        referenceType: 'chat_conversation',
+        referenceId,
+        eventKey: `chat_match_client_success:${referenceId}:${autoLinkedClientIdForTimeline}`,
+        metadata: {
+          link_source: 'auto',
+          link_confidence: 'high',
+        },
+      });
+      await createClientTimelineEvent({
+        tenantId,
+        clientId: autoLinkedClientIdForTimeline,
+        eventName: 'chat_link_auto_effective',
+        source: 'chat',
+        actorType: 'system',
+        actorId: null,
+        referenceType: 'chat_conversation',
+        referenceId,
+        eventKey: `chat_link_auto_effective:${referenceId}:${autoLinkedClientIdForTimeline}`,
+        metadata: {
+          link_source: 'auto',
+          link_state: 'client_linked',
+        },
+      });
+    }
+  return upserted;
   } catch (error: any) {
     console.error(`[UpsertConversation ${upsertId}] Database error:`, {
       error: error.message,
@@ -466,16 +747,23 @@ async function saveMessage(
     const unreadShouldReset = payload.resetUnread === true;
     const skipUnread = payload.skipUnreadUpdate === true;
     const effectiveSentAt = payload.sentAt || new Date();
-    const messagePreview = payload.body || null;
+    const normalizedBody = typeof payload.body === 'string' ? payload.body.trim() : '';
+    const hasMedia =
+      Array.isArray(payload.media) ? payload.media.length > 0 : Boolean(payload.media);
+    const messagePreview = normalizedBody || (hasMedia ? '[Mídia]' : null);
 
-    // Sempre atualizar last_message_at e last_message_preview quando há uma nova mensagem
-    // Se há uma nova mensagem, ela é sempre a mais recente, então sempre atualizamos
     const conversationResult = await pool.query(
       `
       UPDATE chat_conversations
       SET
-        last_message_preview = COALESCE($2, last_message_preview),
-        last_message_at = COALESCE($3, last_message_at),
+        last_message_preview = CASE
+          WHEN last_message_at IS NULL OR $3::timestamptz >= last_message_at THEN COALESCE($2, last_message_preview)
+          ELSE last_message_preview
+        END,
+        last_message_at = CASE
+          WHEN last_message_at IS NULL OR $3::timestamptz >= last_message_at THEN $3::timestamptz
+          ELSE last_message_at
+        END,
         unread_count = CASE
           WHEN $4 THEN unread_count
           WHEN $5 = 'incoming' THEN unread_count + 1
@@ -523,6 +811,35 @@ async function saveMessage(
   }
 }
 
+/**
+ * Alinha last_message_at / last_message_preview ao último registro real em chat_messages
+ * (útil após sync em lote quando a ordem de processamento não reflete o último evento).
+ */
+async function reconcileConversationLastMessage(conversationId: string): Promise<void> {
+  const r = await pool.query<{ body: string | null; sent_at: Date | null; media: unknown }>(
+    `SELECT body, sent_at, media FROM chat_messages
+     WHERE conversation_id = $1
+     ORDER BY sent_at DESC NULLS LAST, created_at DESC
+     LIMIT 1`,
+    [conversationId]
+  );
+  if (r.rowCount === 0) return;
+  const row = r.rows[0];
+  const bodyTrim = row.body?.trim() || '';
+  const hasMedia = Array.isArray(row.media) && (row.media as unknown[]).length > 0;
+  if (!bodyTrim && !hasMedia) return;
+  const preview = bodyTrim || '[Mídia]';
+  const effectiveAt = row.sent_at || new Date();
+  await pool.query(
+    `UPDATE chat_conversations SET
+       last_message_preview = $2,
+       last_message_at = $3,
+       updated_at = now()
+     WHERE id = $1`,
+    [conversationId, preview, effectiveAt]
+  );
+}
+
 export async function listInstances(req: AuthRequest, res: Response) {
   const userId = req.userId!;
   const instances = await pool.query(
@@ -536,14 +853,14 @@ export async function createInstance(req: AuthRequest, res: Response) {
   try {
     console.log('[CreateInstance] Starting instance creation...');
     
-    // Verificar admin token
-  try {
-    ensureAdminToken();
-    } catch (adminError: any) {
-      console.error('[CreateInstance] Admin token error:', adminError.message);
-      res.status(403).json({ 
-        error: 'Admin token required',
-        details: adminError.message 
+    if (!isUazapiAdminConfigured()) {
+      console.error('[CreateInstance] UAZAPI_ADMIN_TOKEN ausente ou em branco no servidor');
+      res.status(503).json({
+        error:
+          'Integração WhatsApp (UazAPI) não está configurada no servidor. Defina UAZAPI_ADMIN_TOKEN no ambiente.',
+        code: 'UAZAPI_NOT_CONFIGURED',
+        details:
+          'Token administrativo do provedor UazAPI ausente (variável de ambiente no backend, não é o login do usuário).',
       });
       return;
     }
@@ -1172,7 +1489,6 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
 export async function deleteInstance(req: AuthRequest, res: Response) {
   try {
-    ensureAdminToken();
     const userId = req.userId!;
     const { id } = req.params;
 
@@ -1679,12 +1995,61 @@ export async function syncConversations(req: AuthRequest, res: Response) {
   }
 }
 
+/**
+ * Foto WhatsApp mais recente vinculada ao cliente/lead (metadata), sem alterar cadastro CRM.
+ * GET ?clientId= ou ?leadId=
+ */
+export async function getCrmWhatsappIdentity(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const clientId = typeof req.query.clientId === 'string' ? req.query.clientId.trim() : '';
+    const leadId = typeof req.query.leadId === 'string' ? req.query.leadId.trim() : '';
+    if ((clientId && leadId) || (!clientId && !leadId)) {
+      res.status(400).json({ error: 'Informe exatamente um parâmetro: clientId ou leadId' });
+      return;
+    }
+    const leadColumnAvailable = await hasLeadIdColumn();
+    let metadata: unknown;
+    if (clientId) {
+      const r = await pool.query<{ metadata: unknown }>(
+        `SELECT metadata FROM chat_conversations
+         WHERE user_id = $1 AND client_id = $2
+         ORDER BY COALESCE(last_message_at, created_at) DESC NULLS LAST
+         LIMIT 1`,
+        [userId, clientId]
+      );
+      metadata = r.rows[0]?.metadata;
+    } else {
+      if (!leadColumnAvailable) {
+        res.json({ avatarUrl: null });
+        return;
+      }
+      const r = await pool.query<{ metadata: unknown }>(
+        `SELECT metadata FROM chat_conversations
+         WHERE user_id = $1 AND lead_id = $2
+         ORDER BY COALESCE(last_message_at, created_at) DESC NULLS LAST
+         LIMIT 1`,
+        [userId, leadId]
+      );
+      metadata = r.rows[0]?.metadata;
+    }
+    const meta = (metadata as Record<string, unknown> | null) || {};
+    const avatarUrl = extractUazapiChatImageUrl(meta);
+    res.json({ avatarUrl: avatarUrl || null });
+  } catch (e: any) {
+    console.error(e);
+    res.status(500).json({ error: e.message || 'Failed' });
+  }
+}
+
 export async function getConversations(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
     const { instanceId, search, assignedTo, unassigned, status, queue, startDate, endDate } = req.query;
     const params: any[] = [userId];
     let paramIndex = 2;
+    const leadColumnAvailable = await hasLeadIdColumn();
+    const leadSelect = leadColumnAvailable ? 'c.lead_id' : 'NULL::uuid as lead_id';
 
     let query = `
       SELECT
@@ -1704,49 +2069,24 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.created_at,
         c.updated_at,
         c.client_id,
+        ${leadSelect},
         i.name as instance_name,
-        -- Cliente: usar o client_id salvo ou buscar pelo telefone via JOIN
-        COALESCE(c.client_id, cl.id) as client_id,
-        -- Lead: apenas se não houver client_id, buscar pelo telefone via JOIN
-        -- NOTA: Não usamos c.lead_id diretamente pois a coluna pode não existir
-        CASE 
-          WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
-          ELSE (
-            SELECT l2.id 
-            FROM leads l2
-            WHERE l2.user_id = c.user_id
-              AND l2.phone IS NOT NULL
-              AND l2.phone <> ''
-              AND c.phone_number IS NOT NULL
-              AND c.phone_number <> ''
-              AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-            LIMIT 1
+        CASE
+          WHEN c.client_id IS NOT NULL THEN 'client_linked'
+          WHEN ${leadColumnAvailable ? 'c.lead_id IS NOT NULL' : 'false'} THEN 'lead_linked'
+          WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
+          ELSE 'unlinked'
+        END as link_state,
+        COALESCE(c.metadata->>'link_source', 'system') as link_source,
+        COALESCE(c.metadata->>'link_confidence', 'review') as link_confidence,
+        CASE
+          WHEN ${leadColumnAvailable ? 'c.lead_id IS NOT NULL' : 'false'} THEN (
+            SELECT l2.status FROM leads l2 WHERE l2.id = c.lead_id AND l2.user_id = c.user_id LIMIT 1
           )
-        END as lead_id,
-        -- Status do lead (para identificar leads convertidos)
-        CASE 
-          WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
-          ELSE (
-            SELECT l2.status 
-            FROM leads l2
-            WHERE l2.user_id = c.user_id
-              AND l2.phone IS NOT NULL
-              AND l2.phone <> ''
-              AND c.phone_number IS NOT NULL
-              AND c.phone_number <> ''
-              AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-            LIMIT 1
-          )
+          ELSE NULL
         END as lead_status
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
-      LEFT JOIN clients cl
-        ON cl.user_id = c.user_id
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND cl.phone IS NOT NULL
-       AND cl.phone <> ''
-       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
       WHERE c.user_id = $1
     `;
 
@@ -1907,54 +2247,18 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
     const { id } = req.params;
-
-    // Buscar a conversa com client_id e lead_id
-    const conversationResult = await pool.query(
+    const leadColumnAvailable = await hasLeadIdColumn();
+    const conversationResult = await pool.query<{
+      id: string;
+      client_id: string | null;
+      lead_id?: string | null;
+      phone_number: string | null;
+      metadata: Record<string, unknown> | null;
+    }>(
       `
-      SELECT 
-        c.id,
-        c.client_id,
-        c.phone_number,
-        COALESCE(
-          c.client_id,
-          CASE 
-            WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' 
-            THEN (
-              SELECT cl.id 
-              FROM clients cl
-              WHERE cl.user_id = c.user_id
-                AND cl.phone IS NOT NULL
-                AND cl.phone <> ''
-                AND regexp_replace(cl.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-              LIMIT 1
-            )
-            ELSE NULL
-          END
-        ) as resolved_client_id,
-        -- Lead: buscar apenas se não houver client_id (sem depender de coluna lead_id)
-        CASE 
-          WHEN COALESCE(c.client_id, (
-            SELECT cl2.id 
-            FROM clients cl2
-            WHERE cl2.user_id = c.user_id
-              AND cl2.phone IS NOT NULL
-              AND cl2.phone <> ''
-              AND c.phone_number IS NOT NULL
-              AND c.phone_number <> ''
-              AND regexp_replace(cl2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-            LIMIT 1
-          )) IS NOT NULL THEN NULL
-          WHEN c.phone_number IS NOT NULL AND c.phone_number <> '' THEN (
-            SELECT l.id 
-            FROM leads l
-            WHERE l.user_id = c.user_id
-              AND l.phone IS NOT NULL
-              AND l.phone <> ''
-              AND regexp_replace(l.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-            LIMIT 1
-          )
-          ELSE NULL
-        END as resolved_lead_id
+      SELECT c.id, c.client_id,
+             ${leadColumnAvailable ? 'c.lead_id,' : ''}
+             c.phone_number, c.metadata
       FROM chat_conversations c
       WHERE c.id = $1 AND c.user_id = $2
       `,
@@ -1967,8 +2271,10 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
     }
 
     const conversation = conversationResult.rows[0];
-    const clientId = conversation.resolved_client_id || conversation.client_id;
-    const leadId = conversation.resolved_lead_id || conversation.lead_id;
+    let clientId = conversation.client_id ?? null;
+    let leadId = leadColumnAvailable ? (conversation.lead_id ?? null) : null;
+
+    // Hardening: GET não deve mutar vínculo. Migração lead->cliente ocorre por função explícita de domínio.
 
     // Priorizar cliente sobre lead
     if (clientId) {
@@ -2010,6 +2316,197 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
   }
 }
 
+export async function linkConversation(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    const { id: conversationId } = req.params;
+    const body = linkConversationSchema.parse(req.body);
+    const leadColumnAvailable = await hasLeadIdColumn();
+
+    const conv = await pool.query<{
+      id: string;
+      user_id: string;
+      metadata: Record<string, unknown> | null;
+    }>(
+      `SELECT id, user_id, metadata FROM chat_conversations WHERE id = $1 AND user_id IN (
+         SELECT id FROM users WHERE tenant_id = $2
+       ) LIMIT 1`,
+      [conversationId, tenantId]
+    );
+    if ((conv.rowCount ?? 0) === 0) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+    const currentMeta = (conv.rows[0].metadata as Record<string, unknown> | null) ?? {};
+
+    if (body.type === 'client') {
+      const client = await pool.query<{ id: string }>(
+        `SELECT c.id
+         FROM clients c
+         INNER JOIN users u ON u.id = c.user_id
+         WHERE c.id = $1 AND u.tenant_id = $2
+         LIMIT 1`,
+        [body.id, tenantId]
+      );
+      if ((client.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: 'Cliente não encontrado para este tenant' });
+        return;
+      }
+      await pool.query(
+        `
+        UPDATE chat_conversations
+        SET client_id = $1,
+            ${leadColumnAvailable ? 'lead_id = NULL,' : ''}
+            metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+            updated_at = now()
+        WHERE id = $3
+          AND user_id IN (SELECT id FROM users WHERE tenant_id = $4)
+        `,
+        [
+          body.id,
+          JSON.stringify({
+            ...currentMeta,
+            link_source: 'manual',
+            link_confidence: 'manual',
+            link_state: 'client_linked',
+            link_manual_at: new Date().toISOString(),
+            link_manual_by: userId,
+          }),
+          conversationId,
+          tenantId,
+        ]
+      );
+      await createClientTimelineEvent({
+        tenantId,
+        clientId: body.id,
+        eventName: 'chat_link_manual',
+        source: 'chat',
+        actorType: 'user',
+        actorId: userId,
+        referenceType: 'chat_conversation',
+        referenceId: conversationId,
+        eventKey: `chat_link_manual:${conversationId}:${body.id}`,
+        metadata: {
+          link_source: 'manual',
+        },
+      });
+    } else {
+      if (!leadColumnAvailable) {
+        res.status(400).json({ error: 'Ambiente sem suporte a vínculo com lead nesta versão do schema' });
+        return;
+      }
+      const lead = await pool.query<{ id: string }>(
+        `SELECT l.id
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id
+         WHERE l.id = $1 AND u.tenant_id = $2
+         LIMIT 1`,
+        [body.id, tenantId]
+      );
+      if ((lead.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: 'Lead não encontrado para este tenant' });
+        return;
+      }
+      await pool.query(
+        `
+        UPDATE chat_conversations
+        SET lead_id = $1,
+            client_id = NULL,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+            updated_at = now()
+        WHERE id = $3
+          AND user_id IN (SELECT id FROM users WHERE tenant_id = $4)
+        `,
+        [
+          body.id,
+          JSON.stringify({
+            ...currentMeta,
+            link_source: 'manual',
+            link_confidence: 'manual',
+            link_state: 'lead_linked',
+            link_manual_at: new Date().toISOString(),
+            link_manual_by: userId,
+          }),
+          conversationId,
+          tenantId,
+        ]
+      );
+    }
+
+    const updated = await pool.query(
+      `SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`,
+      [conversationId]
+    );
+    res.json(updated.rows[0]);
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Payload inválido', details: error.errors });
+      return;
+    }
+    console.error('Error linking conversation:', error);
+    res.status(500).json({ error: 'Falha ao vincular conversa' });
+  }
+}
+
+export async function unlinkConversation(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    const { id: conversationId } = req.params;
+    const leadColumnAvailable = await hasLeadIdColumn();
+
+    const conv = await pool.query<{ metadata: Record<string, unknown> | null }>(
+      `SELECT metadata FROM chat_conversations
+       WHERE id = $1
+         AND user_id IN (SELECT id FROM users WHERE tenant_id = $2)
+       LIMIT 1`,
+      [conversationId, tenantId]
+    );
+    if ((conv.rowCount ?? 0) === 0) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+    const currentMeta = (conv.rows[0].metadata as Record<string, unknown> | null) ?? {};
+    await pool.query(
+      `
+      UPDATE chat_conversations
+      SET client_id = NULL,
+          ${leadColumnAvailable ? 'lead_id = NULL,' : ''}
+          metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+          updated_at = now()
+      WHERE id = $2
+        AND user_id IN (SELECT id FROM users WHERE tenant_id = $3)
+      `,
+      [
+        JSON.stringify({
+          ...currentMeta,
+          link_source: 'manual',
+          link_confidence: 'manual',
+          link_state: 'unlinked',
+          link_unlinked_at: new Date().toISOString(),
+          link_unlinked_by: userId,
+        }),
+        conversationId,
+        tenantId,
+      ]
+    );
+    const updated = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
+    res.json(updated.rows[0]);
+  } catch (error: any) {
+    console.error('Error unlinking conversation:', error);
+    res.status(500).json({ error: 'Falha ao remover vínculo da conversa' });
+  }
+}
+
 /**
  * Busca todas as mensagens de conversas vinculadas a um cliente
  * GET /api/chat/clients/:id/messages
@@ -2017,12 +2514,20 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
 export async function getClientMessages(req: AuthRequest, res: Response) {
   const userId = req.userId!;
   try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant não identificado' });
+      return;
+    }
+
     const { id: clientId } = req.params;
 
-    // Verificar se o cliente existe e pertence ao usuário
+    // Cliente deve existir e pertencer ao tenant (colaborativo: qualquer usuário do tenant).
     const clientResult = await pool.query(
-      'SELECT id FROM clients WHERE id = $1 AND user_id = $2',
-      [clientId, userId]
+      `SELECT c.id FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+       WHERE c.id = $2`,
+      [tenantId, clientId]
     );
 
     if ((clientResult.rowCount ?? 0) === 0) {
@@ -2030,38 +2535,20 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       return;
     }
 
-    // Buscar todas as conversas vinculadas a este cliente
-    // A busca é feita de 3 formas:
-    // 1. Conversas com client_id = clientId (vinculação direta)
-    // 2. Conversas com telefone que corresponde ao telefone do cliente (via JOIN)
-    // 3. Conversas que podem ter sido vinculadas pelo telefone mesmo sem client_id salvo
+    // Conversas de qualquer usuário do mesmo tenant vinculadas a este cliente.
     const conversationsResult = await pool.query(
       `
-      SELECT DISTINCT 
-        c.id, 
-        c.phone_number, 
-        c.contact_name, 
-        c.profile_name, 
-        c.external_chat_id,
-        COALESCE(c.client_id, cl.id) as resolved_client_id
+      SELECT
+        c.id,
+        c.phone_number,
+        c.contact_name,
+        c.profile_name,
+        c.external_chat_id
       FROM chat_conversations c
-      LEFT JOIN clients cl
-        ON cl.user_id = c.user_id
-       AND cl.id = $2
-       AND c.phone_number IS NOT NULL
-       AND c.phone_number <> ''
-       AND cl.phone IS NOT NULL
-       AND cl.phone <> ''
-       AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
-      WHERE c.user_id = $1
-        AND (
-          -- Vinculação direta por client_id
-          c.client_id = $2
-          -- Vinculação via JOIN (telefone corresponde)
-          OR cl.id = $2
-        )
+      INNER JOIN users cu ON cu.id = c.user_id AND cu.tenant_id = $1
+      WHERE c.client_id = $2
       `,
-      [userId, clientId]
+      [tenantId, clientId]
     );
 
     if ((conversationsResult.rowCount ?? 0) === 0) {
@@ -2122,6 +2609,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       stack: error.stack,
       clientId: req.params.id,
       userId,
+      tenantId: req.tenantId,
     });
     res.status(500).json({ 
       error: 'Failed to fetch messages',
@@ -2129,6 +2617,45 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       detail: error.detail,
     });
   }
+}
+
+/**
+ * POST /chat/find na UazAPI (wa_chatid) + upsert local — fonte de nome/foto conforme schema Chat.
+ */
+async function fetchAndUpsertRemoteChatIdentity(
+  instance: ChatInstanceRow,
+  externalChatId: string
+): Promise<AnyObject | null> {
+  const remoteChats = (await uazapiService.findChats(instance.instance_token, {
+    wa_chatid: externalChatId,
+    limit: 20,
+    sort: '-wa_lastMsgTimestamp',
+  })) as AnyObject;
+
+  const chatsArray =
+    (Array.isArray(remoteChats?.chats) && remoteChats?.chats) ||
+    (Array.isArray(remoteChats?.data?.chats) && remoteChats?.data?.chats) ||
+    (Array.isArray(remoteChats?.results) && remoteChats?.results) ||
+    (Array.isArray(remoteChats?.data) && remoteChats?.data) ||
+    (Array.isArray(remoteChats) ? remoteChats : []);
+
+  let item: any = null;
+  for (const ch of chatsArray) {
+    const n = normalizeChatPayload(ch);
+    if (n && n.externalChatId === externalChatId) {
+      item = ch;
+      break;
+    }
+  }
+  // Não usar chatsArray[0] como fallback: pode ser outro chat e corromper nome/foto.
+  if (!item) {
+    return null;
+  }
+  const normalized = normalizeChatPayload(item);
+  if (!normalized) {
+    return null;
+  }
+  return (await upsertConversation(instance, normalized)) as AnyObject | null;
 }
 
 export async function syncConversationMessages(req: AuthRequest, res: Response) {
@@ -2204,6 +2731,21 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
       saved += 1;
     }
 
+    if (saved > 0) {
+      await reconcileConversationLastMessage(conversation.id);
+      try {
+        const instRes = await pool.query<ChatInstanceRow>(
+          `SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2`,
+          [conversation.instance_id, userId]
+        );
+        if (instRes.rows[0]) {
+          await fetchAndUpsertRemoteChatIdentity(instRes.rows[0], conversation.external_chat_id);
+        }
+      } catch (idErr: any) {
+        console.warn('[SyncMessages] identity refresh failed:', idErr?.message);
+      }
+    }
+
     res.json({
       synced: saved,
       totalReturned: remoteMessages.length,
@@ -2218,6 +2760,40 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
   } catch (error: any) {
     console.error('Error syncing messages:', error);
     res.status(500).json({ error: error.message || 'Failed to sync messages' });
+  }
+}
+
+/**
+ * Busca na UazAPI o chat pelo wa_chatid e reaplica upsert (nome, foto, metadata) sem sincronizar mensagens.
+ */
+export async function refreshConversationIdentity(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+
+    const convRow = await pool.query<{ external_chat_id: string; instance_id: string }>(
+      `SELECT external_chat_id, instance_id FROM chat_conversations WHERE id = $1 AND user_id = $2`,
+      [id, userId]
+    );
+    if (convRow.rowCount === 0) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+
+    const { external_chat_id: externalChatId, instance_id: instanceId } = convRow.rows[0]!;
+    const instance = await loadInstance(userId, instanceId, res);
+    if (!instance) return;
+
+    const upserted = await fetchAndUpsertRemoteChatIdentity(instance, externalChatId);
+    if (!upserted) {
+      res.json({ ok: true, updated: false, reason: 'no_remote_chat' });
+      return;
+    }
+
+    res.json({ ok: true, updated: true, conversation: upserted });
+  } catch (error: any) {
+    console.error('Error refreshing conversation identity:', error);
+    res.status(500).json({ error: error.message || 'Failed to refresh conversation identity' });
   }
 }
 
@@ -2266,12 +2842,27 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       metadata: messageResponse,
     });
 
+    try {
+      const instRes = await pool.query<ChatInstanceRow>(
+        `SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2`,
+        [conversation.instance_id, userId]
+      );
+      if (instRes.rows[0]) {
+        void fetchAndUpsertRemoteChatIdentity(instRes.rows[0], conversation.external_chat_id).catch(
+          (idErr: any) => console.warn('[SendMessage] identity refresh failed:', idErr?.message)
+        );
+      }
+    } catch {
+      /* não bloquear envio */
+    }
+
     // Pequeno delay para garantir que a atualização da conversa foi commitada no banco
     // Isso evita problemas de race condition
     await new Promise(resolve => setTimeout(resolve, 50));
 
     // Buscar conversa atualizada e mensagem salva para emitir via WebSocket
-    // IMPORTANTE: Usar query similar a getConversations para garantir todos os campos
+    // IMPORTANTE: manter os mesmos campos de vínculo persistido da listagem principal.
+    const leadColumnAvailableWs = await hasLeadIdColumn();
     const [updatedConversationResult, savedMessageResult] = await Promise.all([
       pool.query(
         `
@@ -2292,49 +2883,25 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             c.created_at,
             c.updated_at,
             c.client_id,
+            ${leadColumnAvailableWs ? 'c.lead_id,' : 'NULL::uuid as lead_id,'}
             c.phone_key,
             i.name as instance_name,
-            -- Cliente: usar o client_id salvo ou buscar pelo telefone via JOIN
-            COALESCE(c.client_id, cl.id) as client_id,
-            -- Lead: apenas se não houver client_id, buscar pelo telefone via JOIN
-            CASE 
-              WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
-              ELSE (
-                SELECT l2.id 
-                FROM leads l2
-                WHERE l2.user_id = c.user_id
-                  AND l2.phone IS NOT NULL
-                  AND l2.phone <> ''
-                  AND c.phone_number IS NOT NULL
-                  AND c.phone_number <> ''
-                  AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-                LIMIT 1
+            CASE
+              WHEN c.client_id IS NOT NULL THEN 'client_linked'
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN 'lead_linked'
+              WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
+              ELSE 'unlinked'
+            END as link_state,
+            COALESCE(c.metadata->>'link_source', 'system') as link_source,
+            COALESCE(c.metadata->>'link_confidence', 'review') as link_confidence,
+            CASE
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN (
+                SELECT l2.status FROM leads l2 WHERE l2.id = c.lead_id AND l2.user_id = c.user_id LIMIT 1
               )
-            END as lead_id,
-            -- Status do lead (para identificar leads convertidos)
-            CASE 
-              WHEN COALESCE(c.client_id, cl.id) IS NOT NULL THEN NULL
-              ELSE (
-                SELECT l2.status 
-                FROM leads l2
-                WHERE l2.user_id = c.user_id
-                  AND l2.phone IS NOT NULL
-                  AND l2.phone <> ''
-                  AND c.phone_number IS NOT NULL
-                  AND c.phone_number <> ''
-                  AND regexp_replace(l2.phone, '\\D', '', 'g') = regexp_replace(c.phone_number, '\\D', '', 'g')
-                LIMIT 1
-              )
+              ELSE NULL
             END as lead_status
           FROM chat_conversations c
           INNER JOIN chat_instances i ON i.id = c.instance_id
-          LEFT JOIN clients cl
-            ON cl.user_id = c.user_id
-           AND c.phone_number IS NOT NULL
-           AND c.phone_number <> ''
-           AND cl.phone IS NOT NULL
-           AND cl.phone <> ''
-           AND regexp_replace(COALESCE(cl.phone, ''), '\\D', '', 'g') = regexp_replace(COALESCE(c.phone_number, ''), '\\D', '', 'g')
           WHERE c.id = $1
         `,
         [data.conversationId]
@@ -2707,9 +3274,10 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
     if (event === 'messages' || payload.message) {
       const extracted = extractMessageData(payload);
 
-      // Ignorar mensagens enviadas pela API para evitar loops
-      if (extracted.message.wasSentByApi || extracted.message.fromMe) {
-        console.log(`[Webhook ${webhookId}] Skipping API-sent message`, {
+      // Ignorar apenas eco da API (evita duplicar o que sendMessage já persistiu).
+      // Mensagens fromMe enviadas pelo WhatsApp no celular (sem wasSentByApi) precisam ser processadas.
+      if (extracted.message.wasSentByApi) {
+        console.log(`[Webhook ${webhookId}] Skipping API-sent message (wasSentByApi)`, {
           messageId: extracted.message.id || extracted.message.messageId,
           direction: extracted.direction,
         });
@@ -2783,18 +3351,6 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         contactName: conversation.contact_name,
       });
 
-      // Emitir evento WebSocket para atualizar conversa em tempo real
-      // OTIMIZAÇÃO: Usar dados já em memória (sem query adicional)
-      try {
-        const conversationWithInstance = {
-          ...conversation,
-          instance_name: instance.name,
-        };
-        emitConversationUpdate(instance.user_id, conversationWithInstance);
-      } catch (wsError: any) {
-        console.warn(`[Webhook ${webhookId}] Failed to emit conversation update:`, wsError.message);
-      }
-
       // Extrair informações da mensagem
       const messageBody = extractMessageBody(message);
       const media = extractMediaInfo(message);
@@ -2822,8 +3378,12 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         hasMedia: media.length > 0,
       });
 
+      const effectiveMessageId =
+        messageId ||
+        randomUUID();
+
       await saveMessage(conversation.id, extracted.direction, {
-        externalMessageId: messageId,
+        externalMessageId: effectiveMessageId,
         body: messageBody || null,
         media: media.length > 0 ? media : null,
         status: message.status || (extracted.direction === 'outgoing' ? 'sent' : null),
@@ -2838,20 +3398,17 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
 
       console.log(`[Webhook ${webhookId}] Message saved successfully`, {
         conversationId: conversation.id,
-        messageId,
+        messageId: effectiveMessageId,
       });
 
-      // Emitir evento WebSocket para atualizar conversa e mensagem em tempo real
-      // OTIMIZAÇÃO: Usar dados já em memória (conversation) ao invés de query adicional
-      // Isso reduz carga no banco e melhora performance em produção
+      // Emitir WebSocket com conversa recalculada (last_message_* após saveMessage)
       try {
-        // Usar conversation já carregada (mais leve e rápido)
-        // Adicionar apenas instance_name se necessário
+        const freshRow = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1`, [conversation.id]);
         const conversationWithInstance = {
-          ...conversation,
+          ...(freshRow.rows[0] || conversation),
           instance_name: instance.name,
         };
-        
+
         console.log(`[Webhook ${webhookId}] Emitting conversation update via WebSocket`, {
           userId: instance.user_id,
           conversationId: conversation.id,
@@ -2861,11 +3418,11 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         console.log(`[Webhook ${webhookId}] Emitting new message via WebSocket`, {
           userId: instance.user_id,
           conversationId: conversation.id,
-          messageId,
+          messageId: effectiveMessageId,
         });
         // Enviar apenas dados essenciais (leve para produção)
         emitNewMessage(instance.user_id, {
-          id: messageId,
+          id: effectiveMessageId,
           conversation_id: conversation.id,
           direction: extracted.direction,
           body: messageBody,
@@ -2885,7 +3442,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
             conversationId: conversation.id,
             conversationName: conversation.contact_name || conversation.profile_name || conversation.phone_number,
             messagePreview: messageBody,
-            messageId: messageId || undefined,
+            messageId: effectiveMessageId,
             isGroup: extracted.isGroup,
           });
         } catch (notifError: any) {
@@ -2898,7 +3455,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
 
       console.log(`[Webhook ${webhookId}] Message saved successfully`, {
         conversationId: conversation.id,
-        messageId: messageId,
+        messageId: effectiveMessageId,
         direction: extracted.direction,
         messageType: extracted.messageType,
         isGroup: extracted.isGroup,
@@ -3175,23 +3732,46 @@ export async function handleWebhook(req: Request, res: Response) {
   });
 
   try {
-    // 1. Validar secret (se configurado e enviado)
-    // A UazAPI pode não enviar o secret mesmo se configurado
-    // Por isso, só validamos se o secret for enviado
-    const secret = process.env.UAZAPI_WEBHOOK_SECRET;
-    const receivedSecret = 
-      req.headers['x-uazapi-secret'] || 
-      req.body?.secret || 
+    // 1. Secret: em produção, se UAZAPI_WEBHOOK_SECRET estiver definido, validação obrigatória (presente e igual).
+    const isProduction = process.env.NODE_ENV === 'production';
+    const configuredSecret = process.env.UAZAPI_WEBHOOK_SECRET;
+    const hasConfiguredSecret =
+      typeof configuredSecret === 'string' && configuredSecret.length > 0;
+    const rawReceived =
+      req.headers['x-uazapi-secret'] ||
+      req.body?.secret ||
       req.body?.data?.secret ||
       req.query?.secret;
-    
-    if (secret && receivedSecret) {
-      // Só validar se ambos secret e receivedSecret existem
-      if (receivedSecret !== secret) {
+    const receivedSecret = ((): string | undefined => {
+      if (typeof rawReceived === 'string') return rawReceived;
+      if (Array.isArray(rawReceived) && typeof rawReceived[0] === 'string') return rawReceived[0];
+      return undefined;
+    })();
+
+    if (isProduction && hasConfiguredSecret) {
+      if (!receivedSecret || receivedSecret !== configuredSecret) {
+        console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
+          webhookId,
+          ip: req.ip,
+          reason: !receivedSecret ? 'missing_secret' : 'invalid_secret',
+          hasHeader: !!req.headers['x-uazapi-secret'],
+        });
+        res.status(401).json({ error: 'Invalid or missing webhook secret' });
+        return;
+      }
+      console.log(`[Webhook ${webhookId}] Secret validated successfully`);
+    } else if (isProduction && !hasConfiguredSecret) {
+      console.warn(`[Webhook ${webhookId}] UAZAPI_WEBHOOK_SECRET_NOT_SET_IN_PRODUCTION`, {
+        webhookId,
+        ip: req.ip,
+        message:
+          'Webhook aceito sem secret configurado. Configure UAZAPI_WEBHOOK_SECRET para endurecer a segurança.',
+      });
+    } else if (hasConfiguredSecret && receivedSecret) {
+      if (receivedSecret !== configuredSecret) {
         console.warn(`[Webhook ${webhookId}] Invalid secret`, {
           ip: req.ip,
           userAgent: req.get('user-agent'),
-          hasSecret: !!secret,
           receivedSecretHeader: !!req.headers['x-uazapi-secret'],
           receivedSecretBody: !!req.body?.secret,
           receivedSecretQuery: !!req.query?.secret,
@@ -3199,12 +3779,9 @@ export async function handleWebhook(req: Request, res: Response) {
         res.status(401).json({ error: 'Invalid webhook secret' });
         return;
       }
-      
       console.log(`[Webhook ${webhookId}] Secret validated successfully`);
-    } else if (secret && !receivedSecret) {
-      // Secret configurado mas não enviado - permitir (UazAPI pode não enviar)
+    } else if (hasConfiguredSecret && !receivedSecret) {
       console.log(`[Webhook ${webhookId}] Secret configured but not received, allowing webhook`, {
-        hasSecret: !!secret,
         receivedSecretHeader: !!req.headers['x-uazapi-secret'],
         receivedSecretBody: !!req.body?.secret,
       });
@@ -3223,14 +3800,20 @@ export async function handleWebhook(req: Request, res: Response) {
       return;
     }
 
-    // 3. Identificar instância - tentar múltiplas formas
-    const instanceName =
+    // 3. Identificador da instância no provedor — deve coincidir com chat_instances.external_instance_name (sem fallback por name).
+    const rawInstanceId =
       payload.instance ||
       payload.instanceName ||
       payload.data?.instance ||
       payload.data?.instanceName ||
       req.query.instance ||
       req.headers['x-uazapi-instance'];
+    const instanceName =
+      typeof rawInstanceId === 'string'
+        ? rawInstanceId
+        : Array.isArray(rawInstanceId) && typeof rawInstanceId[0] === 'string'
+          ? rawInstanceId[0]
+          : null;
 
     console.log(`[Webhook ${webhookId}] Instance identification attempt:`, {
       fromPayloadInstance: payload.instance,
@@ -3244,45 +3827,50 @@ export async function handleWebhook(req: Request, res: Response) {
 
     if (!instanceName || typeof instanceName !== 'string') {
       console.warn(`[Webhook ${webhookId}] Missing instance identifier`, {
-        payload: JSON.stringify(payload).substring(0, 500),
+        webhookId,
+        reason: 'missing_instance_identifier',
         allPayloadKeys: Object.keys(payload),
       });
       res.status(400).json({ error: 'Missing instance identifier' });
       return;
     }
 
-    // 4. Buscar instância no banco - tentar por external_instance_name e também por name
-    let instanceResult = await pool.query<ChatInstanceRow>(
-      'SELECT * FROM chat_instances WHERE external_instance_name = $1 LIMIT 1',
-      [instanceName]
-    );
-
-    // Se não encontrou por external_instance_name, tentar por name
-    if (instanceResult.rowCount === 0) {
-      console.log(`[Webhook ${webhookId}] Instance not found by external_instance_name, trying by name...`, {
-        instanceName,
+    const externalKey = instanceName.trim();
+    if (!externalKey) {
+      console.warn(`[Webhook ${webhookId}] instance_resolution_failed`, {
+        webhookId,
+        reason: 'missing_instance_identifier',
       });
-      instanceResult = await pool.query<ChatInstanceRow>(
-        'SELECT * FROM chat_instances WHERE name = $1 LIMIT 1',
-        [instanceName]
-      );
+      res.status(400).json({ error: 'Missing instance identifier' });
+      return;
     }
 
-    // Listar todas as instâncias para debug se ainda não encontrou
-    if (instanceResult.rowCount === 0) {
-      const allInstances = await pool.query<ChatInstanceRow>(
-        'SELECT id, name, external_instance_name FROM chat_instances LIMIT 10'
-      );
-      console.warn(`[Webhook ${webhookId}] Instance not found`, {
-        instanceName,
-        searchedBy: ['external_instance_name', 'name'],
-        availableInstances: allInstances.rows.map(i => ({
-          name: i.name,
-          external_instance_name: i.external_instance_name,
-        })),
-        ip: req.ip,
+    // 4. Resolver instância apenas por external_instance_name (multi-tenant: nunca usar name global com LIMIT 1).
+    const instanceResult = await pool.query<ChatInstanceRow>(
+      'SELECT * FROM chat_instances WHERE external_instance_name = $1',
+      [externalKey]
+    );
+    const matchCount = instanceResult.rowCount ?? 0;
+
+    if (matchCount === 0) {
+      console.warn(`[Webhook ${webhookId}] instance_resolution_failed`, {
+        webhookId,
+        instanceName: externalKey,
+        reason: 'instance_not_found',
       });
       res.status(404).json({ error: 'Instance not registered' });
+      return;
+    }
+
+    if (matchCount > 1) {
+      console.error(`[Webhook ${webhookId}] instance_resolution_failed`, {
+        webhookId,
+        instanceName: externalKey,
+        reason: 'duplicate_external_instance_name',
+        severity: 'critical',
+        matchCount,
+      });
+      res.status(409).json({ error: 'Ambiguous instance configuration' });
       return;
     }
 
@@ -3293,7 +3881,7 @@ export async function handleWebhook(req: Request, res: Response) {
 
     // 6. Log do recebimento com mais detalhes
     console.log(`[Webhook ${webhookId}] Webhook received and instance found`, {
-      instanceName,
+      instanceName: externalKey,
       instanceId: instance.id,
       instanceExternalName: instance.external_instance_name,
       event,
@@ -3309,7 +3897,7 @@ export async function handleWebhook(req: Request, res: Response) {
       received: true,
       webhookId,
       event,
-      instance: instanceName,
+      instance: externalKey,
     });
 
     // 8. Processar evento de forma assíncrona (não bloqueia a resposta)
@@ -3318,7 +3906,7 @@ export async function handleWebhook(req: Request, res: Response) {
         error: error.message,
         stack: error.stack,
         event,
-        instance: instanceName,
+        instance: externalKey,
       });
     });
   } catch (error: any) {

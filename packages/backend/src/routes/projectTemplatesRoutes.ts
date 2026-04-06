@@ -9,12 +9,12 @@ import {
   createTemplateStage,
   createTemplateTask,
 } from '../controllers/projectTemplatesController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
 
 // Todas as rotas requerem autenticação e tenant atual
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 // Rotas de templates
 router.get('/', getProjectTemplates);

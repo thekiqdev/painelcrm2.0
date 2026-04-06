@@ -1,4 +1,4 @@
-import React, { useState, FormEvent, useEffect } from "react";
+import React, { useState, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -13,29 +13,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
-type AuthTab = "login" | "register";
-
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Abre já na aba de cadastro */
-  defaultTab?: AuthTab;
 }
 
-export default function AuthModal({ open, onOpenChange, defaultTab = "login" }: AuthModalProps) {
-  const [tab, setTab] = useState<AuthTab>(defaultTab);
+/**
+ * Modal público apenas para login. Cadastro de nova empresa paga = /checkout (Fase 1).
+ */
+export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [loginType, setLoginType] = useState<"email" | "phone">("email");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { signIn, signUp } = useAuth();
+  const { signIn } = useAuth();
   const navigate = useNavigate();
-
-  const isLogin = tab === "login";
-
-  useEffect(() => {
-    if (open) setTab(defaultTab);
-  }, [open, defaultTab]);
 
   const resetForm = () => {
     setIdentifier("");
@@ -45,6 +37,12 @@ export default function AuthModal({ open, onOpenChange, defaultTab = "login" }: 
   const handleOpenChange = (next: boolean) => {
     if (!next) resetForm();
     onOpenChange(next);
+  };
+
+  const goToCheckout = () => {
+    resetForm();
+    handleOpenChange(false);
+    navigate("/checkout");
   };
 
   const detectLoginType = (value: string): "email" | "phone" => {
@@ -66,18 +64,10 @@ export default function AuthModal({ open, onOpenChange, defaultTab = "login" }: 
     e.preventDefault();
     setIsLoading(true);
     try {
-      if (isLogin) {
-        await signIn(identifier.trim(), password);
+      const dest = await signIn(identifier.trim(), password);
+      if (dest && dest !== "/login") {
         handleOpenChange(false);
-        navigate("/dashboard");
-      } else {
-        await signUp({
-          identifier: identifier.trim(),
-          password,
-          whatsapp: loginType === "phone" ? identifier.replace(/\D/g, "") : undefined,
-        });
-        handleOpenChange(false);
-        navigate("/register/steps");
+        navigate(dest, { replace: true });
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : "Ocorreu um erro.";
@@ -91,11 +81,9 @@ export default function AuthModal({ open, onOpenChange, defaultTab = "login" }: 
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="landing-page sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{isLogin ? "Entrar" : "Criar conta"}</DialogTitle>
+          <DialogTitle>Entrar</DialogTitle>
           <DialogDescription>
-            {isLogin
-              ? "Use seu e-mail ou telefone e senha para acessar sua conta."
-              : "Cadastre-se com e-mail ou número de WhatsApp."}
+            Use seu e-mail ou telefone e senha para acessar sua conta.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
@@ -139,22 +127,14 @@ export default function AuthModal({ open, onOpenChange, defaultTab = "login" }: 
             />
           </div>
           <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "Processando..." : isLogin ? "Entrar" : "Cadastrar"}
+            {isLoading ? "Processando..." : "Entrar"}
           </Button>
         </form>
         <div className="text-center pt-2 border-t border-border/50">
           <span className="text-sm text-muted-foreground">
-            {isLogin ? "Ainda não tem conta? " : "Já tem conta? "}
-            <Button
-              type="button"
-              variant="link"
-              className="p-0 h-auto text-sm"
-              onClick={() => {
-                setTab(isLogin ? "register" : "login");
-                resetForm();
-              }}
-            >
-              {isLogin ? "Cadastre-se" : "Entrar"}
+            Ainda não tem conta?{" "}
+            <Button type="button" variant="link" className="p-0 h-auto text-sm" onClick={goToCheckout}>
+              Cadastrar / Contratar
             </Button>
           </span>
         </div>

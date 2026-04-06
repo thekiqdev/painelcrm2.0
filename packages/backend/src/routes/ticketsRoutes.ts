@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import * as ticketsController from '../controllers/ticketsController.js';
 import * as ticketMessagesController from '../controllers/ticketMessagesController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 router.get('/', ticketsController.getTickets);
 router.get('/:id', ticketsController.getTicketById);

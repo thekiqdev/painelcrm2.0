@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import * as clientsController from '../controllers/clientsController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 import { requirePermission } from '../permissions/index.js';
 
 const router = Router();
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 router.get('/', clientsController.getClients);
+router.get('/:id/timeline', clientsController.getClientTimeline);
+router.post('/:id/timeline/events', clientsController.createClientTimeline);
 router.get('/:id', clientsController.getClientById);
 router.post('/', requirePermission('clients.create'), clientsController.createClient);
 router.patch('/:id', clientsController.updateClient);

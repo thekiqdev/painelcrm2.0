@@ -3,6 +3,11 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import {
+  createClientTimelineEvent,
+  listClientTimelineEvents,
+  type ClientTimelineEventName,
+} from '../services/clientTimelineEventsService.js';
 
 const MODULE_CLIENTS = 'clients';
 
@@ -14,6 +19,30 @@ async function clientBelongsToTenant(clientId: string, tenantId: string | null):
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
      WHERE c.id = $2`,
     [tenantId, clientId]
+  );
+  return r.rows.length > 0;
+}
+
+/** Grupo existe e pertence ao tenant (via dono do grupo em users). */
+async function clientGroupBelongsToTenant(groupId: string, tenantId: string): Promise<boolean> {
+  const r = await pool.query(
+    `SELECT 1 FROM client_groups cg
+     INNER JOIN users u ON u.id = cg.user_id AND u.tenant_id = $2
+     WHERE cg.id = $1
+     LIMIT 1`,
+    [groupId, tenantId]
+  );
+  return r.rows.length > 0;
+}
+
+/** Perfil existe e o owner está no tenant (acesso colaborativo ao perfil do tenant). */
+async function userProfileBelongsToTenant(profileId: string, tenantId: string): Promise<boolean> {
+  const r = await pool.query(
+    `SELECT 1 FROM user_profiles up
+     INNER JOIN users u ON u.id = up.owner_id AND u.tenant_id = $2
+     WHERE up.id = $1
+     LIMIT 1`,
+    [profileId, tenantId]
   );
   return r.rows.length > 0;
 }
@@ -30,6 +59,27 @@ const clientSchema = z.object({
   group_id: z.any().optional().nullable(),
   profile_id: z.any().optional().nullable(),
   cpf_cnpj: z.string().optional().nullable(),
+});
+
+const timelineEventNameSchema = z.enum([
+  'chat_match_client_success',
+  'chat_link_manual',
+  'chat_link_auto_effective',
+  'chat_link_migrated_lead_to_client',
+  'chat_invoice_sent',
+  'chat_invoice_created',
+  'invoice_paid',
+]);
+
+const createTimelineEventSchema = z.object({
+  event_name: timelineEventNameSchema,
+  source: z.string().min(1).max(80),
+  actor_type: z.enum(['user', 'system', 'integration']).default('user'),
+  actor_id: z.string().uuid().optional().nullable(),
+  reference_type: z.string().max(80).optional().nullable(),
+  reference_id: z.string().uuid().optional().nullable(),
+  event_key: z.string().max(255).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** Normaliza CPF/CNPJ: apenas dígitos. Retorna null se vazio ou inválido. */
@@ -57,10 +107,24 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
       SELECT 
         c.*,
         cg.id as group_table_id,
-        cg.name as group_table_name
+        cg.name as group_table_name,
+        wa.wa_url AS whatsapp_avatar_url
       FROM clients c
       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
       LEFT JOIN client_groups cg ON c.group_id = cg.id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          NULLIF(TRIM(cc.metadata->>'whatsapp_profile_photo'), ''),
+          NULLIF(TRIM(cc.metadata->>'image'), ''),
+          NULLIF(TRIM(cc.metadata->>'imagePreview'), ''),
+          NULLIF(TRIM(cc.metadata->>'image_preview'), '')
+        ) AS wa_url
+        FROM chat_conversations cc
+        INNER JOIN users cu ON cu.id = cc.user_id AND cu.tenant_id = $1
+        WHERE cc.client_id = c.id
+        ORDER BY COALESCE(cc.last_message_at, cc.created_at) DESC NULLS LAST
+        LIMIT 1
+      ) wa ON true
       WHERE 1=1
     `;
     const params: unknown[] = [tenantId];
@@ -130,8 +194,22 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT c.* FROM clients c
+      `SELECT c.*, wa.wa_url AS whatsapp_avatar_url
+       FROM clients c
        INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+           NULLIF(TRIM(cc.metadata->>'whatsapp_profile_photo'), ''),
+           NULLIF(TRIM(cc.metadata->>'image'), ''),
+           NULLIF(TRIM(cc.metadata->>'imagePreview'), ''),
+           NULLIF(TRIM(cc.metadata->>'image_preview'), '')
+         ) AS wa_url
+         FROM chat_conversations cc
+         INNER JOIN users cu ON cu.id = cc.user_id AND cu.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+         WHERE cc.client_id = c.id
+         ORDER BY COALESCE(cc.last_message_at, cc.created_at) DESC NULLS LAST
+         LIMIT 1
+       ) wa ON true
        WHERE c.id = $1`,
       [id, userId]
     );
@@ -144,6 +222,68 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error fetching client:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function getClientTimeline(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    const { id: clientId } = req.params;
+    const limit = Number(req.query.limit ?? 50);
+    const offset = Number(req.query.offset ?? 0);
+    const belongs = await clientBelongsToTenant(clientId, tenantId);
+    if (!belongs) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    const events = await listClientTimelineEvents({ tenantId, clientId, limit, offset });
+    res.json(events);
+  } catch (error) {
+    console.error('Error fetching client timeline:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function createClientTimeline(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    const userId = req.userId!;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    const { id: clientId } = req.params;
+    const belongs = await clientBelongsToTenant(clientId, tenantId);
+    if (!belongs) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    const parsed = createTimelineEventSchema.parse(req.body);
+    const actorId = parsed.actor_id ?? (parsed.actor_type === 'user' ? userId : null);
+    await createClientTimelineEvent({
+      tenantId,
+      clientId,
+      eventName: parsed.event_name as ClientTimelineEventName,
+      source: parsed.source,
+      actorType: parsed.actor_type,
+      actorId,
+      referenceType: parsed.reference_type ?? null,
+      referenceId: parsed.reference_id ?? null,
+      eventKey: parsed.event_key ?? null,
+      metadata: parsed.metadata ?? {},
+    });
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('Error creating client timeline event:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -239,6 +379,42 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    const tenantId = req.tenantId ?? null;
+    if (cleanData.group_id) {
+      if (!tenantId) {
+        res.status(403).json({
+          error: 'INVALID_TENANT',
+          message: 'Tenant necessário para associar grupo ao cliente.',
+        });
+        return;
+      }
+      const groupOk = await clientGroupBelongsToTenant(cleanData.group_id, tenantId);
+      if (!groupOk) {
+        res.status(400).json({
+          error: 'INVALID_GROUP_FOR_TENANT',
+          message: 'Grupo inexistente ou não pertence ao tenant.',
+        });
+        return;
+      }
+    }
+    if (cleanData.profile_id) {
+      if (!tenantId) {
+        res.status(403).json({
+          error: 'INVALID_TENANT',
+          message: 'Tenant necessário para associar perfil ao cliente.',
+        });
+        return;
+      }
+      const profileOk = await userProfileBelongsToTenant(cleanData.profile_id, tenantId);
+      if (!profileOk) {
+        res.status(400).json({
+          error: 'INVALID_PROFILE_FOR_TENANT',
+          message: 'Perfil inexistente ou não pertence ao tenant.',
+        });
+        return;
+      }
+    }
+
     const result = await pool.query(
       `INSERT INTO clients (
         user_id, name, email, phone, company, status, source,
@@ -309,6 +485,66 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
       if (normalizedCpfCnpj !== null && !isValidCpfCnpjLength(normalizedCpfCnpj)) {
         res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
         return;
+      }
+    }
+
+    const tenantIdForRefs = req.tenantId ?? null;
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (clientData.group_id !== undefined && clientData.group_id !== null) {
+      const g =
+        typeof clientData.group_id === 'string' && clientData.group_id.trim()
+          ? clientData.group_id.trim()
+          : '';
+      if (g && !uuidRegex.test(g)) {
+        res.status(400).json({ error: 'Invalid group_id format' });
+        return;
+      }
+      if (g) {
+        if (!tenantIdForRefs) {
+          res.status(403).json({
+            error: 'INVALID_TENANT',
+            message: 'Tenant necessário para associar grupo ao cliente.',
+          });
+          return;
+        }
+        const groupOk = await clientGroupBelongsToTenant(g, tenantIdForRefs);
+        if (!groupOk) {
+          res.status(400).json({
+            error: 'INVALID_GROUP_FOR_TENANT',
+            message: 'Grupo inexistente ou não pertence ao tenant.',
+          });
+          return;
+        }
+      }
+    }
+
+    if (clientData.profile_id !== undefined && clientData.profile_id !== null) {
+      const p =
+        typeof clientData.profile_id === 'string' && clientData.profile_id.trim()
+          ? clientData.profile_id.trim()
+          : '';
+      if (p && !uuidRegex.test(p)) {
+        res.status(400).json({ error: 'Invalid profile_id format' });
+        return;
+      }
+      if (p) {
+        if (!tenantIdForRefs) {
+          res.status(403).json({
+            error: 'INVALID_TENANT',
+            message: 'Tenant necessário para associar perfil ao cliente.',
+          });
+          return;
+        }
+        const profileOk = await userProfileBelongsToTenant(p, tenantIdForRefs);
+        if (!profileOk) {
+          res.status(400).json({
+            error: 'INVALID_PROFILE_FOR_TENANT',
+            message: 'Perfil inexistente ou não pertence ao tenant.',
+          });
+          return;
+        }
       }
     }
 

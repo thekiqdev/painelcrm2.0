@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -48,6 +48,8 @@ import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
 import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
+import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 
@@ -68,6 +70,7 @@ const CLIENTS_QUERY_KEY = ["clients", "list"] as const;
 
 const Clients = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { canCreate, canEdit, canDelete } = useModulePermissions();
   const [clients, setClients] = useState<any[]>([]);
@@ -90,6 +93,15 @@ const Clients = () => {
   const [tabSelected, setTabSelected] = useState("details");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setIsAddDialogOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("new");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -145,6 +157,7 @@ const Clients = () => {
         group_id: client.group_id,
         notes: client.notes,
         cpf_cnpj: client.cpf_cnpj ?? null,
+        whatsapp_avatar_url: client.whatsapp_avatar_url ?? null,
       }));
       return { clients: formatted, groups };
     },
@@ -1356,6 +1369,7 @@ const Clients = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-12" aria-label="Avatar" />
                   <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
                     <div className="flex items-center">
                       Nome
@@ -1378,13 +1392,26 @@ const Clients = () => {
               <TableBody>
                 {paginatedClients.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground">
                       Nenhum cliente encontrado com os critérios de busca
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedClients.map((client) => (
+                  paginatedClients.map((client) => {
+                    const listAvatar = resolveProfileAvatarUrl(
+                      client,
+                      client.whatsapp_avatar_url ?? null
+                    );
+                    return (
                     <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
+                      <TableCell className="w-12">
+                        <Avatar className="h-8 w-8">
+                          {listAvatar.src ? (
+                            <AvatarImage src={listAvatar.src} alt={client.name} />
+                          ) : null}
+                          <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                        </Avatar>
+                      </TableCell>
                       <TableCell>{client.name}</TableCell>
                       <TableCell>{client.company || "—"}</TableCell>
                       <TableCell>{client.email || "—"}</TableCell>
@@ -1456,7 +1483,8 @@ const Clients = () => {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

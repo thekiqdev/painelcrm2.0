@@ -4,9 +4,11 @@ import { insertTenantPlanHistory } from '../services/auditLogService.js';
 import { hashPassword, comparePassword } from '../utils/bcrypt.js';
 import { generateToken } from '../utils/jwt.js';
 import { getEnabledFeaturesForUser } from '../services/featureFlagService.js';
+import { isPhase2TrialCrmGateEnabled } from '../config/checkoutTrialFeatureFlags.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
 import { checkTenantUsersLimitForAddOne } from '../services/tenantLimitService.js';
 import { z } from 'zod';
+import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/userIdentity.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -49,6 +51,13 @@ async function findDefaultProfileId(userId: string): Promise<string | null> {
 }
 
 export async function register(req: Request, res: Response): Promise<void> {
+  if (process.env.DISABLE_PUBLIC_AUTH_REGISTER === 'true') {
+    res.status(403).json({
+      error: 'Cadastro público desativado. Utilize o checkout para criar sua conta.',
+      code: 'PUBLIC_REGISTER_DISABLED',
+    });
+    return;
+  }
   const client = await pool.connect();
   let transactionStarted = false;
   try {
@@ -61,8 +70,8 @@ export async function register(req: Request, res: Response): Promise<void> {
       company_name,
     } = registerSchema.parse(req.body);
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const normalizedWhatsapp = whatsapp ? whatsapp.replace(/\D/g, '') : null;
+    const normalizedEmail = normalizeEmailForUniqueness(email);
+    const normalizedWhatsapp = normalizeWhatsappDigits(whatsapp ?? null);
     const firstName = first_name?.trim() || null;
     const lastName = last_name?.trim() || null;
     const inferredCompanyName =
@@ -73,16 +82,30 @@ export async function register(req: Request, res: Response): Promise<void> {
     await client.query('BEGIN');
     transactionStarted = true;
 
-    const existingUser = await client.query(
-      'SELECT id FROM users WHERE email = $1 AND tenant_id IS NULL',
+    const existingByEmail = await client.query(
+      'SELECT id FROM users WHERE lower(btrim(email)) = $1',
       [normalizedEmail]
     );
-
-    if (existingUser.rows.length > 0) {
+    if (existingByEmail.rows.length > 0) {
       await client.query('ROLLBACK');
       transactionStarted = false;
-      res.status(400).json({ error: 'User already exists' });
+      res.status(400).json({ error: 'Este e-mail já está cadastrado na plataforma.' });
       return;
+    }
+
+    if (normalizedWhatsapp) {
+      const existingByWa = await client.query(
+        `SELECT id FROM users
+         WHERE length(regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g')) >= 8
+           AND regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g') = $1`,
+        [normalizedWhatsapp]
+      );
+      if (existingByWa.rows.length > 0) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        res.status(400).json({ error: 'Este número de WhatsApp já está cadastrado na plataforma.' });
+        return;
+      }
     }
 
     const passwordHash = await hashPassword(password);
@@ -91,7 +114,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       `INSERT INTO users (email, password_hash, whatsapp_number)
        VALUES ($1, $2, $3)
        RETURNING id, email, created_at`,
-      [normalizedEmail, passwordHash, normalizedWhatsapp || null]
+      [normalizedEmail, passwordHash, normalizedWhatsapp]
     );
 
     const user = userResult.rows[0];
@@ -104,7 +127,7 @@ export async function register(req: Request, res: Response): Promise<void> {
         firstName,
         lastName,
         inferredCompanyName,
-        normalizedWhatsapp || '',
+        normalizedWhatsapp ?? '',
       ]
     );
 
@@ -234,6 +257,13 @@ export async function register(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
     }
+    const pgCode = (error as { code?: string })?.code;
+    if (pgCode === '23505') {
+      res.status(400).json({
+        error: 'E-mail ou WhatsApp já cadastrado. Se o problema persistir, entre em contato com o suporte.',
+      });
+      return;
+    }
     console.error('Register error:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
@@ -251,15 +281,30 @@ export async function login(req: Request, res: Response): Promise<void> {
     
     let userResult;
     if (isEmail) {
+      const em = normalizeEmailForUniqueness(identifier);
       userResult = await pool.query(
-        'SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin FROM users WHERE email = $1',
-        [identifier.toLowerCase().trim()]
+        `SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin,
+                tenant_id
+         FROM users
+         WHERE lower(btrim(email)) = $1
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [em]
       );
     } else {
-      const normalizedPhone = identifier.replace(/[\s\-\(\)\+]/g, '');
+      const digits = identifier.replace(/\D/g, '');
+      if (digits.length < 8) {
+        res.status(401).json({ error: 'Credenciais inválidas' });
+        return;
+      }
       userResult = await pool.query(
-        'SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin FROM users WHERE whatsapp_number = $1 OR whatsapp_number = $2',
-        [identifier, normalizedPhone]
+        `SELECT id, email, password_hash, whatsapp_number, COALESCE(is_super_admin, false) AS is_super_admin
+         FROM users
+         WHERE length(regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g')) >= 8
+           AND regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g') = $1
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [digits]
       );
     }
 
@@ -338,6 +383,7 @@ export async function login(req: Request, res: Response): Promise<void> {
         company_name: profile.company_name,
         default_profile_id: defaultProfileId,
         is_super_admin: user.is_super_admin === true,
+        tenant_id: user.tenant_id ?? null,
       },
       token,
     });
@@ -392,16 +438,27 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     let planExpired = false;
     let tenantStatus: string | null = null;
     let onboardingCompleted = false;
+    let trialEndsAt: string | null = null;
+    let suspensionReason: string | null = null;
+    let requiresCheckoutResume = false;
     const tenantCheck = await pool.query<{
       tenant_id: string;
       primary_user_id: string;
       status: string;
       onboarding_completed: boolean;
+      trial_ends_at: string | null;
+      activated_billing_id: string | null;
+      suspension_reason: string | null;
+      plan_period_end: string | null;
     }>(
       `SELECT u.tenant_id,
         (SELECT u2.id FROM users u2 WHERE u2.tenant_id = u.tenant_id ORDER BY u2.created_at ASC LIMIT 1) AS primary_user_id,
         t.status,
-        t.onboarding_completed
+        t.onboarding_completed,
+        t.trial_ends_at,
+        t.activated_billing_id,
+        t.suspension_reason,
+        t.plan_period_end
        FROM users u
        JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = $1 AND u.tenant_id IS NOT NULL`,
@@ -410,6 +467,26 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     if (tenantCheck.rows.length > 0) {
       const row = tenantCheck.rows[0];
       tenantStatus = row.status;
+      trialEndsAt = row.trial_ends_at;
+      suspensionReason = row.suspension_reason;
+      const trialEndedUnpaid =
+        row.status === 'trial' &&
+        row.trial_ends_at != null &&
+        new Date(row.trial_ends_at) < new Date() &&
+        row.activated_billing_id == null;
+      const trialEndedWhilePaymentPending =
+        row.status === 'payment_pending' &&
+        row.trial_ends_at != null &&
+        new Date(row.trial_ends_at) < new Date() &&
+        row.activated_billing_id == null;
+      const needsTrialPayment =
+        (row.status === 'suspended' && row.suspension_reason === 'trial_expired') ||
+        trialEndedUnpaid ||
+        trialEndedWhilePaymentPending;
+      requiresCheckoutResume = isPhase2TrialCrmGateEnabled() && needsTrialPayment;
+      if (row.status === 'active' || row.activated_billing_id != null) {
+        requiresCheckoutResume = false;
+      }
       onboardingCompleted = row.onboarding_completed === true;
       const primaryUserId = row.primary_user_id;
       const isPrimaryUser = primaryUserId === userId;
@@ -418,6 +495,10 @@ export async function getMe(req: Request, res: Response): Promise<void> {
         [userId]
       );
       canManagePlan = isPrimaryUser || hasAdminProfile.rows.length > 0;
+      const planPeriodValid =
+        row.plan_period_end != null && new Date(row.plan_period_end).getTime() >= Date.now();
+      const hasPaidActivationOrActive =
+        row.activated_billing_id != null || row.status === 'active' || planPeriodValid;
       const expCheck = await pool.query(
         `SELECT t.trial_ends_at, p.is_free
          FROM tenants t
@@ -425,7 +506,12 @@ export async function getMe(req: Request, res: Response): Promise<void> {
          WHERE t.id = $1`,
         [row.tenant_id]
       );
-      if (expCheck.rows.length > 0 && expCheck.rows[0].is_free === true && expCheck.rows[0].trial_ends_at) {
+      if (
+        !hasPaidActivationOrActive &&
+        expCheck.rows.length > 0 &&
+        expCheck.rows[0].is_free === true &&
+        expCheck.rows[0].trial_ends_at
+      ) {
         const endsAt = new Date(expCheck.rows[0].trial_ends_at);
         if (endsAt.getTime() < Date.now()) {
           planExpired = true;
@@ -450,6 +536,9 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       plan_expired: planExpired,
       tenant_status: tenantStatus,
       onboarding_completed: onboardingCompleted,
+      trial_ends_at: trialEndsAt,
+      suspension_reason: suspensionReason,
+      requires_checkout_resume: requiresCheckoutResume,
     });
   } catch (error) {
     console.error('Get me error:', error);

@@ -7,9 +7,14 @@ import type { GatewayWebhookParser, ParsedWebhookPayload } from '../paymentGatew
 import { getInvoiceByGatewayReferenceId } from '../../../services/invoiceService.js';
 import { findCustomerInvoiceByGatewayReference } from '../../../services/customerInvoiceService.js';
 import { findInvoiceAttemptByGatewayReference } from '../../../services/customerInvoicePaymentAttemptsService.js';
+import { findTenantBillingPaymentAttemptByGatewayReference } from '../../../services/tenantBillingPaymentAttemptsService.js';
 import { normalizeGatewayStatus } from './statusNormalizer.js';
 import { insertPaymentEvent, markPaymentEventProcessed } from './paymentEventsService.js';
-import { applyPaymentEvent, applyPaymentAttemptEvent } from './paymentDomainService.js';
+import {
+  applyPaymentEvent,
+  applyPaymentAttemptEvent,
+  applyTenantBillingPaymentAttemptEvent,
+} from './paymentDomainService.js';
 
 const parsers = new Map<string, GatewayWebhookParser>();
 
@@ -109,6 +114,30 @@ export async function handleWebhook(
       attemptId: attempt.id,
       invoiceId: attempt.invoice_id,
       invoiceCurrentStatus,
+      internalStatus,
+      gatewayStatus: externalStatus,
+      paidAt: internalStatus === 'paid' ? new Date() : undefined,
+    });
+    await markPaymentEventProcessed({
+      gateway: gatewayKey,
+      eventId,
+      processedResult,
+    });
+    return { status: 200, body: { received: true } };
+  }
+
+  const tbAttempt = await findTenantBillingPaymentAttemptByGatewayReference(gatewayKey, referenceId);
+  if (tbAttempt) {
+    const { pool } = await import('../../../utils/db.js');
+    const billingRow = await pool.query<{ status: string }>(
+      `SELECT status FROM tenant_billing WHERE id = $1 LIMIT 1`,
+      [tbAttempt.billing_id]
+    );
+    const billingCurrentStatus = billingRow.rows[0]?.status ?? 'pending';
+    const processedResult = await applyTenantBillingPaymentAttemptEvent({
+      attemptId: tbAttempt.id,
+      billingId: tbAttempt.billing_id,
+      billingCurrentStatus,
       internalStatus,
       gatewayStatus: externalStatus,
       paidAt: internalStatus === 'paid' ? new Date() : undefined,

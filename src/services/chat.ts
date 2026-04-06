@@ -32,7 +32,11 @@ export interface ChatConversation {
   lastMessagePreview?: string | null;
   lastMessageAt?: string | null;
   unreadCount: number;
+  link_state?: 'client_linked' | 'lead_linked' | 'review_required' | 'unlinked' | null;
+  link_source?: 'auto' | 'manual' | 'system' | null;
+  link_confidence?: 'high' | 'review' | 'manual' | null;
   metadata?: Record<string, unknown> | null;
+  created_at?: string;
   updated_at?: string;
 }
 
@@ -65,6 +69,7 @@ const normalizeConversation = (raw: any): ChatConversation => {
     metadata.image ||
     metadata.image_preview ||
     metadata.imagePreview ||
+    (typeof metadata.whatsapp_profile_photo === 'string' ? metadata.whatsapp_profile_photo : null) ||
     null;
 
   return {
@@ -84,7 +89,11 @@ const normalizeConversation = (raw: any): ChatConversation => {
   lastMessagePreview: raw.last_message_preview ?? null,
   lastMessageAt: raw.last_message_at ?? null,
   unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
+    link_state: raw.link_state ?? metadata.link_state ?? null,
+    link_source: raw.link_source ?? metadata.link_source ?? null,
+    link_confidence: raw.link_confidence ?? metadata.link_confidence ?? null,
     metadata: metadata ?? null,
+  created_at: raw.created_at,
   updated_at: raw.updated_at,
   };
 };
@@ -189,6 +198,32 @@ export const chatService = {
     return response.data;
   },
 
+  /** Busca na UazAPI o chat por wa_chatid e reaplica upsert (nome, foto, metadata). Não sincroniza mensagens. */
+  async refreshConversationIdentity(conversationId: string): Promise<{
+    ok: boolean;
+    updated: boolean;
+    reason?: string;
+    conversation?: ChatConversation;
+  }> {
+    const response = await apiClient.post<{
+      ok: boolean;
+      updated: boolean;
+      reason?: string;
+      conversation?: Record<string, unknown>;
+    }>(`/api/chat/conversations/${conversationId}/refresh-identity`);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    const data = response.data;
+    if (!data) {
+      throw new Error('Resposta vazia ao atualizar contato');
+    }
+    return {
+      ...data,
+      conversation: data.conversation ? normalizeConversation(data.conversation) : undefined,
+    };
+  },
+
   async sendMessage(conversationId: string, text: string) {
     const response = await apiClient.post(`/api/chat/messages`, {
       conversationId,
@@ -208,6 +243,26 @@ export const chatService = {
       throw new Error(response.error);
     }
     return response.data;
+  },
+
+  async linkConversation(
+    conversationId: string,
+    payload: { type: 'client' | 'lead'; id: string }
+  ): Promise<ChatConversation> {
+    const response = await apiClient.post<ChatConversation>(
+      `/api/chat/conversations/${conversationId}/link`,
+      payload
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Falha ao vincular conversa');
+    return normalizeConversation(response.data);
+  },
+
+  async unlinkConversation(conversationId: string): Promise<ChatConversation> {
+    const response = await apiClient.delete<ChatConversation>(`/api/chat/conversations/${conversationId}/link`);
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Falha ao remover vínculo');
+    return normalizeConversation(response.data);
   },
 
   async deleteInstance(id: string) {
@@ -237,6 +292,18 @@ export const chatService = {
       conversationId: data.conversationId || null,
       conversationIds: data.conversationIds || [],
     };
+  },
+
+  /** Foto WhatsApp da conversa vinculada (metadata); não persiste no CRM. */
+  async getCrmWhatsappIdentity(params: { clientId?: string; leadId?: string }): Promise<{ avatarUrl: string | null }> {
+    const q = new URLSearchParams();
+    if (params.clientId) q.set('clientId', params.clientId);
+    if (params.leadId) q.set('leadId', params.leadId);
+    const response = await apiClient.get<{ avatarUrl: string | null }>(`/api/chat/crm-whatsapp-identity?${q.toString()}`);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data || { avatarUrl: null };
   },
 };
 

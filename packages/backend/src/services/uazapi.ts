@@ -12,7 +12,8 @@ export class UazapiService {
 
   constructor() {
     this.baseUrl = (process.env.UAZAPI_BASE_URL || 'https://free.uazapi.com').replace(/\/$/, '');
-    this.adminToken = process.env.UAZAPI_ADMIN_TOKEN;
+    const raw = process.env.UAZAPI_ADMIN_TOKEN?.trim();
+    this.adminToken = raw || undefined;
   }
 
   public updateConfig(params: { baseUrl?: string; adminToken?: string }) {
@@ -20,7 +21,8 @@ export class UazapiService {
       this.baseUrl = params.baseUrl.replace(/\/$/, '');
     }
     if (typeof params.adminToken === 'string') {
-      this.adminToken = params.adminToken;
+      const t = params.adminToken.trim();
+      this.adminToken = t || undefined;
     }
   }
 
@@ -31,7 +33,7 @@ export class UazapiService {
     };
 
     if (options.useAdminToken) {
-      if (!this.adminToken) {
+      if (!this.adminToken?.trim()) {
         const error = new Error('UAZAPI_ADMIN_TOKEN is not configured');
         (error as any).status = 500;
         throw error;

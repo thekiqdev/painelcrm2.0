@@ -15,7 +15,10 @@ const createTenantSchema = z.object({
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/, 'Slug: apenas letras minúsculas, números e hífen'),
   domain: z.string().optional().nullable(),
   plan_id: z.string().uuid(),
-  status: z.enum(['active', 'suspended', 'trial']).optional().default('active'),
+  status: z
+    .enum(['active', 'suspended', 'trial', 'payment_pending'])
+    .optional()
+    .default('active'),
   trial_ends_at: z.union([z.string(), z.null()]).optional().transform((v) => (v && v !== '' ? v : null)),
   timezone: z.string().optional().nullable(),
   locale: z.string().optional().nullable(),
@@ -305,7 +308,10 @@ export async function updatePrimaryUser(req: AuthRequest, res: Response): Promis
     const userId = userResult.rows[0].id;
     if (body.email !== undefined) {
       const email = body.email.trim().toLowerCase();
-      const existing = await pool.query('SELECT id FROM users WHERE email = $1 AND id != $2', [email, userId]);
+      const existing = await pool.query(
+        'SELECT id FROM users WHERE lower(btrim(email)) = $1 AND id != $2',
+        [email, userId]
+      );
       if (existing.rows.length > 0) {
         res.status(400).json({ error: 'Este e-mail já está em uso por outro usuário.' });
         return;

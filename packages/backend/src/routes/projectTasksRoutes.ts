@@ -6,13 +6,13 @@ import {
   updateProjectTask,
   deleteProjectTask,
 } from '../controllers/projectTasksController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 import { requirePermission } from '../permissions/index.js';
 
 const router = Router();
 
 // Todas as rotas requerem autenticação e tenant atual
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 // Rotas de tarefas
 router.get('/lists/:listId/tasks', getProjectTasks);

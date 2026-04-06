@@ -51,6 +51,8 @@ import superadminRoutes from './routes/superadminRoutes.js';
 import plansRoutes from './routes/plansRoutes.js';
 import * as plansController from './controllers/plansController.js';
 import myTenantPlanRoutes from './routes/myTenantPlanRoutes.js';
+import { authenticateToken, setCurrentTenant, setRequestDb } from './middleware/auth.js';
+import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
 import billingRoutes from './routes/billingRoutes.js';
 import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
@@ -243,6 +245,13 @@ app.use('/api/billing', billingRoutes);
 app.use('/api/customer-invoices', customerInvoicesRoutes);
 app.use('/api/customer-charges', customerChargesRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.get(
+  '/api/me/tenant/checkout-context',
+  authenticateToken,
+  setCurrentTenant,
+  setRequestDb,
+  getCheckoutContext
+);
 app.use('/api/me/tenant', myTenantPlanRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);

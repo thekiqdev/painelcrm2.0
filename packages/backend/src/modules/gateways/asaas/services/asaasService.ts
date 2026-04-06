@@ -25,6 +25,31 @@ import type { AsaasPaymentRequest } from '../asaasTypes.js';
 
 const GATEWAY_KEY = 'asaas';
 
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Após POST /payments com PIX, o GET /pixQrCode pode falhar ou vir vazio até o Asaas gerar o QR. */
+async function fetchPixQrWithRetry(
+  paymentId: string,
+  config: AsaasConfig | null | undefined,
+  maxAttempts: number
+): Promise<{ payload?: string; encodedImage?: string } | null> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      const backoff = Math.min(2_500, 350 * 2 ** (attempt - 1));
+      await delayMs(backoff);
+    }
+    const pixData = await asaasClient.getPixQrCode(paymentId, config);
+    const payload = pixData?.payload?.trim();
+    const enc = pixData?.encodedImage?.trim();
+    if (payload || enc) {
+      return { payload: payload || undefined, encodedImage: enc || undefined };
+    }
+  }
+  return null;
+}
+
 function withLog<T>(
   operation: string,
   tenantId: string | undefined | null,
@@ -108,15 +133,23 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
         let pixCopyPaste: string | undefined;
 
         if (body.billingType === 'PIX') {
-          const pixData = await asaasClient.getPixQrCode(res.id, config);
+          const pixData = await fetchPixQrWithRetry(res.id, config, 14);
           if (pixData) {
             pixCopyPaste = pixData.payload ?? undefined;
             if (pixData.encodedImage) {
-              pixQrCode = pixData.encodedImage.startsWith('data:') ? pixData.encodedImage : `data:image/png;base64,${pixData.encodedImage}`;
+              pixQrCode = pixData.encodedImage.startsWith('data:')
+                ? pixData.encodedImage
+                : `data:image/png;base64,${pixData.encodedImage}`;
             }
-            console.log('[DIAG asaasService] getPixQrCode result', { hasPayload: !!pixCopyPaste, hasEncodedImage: !!pixData.encodedImage });
+            console.log('[DIAG asaasService] getPixQrCode result', {
+              hasPayload: !!pixCopyPaste,
+              hasEncodedImage: !!pixData.encodedImage,
+            });
           } else {
-            console.warn('[DIAG asaasService] getPixQrCode retornou null para paymentId=', res.id);
+            console.warn(
+              '[DIAG asaasService] getPixQrCode sem payload/imagem após retentativas paymentId=',
+              res.id
+            );
           }
         }
 
@@ -236,6 +269,7 @@ function normalizeTenantCpfDigits(cpfCnpj: string | null | undefined): string | 
 
 /**
  * Se o tenant tem CPF/CNPJ válido e o customer remoto está vazio ou diverge, atualiza no Asaas.
+ * Falhas de rede/timeout não bloqueiam o checkout — o vínculo local continua válido.
  */
 async function syncTenantCpfToAsaasCustomerIfNeeded(
   customerId: string,
@@ -243,20 +277,25 @@ async function syncTenantCpfToAsaasCustomerIfNeeded(
   config?: AsaasConfig | null
 ): Promise<void> {
   if (!tenantCpfDigits) return;
-  const remote = await asaasClient.getCustomer(customerId, config);
-  if (!remote?.email) return;
-  const remoteDigits = onlyDigits((remote.cpfCnpj as string | undefined) ?? '');
-  if (remoteDigits === tenantCpfDigits) return;
+  try {
+    const remote = await asaasClient.getCustomer(customerId, config);
+    if (!remote?.email) return;
+    const remoteDigits = onlyDigits((remote.cpfCnpj as string | undefined) ?? '');
+    if (remoteDigits === tenantCpfDigits) return;
 
-  const name = String(remote.name ?? '').trim() || 'Cliente';
-  const email = String(remote.email).trim();
-  const payload = asaasMapper.tenantToAsaasCustomer({
-    name,
-    email,
-    cpfCnpj: tenantCpfDigits,
-    phone: remote.phone != null ? String(remote.phone) : undefined,
-  });
-  await asaasClient.updateCustomer(customerId, payload, config);
+    const name = String(remote.name ?? '').trim() || 'Cliente';
+    const email = String(remote.email).trim();
+    const payload = asaasMapper.tenantToAsaasCustomer({
+      name,
+      email,
+      cpfCnpj: tenantCpfDigits,
+      phone: remote.phone != null ? String(remote.phone) : undefined,
+    });
+    await asaasClient.updateCustomer(customerId, payload, config);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[asaasService] syncTenantCpfToAsaasCustomerIfNeeded skipped:', customerId, msg);
+  }
 }
 
 /**

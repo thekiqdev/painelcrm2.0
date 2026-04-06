@@ -50,6 +50,11 @@ const TENANT_SCOPED_TABLES = [
   'chat_messages',
   'store_profiles',
   'registration_steps',
+  'client_timeline_events',
+  'customer_invoice_items',
+  'subscriptions',
+  'payment_customers',
+  'billing_recurring_jobs',
 ] as const;
 
 /** Padrões que indicam filtro por tenant (query considerada segura se algum estiver presente). */
@@ -113,7 +118,8 @@ export function assertTenantScopedQuery(sql: string): void {
   const preview = normalized.length > 400 ? `${normalized.slice(0, 400)}...` : normalized;
   console.warn(
     '[tenantSecurity] SELECT em tabela(s) tenant-scoped sem filtro de tenant detectado. ' +
-      'Garanta: tenant_id, user_id IN (SELECT ... users ... tenant_id), ou JOIN users ... tenant_id.\n' +
+      'Garanta: tenant_id explícito, JOIN users ... tenant_id, ou user_id IN (SELECT id FROM users WHERE tenant_id = ...). ' +
+      'Em faturas/itens, prefira customer_invoices.tenant_id antes de ler customer_invoice_items.\n' +
       `Query (preview): ${preview}`
   );
 }

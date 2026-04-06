@@ -23,7 +23,17 @@ import {
   setCustomRoleModulePermissions,
 } from '../services/customRolesService.js';
 import { incrementPermissionVersion } from '../services/permissionVersionService.js';
+import { getOpenTenantBillingSummary } from '../services/commercialHubContextService.js';
+import { listCommercialBillingsForHub } from '../services/commercialTenantBillingsHubService.js';
 import { z } from 'zod';
+import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/userIdentity.js';
+import {
+  previewSeatAddonPurchase,
+  scheduleSeatDowngradeNextCycle,
+  startSeatAddonCheckout,
+} from '../services/tenantSeatCommercialService.js';
+import { getInvoiceById } from '../services/invoiceService.js';
+import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 
 async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
   const userId = req.userId;
@@ -162,13 +172,34 @@ export async function postMyTenantUser(req: AuthRequest, res: Response): Promise
     }
 
     const body = createTenantUserSchema.parse(req.body);
-    const email = body.email.trim().toLowerCase();
-    const phone = body.phone?.replace(/\D/g, '').trim() || null;
+    const email = normalizeEmailForUniqueness(body.email);
+    const phoneDigits = normalizeWhatsappDigits(body.phone ?? null);
 
-    const existing = await pool.query('SELECT id FROM users WHERE tenant_id = $1 AND email = $2', [tenantId, email]);
-    if (existing.rows.length > 0) {
-      res.status(400).json({ error: 'Já existe um usuário com este e-mail nesta conta.' });
+    const existingEmail = await pool.query<{ id: string; tenant_id: string | null }>(
+      'SELECT id, tenant_id FROM users WHERE lower(btrim(email)) = $1',
+      [email]
+    );
+    if (existingEmail.rows.length > 0) {
+      const row = existingEmail.rows[0];
+      if (row.tenant_id === tenantId) {
+        res.status(400).json({ error: 'Já existe um usuário com este e-mail nesta conta.' });
+        return;
+      }
+      res.status(400).json({ error: 'Este e-mail já está cadastrado na plataforma.' });
       return;
+    }
+
+    if (phoneDigits) {
+      const existingPhone = await pool.query(
+        `SELECT id FROM users
+         WHERE length(regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g')) >= 8
+           AND regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g') = $1`,
+        [phoneDigits]
+      );
+      if (existingPhone.rows.length > 0) {
+        res.status(400).json({ error: 'Este número de WhatsApp já está cadastrado na plataforma.' });
+        return;
+      }
     }
 
     const passwordHash = await hashPassword(body.password);
@@ -181,14 +212,14 @@ export async function postMyTenantUser(req: AuthRequest, res: Response): Promise
       `INSERT INTO users (email, password_hash, whatsapp_number, tenant_id)
        VALUES ($1, $2, $3, $4)
        RETURNING id, email`,
-      [email, passwordHash, phone, tenantId]
+      [email, passwordHash, phoneDigits, tenantId]
     );
     const newUser = userResult.rows[0];
 
     await pool.query(
       `INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, registration_complete)
        VALUES ($1, $2, $3, '', $4, true)`,
-      [newUser.id, firstName, lastName, phone ?? '']
+      [newUser.id, firstName, lastName, phoneDigits ?? body.phone?.trim() ?? '']
     );
 
     await pool.query(
@@ -218,6 +249,12 @@ export async function postMyTenantUser(req: AuthRequest, res: Response): Promise
       return;
     }
     console.error('postMyTenantUser error:', error);
+    if ((error as { code?: string })?.code === '23505') {
+      res.status(400).json({
+        error: 'E-mail ou WhatsApp já cadastrado na plataforma.',
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : 'Erro ao criar usuário';
     res.status(500).json({ error: message });
   }
@@ -433,6 +470,25 @@ export async function getMyTenantLimits(req: AuthRequest, res: Response): Promis
   }
 }
 
+/**
+ * GET /api/me/tenant/commercial-billings — histórico comercial (cobrança pai = tenant_billing).
+ * Não expõe tentativas técnicas (tenant_billing_payment_attempts).
+ */
+export async function getMyTenantCommercialBillings(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const billings = await listCommercialBillingsForHub(tenantId, 60);
+    res.json({ billings });
+  } catch (error: unknown) {
+    console.error('getMyTenantCommercialBillings error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 /** GET /api/me/tenant/plan - plano atual do tenant do usuário (apenas primary user). */
 export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -443,7 +499,9 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
     }
     const planResult = await pool.query(
       `SELECT p.*, t.trial_ends_at, t.max_users_override, t.max_whatsapp_instances_override,
-              t.status AS tenant_status, t.plan_period_start, t.plan_period_end
+              t.status AS tenant_status, t.plan_period_start, t.plan_period_end,
+              t.suspension_reason, t.activated_billing_id,
+              t.max_users_scheduled_next_cycle, t.seat_addon_pending_billing_id
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
        WHERE t.id = $1`,
@@ -462,6 +520,53 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
       );
       plan.interval_prices = pricesRows.rows;
     }
+    const activatedBid = plan.activated_billing_id ?? null;
+    const pendingBilling = await getOpenTenantBillingSummary(ctx.tenantId, activatedBid);
+
+    let pending_seat_addon_billing: {
+      billing_id: string;
+      status: string;
+      amount_cents: number;
+      due_date: string | null;
+      payment_method: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | null;
+      gateway: string | null;
+      invoice_number: string | null;
+      has_gateway_reference: boolean;
+    } | null = null;
+    const seatBid = plan.seat_addon_pending_billing_id as string | null | undefined;
+    if (seatBid) {
+      const sb = await getInvoiceById(seatBid);
+      const open =
+        sb &&
+        ['pending', 'waiting_payment', 'processing', 'overdue'].includes(String(sb.status));
+      if (open && sb) {
+        const due = sb.due_date;
+        let dueStr: string | null = null;
+        if (due != null) {
+          const d = typeof due === 'string' || typeof due === 'number' ? new Date(due) : new Date(String(due));
+          if (!Number.isNaN(d.getTime())) dueStr = d.toISOString().slice(0, 10);
+        }
+        const pm = sb.payment_method;
+        const methodOk =
+          pm === 'PIX' || pm === 'BOLETO' || pm === 'CREDIT_CARD' ? pm : null;
+        pending_seat_addon_billing = {
+          billing_id: sb.id,
+          status: sb.status,
+          amount_cents: sb.amount_cents ?? 0,
+          due_date: dueStr,
+          payment_method: methodOk,
+          gateway: sb.gateway ?? null,
+          invoice_number: sb.invoice_number ?? null,
+          has_gateway_reference: !!(sb.gateway_reference_id && String(sb.gateway_reference_id).trim()),
+        };
+      } else {
+        await pool.query(
+          `UPDATE tenants SET seat_addon_pending_billing_id = NULL, updated_at = now() WHERE id = $1`,
+          [ctx.tenantId]
+        );
+      }
+    }
+
     res.json({
       tenant_id: ctx.tenantId,
       plan,
@@ -471,6 +576,11 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
       tenant_status: plan.tenant_status,
       plan_period_start: plan.plan_period_start,
       plan_period_end: plan.plan_period_end,
+      suspension_reason: plan.suspension_reason ?? null,
+      activated_billing_id: activatedBid,
+      pending_billing: pendingBilling,
+      max_users_scheduled_next_cycle: plan.max_users_scheduled_next_cycle ?? null,
+      pending_seat_addon_billing,
     });
   } catch (error: any) {
     console.error('getMyTenantPlan error:', error);
@@ -484,7 +594,7 @@ const putMyTenantPlanSchema = z.object({
   users_count: z.number().int().min(1).optional(),
 });
 
-/** PUT /api/me/tenant/plan - alterar plano ou (custom) número de usuários (apenas primary user). */
+/** PUT /api/me/tenant/plan - alterar plano (apenas primary user). Assentos: rotas dedicadas em /seat-addon e /seats. */
 export async function putMyTenantPlan(req: AuthRequest, res: Response): Promise<void> {
   try {
     const ctx = await getMyTenantAndPrimary(req);
@@ -493,6 +603,13 @@ export async function putMyTenantPlan(req: AuthRequest, res: Response): Promise<
       return;
     }
     const body = putMyTenantPlanSchema.parse(req.body || {});
+    if (body.users_count !== undefined) {
+      res.status(400).json({
+        error:
+          'Alterar quantidade de assentos por esta rota não é permitido. Em Meu plano, use “Contratar novos usuários” (com pagamento) ou “Reduzir usuários no próximo ciclo”.',
+      });
+      return;
+    }
 
     const tenantRow = await pool.query(
       'SELECT plan_id, max_users_override FROM tenants WHERE id = $1',
@@ -532,12 +649,6 @@ export async function putMyTenantPlan(req: AuthRequest, res: Response): Promise<
       }
     }
 
-    if (plan.plan_type === 'custom' && body.users_count !== undefined) {
-      updates.push(`max_users_override = $${i}`);
-      values.push(body.users_count);
-      i++;
-    }
-
     if (updates.length > 0) {
       values.push(ctx.tenantId);
       await pool.query(
@@ -559,6 +670,170 @@ export async function putMyTenantPlan(req: AuthRequest, res: Response): Promise<
     }
     console.error('putMyTenantPlan error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+const seatAddonPreviewSchema = z.object({
+  additional_seats: z.number().int().min(1),
+});
+
+const seatAddonCheckoutSchema = z.object({
+  additional_seats: z.number().int().min(1),
+  payment_method: z.enum(['PIX', 'BOLETO', 'CREDIT_CARD']).optional(),
+});
+
+const scheduleSeatsNextCycleSchema = z.object({
+  target_seats: z.number().int().min(1),
+});
+
+async function assertTenantActiveForSeatCommerce(tenantId: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const r = await pool.query<{ status: string }>(`SELECT status FROM tenants WHERE id = $1`, [tenantId]);
+  const st = r.rows[0]?.status;
+  if (st !== 'active') {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        'Gestão comercial de assentos só está disponível para contas ativas. Conclua trial ou pagamento pendente antes.',
+    };
+  }
+  return { ok: true };
+}
+
+/** POST /api/me/tenant/seat-addon/preview — cálculo explícito do pró-rata (sem criar cobrança). */
+export async function postSeatAddonPreview(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode contratar assentos' });
+      return;
+    }
+    const gate = await assertTenantActiveForSeatCommerce(ctx.tenantId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ error: gate.error });
+      return;
+    }
+    const body = seatAddonPreviewSchema.parse(req.body || {});
+    const tp = await pool.query<{ plan_id: string }>(`SELECT plan_id FROM tenants WHERE id = $1`, [ctx.tenantId]);
+    const planId = tp.rows[0]?.plan_id;
+    if (!planId) {
+      res.status(400).json({ error: 'Plano não encontrado' });
+      return;
+    }
+    const pt = await pool.query<{ plan_type: string }>(`SELECT plan_type FROM plans WHERE id = $1`, [planId]);
+    const planType = pt.rows[0]?.plan_type ?? 'standard';
+    const preview = await previewSeatAddonPurchase({
+      tenantId: ctx.tenantId,
+      planId,
+      planType,
+      additionalSeats: body.additional_seats,
+    });
+    res.json(preview);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    console.error('postSeatAddonPreview error:', error);
+    res.status(400).json({ error: msg });
+  }
+}
+
+/** POST /api/me/tenant/seat-addon/checkout — cria fatura seat_addon e cobrança no gateway (checkout com focusBillingId). */
+export async function postSeatAddonCheckout(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode contratar assentos' });
+      return;
+    }
+    const gate = await assertTenantActiveForSeatCommerce(ctx.tenantId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ error: gate.error });
+      return;
+    }
+    const body = seatAddonCheckoutSchema.parse(req.body || {});
+    const tp = await pool.query<{ plan_id: string }>(`SELECT plan_id FROM tenants WHERE id = $1`, [ctx.tenantId]);
+    const planId = tp.rows[0]?.plan_id;
+    if (!planId) {
+      res.status(400).json({ error: 'Plano não encontrado' });
+      return;
+    }
+    const pt = await pool.query<{ plan_type: string }>(`SELECT plan_type FROM plans WHERE id = $1`, [planId]);
+    const planType = pt.rows[0]?.plan_type ?? 'standard';
+    const result = await startSeatAddonCheckout({
+      tenantId: ctx.tenantId,
+      planId,
+      planType,
+      additionalSeats: body.additional_seats,
+      paymentMethod: body.payment_method as PaymentMethod | undefined,
+    });
+    res.json({
+      billing_id: result.billing.id,
+      billing: result.billing,
+      payment_urls: result.paymentUrls ?? null,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    const code = /Já existe uma cobrança/.test(msg) ? 409 : 400;
+    console.error('postSeatAddonCheckout error:', error);
+    res.status(code).json({ error: msg });
+  }
+}
+
+/** PUT /api/me/tenant/seats/schedule-next-cycle — agenda downgrade de assentos na próxima renovação (sem estorno). */
+export async function putSeatsScheduleNextCycle(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode alterar assentos' });
+      return;
+    }
+    const gate = await assertTenantActiveForSeatCommerce(ctx.tenantId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ error: gate.error });
+      return;
+    }
+    const body = scheduleSeatsNextCycleSchema.parse(req.body || {});
+    const tp = await pool.query<{ plan_id: string }>(`SELECT plan_id FROM tenants WHERE id = $1`, [ctx.tenantId]);
+    const planId = tp.rows[0]?.plan_id;
+    if (!planId) {
+      res.status(400).json({ error: 'Plano não encontrado' });
+      return;
+    }
+    const pt = await pool.query<{ plan_type: string }>(`SELECT plan_type FROM plans WHERE id = $1`, [planId]);
+    const planType = pt.rows[0]?.plan_type ?? 'standard';
+    const uc = await pool.query<{ c: number }>(
+      `SELECT COUNT(*)::int AS c FROM users WHERE tenant_id = $1`,
+      [ctx.tenantId]
+    );
+    const usersInUse = uc.rows[0]?.c ?? 0;
+    const out = await scheduleSeatDowngradeNextCycle({
+      tenantId: ctx.tenantId,
+      planType,
+      targetSeats: body.target_seats,
+      usersInUse,
+    });
+    res.json({
+      scheduled_next_cycle: out.scheduled,
+      message:
+        out.scheduled != null
+          ? 'Redução agendada: sem estorno; a nova quantidade vale na próxima cobrança. Até lá, os assentos atuais permanecem.'
+          : 'Agendamento removido: a renovação seguirá a quantidade de assentos atualmente contratada.',
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    console.error('putSeatsScheduleNextCycle error:', error);
+    res.status(400).json({ error: msg });
   }
 }
 

@@ -1,203 +1,350 @@
-# Relatório técnico — Auditoria do isolamento multi-tenant
+# Auditoria: isolamento multi-tenant (dados de negócio)
 
-**Data da auditoria:** 2026-03-05  
-**Escopo:** Implementação recente do plano de isolamento multi-tenant (Etapas 1 a 6).  
-**Objetivo:** Verificar conformidade com o plano e identificar falhas de isolamento de dados entre tenants.
-
----
-
-## 1 — Middleware de tenant
-
-### 1.1 setCurrentTenant
-
-- **Local:** `packages/backend/src/middleware/auth.ts` (linhas 61–76).
-- **Comportamento:** Roda após `authenticateToken`; chama `getTenantIdForUser(req.userId)` uma vez e atribui a `req.tenantId`. Se o usuário não tiver tenant (ex.: superadmin), `req.tenantId` fica `null`.
-- **Ordem:** Garantida pela cadeia `tenantAuth = [authenticateToken, setCurrentTenant, setRequestDb]`: primeiro auth, depois tenant, depois RLS.
-- **Consultas ao banco:** Uma chamada a `getTenantIdForUser` por request (uma query `SELECT tenant_id FROM users WHERE id = $1`) quando há `req.userId`. Não há múltiplas consultas no middleware.
-- **Fallback superadmin:** Usuários sem `tenant_id` (superadmin) recebem `req.tenantId = null`; rotas superadmin usam `superadminAuth` (bypass RLS) e não dependem de tenant.
-
-### 1.2 Onde o middleware é aplicado
-
-**Cadeia `tenantAuth` (authenticateToken + setCurrentTenant + setRequestDb)** aplicada em:
-
-- `authRoutes.ts`: `/me`, `/me/features`, `/logout`
-- `productsRoutes`, `storeProfileRoutes`, `clientsRoutes`, `clientGroupsRoutes`, `profileRoutes`, `registrationStepsRoutes`, `leadsRoutes`, `leadStatusesRoutes`, `leadTasksRoutes`, `funnelsRoutes`, `funnelStagesRoutes`, `cartRoutes`, `ordersRoutes`, `ticketsRoutes`, `ticketCategoriesRoutes`, `contractsRoutes`, `contractTemplatesRoutes`, `projectTemplatesRoutes`, `projectsRoutes`, `projectListsRoutes`, `projectAreasRoutes`, `projectTasksRoutes`, `teamsRoutes`, `userProfilesRoutes`, `profileMembersRoutes`, `userPermissionsRoutes`, `searchRoutes`, `tasksRoutes`, `invoicesRoutes`, `expensesRoutes`, `proposalsRoutes`, `membersRoutes`, `dashboardRoutes`, `chatRoutes`, `notificationsRoutes`, `messageTemplatesRoutes`, `messagesRoutes`, `myTenantPlanRoutes`
-
-**Cadeia `superadminAuth`** (authenticateToken + requireSuperAdmin + setRequestDb):
-
-- `superadminRoutes`, `plansRoutes`, `tenantsRoutes`
-
-**Rotas sem tenant (intencional):**
-
-- `authRoutes`: `/register`, `/login` (públicas)
-- `productsRoutes`: `GET /public/:userId` (público, antes de `tenantAuth`)
-
-### 1.3 Rotas protegidas sem setCurrentTenant
-
-- **Nenhuma.** Todas as rotas que usam autenticação usam `tenantAuth` ou `superadminAuth`; em ambos os casos `setCurrentTenant` está incluído (em `tenantAuth`) ou não é necessário (superadmin usa bypass).
-- **Observação:** Rotas de planos (`/api/plans`) estão atrás de `superadminAuth`. Se a aplicação precisar de listagem pública de planos para pricing, será necessário um endpoint público ou um middleware alternativo.
+**Contexto:** continuação de incidente crítico — não se assume que o isolamento está correto.  
+**Escopo:** clients, leads, chat (conversas/mensagens/webhook/sync), faturas/cobranças, timeline, tabelas relacionadas.  
+**Data da revisão de código/SQL:** 2026-03-31 (repositório `painelcrm`).
 
 ---
 
-## 2 — Uso de getTenantIdForUser nos controllers
+## 1. Estado atual real
 
-### 2.1 Controllers que ainda usam getTenantIdForUser (ou getTenantId local)
+### 1.1 Modelo de dados: coluna `tenant_id` vs `user_id`
 
-| Arquivo | Linhas | Observação |
-|---------|--------|------------|
-| `middleware/auth.ts` | 73 | Uso correto: único ponto que popula `req.tenantId`. |
-| `leadStatusesController.ts` | 5, 15 | Obtém tenantId após ler userId; poderia usar `req.tenantId`. |
-| `funnelStagesController.ts` | 5, 21 | Idem. |
-| `leadTasksController.ts` | 5, 16 | Idem. |
-| `teamsController.ts` | 17, 39, 66, 126, 176, 198, 242, 295, 325, 360 | Função local `getTenantId(userId)` duplicada; poderia usar `req.tenantId`. |
-| `clientsController.ts` | 10, 17, 44 | Função local `getTenantIdForUser` duplicada; poderia usar `req.tenantId`. |
-| `funnelsController.ts` | 5, 19 | Obtém tenantId; poderia usar `req.tenantId`. |
-| `projectsController.ts` | 5, 93 | Idem. |
-| `tasksController.ts` | 4, 33 | Idem. |
-| `projectTemplatesController.ts` | 4, 36 | Idem. |
-| `leadsController.ts` | 6, 24 | Idem. |
-| `projectAreasController.ts` | 4, 27, 86 | Idem. |
-| `projectTasksController.ts` | 5, 88, 181, 422 | Várias chamadas; poderia usar `req.tenantId`. |
-| `projectListsController.ts` | 4, 17, 52 | Idem. |
+| Tabela | `tenant_id` na linha? | NOT NULL? | Isolamento declarado no banco |
+|--------|------------------------|-----------|-------------------------------|
+| `clients` | **Não** — só `user_id` | — | RLS: `user_id ∈ users` do tenant da sessão (`57_rls_tenant_isolation.sql`) |
+| `leads` | **Não** | — | Idem |
+| `client_groups`, `client_tasks`, … | **Não** | — | Idem (via `user_id`) |
+| `chat_instances` | **Não** — só `user_id` | — | RLS idem |
+| `chat_conversations` | **Não** — só `user_id` (+ FK `instance_id`) | — | RLS idem |
+| `chat_messages` | **Não** | — | RLS via conversa → `user_id` no tenant |
+| `customer_invoices` | **Sim** | Sim (criação inicial) | RLS por `tenant_id` (`71_customer_invoices_manual_support.sql`) |
+| `customer_charges` | **Sim** | Sim | RLS por `tenant_id` (`79_customer_charges.sql`) |
+| `client_timeline_events` | **Sim** | Sim | **Sem RLS** nas migrations analisadas (`86_client_timeline_events.sql`) |
+| `subscriptions` | **Sim** | Sim | **Sem RLS** nas migrations analisadas (`67_subscriptions.sql`) |
+| `customer_invoice_items` | **Não** (só `invoice_id`) | — | **Sem RLS** (`76_customer_invoice_items.sql`) |
+| `payment_customers` | **Sim** | Sim | **Sem RLS** (`61_payment_gateways_panel_phase1.sql` + alterações) |
+| `billing_recurring_jobs` | **Sim** | Sim | **Sem RLS** (`69_billing_recurring_jobs.sql`) |
 
-**Conclusão:** O middleware já define `req.tenantId` em todas as rotas tenant-scoped. **Refatoração aplicada (2026):** todos os controllers listados acima passaram a usar apenas `req.tenantId`; funções locais `getTenantId`/`getTenantIdForUser` foram removidas dos controllers. A única chamada a `getTenantIdForUser` restante é no middleware (`auth.ts`), uma vez por request.
-
-### 2.2 Controllers que usam req.tenantId (após refatoração)
-
-- Todos os controllers tenant-scoped usam `req.tenantId ?? null` ou `(req as AuthRequest).tenantId`. Nenhum controller chama mais `getTenantIdForUser` nem mantém função local `getTenantId`.
-- `productsController.ts` — `getTenantIdOrNull(req.tenantId)` e helpers tenantScope
-- `teamsController.ts` — removida função local `getTenantId`; todas as funções usam `(req as AuthRequest).tenantId`
-- `clientsController.ts` — removida função local `getTenantIdForUser`; helper `clientBelongsToTenant(clientId, tenantId)` recebe `req.tenantId`
-- `leadTasksController.ts` — helper `leadBelongsToTenant(leadId, tenantId)` recebe `req.tenantId`
+**Conclusão objetiva:** o isolamento “real” no CRM **não** é “toda linha tem `tenant_id`”. Para a maior parte do CRM histórico, o tenant é **derivado** de `users.tenant_id` através de `user_id` na linha. Isso **atende** isolamento **se** `user_id` for sempre de um usuário do tenant correto e **se** RLS + app estiverem sempre ativos.
 
 ---
 
-## 3 — Queries sem isolamento de tenant
+## 2. Camada de aplicação: `setRequestDb` e pool
 
-### 3.1 Queries consideradas seguras
+O `pool` usado pelos controllers delega ao client da request quando há contexto (`setRequestDb`), aplicando `SET LOCAL app.current_tenant_id` e `app.bypass_rls` para superadmin.
 
-- Maioria dos controllers de domínio (clients, leads, contracts, invoices, expenses, tickets, message_templates, dashboard, search, products, etc.) aplica filtro por tenant via:
-  - `INNER JOIN users u ON u.id = <entity>.user_id AND u.tenant_id = $1` (com `req.tenantId`), ou
-  - `WHERE user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $N))` (com `req.userId`).
-- `teamsController`: uso de `tenant_id = $2` com tenantId do request.
-- RLS (Etapa 5) atua como segunda barreira nas tabelas com políticas aplicadas.
+```38:56:c:\CURSOR\painelcrm\packages\backend\src\utils\db.ts
+export const pool = {
+  query(
+    textOrConfig: string | pg.QueryConfig,
+    values?: unknown[]
+  ): Promise<pg.QueryResult> {
+    const text = getQueryText(textOrConfig);
+    assertTenantScopedQuery(text);
 
-### 3.2 Queries potencialmente inseguras ou a reforçar
+    const store = dbRequestStorage.getStore();
+    if (store?.client) {
+      if (typeof textOrConfig === 'string') {
+        return store.client.query(textOrConfig, values);
+      }
+      return store.client.query(textOrConfig);
+    }
+    if (typeof textOrConfig === 'string') {
+      return internalPool.query(textOrConfig, values);
+    }
+    return internalPool.query(textOrConfig);
+  },
+```
 
-| Arquivo | Contexto | Risco |
-|---------|----------|--------|
-| `ordersController.ts` | Linhas 63–64: `SELECT id, name, type FROM products WHERE id = ANY($1::uuid[])` | **Médio.** Lista de `product_id` vem do body; não há filtro por tenant. Um cliente malicioso poderia enviar IDs de produtos de outro tenant e obter nomes/tipos. **Recomendação:** restringir com `AND user_id IN (SELECT id FROM users WHERE tenant_id = $2)` usando `req.tenantId`. |
-| `clientGroupsController.ts` | Linhas 25, 118, 144: `SELECT COUNT(*) FROM clients WHERE group_id = $1` | **Baixo.** O `group_id` pertence a grupos já filtrados por tenant. Para maior rigor, adicionar `AND user_id IN (SELECT id FROM users WHERE tenant_id = $2)`. |
-| `chatController.ts` | Linhas 251–258: `SELECT id FROM clients WHERE user_id = $1 AND phone = ...` | **Baixo.** `user_id` é do dono da instância (já no contexto do request). Escopo por tenant garantido pelo fluxo da instância. |
-| `chatController.ts` | Linhas 1976, 1990, 2024: `SELECT * FROM clients WHERE id = $1 AND user_id = $2` (e equivalente para leads) | **Baixo.** Filtro por `user_id = req.userId`; apenas o dono do registro acessa. Não vaza dados entre tenants; pode ser considerado restrito ao dono (não compartilha no tenant). |
+`tenantAuth` inclui `setRequestDb`:
 
----
+```290:290:c:\CURSOR\painelcrm\packages\backend\src\middleware\auth.ts
+export const tenantAuth = [authenticateToken, setCurrentTenant, requireActivePlanPeriod, setRequestDb];
+```
 
-## 4 — Inserts inseguros
-
-### 4.1 Análise
-
-- **Nenhum INSERT** foi encontrado que use `tenant_id` vindo do body. Os que gravam `tenant_id` usam valor do servidor (ex.: `teamsController` com `ensureTenantIdForInsert(req)`, `tenantsController`/auth com tenant recém-criado ou da sessão).
-- **Tabelas com `user_id`:** Inserts usam `req.userId` (ou equivalente) para o dono; não foi encontrado uso de `user_id` do body para dados tenant-scoped.
-- **Boas práticas já adotadas:** `teamsController` usa `stripTenantIdFromBody` e `ensureTenantIdForInsert`; `productsController` usa `ensureUserIdForInsert`.
-
-### 4.2 Inserções que ainda não usam helpers de tenantScope
-
-Vários controllers fazem INSERT com `user_id = req.userId!` sem usar `ensureUserIdForInsert(req)` ou `stripTenantIdFromBody` em tabelas com `tenant_id`. Funcionalmente corretos (valor vem do request), mas não padronizados:
-
-- Ex.: `leadStatusesController`, `ticketCategoriesController`, `ticketsController`, `contractTemplatesController`, `leadsController`, `funnelStagesController`, `messageTemplatesController`, `userProfilesController`, `projectTemplatesController`, etc.
-
-**Recomendação:** Migrar gradualmente para `ensureUserIdForInsert` / `ensureTenantIdForInsert` e `stripTenantIdFromBody` onde se aplique, para alinhar ao padrão e à documentação.
+**Risco:** qualquer rota **autenticada** que use `pool` **sem** passar por `setRequestDb` cai no `internalPool` com **sessão sem** `app.current_tenant_id`. Para tabelas com RLS baseada no tenant, isso tende a **não expor** linhas de outros tenants (predicado falso), mas **pode** causar comportamento inconsistente ou, em políticas mal formuladas, surpresas. Para tabelas **sem** RLS, o `internalPool` vê **toda a tabela**.
 
 ---
 
-## 5 — Uso de user_id, created_by, updated_by, tenant_id
+## 3. Queries reais — pontos verificados
 
-### 5.1 Padrão atual
+### 3.1 Clients / listagem (usa `tenant_id` via join em `users`)
 
-- **tenant_id:** Usado em tabelas como `teams`, `tenant_plan`, `tenant_billing`, `tenant_feature_overrides`, `tenant_admin_notes`, `tenant_tags`, `users`, `project_templates` (nullable). Controllers que escrevem nessas tabelas usam `req.tenantId` ou contexto de tenant já validado.
-- **user_id:** Usado como “dono” em muitas tabelas (clients, leads, products, contracts, etc.). Isolamento feito por `user_id IN (SELECT id FROM users WHERE tenant_id = ...)` ou JOIN com `users.tenant_id`.
-- **created_by / updated_by:** Aparecem em várias tabelas (ex.: `profile_members`, `user_permissions`, `user_roles`). São preenchidos com `req.userId` ou equivalente; não há leitura desses campos do body para decisão de escopo.
+```82:105:c:\CURSOR\painelcrm\packages\backend\src\controllers\clientsController.ts
+    let query = `
+      SELECT 
+        c.*,
+        cg.id as group_table_id,
+        cg.name as group_table_name,
+        wa.wa_url AS whatsapp_avatar_url
+      FROM clients c
+      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+      LEFT JOIN client_groups cg ON c.group_id = cg.id
+      LEFT JOIN LATERAL (
+        ...
+        FROM chat_conversations cc
+        INNER JOIN users cu ON cu.id = cc.user_id AND cu.tenant_id = $1
+        WHERE cc.client_id = c.id
+```
 
-### 5.2 Tabelas que dependem apenas de user_id (sem coluna tenant_id)
+**Observação:** filtro de tenant explícito em `clients` e nas conversas do lateral join.  
+**Risco residual:** `LEFT JOIN client_groups cg ON c.group_id = cg.id` **sem** `cg.user_id`/`tenant` no join — integridade depende de não existir `group_id` apontando para outro tenant (ver §4).
 
-São as tabelas “dono por user_id” já cobertas pelo plano: clients, client_groups, leads, lead_statuses, lead_tasks, sales_funnels, funnel_stages, products, proposals, contracts, contract_templates, invoices, expenses, tickets, message_templates, projects, project_lists, project_tasks, tasks, notifications, user_roles, user_permissions, chat_instances, store_profiles, registration_steps, shopping_carts (user_id/store_user_id), orders (store_user_id), etc. O isolamento é feito via `users.tenant_id` nas queries e, quando ativo, pelas políticas RLS.
+### 3.2 Leads — listagem análoga (`u.tenant_id = $1`)
 
-### 5.3 Tabelas com tenant_id
+Trecho em `leadsController.getLeads`: `INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1` (arquivo `packages/backend/src/controllers/leadsController.ts`).
 
-- Já listadas no plano e na migração RLS (teams, tenant_plan, tenant_billing, tenant_feature_overrides, tenant_admin_notes, tenant_tags, project_templates). Nenhuma tabela claramente “tenant-scoped” foi identificada como faltando `tenant_id` na auditoria.
+### 3.3 Chat — matching por telefone (escopo tenant explícito)
 
----
+```68:82:c:\CURSOR\painelcrm\packages\backend\src\services\conversationMatchingService.ts
+  const clients = await pool.query<{ id: string }>(
+    `
+    SELECT c.id
+    FROM clients c
+    INNER JOIN users u ON u.id = c.user_id
+    WHERE u.tenant_id = $1
+      AND c.phone IS NOT NULL
+      ...
+    `,
+    [input.tenantId, normalizedPhone]
+  );
+```
 
-## 6 — Helpers de tenant
+**Conclusão:** o match **não** é global: depende de `input.tenantId` (derivado do dono da instância em `upsertConversation`).
 
-### 6.1 Existência e uso
+### 3.4 Chat — `getClientMessages`: isolamento por **dono do cliente**, não por tenant
 
-- **requireTenantId:** Existe em `middleware/auth.ts` (linha 91). Não é usado nos controllers auditados; eles usam `req.tenantId ?? null` e retornam 403 ou lista vazia quando null.
-- **tenantScope (joinUserTenant, joinUserTenantByUserId, whereUserInTenantFromUserId, getTenantIdOrNull, assertTenantId, ensureTenantIdForInsert, ensureUserIdForInsert, stripTenantIdFromBody):** Implementados em `utils/tenantScope.ts` e com testes em `tenantScope.test.ts`.
-- **Uso nos controllers:** Apenas **productsController** e **teamsController** usam explicitamente os helpers de `tenantScope` (joinUserTenant, joinUserTenantByUserId, whereUserInTenantFromUserId, ensureTenantIdForInsert, ensureUserIdForInsert, stripTenantIdFromBody). Os demais aplicam o mesmo critério de isolamento manualmente (JOIN/WHERE equivalente), mas não reutilizam os helpers.
-- **withTenantContext:** Não existe no código; o contexto de tenant é `req.tenantId` + `setRequestDb` (RLS).
+```2519:2543:c:\CURSOR\painelcrm\packages\backend\src\controllers\chatController.ts
+    const clientResult = await pool.query(
+      'SELECT id FROM clients WHERE id = $1 AND user_id = $2',
+      [clientId, userId]
+    );
+    ...
+      FROM chat_conversations c
+      WHERE c.user_id = $1
+        AND c.client_id = $2
+```
 
-### 6.2 Recomendação
+**Problema de modelo (não é vazamento cross-tenant direto):** um colega **mesmo tenant** com outro `user_id` **não** passa neste check, embora RLS de `chat_conversations` permita visão por tenant. Isso é **inconsistência** entre “isolamento por tenant” e “isolamento por user_id” na API.
 
-- Ampliar o uso de `tenantScope` (e, quando fizer sentido, `requireTenantId`) nos demais controllers, usando `productsController` e `teamsController` como referência, para reduzir duplicação e risco de erro.
+### 3.5 Faturas públicas — token único + função `SECURITY DEFINER`
 
----
+```14:53:c:\CURSOR\painelcrm\database\init\77_payment_token_customer_invoices.sql
+CREATE OR REPLACE FUNCTION public.get_customer_invoice_by_payment_token(p_token UUID)
+...
+  FROM customer_invoices ci
+  LEFT JOIN clients c ON c.id = ci.client_id
+  WHERE ci.payment_token = p_token
+  LIMIT 1;
+```
 
-## 7 — Tabelas de roles e permissions
+**Risco:** não é vazamento entre tenants sem o token; o vetor é **token vazado/adivinhado** (UUID forte mitiga adivinhação). A função **ignora RLS** de propósito.
 
-### 7.1 Estrutura encontrada
+### 3.6 Itens de fatura — só `invoice_id`
 
-- **user_roles** (03_create_permissions_and_roles.sql): `user_id`, `role` (enum app_role), `profile_id`, `created_by`. Escopo por tenant indireto via `user_id` e `profile_id` (user_profiles.owner_id no tenant).
-- **user_permissions:** `user_id`, `profile_id`, `permission`, `created_by`. Mesmo modelo.
-- **tenant_enabled_roles** (52): perfis habilitados por tenant (profile).
-- **tenant_custom_roles** e **user_custom_roles** (53): roles customizados por tenant/profile.
+```337:346:c:\CURSOR\painelcrm\packages\backend\src\services\customerInvoiceService.ts
+export async function getCustomerInvoiceItems(invoiceId: string): Promise<CustomerInvoiceItemRow[]> {
+  ...
+     FROM customer_invoice_items
+     WHERE invoice_id = $1
+```
 
-Não existem tabelas nomeadas exatamente **roles**, **permissions** ou **role_permissions**; o modelo é **user_roles** + **user_permissions** + **tenant_enabled_roles** + **tenant_custom_roles/user_custom_roles**, com escopo por usuário e perfil (e indiretamente por tenant via owner do profile). RLS aplicado em **user_roles** e **user_permissions** na migração 57.
-
-### 7.2 Relacionamento com tenant
-
-- Roles e permissions são atrelados a `user_id` e `profile_id`; o tenant vem de `users.tenant_id` e de `user_profiles.owner_id`. As políticas RLS para essas tabelas usam `user_id IN (SELECT id FROM users WHERE tenant_id = app_current_tenant_id())`, alinhado ao plano.
-
----
-
-## 8 — Teste lógico de isolamento (Tenant A vs Tenant B)
-
-### 8.1 Cenários simulados
-
-- **Usuário tenant A acessa registro do tenant B (getById):** Controllers que fazem getById usam WHERE/JOIN com tenant (via `req.tenantId` ou subquery com `req.userId`). Com RLS ativo, mesmo que a aplicação falhasse, o banco não retornaria linhas do tenant B. **Resultado:** isolamento garantido na aplicação e reforçado pelo RLS.
-- **Listagens:** Listagens auditadas usam `req.tenantId` ou subquery por `req.userId`; RLS também filtra. **Resultado:** não há mistura de dados entre tenants nas listagens verificadas.
-- **Updates/deletes:** UPDATE/DELETE incluem condição de tenant (ex.: `user_id IN (SELECT id FROM users WHERE tenant_id = ...)`). **Resultado:** usuário do tenant A não altera ou exclui registros do tenant B.
-
-### 8.2 Riscos pontuais
-
-- **ordersController — produtos por IDs:** Possível vazamento de informação (nomes/tipos de produtos) se o cliente enviar `product_id` de outro tenant (ver item 3.2).
-- **Chat:** Acesso a cliente/lead por `user_id = req.userId` restringe ao dono; não há vazamento entre tenants, mas o modelo é “só dono” e não “qualquer usuário do tenant”.
-
----
-
-## 9 — Score de segurança multi-tenant
-
-### Multi-tenant safety score: **8/10**
-
-### Riscos críticos
-
-- Nenhum risco crítico identificado. Nenhum endpoint retorna listagens ou getById sem filtro de tenant; inserts de `tenant_id`/`user_id` não usam body; RLS está ativo nas tabelas tenant-scoped.
-
-### Riscos médios
-
-1. **ordersController — SELECT de produtos por IDs** (linhas 63–64): query sem filtro de tenant; possível vazamento de nomes/tipos de produtos de outro tenant. Correção: adicionar filtro por tenant (ex.: `AND user_id IN (SELECT id FROM users WHERE tenant_id = $2)` com `req.tenantId`).
-2. **Redundância de getTenantIdForUser/getTenantId em vários controllers:** consultas extras ao banco e risco de inconsistência futura se alguém deixar de passar `req.tenantId` em algum path. Correção: usar sempre `req.tenantId` e, onde possível, helpers de `tenantScope`.
-
-### Melhorias recomendadas
-
-1. **Refatorar controllers** que ainda chamam `getTenantIdForUser` ou `getTenantId` local para usar apenas `req.tenantId` (e tenantScope quando aplicável).
-2. **Corrigir SELECT de produtos em ordersController** com filtro por tenant (e validar que os `product_id` do body pertencem ao tenant antes de usar).
-3. **Padronizar INSERTs** com `ensureUserIdForInsert` / `ensureTenantIdForInsert` e `stripTenantIdFromBody` nos controllers que ainda não usam.
-4. **Estender uso dos helpers de tenantScope** (joinUserTenant, whereUserInTenantFromUserId, etc.) nos demais controllers, seguindo `productsController` e `teamsController`.
-5. **Revisar GET /api/plans:** se a aplicação precisar de listagem pública de planos (pricing), criar endpoint ou rota sem `superadminAuth` e documentar.
-6. **Opcional:** Adicionar testes E2E para cenários “tenant A não vê/altera dados do tenant B” conforme `docs/TESTES-ISOLAMENTO-TENANT.md`.
+**Risco estrutural:** a tabela **não tem RLS**. Quem chama deve garantir que `invoiceId` pertence ao tenant. Um bug futuro que passe UUID de outra fatura **expõe linhas** sem passar por `customer_invoices` RLS.
 
 ---
 
-**Conclusão:** A implementação está alinhada ao plano de isolamento multi-tenant. O middleware de tenant está correto e aplicado em todas as rotas protegidas; as queries de domínio aplicam filtro por tenant; não há inserts inseguros com `tenant_id`/`user_id` do body. O principal ponto a corrigir é a query de produtos em `ordersController`; em seguida, a padronização com `req.tenantId` e helpers de `tenantScope` nos demais controllers.
+## 4. Chat / webhook — achado **CRÍTICO**
+
+### 4.1 Resolução de instância sem `tenant_id`
+
+```3802:3817:c:\CURSOR\painelcrm\packages\backend\src\controllers\chatController.ts
+    let instanceResult = await pool.query<ChatInstanceRow>(
+      'SELECT * FROM chat_instances WHERE external_instance_name = $1 LIMIT 1',
+      [instanceName]
+    );
+
+    if (instanceResult.rowCount === 0) {
+      ...
+      instanceResult = await pool.query<ChatInstanceRow>(
+        'SELECT * FROM chat_instances WHERE name = $1 LIMIT 1',
+        [instanceName]
+      );
+    }
+```
+
+No schema original, a unicidade de nome de instância é **por usuário**, não global:
+
+```13:14:c:\CURSOR\painelcrm\database\init\15_create_chat_tables.sql
+  UNIQUE(user_id, name)
+);
+```
+
+**Cenário de falha:** dois usuários (de **tenants diferentes**) com instância `name = 'Principal'` (ou qualquer nome colisionando com o que a UazAPI envia no webhook). O fallback `WHERE name = $1 LIMIT 1` escolhe **uma linha arbitrária** → mensagens podem ser gravadas na instância/conversas do **tenant errado**.
+
+**Severidade:** **crítica** (possível mistura de dados de chat entre contas).
+
+### 4.2 Validação de secret opcional / ausente
+
+Se `UAZAPI_WEBHOOK_SECRET` não estiver configurado, o handler **aceita** o corpo e resolve instância só pelo nome identificado no payload — superfície de abuso maior (dependendo do formato dos nomes que a UazAPI envia).
+
+### 4.3 Log de debug com amostra de instâncias
+
+```3821:3823:c:\CURSOR\painelcrm\packages\backend\src\controllers\chatController.ts
+      const allInstances = await pool.query<ChatInstanceRow>(
+        'SELECT id, name, external_instance_name FROM chat_instances LIMIT 10'
+      );
+```
+
+**Risco:** vazamento de metadados em logs (não é cross-tenant por si só, mas é ruído operacional/sensível).
+
+---
+
+## 5. Integridade referencial / “tenant errado” sem vazar leitura
+
+### 5.1 `createClient` e `group_id`
+
+Não há verificação explícita de que `group_id` pertence ao mesmo tenant antes do `INSERT` (`clientsController.ts` — validação UUID apenas). FK `clients.group_id → client_groups.id` **não** amarra tenant. **Efeito:** possível `group_id` inválido cross-tenant; leitura pode mascarar com RLS em `client_groups`, mas o dado fica **inconsistente**.
+
+### 5.2 `migrateConversationLeadToClient`
+
+O `UPDATE` restringe por `conversation id` + `user_id` do dono da conversa, mas **não** revalida que `clientId` pertence ao mesmo tenant antes de gravar (o chamador em `leadsController` filtra por `tenant_id` — mitigação **por chamada**, não **na função**).
+
+---
+
+## 6. RLS (PostgreSQL) — recorte das políticas de CRM
+
+Política típica para `clients` / `leads` / `chat_*`:
+
+```147:151:c:\CURSOR\painelcrm\database\init\57_rls_tenant_isolation.sql
+ALTER TABLE public.clients ENABLE ROW LEVEL SECURITY;
+...
+CREATE POLICY clients_tenant_policy ON public.clients FOR ALL
+  USING (public.app_can_bypass_rls() OR user_id IN (SELECT id FROM public.users WHERE tenant_id = public.app_current_tenant_id()))
+  WITH CHECK (public.app_can_bypass_rls() OR user_id IN (SELECT id FROM public.users WHERE tenant_id = public.app_current_tenant_id()));
+```
+
+**Interpretação:** o isolamento **não** é “`WHERE tenant_id = $tenant` na linha”; é “`user_id` pertence a **algum** usuário com `users.tenant_id` igual ao da sessão”. Isso é equivalente a tenant **desde que** todos os `user_id` daquele tenant estejam corretamente preenchidos em `users.tenant_id`.
+
+---
+
+## 7. Teste real (roteiro + SQL) — evidência em ambiente
+
+### 7.1 Teste funcional (dois tenants, mesmo telefone)
+
+1. Criar tenant A e tenant B (dois cadastros distintos).  
+2. Em A, criar cliente com telefone `5511999999999`.  
+3. Em B, criar cliente com o **mesmo** telefone.  
+4. Sincronizar chat / receber webhook na instância de B.
+
+**Resultado esperado (código atual de match):** `resolveConversationMatch` usa `tenantId` do dono da instância → cada lado resolve **apenas** clientes do seu tenant. **Não** há match global por telefone nesse serviço.
+
+### 7.2 Teste de colisão de nome de instância (webhook)
+
+1. Dois usuários em tenants diferentes, ambos com `chat_instances.name` igual ao valor que a UazAPI envia no webhook quando `external_instance_name` não casa.  
+2. Disparar webhook sintético com esse `instanceName`.  
+3. Observar qual `instance_id` foi escolhido (`LIMIT 1`).
+
+**Resultado esperado hoje:** comportamento **não determinístico** / errado possível — **falha de isolamento**.
+
+### 7.3 Queries SQL sugeridas (auditoria de dados existentes)
+
+**Clientes cujo `user_id` não bate com o tenant esperado (usuário sem tenant ou tenant divergente):**
+
+```sql
+SELECT c.id, c.user_id, u.tenant_id
+FROM clients c
+LEFT JOIN users u ON u.id = c.user_id
+WHERE u.id IS NULL OR u.tenant_id IS NULL;
+```
+
+**Conversas com `client_id` apontando para cliente cujo dono (`clients.user_id`) está em outro tenant que o dono da conversa (anomalia):**
+
+```sql
+SELECT cc.id AS conversation_id,
+       cc.user_id AS conv_owner_user_id,
+       uc.tenant_id AS conv_owner_tenant,
+       c.id AS client_id,
+       c.user_id AS client_owner_user_id,
+       ucl.tenant_id AS client_owner_tenant
+FROM chat_conversations cc
+JOIN users uc ON uc.id = cc.user_id
+LEFT JOIN clients c ON c.id = cc.client_id
+LEFT JOIN users ucl ON ucl.id = c.user_id
+WHERE c.id IS NOT NULL
+  AND uc.tenant_id IS DISTINCT FROM ucl.tenant_id;
+```
+
+**Grupos de cliente usados por cliente de outro “mundo” (via `user_id` do grupo vs do cliente):**
+
+```sql
+SELECT c.id AS client_id, c.group_id, c.user_id AS client_user,
+       g.user_id AS group_owner_user,
+       uc.tenant_id AS client_tenant,
+       ug.tenant_id AS group_tenant
+FROM clients c
+JOIN client_groups g ON g.id = c.group_id
+JOIN users uc ON uc.id = c.user_id
+JOIN users ug ON ug.id = g.user_id
+WHERE uc.tenant_id IS DISTINCT FROM ug.tenant_id;
+```
+
+**Timeline: `tenant_id` inconsistente com o tenant do dono do cliente:**
+
+```sql
+SELECT e.id, e.tenant_id AS event_tenant,
+       uc.tenant_id AS client_owner_tenant
+FROM client_timeline_events e
+JOIN clients c ON c.id = e.client_id
+JOIN users uc ON uc.id = c.user_id
+WHERE e.tenant_id IS DISTINCT FROM uc.tenant_id;
+```
+
+*(Executar no ambiente real; resultados vazios = bom sinal para essas anomalias.)*
+
+---
+
+## 8. Pontos de risco (resumo)
+
+| ID | Severidade | Descrição |
+|----|------------|-----------|
+| R1 | **Crítica** | Webhook: fallback `SELECT ... FROM chat_instances WHERE name = $1 LIMIT 1` com `UNIQUE(user_id, name)` apenas — colisão cross-tenant possível. |
+| R2 | Alta | Tabelas com dados sensíveis **sem RLS**: `subscriptions`, `customer_invoice_items`, `payment_customers`, `billing_recurring_jobs`, `client_timeline_events`. |
+| R3 | Alta | `getCustomerInvoiceItems` / rotas que o chamam: dependência total em “invoiceId confiável”; sem segunda barreira no banco. |
+| R4 | Média | API mistura critérios: listagens por tenant vs `getClientMessages` por `user_id` do cliente. |
+| R5 | Média | `createClient` não valida `group_id`/`profile_id` contra tenant antes de inserir. |
+| R6 | Baixa/Média | `uq_client_timeline_events_event_key` único global em `event_key` — colisão cross-tenant pode silenciar evento (`ON CONFLICT DO NOTHING`). |
+| R7 | Operacional | Jobs/workers usam `pool` sem contexto HTTP — esperado para scheduler, mas exige queries **sempre** escopadas por `tenant_id`/`subscription_id` corretos no código. |
+
+---
+
+## 9. Correções necessárias (prioridade)
+
+1. **Webhook:** remover ou endurecer o fallback por `name`; resolver instância por **`external_instance_name`** garantido único **ou** por `(user_id + name)` somente após identificar o usuário/tenant por token assinado/cabeçalho confiável; nunca `LIMIT 1` global em nome ambíguo.  
+2. **RLS:** adicionar políticas para `client_timeline_events`, `customer_invoice_items` (via join a `customer_invoices`), `subscriptions`, `payment_customers`, `billing_recurring_jobs` alinhadas a `tenant_id`.  
+3. **API:** alinhar `getClientMessages` (e similares) ao critério de tenant usado em `getClients` / `getClientById`.  
+4. **Validação:** ao criar/atualizar cliente, validar `group_id` e `profile_id` contra o tenant do request.  
+5. **Durante hardening:** incluir `client_timeline_events` (e outras tabelas novas) em `tenantSecurity.TENANT_SCOPED_TABLES` e revisar `assertTenantScopedQuery`.
+
+---
+
+## 10. Plano de hardening (fases)
+
+| Fase | Ação |
+|------|------|
+| H0 | Rodar SQLs da §7.3 em produção/staging; registrar contagens. |
+| H1 | Corrigir resolução de instância no webhook + obrigatoriedade de secret em produção. |
+| H2 | Migrações RLS para tabelas listadas em R2 + testes de regressão com `SET LOCAL app.current_tenant_id`. |
+| H3 | Padronizar controllers: toda leitura/escrita de negócio com `tenant_id` explícito **ou** join `users.tenant_id` + testes de API com dois tenants. |
+| H4 | Teste automatizado: dois tenants, mesmo telefone, sync + webhook simulado — assert de não-cruzamento de `chat_conversations`/`chat_messages`. |
+
+---
+
+## 11. Declaração explícita
+
+- **Não** foi possível executar as queries da §7.3 neste ambiente (sem acesso ao banco de produção). A auditoria é **estática** (código + migrations).  
+- **Qualquer** rota ou script que use `pool`/`connect` sem `setRequestDb` e toque tabelas **sem** RLS deve ser tratada como **candidata a vazamento** até prova em contrário.
+
+---
+
+*Documento gerado como entrega de auditoria; alterações de código devem seguir PRs separados com testes e migrações revisadas.*

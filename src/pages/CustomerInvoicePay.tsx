@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { formatPhoneBrDigits, formatCpfCnpjDigits } from "@/lib/brazilInputMasks";
+import { InlineCreditCardPaymentForm } from "@/components/payments/InlineCreditCardPaymentForm";
 import {
   customerInvoicePublicStatusTextClass,
   getCustomerInvoiceStatusLabel,
@@ -78,6 +79,13 @@ export interface PayInvoiceResponse {
     billing_email?: string | null;
   };
   needs_customer?: boolean;
+  needs_customer_reason?: "missing_client" | "missing_cpf_cnpj" | null;
+  client_summary?: {
+    name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    company?: string | null;
+  } | null;
   /** Fase 10: se há PIX ou link de cobrança no metadata. */
   has_payment_payload?: boolean;
   payment_options_summary?: "none" | "pix" | "hosted" | "pix_and_hosted";
@@ -253,6 +261,18 @@ const CustomerInvoicePay = () => {
     }));
   }, [data?.client_name]);
 
+  useEffect(() => {
+    if (!data?.needs_customer) return;
+    const summary = data.client_summary;
+    setCustomerForm((f) => ({
+      ...f,
+      name: f.name || summary?.name || data.client_name || "",
+      email: f.email || summary?.email || "",
+      phone: f.phone || (summary?.phone ? String(summary.phone).replace(/\D/g, "").slice(0, 11) : ""),
+      company: f.company || summary?.company || "",
+    }));
+  }, [data?.needs_customer, data?.client_summary, data?.client_name]);
+
   /** Atualização automática do status a cada 5s, até confirmar pagamento. */
   useEffect(() => {
     if (!token || !data) return;
@@ -370,8 +390,9 @@ const CustomerInvoicePay = () => {
   const handleCompleteCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !data?.needs_customer) return;
-    const name = customerForm.name.trim();
-    if (!name) {
+    const requiresFullCustomer = data.needs_customer_reason !== "missing_cpf_cnpj";
+    const resolvedName = customerForm.name.trim() || data.client_summary?.name?.trim() || data.client_name?.trim() || "";
+    if (requiresFullCustomer && !resolvedName) {
       toast.error("Nome é obrigatório");
       return;
     }
@@ -389,10 +410,10 @@ const CustomerInvoicePay = () => {
       }>(
         `/api/public/customer-invoices/pay/${token}/complete`,
         {
-          name,
-          email: customerForm.email.trim() || null,
-          phone: customerForm.phone.replace(/\D/g, "") || null,
-          company: customerForm.company.trim() || null,
+          name: resolvedName,
+          email: customerForm.email.trim() || data.client_summary?.email || null,
+          phone: customerForm.phone.replace(/\D/g, "") || (data.client_summary?.phone ? String(data.client_summary.phone).replace(/\D/g, "") : null),
+          company: customerForm.company.trim() || data.client_summary?.company || null,
           cpf_cnpj: cpfCnpjDigits,
         }
       );
@@ -405,7 +426,8 @@ const CustomerInvoicePay = () => {
                 ...prev,
                 payment_urls: urls,
                 needs_customer: false,
-                client_name: name,
+                needs_customer_reason: null,
+                client_name: resolvedName,
                 has_payment_payload:
                   typeof res.data!.has_payment_payload === "boolean"
                     ? res.data!.has_payment_payload
@@ -705,62 +727,77 @@ const CustomerInvoicePay = () => {
 
               {data.needs_customer && (
               <form onSubmit={handleCompleteCustomer} className="space-y-4 pt-4 border-t">
-                <p className="text-sm font-medium leading-snug">
-                  Preencha seus dados para liberar as opções de pagamento nesta página
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Em seguida você poderá pagar com <strong>PIX</strong> aqui mesmo; <strong>boleto</strong> e{" "}
-                  <strong>cartão</strong> também seguem nesta página após a cobrança ser gerada.
-                </p>
-                <div>
-                  <Label htmlFor="pay_name">Nome *</Label>
-                  <Input
-                    id="pay_name"
-                    value={customerForm.name}
-                    onChange={(e) => setCustomerForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="Seu nome"
-                    className="mt-1"
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="pay_email">E-mail</Label>
-                  <Input
-                    id="pay_email"
-                    type="email"
-                    value={customerForm.email}
-                    onChange={(e) => setCustomerForm((f) => ({ ...f, email: e.target.value }))}
-                    placeholder="email@exemplo.com"
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="pay_company">Empresa (opcional)</Label>
-                  <Input
-                    id="pay_company"
-                    value={customerForm.company}
-                    onChange={(e) => setCustomerForm((f) => ({ ...f, company: e.target.value }))}
-                    placeholder="Razão social ou nome fantasia"
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="pay_phone">Telefone</Label>
-                  <Input
-                    id="pay_phone"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    value={formatPhoneBrDigits(customerForm.phone)}
-                    onChange={(e) =>
-                      setCustomerForm((f) => ({
-                        ...f,
-                        phone: e.target.value.replace(/\D/g, "").slice(0, 11),
-                      }))
-                    }
-                    placeholder="(11) 99999-9999"
-                    className="mt-1"
-                  />
-                </div>
+                {data.needs_customer_reason === "missing_cpf_cnpj" ? (
+                  <>
+                    <p className="text-sm font-medium leading-snug">
+                      Confirme seu CPF/CNPJ para continuar para o pagamento
+                    </p>
+                    <div className="rounded-md border bg-muted/20 p-3 text-sm space-y-1">
+                      <p><strong>Nome:</strong> {data.client_summary?.name || data.client_name || "—"}</p>
+                      <p><strong>E-mail:</strong> {data.client_summary?.email || "—"}</p>
+                      <p><strong>Telefone:</strong> {data.client_summary?.phone || "—"}</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium leading-snug">
+                      Preencha seus dados para liberar as opções de pagamento nesta página
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Em seguida você poderá pagar com <strong>PIX</strong> aqui mesmo; <strong>boleto</strong> e{" "}
+                      <strong>cartão</strong> também seguem nesta página após a cobrança ser gerada.
+                    </p>
+                    <div>
+                      <Label htmlFor="pay_name">Nome *</Label>
+                      <Input
+                        id="pay_name"
+                        value={customerForm.name}
+                        onChange={(e) => setCustomerForm((f) => ({ ...f, name: e.target.value }))}
+                        placeholder="Seu nome"
+                        className="mt-1"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="pay_email">E-mail</Label>
+                      <Input
+                        id="pay_email"
+                        type="email"
+                        value={customerForm.email}
+                        onChange={(e) => setCustomerForm((f) => ({ ...f, email: e.target.value }))}
+                        placeholder="email@exemplo.com"
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="pay_company">Empresa (opcional)</Label>
+                      <Input
+                        id="pay_company"
+                        value={customerForm.company}
+                        onChange={(e) => setCustomerForm((f) => ({ ...f, company: e.target.value }))}
+                        placeholder="Razão social ou nome fantasia"
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="pay_phone">Telefone</Label>
+                      <Input
+                        id="pay_phone"
+                        inputMode="tel"
+                        autoComplete="tel"
+                        value={formatPhoneBrDigits(customerForm.phone)}
+                        onChange={(e) =>
+                          setCustomerForm((f) => ({
+                            ...f,
+                            phone: e.target.value.replace(/\D/g, "").slice(0, 11),
+                          }))
+                        }
+                        placeholder="(11) 99999-9999"
+                        className="mt-1"
+                      />
+                    </div>
+                  </>
+                )}
                 <div>
                   <Label htmlFor="pay_cpf">CPF/CNPJ *</Label>
                   <Input
@@ -978,232 +1015,13 @@ const CustomerInvoicePay = () => {
                     )}
 
                     {isCardSelected && allowCard && showCardFormFields && (
-                      <form className="space-y-4" onSubmit={(e) => void handlePayWithCard(e)}>
-                        <h3 className="text-sm font-semibold flex items-center gap-2">
-                          <CreditCard className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
-                          Cartão de crédito
-                        </h3>
-                        <div className="space-y-3 rounded-lg border bg-background/80 p-4">
-                          <p className="text-xs font-medium text-muted-foreground">Dados do cartão</p>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div className="sm:col-span-2">
-                              <Label htmlFor="cc_holder">Nome no cartão</Label>
-                              <Input
-                                id="cc_holder"
-                                autoComplete="cc-name"
-                                value={cardForm.holder_name}
-                                onChange={(e) => setCardForm((f) => ({ ...f, holder_name: e.target.value }))}
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label htmlFor="cc_num">Número do cartão</Label>
-                              <Input
-                                id="cc_num"
-                                inputMode="numeric"
-                                autoComplete="cc-number"
-                                value={cardForm.number}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({
-                                    ...f,
-                                    number: e.target.value.replace(/\D/g, "").slice(0, 19),
-                                  }))
-                                }
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="cc_m">Mês</Label>
-                              <Input
-                                id="cc_m"
-                                inputMode="numeric"
-                                placeholder="MM"
-                                autoComplete="cc-exp-month"
-                                value={cardForm.expiry_month}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({
-                                    ...f,
-                                    expiry_month: e.target.value.replace(/\D/g, "").slice(0, 2),
-                                  }))
-                                }
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="cc_y">Ano</Label>
-                              <Input
-                                id="cc_y"
-                                inputMode="numeric"
-                                placeholder="AAAA"
-                                autoComplete="cc-exp-year"
-                                value={cardForm.expiry_year}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({
-                                    ...f,
-                                    expiry_year: e.target.value.replace(/\D/g, "").slice(0, 4),
-                                  }))
-                                }
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label htmlFor="cc_cvv">CVV</Label>
-                              <Input
-                                id="cc_cvv"
-                                inputMode="numeric"
-                                autoComplete="cc-csc"
-                                type="password"
-                                value={cardForm.cvv}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({ ...f, cvv: e.target.value.replace(/\D/g, "").slice(0, 4) }))
-                                }
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                          </div>
-                        </div>
-                        <div className="space-y-3 rounded-lg border bg-background/80 p-4">
-                          <p className="text-xs font-medium text-muted-foreground">Titular do cartão</p>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div className="sm:col-span-2">
-                              <Label htmlFor="ch_name">Nome completo</Label>
-                              <Input
-                                id="ch_name"
-                                value={cardForm.ch_name}
-                                onChange={(e) => setCardForm((f) => ({ ...f, ch_name: e.target.value }))}
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label htmlFor="ch_email">E-mail</Label>
-                              <Input
-                                id="ch_email"
-                                type="email"
-                                autoComplete="email"
-                                value={cardForm.ch_email}
-                                onChange={(e) => setCardForm((f) => ({ ...f, ch_email: e.target.value }))}
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label htmlFor="ch_cpf">CPF ou CNPJ</Label>
-                              <Input
-                                id="ch_cpf"
-                                inputMode="numeric"
-                                value={formatCpfCnpjDigits(cardForm.ch_cpf_cnpj)}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({
-                                    ...f,
-                                    ch_cpf_cnpj: e.target.value.replace(/\D/g, "").slice(0, 14),
-                                  }))
-                                }
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="ch_cep">CEP</Label>
-                              <Input
-                                id="ch_cep"
-                                inputMode="numeric"
-                                value={cardForm.ch_postal_code}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({
-                                    ...f,
-                                    ch_postal_code: e.target.value.replace(/\D/g, "").slice(0, 8),
-                                  }))
-                                }
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="ch_num">Número</Label>
-                              <Input
-                                id="ch_num"
-                                value={cardForm.ch_address_number}
-                                onChange={(e) => setCardForm((f) => ({ ...f, ch_address_number: e.target.value }))}
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label htmlFor="ch_comp">Complemento (opcional)</Label>
-                              <Input
-                                id="ch_comp"
-                                value={cardForm.ch_complement}
-                                onChange={(e) => setCardForm((f) => ({ ...f, ch_complement: e.target.value }))}
-                                className="mt-1"
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="ch_phone">Telefone</Label>
-                              <Input
-                                id="ch_phone"
-                                inputMode="tel"
-                                value={formatPhoneBrDigits(cardForm.ch_phone)}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({
-                                    ...f,
-                                    ch_phone: e.target.value.replace(/\D/g, "").slice(0, 11),
-                                  }))
-                                }
-                                className="mt-1"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="ch_mobile">Celular (opcional)</Label>
-                              <Input
-                                id="ch_mobile"
-                                inputMode="tel"
-                                value={formatPhoneBrDigits(cardForm.ch_mobile)}
-                                onChange={(e) =>
-                                  setCardForm((f) => ({
-                                    ...f,
-                                    ch_mobile: e.target.value.replace(/\D/g, "").slice(0, 11),
-                                  }))
-                                }
-                                className="mt-1"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                        <Button type="submit" className="w-full sm:w-auto" disabled={payingCard}>
-                          {payingCard ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Processando…
-                            </>
-                          ) : (
-                            <>
-                              <CreditCard className="h-4 w-4 mr-2" />
-                              Pagar agora
-                            </>
-                          )}
-                        </Button>
-                        {hostedCheckoutUrl ? (
-                          <p className="text-xs text-muted-foreground">
-                            Alternativa:{" "}
-                            <a
-                              href={hostedCheckoutUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary underline underline-offset-2 inline-flex items-center gap-1"
-                            >
-                              abrir página do provedor
-                              <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
-                            </a>
-                          </p>
-                        ) : null}
-                      </form>
+                      <InlineCreditCardPaymentForm
+                        form={cardForm}
+                        setForm={setCardForm}
+                        onSubmit={handlePayWithCard}
+                        paying={payingCard}
+                        hostedCheckoutUrl={hostedCheckoutUrl || null}
+                      />
                     )}
                   </div>
                 )}

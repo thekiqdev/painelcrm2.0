@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from 'sonner';
-import { Loader2, Copy, ExternalLink } from 'lucide-react';
+import { Loader2, Copy, ExternalLink, QrCode, Banknote, CreditCard } from 'lucide-react';
 
 const BILLING_INTERVALS = [
   { key: 'monthly', label: 'Mensal' },
@@ -21,9 +21,9 @@ const BILLING_INTERVALS = [
 ] as const;
 
 const PAYMENT_METHODS = [
-  { value: 'BOLETO', label: 'Boleto' },
-  { value: 'PIX', label: 'PIX' },
-  { value: 'CREDIT_CARD', label: 'Cartão de crédito' },
+  { value: 'PIX' as const, label: 'PIX', icon: QrCode, description: 'Pagamento instantâneo' },
+  { value: 'BOLETO' as const, label: 'Boleto', icon: Banknote, description: 'Boleto bancário' },
+  { value: 'CREDIT_CARD' as const, label: 'Cartão de crédito', icon: CreditCard, description: 'Página segura do gateway' },
 ] as const;
 
 export interface PlanForPurchase {
@@ -88,7 +88,7 @@ export function PlanPurchaseModal({
   const [interval, setInterval] = useState(billingInterval);
   const [users, setUsers] = useState(usersCount);
   const [name, setName] = useState(companyName);
-  const [paymentMethod, setPaymentMethod] = useState<'BOLETO' | 'PIX' | 'CREDIT_CARD'>('BOLETO');
+  const [paymentMethod, setPaymentMethod] = useState<'BOLETO' | 'PIX' | 'CREDIT_CARD'>('PIX');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PurchaseResult | null>(null);
 
@@ -98,18 +98,18 @@ export function PlanPurchaseModal({
   const amountCents = isCustom && priceRow ? priceRow.price_per_user_cents * users : plan.price_cents;
   const isLoggedIn = !!apiClient.getToken();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const runPurchase = async (method: 'BOLETO' | 'PIX' | 'CREDIT_CARD') => {
     if (!isLoggedIn && !name.trim()) {
       toast.error('Informe o nome da empresa.');
       return;
     }
+    setPaymentMethod(method);
     setLoading(true);
     setResult(null);
     const body: Record<string, unknown> = {
       plan_id: plan.id,
       billing_interval: interval,
-      payment_method: paymentMethod,
+      payment_method: method,
     };
     if (isCustom) body.users_count = users;
     if (!isLoggedIn && name.trim()) body.name = name.trim();
@@ -124,6 +124,7 @@ export function PlanPurchaseModal({
     if (res.data) {
       setResult(res.data);
       onSuccess?.();
+      toast.success('Cobrança preparada. Siga as instruções abaixo.');
     }
   };
 
@@ -140,7 +141,7 @@ export function PlanPurchaseModal({
           <DialogDescription>
             {result
               ? 'Use um dos links abaixo para pagar. Após a confirmação, seu plano será ativado automaticamente.'
-              : 'Escolha o intervalo e a forma de pagamento.'}
+              : 'Escolha o intervalo e, em seguida, o método — a cobrança é gerada ou reutilizada na hora.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -154,11 +155,7 @@ export function PlanPurchaseModal({
 
             {result.invoice_url && (
               <div>
-                <Button
-                  variant="outline"
-                  className="w-full gap-2"
-                  asChild
-                >
+                <Button variant="outline" className="w-full gap-2" asChild>
                   <a href={result.invoice_url} target="_blank" rel="noopener noreferrer">
                     Abrir página de pagamento
                     <ExternalLink className="h-4 w-4" />
@@ -169,12 +166,7 @@ export function PlanPurchaseModal({
             {result.bank_slip_url && (
               <div>
                 <Label className="text-xs text-muted-foreground">Boleto</Label>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full mt-1 gap-2"
-                  asChild
-                >
+                <Button variant="outline" size="sm" className="w-full mt-1 gap-2" asChild>
                   <a href={result.bank_slip_url} target="_blank" rel="noopener noreferrer">
                     Ver boleto
                     <ExternalLink className="h-4 w-4" />
@@ -186,17 +178,8 @@ export function PlanPurchaseModal({
               <div>
                 <Label className="text-xs text-muted-foreground">PIX Copia e Cola</Label>
                 <div className="flex gap-2 mt-1">
-                  <Input
-                    readOnly
-                    value={result.pix_copy_paste}
-                    className="font-mono text-xs"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => copyToClipboard(result.pix_copy_paste!)}
-                  >
+                  <Input readOnly value={result.pix_copy_paste} className="font-mono text-xs" />
+                  <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.pix_copy_paste!)}>
                     <Copy className="h-4 w-4" />
                   </Button>
                 </div>
@@ -216,7 +199,7 @@ export function PlanPurchaseModal({
             </Button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-4">
             {!isLoggedIn && (
               <div>
                 <Label htmlFor="plan-purchase-name">Nome da empresa</Label>
@@ -259,33 +242,41 @@ export function PlanPurchaseModal({
             )}
 
             <div>
-              <Label>Forma de pagamento</Label>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value as 'BOLETO' | 'PIX' | 'CREDIT_CARD')}
-                className="mt-1 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-              >
-                {PAYMENT_METHODS.map((pm) => (
-                  <option key={pm.value} value={pm.value}>
-                    {pm.label}
-                  </option>
-                ))}
-              </select>
+              <Label className="text-sm font-medium">Forma de pagamento</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Toque no método — o sistema reutiliza cobrança compatível ou gera automaticamente (como no pagamento de
+                faturas).
+              </p>
+              <div className="mt-2 grid gap-2">
+                {PAYMENT_METHODS.map((pm) => {
+                  const Icon = pm.icon;
+                  const isSelected = paymentMethod === pm.value;
+                  const busy = loading && isSelected;
+                  return (
+                    <button
+                      key={pm.value}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void runPurchase(pm.value)}
+                      className={`flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-colors disabled:opacity-60 ${
+                        isSelected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:border-primary/50'
+                      }`}
+                    >
+                      <div className={`rounded-full p-2 ${isSelected ? 'bg-primary/20' : 'bg-muted'}`}>
+                        {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Icon className="h-5 w-5" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold">{pm.label}</div>
+                        <div className="text-[11px] text-muted-foreground">{pm.description}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <p className="text-sm font-semibold">{formatPrice(amountCents)}</p>
-
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processando...
-                </>
-              ) : (
-                'Gerar cobrança'
-              )}
-            </Button>
-          </form>
+          </div>
         )}
       </DialogContent>
     </Dialog>

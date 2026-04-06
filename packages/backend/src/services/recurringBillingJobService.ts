@@ -3,10 +3,11 @@
  * Scheduler: SELECT subscriptions WHERE status='active' AND next_billing_date <= CURRENT_DATE LIMIT 500.
  * Worker: SELECT jobs FOR UPDATE SKIP LOCKED LIMIT 100; validar subscription; criar fatura; gateway; atualizar subscription e job.
  */
-import { pool } from '../utils/db.js';
+import { pool, dbRequestStorage, withBillingWorkerRlsBypass } from '../utils/db.js';
 
 import { billingLog, notifyBillingJobFailed } from './billingLogger.js';
 import {
+  changeSubscriptionPlan,
   getSubscriptionById,
   updateSubscriptionAfterRenewal,
   expireCancelledSubscriptions,
@@ -96,44 +97,46 @@ function calculateNextItemDueDate(periodStart: string, interval: CustomerItemRec
  * Também expira assinaturas com cancel_at_period_end e current_period_end < hoje.
  */
 export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped: number; expired: number }> {
-  const expired = await expireCancelledSubscriptions();
+  return withBillingWorkerRlsBypass(async () => {
+    const expired = await expireCancelledSubscriptions();
 
-  const subs = await pool.query<{ id: string; tenant_id: string; next_billing_date: string }>(
-    `SELECT id, tenant_id, next_billing_date
-     FROM subscriptions
-     WHERE status = 'active' AND next_billing_date <= CURRENT_DATE
-     ORDER BY next_billing_date
-     LIMIT $1`,
-    [SCHEDULER_LIMIT]
-  );
-
-  let enqueued = 0;
-  let skipped = 0;
-
-  billingLog('scheduler', 'enqueue_run', { total_candidates: subs.rows.length, expired });
-  for (const row of subs.rows) {
-    const cycleKey = row.next_billing_date; // YYYY-MM-DD
-    const existing = await pool.query(
-      `SELECT id FROM billing_recurring_jobs
-       WHERE subscription_id = $1 AND cycle_key = $2 AND status IN ('pending', 'processing')
-       LIMIT 1`,
-      [row.id, cycleKey]
+    const subs = await pool.query<{ id: string; tenant_id: string; next_billing_date: string }>(
+      `SELECT id, tenant_id, next_billing_date
+       FROM subscriptions
+       WHERE status = 'active' AND next_billing_date <= CURRENT_DATE
+       ORDER BY next_billing_date
+       LIMIT $1`,
+      [SCHEDULER_LIMIT]
     );
-    if (existing.rows.length > 0) {
-      skipped++;
-      continue;
+
+    let enqueued = 0;
+    let skipped = 0;
+
+    billingLog('scheduler', 'enqueue_run', { total_candidates: subs.rows.length, expired });
+    for (const row of subs.rows) {
+      const cycleKey = row.next_billing_date; // YYYY-MM-DD
+      const existing = await pool.query(
+        `SELECT id FROM billing_recurring_jobs
+         WHERE subscription_id = $1 AND cycle_key = $2 AND status IN ('pending', 'processing')
+         LIMIT 1`,
+        [row.id, cycleKey]
+      );
+      if (existing.rows.length > 0) {
+        skipped++;
+        continue;
+      }
+      await pool.query(
+        `INSERT INTO billing_recurring_jobs (subscription_id, tenant_id, job_type, cycle_key, scheduled_at, status)
+         VALUES ($1, $2, 'renewal', $3, ($4::date)::timestamptz, 'pending')
+         ON CONFLICT (subscription_id, cycle_key) DO NOTHING`,
+        [row.id, row.tenant_id, cycleKey, row.next_billing_date]
+      );
+      enqueued++;
     }
-    await pool.query(
-      `INSERT INTO billing_recurring_jobs (subscription_id, tenant_id, job_type, cycle_key, scheduled_at, status)
-       VALUES ($1, $2, 'renewal', $3, ($4::date)::timestamptz, 'pending')
-       ON CONFLICT (subscription_id, cycle_key) DO NOTHING`,
-      [row.id, row.tenant_id, cycleKey, row.next_billing_date]
-    );
-    enqueued++;
-  }
 
-  billingLog('scheduler', 'enqueue_done', { enqueued, skipped, expired });
-  return { enqueued, skipped, expired };
+    billingLog('scheduler', 'enqueue_done', { enqueued, skipped, expired });
+    return { enqueued, skipped, expired };
+  });
 }
 
 export interface JobRow {
@@ -154,10 +157,13 @@ export interface JobRow {
  * Valida subscription (active, next_billing_date <= CURRENT_DATE, cancel_at_period_end); cria fatura; chama gateway; atualiza subscription (last_job_at, next_billing_date, etc.) e job.
  */
 export async function processNextBatch(workerId: string): Promise<{ processed: number; failed: number; cancelled: number }> {
-  const client = await pool.connect();
-  const result = { processed: 0, failed: 0, cancelled: 0 };
+  return withBillingWorkerRlsBypass(async () => {
+    const client = dbRequestStorage.getStore()?.client;
+    if (!client) {
+      throw new Error('billing worker RLS context missing');
+    }
+    const result = { processed: 0, failed: 0, cancelled: 0 };
 
-  try {
     const jobsResult = await client.query<JobRow>(
       `SELECT id, subscription_id, tenant_id, job_type, cycle_key, scheduled_at, retry_at, status, attempts, max_attempts
        FROM billing_recurring_jobs
@@ -276,12 +282,10 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
         result.failed++;
       }
     }
-  } finally {
-    client.release();
-  }
 
-  billingLog('worker', 'batch_done', { workerId, ...result });
-  return result;
+    billingLog('worker', 'batch_done', { workerId, ...result });
+    return result;
+  });
 }
 
 async function markJobCancelled(client: import('pg').PoolClient, jobId: string): Promise<void> {
@@ -301,14 +305,27 @@ async function processOneRenewalJob(job: JobRow, subscription: SubscriptionRow):
     throw new Error('Subscription saas sem plan_id');
   }
 
-  const planRow = await pool.query<{ name: string; price_cents: number | null }>(
-    'SELECT name, price_cents FROM plans WHERE id = $1',
-    [planId]
-  );
+  const planRow = await pool.query<{
+    name: string;
+    price_cents: number | null;
+    plan_type: string | null;
+  }>('SELECT name, price_cents, plan_type FROM plans WHERE id = $1', [planId]);
   const planName = planRow.rows[0]?.name ?? null;
   const planPriceCents = planRow.rows[0]?.price_cents ?? subscription.amount_cents;
+  const planType = planRow.rows[0]?.plan_type ?? 'standard';
 
-  const amountCents = await calculateInvoiceAmount(planId, interval, subscription.users_count ?? null);
+  const tenantSeats = await pool.query<{ max_users_scheduled_next_cycle: number | null }>(
+    `SELECT max_users_scheduled_next_cycle FROM tenants WHERE id = $1`,
+    [subscription.tenant_id]
+  );
+  const scheduledNext = tenantSeats.rows[0]?.max_users_scheduled_next_cycle;
+  const isCustom = planType === 'custom';
+  let usersForRenewal = subscription.users_count ?? null;
+  if (isCustom && scheduledNext != null && scheduledNext >= 1) {
+    usersForRenewal = scheduledNext;
+  }
+
+  const amountCents = await calculateInvoiceAmount(planId, interval, usersForRenewal);
   const dueDate = periodStart;
   const config = await getActiveConfig('saas');
   const gatewayKey = config?.gateway_key ?? 'asaas';
@@ -321,7 +338,7 @@ async function processOneRenewalJob(job: JobRow, subscription: SubscriptionRow):
     due_date: dueDate,
     source: 'self_service',
     billing_reason: 'plan_renewal',
-    users_count: subscription.users_count ?? null,
+    users_count: usersForRenewal,
     gateway: gatewayKey,
     subscription_id: subscription.id,
     period_start: periodStart,
@@ -367,6 +384,25 @@ async function processOneRenewalJob(job: JobRow, subscription: SubscriptionRow):
     billing_cycle_count: subscription.billing_cycle_count + 1,
   });
 
+  if (isCustom && scheduledNext != null && scheduledNext >= 1) {
+    await pool.query(
+      `UPDATE tenants
+       SET max_users_override = $1,
+           max_users_scheduled_next_cycle = NULL,
+           updated_at = now()
+       WHERE id = $2`,
+      [scheduledNext, subscription.tenant_id]
+    );
+    const sync = await changeSubscriptionPlan(subscription.id, subscription.tenant_id, {
+      plan_id: planId,
+      users_count: scheduledNext,
+      billing_interval: interval,
+    });
+    if (!sync.ok) {
+      console.error('[recurringBillingJobService] falha ao aplicar assentos agendados', sync.error);
+    }
+  }
+
   await pool.query(
     `UPDATE billing_recurring_jobs SET status = 'completed', result_invoice_id = $1, result_invoice_type = 'tenant_billing', updated_at = now() WHERE id = $2`,
     [billing.id, job.id]
@@ -403,7 +439,7 @@ async function processOneCustomerRenewalJob(job: JobRow, subscription: Subscript
     throw new Error('Fatura anterior (para copiar itens) não encontrada no subscription');
   }
 
-  const prevItems = await getCustomerInvoiceItems(prevInvoice.id);
+  const prevItems = await getCustomerInvoiceItems(prevInvoice.id, prevInvoice.tenant_id);
 
   // D5: só linhas com is_recurring=true entram na próxima fatura de ciclo; demais são “avulsas” neste ciclo.
   const includedItems: Array<CustomerInvoiceItemRow & { next_due_date: string }> = [];
@@ -575,16 +611,17 @@ export interface ProcessChildInvoicesResult {
  * (cobrança em outra data). Cria fatura filha + cobrança no gateway e avança scheduled_due_date no item pai.
  */
 export async function processChildItemDueInvoices(): Promise<ProcessChildInvoicesResult> {
-  const result: ProcessChildInvoicesResult = { created: 0, skipped: 0, errors: 0 };
+  return withBillingWorkerRlsBypass(async () => {
+    const result: ProcessChildInvoicesResult = { created: 0, skipped: 0, errors: 0 };
 
-  if (!isChildItemInvoicesEnabled()) {
-    billingLog('worker', 'child_invoices_feature_off', {
-      hint: 'Set BILLING_CHILD_ITEM_INVOICES_ENABLED=true to enable E2 child invoices',
-    });
-    return result;
-  }
+    if (!isChildItemInvoicesEnabled()) {
+      billingLog('worker', 'child_invoices_feature_off', {
+        hint: 'Set BILLING_CHILD_ITEM_INVOICES_ENABLED=true to enable E2 child invoices',
+      });
+      return result;
+    }
 
-  const batchLimit = getChildBillingBatchLimit();
+    const batchLimit = getChildBillingBatchLimit();
 
   type Row = {
     item_id: string;
@@ -792,13 +829,14 @@ export async function processChildItemDueInvoices(): Promise<ProcessChildInvoice
     result.created++;
   }
 
-  billingLog('worker', 'child_batch_summary', {
-    created: result.created,
-    skipped: result.skipped,
-    errors: result.errors,
-    candidates: q.rows.length,
-    batchLimit,
-  });
+    billingLog('worker', 'child_batch_summary', {
+      created: result.created,
+      skipped: result.skipped,
+      errors: result.errors,
+      candidates: q.rows.length,
+      batchLimit,
+    });
 
-  return result;
+    return result;
+  });
 }

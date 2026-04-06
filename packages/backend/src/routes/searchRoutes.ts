@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { searchGlobal } from '../controllers/searchController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 router.get('/', searchGlobal);
 

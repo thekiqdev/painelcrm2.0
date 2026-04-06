@@ -3,13 +3,24 @@
  * Geração de invoice_number; usado pelo webhook e pelo fluxo de compra.
  * Fase 4: apenas colunas genéricas gateway_reference_id, gateway_metadata, gateway_status.
  */
+import { randomUUID } from 'node:crypto';
 import { pool } from '../utils/db.js';
 import { billingLog } from './billingLogger.js';
 import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
 
 export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 export type BillingSource = 'superadmin' | 'self_service' | 'api';
-export type BillingReason = 'plan_purchase' | 'plan_upgrade' | 'plan_renewal' | 'manual_charge';
+export type BillingReason =
+  | 'plan_purchase'
+  | 'plan_upgrade'
+  | 'plan_renewal'
+  | 'manual_charge'
+  | 'seat_addon';
+
+/** Idempotência estável por linha + método (evita colisão entre tenants; troca de método gera nova chave no gateway). */
+export function buildSaasCheckoutChargeIdempotencyKey(billingId: string, paymentMethod: string): string {
+  return `saas_co_${billingId}_${paymentMethod}`;
+}
 export type BillingStatus = 'pending' | 'paid' | 'overdue' | 'cancelled';
 
 export interface TenantBillingRow {
@@ -170,7 +181,17 @@ export async function updateInvoiceGatewayData(
   billingId: string,
   data: GatewayPaymentData
 ): Promise<void> {
-  const metadataJson = data.gateway_metadata != null ? JSON.stringify(data.gateway_metadata) : null;
+  const existing = await getInvoiceById(billingId);
+  const prevMeta =
+    existing?.gateway_metadata && typeof existing.gateway_metadata === 'object'
+      ? ({ ...(existing.gateway_metadata as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
+  const incoming =
+    data.gateway_metadata != null && typeof data.gateway_metadata === 'object'
+      ? (data.gateway_metadata as Record<string, unknown>)
+      : {};
+  const merged: Record<string, unknown> = { ...prevMeta, ...incoming };
+  const metadataJson = JSON.stringify(merged);
   await pool.query(
     `UPDATE tenant_billing
      SET gateway = $1, payment_method = $2,
@@ -234,6 +255,32 @@ export async function getInvoiceById(billingId: string): Promise<TenantBillingRo
 }
 
 /**
+ * Token opaco para POST de cartão no checkout SaaS sem JWT (papel análogo ao `payment_token` do link público de faturas).
+ * Persistido em `gateway_metadata.checkout_inline_pay_token` e preservado nos merges de metadata.
+ */
+export async function ensureTenantBillingInlinePayToken(billingId: string): Promise<string> {
+  const billing = await getInvoiceById(billingId);
+  if (!billing) {
+    throw new Error(`Billing not found: ${billingId}`);
+  }
+  const meta =
+    billing.gateway_metadata && typeof billing.gateway_metadata === 'object'
+      ? ({ ...(billing.gateway_metadata as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
+  const existing = meta.checkout_inline_pay_token;
+  if (typeof existing === 'string' && existing.length >= 32) {
+    return existing;
+  }
+  const token = randomUUID();
+  meta.checkout_inline_pay_token = token;
+  await pool.query(
+    `UPDATE tenant_billing SET gateway_metadata = $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(meta), billingId]
+  );
+  return token;
+}
+
+/**
  * Verifica se já existe fatura para a assinatura e período (idempotência).
  */
 export async function findInvoiceBySubscriptionAndPeriod(
@@ -252,4 +299,133 @@ export async function findInvoiceBySubscriptionAndPeriod(
     [subscriptionId, periodStart]
   );
   return result.rows[0] ?? null;
+}
+
+/**
+ * Status em `tenant_billing` para o checkout SaaS do plano:
+ *
+ * Reutilizáveis (mesma linha, troca de método ou retorno ao checkout): `pending`, `waiting_payment`, `processing`.
+ * Não reutilizáveis (nova cobrança / nova linha quando aplicável): `paid`, `cancelled`, `failed`, `refunded`,
+ * `overdue` (vencida — exige nova cobrança no gateway), e demais que não estejam na lista reutilizável.
+ *
+ * `overdue` entra em SAAS_PLAN_SIBLING_OPEN_STATUSES para cancelar irmãs ao pagar uma cobrança válida.
+ */
+export const SAAS_PLAN_CHECKOUT_REUSABLE_STATUSES = ['pending', 'waiting_payment', 'processing'];
+
+/** Irmãs concorrentes a cancelar ao confirmar pagamento (inclui overdue ainda “abertas” comercialmente). */
+export const SAAS_PLAN_SIBLING_OPEN_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'];
+
+/** @deprecated use SAAS_PLAN_SIBLING_OPEN_STATUSES */
+export const SAAS_SELF_SERVICE_REUSABLE_STATUSES = SAAS_PLAN_SIBLING_OPEN_STATUSES;
+
+/**
+ * Chave legada por contexto (tenant + plano + vencimento) — apenas referência/auditoria; a idempotência do gateway usa `buildSaasCheckoutChargeIdempotencyKey`.
+ */
+export function buildSaasPlanCheckoutIdempotencyKeys(
+  tenantId: string,
+  planId: string,
+  dueDateStr: string,
+  _paymentMethod: string
+): { v2Key: string; legacyKey: string } {
+  const legacyKey = `saas_${tenantId}_${planId}_${dueDateStr}`;
+  const v2Key = `${legacyKey}_${_paymentMethod}`;
+  return { v2Key, legacyKey };
+}
+
+/**
+ * Mesma “cobrança de contexto” do checkout SaaS: tenant + plano + intervalo + usuários + finalidade.
+ * Não usa `amount_cents` na chave — o valor deriva do contexto; divergência é corrigida em subscribePlan.
+ */
+export async function findReusableSaasPlanCheckoutInvoice(params: {
+  tenantId: string;
+  planId: string;
+  billingInterval: BillingInterval;
+  usersCount: number | null;
+  billingReason: BillingReason | null;
+}): Promise<TenantBillingRow | null> {
+  const reasonNorm = params.billingReason ?? 'plan_purchase';
+  const result = await pool.query<TenantBillingRow>(
+    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
+       invoice_number, gateway, payment_method,
+       gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
+       period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
+       users_count, source, billing_reason, created_at, updated_at
+     FROM tenant_billing
+     WHERE tenant_id = $1
+       AND plan_id = $2
+       AND billing_interval = $3
+       AND status = ANY($4::text[])
+       AND COALESCE(billing_reason, 'plan_purchase') = $5
+       AND (users_count IS NOT DISTINCT FROM $6)
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [
+      params.tenantId,
+      params.planId,
+      params.billingInterval,
+      SAAS_PLAN_CHECKOUT_REUSABLE_STATUSES,
+      reasonNorm,
+      params.usersCount,
+    ]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Antes de criar nova linha para o mesmo contexto comercial, encerra pendentes antigas (evita múltiplas faturas ativas).
+ */
+export async function cancelOpenPlanPurchaseBillingsForContext(params: {
+  tenantId: string;
+  planId: string;
+  billingInterval: BillingInterval;
+  usersCount: number | null;
+  billingReason: BillingReason | null;
+}): Promise<void> {
+  const reasonNorm = params.billingReason ?? 'plan_purchase';
+  await pool.query(
+    `UPDATE tenant_billing
+     SET status = 'cancelled', updated_at = now()
+     WHERE tenant_id = $1
+       AND plan_id = $2
+       AND billing_interval = $3
+       AND COALESCE(billing_reason, 'plan_purchase') = $4
+       AND (users_count IS NOT DISTINCT FROM $5)
+       AND status = ANY($6::text[])`,
+    [
+      params.tenantId,
+      params.planId,
+      params.billingInterval,
+      reasonNorm,
+      params.usersCount,
+      SAAS_PLAN_SIBLING_OPEN_STATUSES,
+    ]
+  );
+}
+
+/**
+ * Cancela faturas seat_addon abertas, exceto a indicada (reuso de checkout).
+ * Limpa `tenants.seat_addon_pending_billing_id` quando apontava para fatura cancelada.
+ */
+export async function cancelOpenSeatAddonBillingsExcept(
+  tenantId: string,
+  exceptBillingId: string | null
+): Promise<void> {
+  const r = await pool.query<{ id: string }>(
+    `UPDATE tenant_billing
+     SET status = 'cancelled', updated_at = now()
+     WHERE tenant_id = $1
+       AND COALESCE(billing_reason, '') = 'seat_addon'
+       AND status = ANY($2::text[])
+       AND ($3::uuid IS NULL OR id <> $3::uuid)
+     RETURNING id`,
+    [tenantId, SAAS_PLAN_SIBLING_OPEN_STATUSES, exceptBillingId]
+  );
+  const ids = r.rows.map((row) => row.id);
+  if (ids.length === 0) return;
+  await pool.query(
+    `UPDATE tenants
+     SET seat_addon_pending_billing_id = NULL, updated_at = now()
+     WHERE id = $1 AND seat_addon_pending_billing_id = ANY($2::uuid[])`,
+    [tenantId, ids]
+  );
 }

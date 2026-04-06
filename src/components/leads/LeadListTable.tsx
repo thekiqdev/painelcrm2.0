@@ -19,6 +19,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
 
 type SortIconProps = {
   field: string;
@@ -90,6 +92,7 @@ const LeadListTable: React.FC<LeadListTableProps> = ({
     <Table>
       <TableHeader>
         <TableRow>
+          <TableHead className="w-12" aria-label="Avatar" />
           <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
             <div className="flex items-center">
               Nome
@@ -111,13 +114,21 @@ const LeadListTable: React.FC<LeadListTableProps> = ({
       <TableBody>
         {leads.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={6} className="text-center text-muted-foreground">
+            <TableCell colSpan={7} className="text-center text-muted-foreground">
               Nenhum lead encontrado com os critérios de busca
             </TableCell>
           </TableRow>
         ) : (
-          leads.map((lead) => (
+          leads.map((lead) => {
+            const listAvatar = resolveProfileAvatarUrl(lead, lead.whatsapp_avatar_url ?? null);
+            return (
             <TableRow key={lead.id}>
+              <TableCell className="w-12">
+                <Avatar className="h-8 w-8">
+                  {listAvatar.src ? <AvatarImage src={listAvatar.src} alt={lead.name} /> : null}
+                  <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                </Avatar>
+              </TableCell>
               <TableCell 
                 className="cursor-pointer hover:underline"
                 onClick={() => handleViewLead(lead)}
@@ -188,7 +199,8 @@ const LeadListTable: React.FC<LeadListTableProps> = ({
                 </DropdownMenu>
               </TableCell>
             </TableRow>
-          ))
+            );
+          })
         )}
       </TableBody>
     </Table>

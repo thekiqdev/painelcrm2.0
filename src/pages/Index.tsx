@@ -21,7 +21,7 @@ const Index = () => {
             <Button variant="ghost" onClick={() => navigate("/login")}>
               Login
             </Button>
-            <Button onClick={() => navigate("/register")}>
+            <Button onClick={() => navigate("/checkout")}>
               Começar Agora
             </Button>
           </div>
@@ -38,7 +38,7 @@ const Index = () => {
             Aumente suas vendas, melhore o relacionamento com clientes e impulsione seu negócio com nossa solução completa de CRM
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" className="bg-white hover:bg-gray-100 text-crm-primary" onClick={() => navigate("/register")}>
+            <Button size="lg" className="bg-white hover:bg-gray-100 text-crm-primary" onClick={() => navigate("/checkout")}>
               Comece Gratuitamente
             </Button>
             <Button size="lg" variant="outline" className="text-white border-white hover:bg-white/10" onClick={() => navigate("/login")}>
@@ -137,7 +137,7 @@ const Index = () => {
                   <Button 
                     className={`w-full ${plan.popular ? 'bg-white text-crm-primary hover:bg-gray-100' : ''}`}
                     variant={plan.popular ? "default" : "outline"}
-                    onClick={() => navigate("/register")}
+                    onClick={() => navigate("/checkout")}
                   >
                     {plan.cta}
                   </Button>
@@ -170,7 +170,7 @@ const Index = () => {
           <Button 
             size="lg" 
             className="bg-crm-accent hover:bg-crm-accent/90"
-            onClick={() => navigate("/register")}
+            onClick={() => navigate("/checkout")}
           >
             Começar Gratuitamente
           </Button>

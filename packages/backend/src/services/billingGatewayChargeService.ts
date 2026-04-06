@@ -8,6 +8,7 @@ import { billingLog } from './billingLogger.js';
 import { normalizeGatewayStatus } from '../modules/payments/webhook/statusNormalizer.js';
 import type { PaymentGateway } from '../modules/payments/paymentGatewayTypes.js';
 import type { CustomerInvoicePaymentAttemptRow } from './customerInvoicePaymentAttemptsService.js';
+import type { TenantBillingPaymentAttemptRow } from './tenantBillingPaymentAttemptsService.js';
 
 /** Status Asaas em que NÃO se deve excluir cobrança (já liquidada ou encerrada). */
 const ASAAS_NO_DELETE = new Set([
@@ -36,7 +37,8 @@ export function isAsaasRawStatusSafeToDelete(raw: string | null | undefined): bo
 }
 
 export interface DeleteGatewayChargeContext {
-  invoice_id: string;
+  invoice_id?: string;
+  billing_id?: string;
   attempt_id?: string;
   reason: 'superseded_by_paid' | 'switch_cleanup' | 'manual';
 }
@@ -141,6 +143,31 @@ export async function deleteGatewayChargeIfSafe(params: {
   }
 }
 
+async function cleanupSupersedeTenantBillingAttemptRows(
+  billingId: string,
+  tenantId: string,
+  rows: TenantBillingPaymentAttemptRow[]
+): Promise<void> {
+  const { markTenantBillingAttemptCancelledSuperseded } = await import('./tenantBillingPaymentAttemptsService.js');
+  for (const row of rows) {
+    await deleteGatewayChargeIfSafe({
+      tenantId,
+      gatewayKey: row.gateway,
+      gatewayReferenceId: row.gateway_reference_id ?? '',
+      gatewayStatusRaw: row.gateway_status,
+      ctx: {
+        billing_id: billingId,
+        attempt_id: row.id,
+        reason: 'superseded_by_paid',
+      },
+    });
+    await markTenantBillingAttemptCancelledSuperseded(row.id, {
+      reason: 'superseded_by_other_attempt_paid',
+      superseded_by: 'paid_other',
+    });
+  }
+}
+
 async function cleanupSupersedeAttemptRows(
   invoiceId: string,
   tenantId: string,
@@ -178,6 +205,101 @@ export async function supersedeOtherPendingAttemptsAfterPaid(
   const { listPendingAttemptsForInvoiceExcept } = await import('./customerInvoicePaymentAttemptsService.js');
   const rows = await listPendingAttemptsForInvoiceExcept(invoiceId, paidAttemptId);
   await cleanupSupersedeAttemptRows(invoiceId, tenantId, rows);
+}
+
+/**
+ * Igual a `supersedeOtherPendingAttemptsAfterPaid` nas faturas CRM: remove/supersed outras cobranças no gateway
+ * e marca tentativas como canceladas no banco.
+ */
+export async function supersedeOtherPendingTenantBillingAttemptsAfterPaid(
+  billingId: string,
+  paidAttemptId: string,
+  tenantId: string
+): Promise<void> {
+  const { listPendingTenantBillingAttemptsExcept } = await import('./tenantBillingPaymentAttemptsService.js');
+  const rows = await listPendingTenantBillingAttemptsExcept(billingId, paidAttemptId);
+  await cleanupSupersedeTenantBillingAttemptRows(billingId, tenantId, rows);
+}
+
+/**
+ * Consolida tentativa vencedora na linha `tenant_billing`, ativa o plano e aplica o mesmo cleanup das faturas
+ * (polling do checkout, quando o pagamento não veio só pela tentativa “ativa” na UI).
+ */
+export async function runPostPaidCleanupForTenantBilling(params: {
+  billingId: string;
+  tenantId: string;
+  paidAttemptId: string | null;
+  paidGatewayReferenceId: string;
+  gatewayStatusRaw: string | null;
+  paidAt: Date;
+  /** Quando não há linha em `tenant_billing_payment_attempts` (legado). */
+  paymentMethodFallback?: string | null;
+}): Promise<void> {
+  const {
+    hasTenantBillingPaymentAttemptsTable,
+    updateTenantBillingPaymentAttemptStatus,
+    activateTenantBillingPaymentAttempt,
+  } = await import('./tenantBillingPaymentAttemptsService.js');
+  const { updateInvoiceGatewayData, updateInvoiceStatus } = await import('./invoiceService.js');
+  const { activatePlanFromBilling } = await import('./subscriptionService.js');
+  const { pool } = await import('../utils/db.js');
+
+  const ref = params.paidGatewayReferenceId?.trim();
+  if (!ref) return;
+
+  if (!(await hasTenantBillingPaymentAttemptsTable())) {
+    const pm = (params.paymentMethodFallback || 'PIX').toUpperCase().trim() || 'PIX';
+    await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
+    await activatePlanFromBilling(params.billingId);
+    return;
+  }
+
+  let paidAttemptId = params.paidAttemptId;
+  if (!paidAttemptId) {
+    const r = await pool.query<{ id: string }>(
+      `SELECT id FROM tenant_billing_payment_attempts
+       WHERE billing_id = $1 AND gateway_reference_id = $2
+       LIMIT 1`,
+      [params.billingId, ref]
+    );
+    paidAttemptId = r.rows[0]?.id ?? null;
+  }
+
+  if (paidAttemptId) {
+    const attRes = await pool.query<TenantBillingPaymentAttemptRow>(
+      `SELECT id, billing_id, tenant_id, gateway, payment_method, status, gateway_status,
+        gateway_reference_id, gateway_metadata, idempotency_key, is_active, activated_at, deactivated_at,
+        expires_at, paid_at, created_at, updated_at
+       FROM tenant_billing_payment_attempts WHERE id = $1 LIMIT 1`,
+      [paidAttemptId]
+    );
+    const att = attRes.rows[0];
+    await updateTenantBillingPaymentAttemptStatus({
+      attemptId: paidAttemptId,
+      status: 'paid',
+      gatewayStatus: params.gatewayStatusRaw,
+      paidAt: params.paidAt,
+    });
+    await activateTenantBillingPaymentAttempt(params.billingId, paidAttemptId);
+    if (att) {
+      await updateInvoiceGatewayData(params.billingId, {
+        gateway: att.gateway,
+        payment_method: att.payment_method,
+        gateway_reference_id: att.gateway_reference_id ?? ref,
+        gateway_metadata: (att.gateway_metadata as Record<string, unknown>) ?? {},
+        gateway_status: params.gatewayStatusRaw,
+        idempotency_key: att.idempotency_key,
+      });
+    }
+    const pm = (att?.payment_method ?? params.paymentMethodFallback ?? 'PIX').toString().toUpperCase().trim() || 'PIX';
+    await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
+    await activatePlanFromBilling(params.billingId);
+    await supersedeOtherPendingTenantBillingAttemptsAfterPaid(params.billingId, paidAttemptId, params.tenantId);
+  } else {
+    const pm = (params.paymentMethodFallback || 'PIX').toUpperCase().trim() || 'PIX';
+    await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
+    await activatePlanFromBilling(params.billingId);
+  }
 }
 
 /**

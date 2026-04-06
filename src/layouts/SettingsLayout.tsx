@@ -2,8 +2,8 @@
  * Layout das Configurações: menu lateral + conteúdo (Outlet).
  * Mantém o menu visível em /settings, /settings/payments e /settings/payments/:gatewayKey.
  */
-import React, { useState, useCallback } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import React, { useState, useCallback, useEffect } from "react";
+import { Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 
 export type SettingSection =
@@ -30,10 +30,42 @@ interface SettingsLayoutContextValue {
 
 export const SettingsLayoutContext = React.createContext<SettingsLayoutContextValue | null>(null);
 
+const SECTION_QUERY_VALUES: SettingSection[] = [
+  "companyData",
+  "users",
+  "teams",
+  "userManagement",
+  "billing",
+  "notifications",
+  "security",
+  "preferences",
+  "leadsConfig",
+  "clientGroups",
+  "collaborators",
+  "whatsapp",
+  "domain",
+  "messageTemplates",
+  "paymentGateway",
+];
+
+function sectionFromQuery(raw: string | null): SettingSection | null {
+  if (!raw) return null;
+  return SECTION_QUERY_VALUES.includes(raw as SettingSection) ? (raw as SettingSection) : null;
+}
+
 export default function SettingsLayout() {
   const [activeSection, setActiveSection] = useState<SettingSection>("companyData");
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    if (!location.pathname.startsWith("/settings") || location.pathname.startsWith("/settings/payments")) {
+      return;
+    }
+    const s = sectionFromQuery(searchParams.get("section"));
+    if (s) setActiveSection(s);
+  }, [location.pathname, searchParams]);
 
   const handleSelect = useCallback(
     (section: SettingSection) => {

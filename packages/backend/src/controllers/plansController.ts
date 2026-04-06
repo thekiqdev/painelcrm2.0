@@ -28,6 +28,8 @@ const createPlanSchemaBase = z.object({
   is_default: z.boolean().optional().default(false),
   is_free: z.boolean().optional().default(false),
   free_access_days: z.number().int().min(1).optional().nullable(),
+  /** Dias de trial no checkout (Fase 2); 0 = sem trial. Em plano is_free deve permanecer 0. */
+  trial_days: z.number().int().min(0).optional().default(0),
   interval_prices: z.array(intervalPriceSchema).optional(),
   is_active: z.boolean().optional().default(true),
   sort_order: z.number().int().optional().default(0),
@@ -48,7 +50,11 @@ const createPlanSchema = createPlanSchemaBase
       return data.free_access_days != null && data.free_access_days >= 1;
     },
     { message: 'Plano grátis exige dias de acesso (free_access_days) >= 1', path: ['free_access_days'] }
-  );
+  )
+  .refine((data) => !data.is_free || (data.trial_days ?? 0) === 0, {
+    message: 'Plano gratuito não utiliza trial_days; use 0.',
+    path: ['trial_days'],
+  });
 
 const updatePlanSchema = createPlanSchemaBase.partial().extend({
   interval_prices: z.array(intervalPriceSchema).optional(),
@@ -66,7 +72,15 @@ const updatePlanSchema = createPlanSchemaBase.partial().extend({
     return days != null && days >= 1;
   },
   { message: 'Plano grátis exige free_access_days >= 1', path: ['free_access_days'] }
-);
+)
+  .refine(
+    (data) => {
+      if (data.is_free !== true) return true;
+      if (data.trial_days === undefined) return true;
+      return data.trial_days === 0;
+    },
+    { message: 'Plano gratuito não utiliza trial_days; use 0.', path: ['trial_days'] }
+  );
 
 export async function listPlans(_req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -98,7 +112,7 @@ export async function listPlans(_req: AuthRequest, res: Response): Promise<void>
 export async function listPublicPlans(_req: Request, res: Response): Promise<void> {
   try {
     const result = await pool.query(
-      `SELECT id, name, slug, description, price_cents, billing_interval, max_users, max_profiles, max_whatsapp_instances, plan_type, is_default, is_free, free_access_days, benefits, sort_order
+      `SELECT id, name, slug, description, price_cents, billing_interval, max_users, max_profiles, max_whatsapp_instances, plan_type, is_default, is_free, free_access_days, trial_days, benefits, sort_order
        FROM plans
        WHERE is_active = true
        ORDER BY sort_order ASC, name ASC`
@@ -161,12 +175,13 @@ export async function createPlan(req: AuthRequest, res: Response): Promise<void>
     }
     const planType = body.plan_type ?? 'standard';
     const isDefault = body.is_default === true;
+    const trialDaysInsert = body.is_free ? 0 : (body.trial_days ?? 0);
     if (isDefault) {
       await pool.query("UPDATE plans SET is_default = false WHERE is_default = true");
     }
     const result = await pool.query(
-      `INSERT INTO plans (name, slug, description, price_cents, billing_interval, max_users, max_profiles, max_whatsapp_instances, plan_type, is_default, is_free, free_access_days, is_active, sort_order, benefits)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      `INSERT INTO plans (name, slug, description, price_cents, billing_interval, max_users, max_profiles, max_whatsapp_instances, plan_type, is_default, is_free, free_access_days, trial_days, is_active, sort_order, benefits)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         body.name.trim(),
@@ -181,6 +196,7 @@ export async function createPlan(req: AuthRequest, res: Response): Promise<void>
         isDefault,
         body.is_free ?? false,
         body.is_free ? (body.free_access_days ?? null) : null,
+        trialDaysInsert,
         body.is_active,
         body.sort_order ?? 0,
         JSON.stringify(Array.isArray(body.benefits) ? body.benefits : []),
@@ -256,7 +272,23 @@ export async function updatePlan(req: AuthRequest, res: Response): Promise<void>
     if (body.is_free === false && body.free_access_days === undefined) {
       body.free_access_days = null;
     }
-    const fields: (keyof typeof body)[] = ['name', 'slug', 'description', 'price_cents', 'billing_interval', 'max_users', 'max_profiles', 'max_whatsapp_instances', 'plan_type', 'is_default', 'is_free', 'free_access_days', 'is_active', 'sort_order'];
+    const fields: (keyof typeof body)[] = [
+      'name',
+      'slug',
+      'description',
+      'price_cents',
+      'billing_interval',
+      'max_users',
+      'max_profiles',
+      'max_whatsapp_instances',
+      'plan_type',
+      'is_default',
+      'is_free',
+      'free_access_days',
+      'trial_days',
+      'is_active',
+      'sort_order',
+    ];
     for (const key of fields) {
       if (body[key] !== undefined) {
         if (key === 'slug') {
@@ -280,6 +312,9 @@ export async function updatePlan(req: AuthRequest, res: Response): Promise<void>
         `UPDATE plans SET ${updates.join(', ')}, updated_at = now() WHERE id = $${i}`,
         values
       );
+    }
+    if (body.is_free === true) {
+      await pool.query('UPDATE plans SET trial_days = 0, updated_at = now() WHERE id = $1', [id]);
     }
     if (body.interval_prices !== undefined) {
       await pool.query('DELETE FROM plan_interval_prices WHERE plan_id = $1', [id]);

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as productsController from '../controllers/productsController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -8,7 +8,7 @@ const router = Router();
 router.get('/public/:userId', productsController.getPublicProducts);
 
 // Protected routes (auth + tenant)
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 router.get('/', productsController.getProducts);
 router.get('/:id', productsController.getProductById);
 router.post('/', productsController.createProduct);

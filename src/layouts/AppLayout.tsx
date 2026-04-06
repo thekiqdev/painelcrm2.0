@@ -162,6 +162,34 @@ const Nav = () => {
         </SidebarGroup>
 
         <SidebarGroup>
+          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {show(hasChat, 'chat') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/chat" className={getNavClass} onMouseEnter={() => routePreload.chat()}>
+                      <MessageSquare className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Chat</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {show(hasTickets, 'tickets') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/support/tickets" className={getNavClass} onMouseEnter={() => routePreload.tickets()}>
+                      <Ticket className="mr-2 h-5 w-5" />
+                      {!collapsed && <span>Tickets</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Projetos</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -198,35 +226,7 @@ const Nav = () => {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        
-        <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Atendimento</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {show(hasChat, 'chat') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
-                    <NavLink to="/chat" className={getNavClass} onMouseEnter={() => routePreload.chat()}>
-                      <MessageSquare className="mr-2 h-5 w-5" />
-                      {!collapsed && <span>Chat</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-              {show(hasTickets, 'tickets') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
-                    <NavLink to="/support/tickets" className={getNavClass} onMouseEnter={() => routePreload.tickets()}>
-                      <Ticket className="mr-2 h-5 w-5" />
-                      {!collapsed && <span>Tickets</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        
+
         <SidebarGroup>
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Documentação</SidebarGroupLabel>
           <SidebarGroupContent>

@@ -4,7 +4,7 @@
  * Fase 4: apenas colunas genéricas gateway_reference_id, gateway_metadata, gateway_status.
  */
 import crypto from 'node:crypto';
-import { pool } from '../utils/db.js';
+import { pool, withTenantRlsContext } from '../utils/db.js';
 import { billingLog } from './billingLogger.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
@@ -333,8 +333,23 @@ export async function createManualCustomerInvoice(
 
 /**
  * Retorna itens da fatura (customer_invoice_items) ordenados por sort_order.
+ *
+ * Defesa em profundidade: `tenantId` deve ser o tenant da fatura. `customer_invoice_items`
+ * não carrega tenant_id; sem esta checagem, um invoiceId vindo de contexto errado poderia
+ * expor linhas (RLS ajuda, mas a camada de app não deve depender só disso).
  */
-export async function getCustomerInvoiceItems(invoiceId: string): Promise<CustomerInvoiceItemRow[]> {
+export async function getCustomerInvoiceItems(
+  invoiceId: string,
+  tenantId: string
+): Promise<CustomerInvoiceItemRow[]> {
+  const belongs = await pool.query(
+    `SELECT 1 FROM customer_invoices WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+    [invoiceId, tenantId]
+  );
+  if ((belongs.rowCount ?? 0) === 0) {
+    return [];
+  }
+
   const schema = await getCustomerInvoiceSchema();
   if (schema.hasInvoiceItemAdvancedColumns) {
     const r = await pool.query<CustomerInvoiceItemRow>(
@@ -427,7 +442,9 @@ export async function getByPaymentToken(token: string): Promise<GetByPaymentToke
     [row.tenant_id]
   );
   const tenant = tenantResult.rows[0] ?? null;
-  const items = await getCustomerInvoiceItems(row.invoice_id);
+  const items = await withTenantRlsContext(row.tenant_id, () =>
+    getCustomerInvoiceItems(row.invoice_id, row.tenant_id)
+  );
   return {
     invoice: {
       invoice_number: row.invoice_number,

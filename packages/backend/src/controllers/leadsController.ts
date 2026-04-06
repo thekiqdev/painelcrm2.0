@@ -3,6 +3,8 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { normalizeConversationPhone } from '../services/conversationMatchingService.js';
+import { migrateConversationLeadToClient } from '../services/conversationLinkService.js';
 
 const MODULE_LEADS = 'leads';
 
@@ -17,6 +19,11 @@ const leadSchema = z.object({
   profile_id: z.string().uuid().optional().nullable(),
 });
 
+/** PATCH: aceita `migrated_client_id` para migrar conversas lead→cliente sem depender só do match por telefone. */
+const updateLeadBodySchema = leadSchema.partial().extend({
+  migrated_client_id: z.string().uuid().optional(),
+});
+
 export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
@@ -24,17 +31,70 @@ export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
       res.json([]);
       return;
     }
-    const { profileId } = req.query;
+    const { profileId, onlyConverted } = req.query;
+    const onlyConv = onlyConverted === 'true' || onlyConverted === '1';
 
     let query = `
-      SELECT l.* FROM leads l
+      SELECT l.*, wa.wa_url AS whatsapp_avatar_url
+      FROM leads l
       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          NULLIF(TRIM(cc.metadata->>'whatsapp_profile_photo'), ''),
+          NULLIF(TRIM(cc.metadata->>'image'), ''),
+          NULLIF(TRIM(cc.metadata->>'imagePreview'), ''),
+          NULLIF(TRIM(cc.metadata->>'image_preview'), '')
+        ) AS wa_url
+        FROM chat_conversations cc
+        INNER JOIN users cu ON cu.id = cc.user_id AND cu.tenant_id = $1
+        WHERE (
+          cc.lead_id = l.id
+          OR (
+            l.status = 'Convertido'
+            AND (cc.metadata->'link_migration'->>'previous_lead_id') = l.id::text
+          )
+          OR (
+            l.status = 'Convertido'
+            AND EXISTS (
+              SELECT 1
+              FROM clients c
+              INNER JOIN users uc ON uc.id = c.user_id AND uc.tenant_id = $1
+              CROSS JOIN LATERAL (
+                SELECT CASE
+                  WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (10, 11)
+                    THEN '55' || regexp_replace(l.phone, '\\D', '', 'g')
+                  WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (12, 13)
+                    AND left(regexp_replace(l.phone, '\\D', '', 'g'), 2) = '55'
+                    THEN regexp_replace(l.phone, '\\D', '', 'g')
+                  ELSE NULL
+                END AS n
+              ) nl
+              WHERE c.id = cc.client_id
+                AND l.phone IS NOT NULL AND btrim(l.phone) <> ''
+                AND nl.n IS NOT NULL
+                AND (
+                  regexp_replace(c.phone, '\\D', '', 'g') = nl.n
+                  OR regexp_replace(c.phone, '\\D', '', 'g') = substring(nl.n from 3)
+                )
+            )
+          )
+        )
+        ORDER BY COALESCE(cc.last_message_at, cc.created_at) DESC NULLS LAST
+        LIMIT 1
+      ) wa ON true
       WHERE 1=1
     `;
     const params: any[] = [tenantId];
 
+    if (onlyConv) {
+      query += ` AND l.status = 'Convertido'`;
+    } else {
+      // Lista principal: sem convertidos (multi-tenant inalterado).
+      query += ` AND (l.status IS NULL OR l.status <> 'Convertido')`;
+    }
+
     if (profileId) {
-      query += ' AND l.profile_id = $2';
+      query += ` AND l.profile_id = $${params.length + 1}`;
       params.push(profileId);
     }
 
@@ -54,8 +114,53 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT l.* FROM leads l
+      `SELECT l.*, wa.wa_url AS whatsapp_avatar_url
+       FROM leads l
        INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+           NULLIF(TRIM(cc.metadata->>'whatsapp_profile_photo'), ''),
+           NULLIF(TRIM(cc.metadata->>'image'), ''),
+           NULLIF(TRIM(cc.metadata->>'imagePreview'), ''),
+           NULLIF(TRIM(cc.metadata->>'image_preview'), '')
+         ) AS wa_url
+         FROM chat_conversations cc
+         INNER JOIN users cu ON cu.id = cc.user_id AND cu.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+         WHERE (
+           cc.lead_id = l.id
+           OR (
+             l.status = 'Convertido'
+             AND (cc.metadata->'link_migration'->>'previous_lead_id') = l.id::text
+           )
+           OR (
+             l.status = 'Convertido'
+             AND EXISTS (
+               SELECT 1
+               FROM clients c
+               INNER JOIN users uc ON uc.id = c.user_id AND uc.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+               CROSS JOIN LATERAL (
+                 SELECT CASE
+                   WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (10, 11)
+                     THEN '55' || regexp_replace(l.phone, '\\D', '', 'g')
+                   WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (12, 13)
+                     AND left(regexp_replace(l.phone, '\\D', '', 'g'), 2) = '55'
+                     THEN regexp_replace(l.phone, '\\D', '', 'g')
+                   ELSE NULL
+                 END AS n
+               ) nl
+               WHERE c.id = cc.client_id
+                 AND l.phone IS NOT NULL AND btrim(l.phone) <> ''
+                 AND nl.n IS NOT NULL
+                 AND (
+                   regexp_replace(c.phone, '\\D', '', 'g') = nl.n
+                   OR regexp_replace(c.phone, '\\D', '', 'g') = substring(nl.n from 3)
+                 )
+             )
+           )
+         )
+         ORDER BY COALESCE(cc.last_message_at, cc.created_at) DESC NULLS LAST
+         LIMIT 1
+       ) wa ON true
        WHERE l.id = $1`,
       [id, userId]
     );
@@ -181,13 +286,14 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
     await assertModulePermission(userId, MODULE_LEADS, 'edit', {
       ownerId: existing.rows[0].user_id,
     }, req);
-    const leadData = leadSchema.partial().parse(req.body);
+    const leadData = updateLeadBodySchema.parse(req.body);
+    const { migrated_client_id, ...leadFields } = leadData;
 
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
-    Object.entries(leadData).forEach(([key, value]) => {
+    Object.entries(leadFields).forEach(([key, value]) => {
       if (value !== undefined) {
         updates.push(`${key} = $${paramIndex}`);
         values.push(value);
@@ -214,7 +320,85 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    res.json(result.rows[0]);
+    const updatedLead = result.rows[0];
+    if ((leadFields.status ?? null) === 'Convertido' || updatedLead.status === 'Convertido') {
+      try {
+        const tenantRow = await pool.query<{ tenant_id: string }>(
+          `SELECT tenant_id FROM users WHERE id = $1 LIMIT 1`,
+          [userId]
+        );
+        const tenantId = tenantRow.rows[0]?.tenant_id ?? null;
+        if (tenantId) {
+        let targetClientId: string | null = null;
+        if (migrated_client_id) {
+          const okClient = await pool.query<{ id: string }>(
+            `
+            SELECT c.id
+            FROM clients c
+            INNER JOIN users u ON u.id = c.user_id
+            WHERE c.id = $1 AND u.tenant_id = $2
+            LIMIT 1
+            `,
+            [migrated_client_id, tenantId]
+          );
+          if (okClient.rows.length === 1) {
+            targetClientId = okClient.rows[0].id;
+          }
+        }
+
+        if (!targetClientId) {
+          const normalizedPhone = normalizeConversationPhone(updatedLead.phone);
+          if (normalizedPhone) {
+            const clientRows = await pool.query<{ id: string }>(
+              `
+              SELECT c.id
+              FROM clients c
+              INNER JOIN users u ON u.id = c.user_id
+              WHERE u.tenant_id = $1
+                AND c.phone IS NOT NULL
+                AND c.phone <> ''
+                AND (
+                  regexp_replace(c.phone, '\\D', '', 'g') = $2
+                  OR regexp_replace(c.phone, '\\D', '', 'g') = substring($2 from 3)
+                )
+              LIMIT 2
+              `,
+              [tenantId, normalizedPhone]
+            );
+            if (clientRows.rows.length === 1) {
+              targetClientId = clientRows.rows[0].id;
+            }
+          }
+        }
+
+        if (targetClientId) {
+          const conversationRows = await pool.query<{ id: string; user_id: string }>(
+            `
+            SELECT c.id, c.user_id
+            FROM chat_conversations c
+            INNER JOIN users u ON u.id = c.user_id
+            WHERE u.tenant_id = $1
+              AND c.lead_id = $2
+            `,
+            [tenantId, id]
+          );
+          for (const c of conversationRows.rows) {
+            await migrateConversationLeadToClient({
+              conversationId: c.id,
+              userId: c.user_id,
+              clientId: targetClientId,
+              previousLeadId: id,
+              context: { actorUserId: userId, reason: 'lead_converted' },
+            });
+          }
+        }
+        }
+      } catch (migrateError) {
+        console.error('[updateLead] lead->client link migration failed:', migrateError);
+      }
+    }
+
+    res.json(updatedLead);
   } catch (error) {
     if (error instanceof ModulePermissionError) {
       res.status(error.statusCode).json({ error: error.message });

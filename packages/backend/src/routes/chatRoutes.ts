@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { tenantAuth, requireFeature } from '../middleware/auth.js';
+import { tenantAuthCrm, requireFeature } from '../middleware/auth.js';
 import {
   createInstance,
   listInstances,
@@ -16,14 +16,19 @@ import {
   getInstanceWebhook,
   forceConfigureWebhook,
   syncConversationMessages,
+  refreshConversationIdentity,
   markConversationRead,
+  linkConversation,
+  unlinkConversation,
+  getCrmWhatsappIdentity,
 } from '../controllers/chatController.js';
 
 const router = Router();
 
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 router.use(requireFeature('chat'));
 
+router.get('/crm-whatsapp-identity', getCrmWhatsappIdentity);
 router.get('/instances', listInstances);
 router.post('/instances', createInstance);
 router.post('/instances/:id/connect', connectInstance);
@@ -36,8 +41,11 @@ router.post('/conversations/sync', syncConversations);
 router.get('/conversations', getConversations);
 router.get('/conversations/:id/messages', getConversationMessages);
 router.get('/conversations/:id/profile', getConversationProfile);
+router.post('/conversations/:id/link', linkConversation);
+router.delete('/conversations/:id/link', unlinkConversation);
 router.get('/clients/:id/messages', getClientMessages);
 router.post('/conversations/:id/messages/sync', syncConversationMessages);
+router.post('/conversations/:id/refresh-identity', refreshConversationIdentity);
 router.post('/messages', sendMessage);
 router.post('/conversations/:id/mark-read', markConversationRead);
 

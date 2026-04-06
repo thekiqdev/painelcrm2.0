@@ -14,6 +14,7 @@ import {
 import { ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/integrations/api/client';
+import { datetimeLocalToTrialEndsAtIso } from '@/lib/trialEndsAtBrAdmin';
 
 interface Plan {
   id: string;
@@ -82,7 +83,7 @@ export default function SuperAdminClientNew() {
       domain: form.domain || null,
       plan_id: form.plan_id,
       status: form.status,
-      trial_ends_at: form.trial_ends_at ? new Date(form.trial_ends_at).toISOString() : null,
+      trial_ends_at: datetimeLocalToTrialEndsAtIso(form.trial_ends_at),
     };
     if (isCustom) {
       const u = form.max_users_override === '' || form.max_users_override === null ? null : Number(form.max_users_override);
@@ -202,12 +203,16 @@ export default function SuperAdminClientNew() {
                 <SelectContent>
                   <SelectItem value="active">Ativo</SelectItem>
                   <SelectItem value="trial">Trial</SelectItem>
+                  <SelectItem value="payment_pending">Aguardando pagamento</SelectItem>
                   <SelectItem value="suspended">Desativado</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label>Trial até (opcional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Horário de Brasília (America/Sao_Paulo). Gravado em UTC no servidor.
+              </p>
               <Input
                 type="datetime-local"
                 value={form.trial_ends_at}

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ClientSidebar } from "@/components/clients/ClientSidebar";
-import { clientsService } from "@/services/clients";
+import { clientsService, type ClientTimelineEvent } from "@/services/clients";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
@@ -23,6 +23,12 @@ import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { cn } from "@/lib/utils";
 import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
+import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
+import {
+  getClientProfileReturnContext,
+  navigateBackFromClientProfile,
+} from "@/utils/clientProfileNavigation";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useForm } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -85,10 +91,24 @@ const statusLabels: Record<"pending" | "completed", string> = {
   completed: "Concluída",
 };
 
+const timelineEventLabelMap: Record<string, string> = {
+  chat_match_client_success: "Conversa vinculada automaticamente ao cliente",
+  chat_link_manual: "Vínculo da conversa definido manualmente",
+  chat_link_auto_effective: "Vínculo automático do chat efetivado",
+  chat_link_migrated_lead_to_client: "Lead convertido em cliente",
+  chat_invoice_created: "Fatura criada a partir do chat",
+  chat_invoice_sent: "Fatura enviada pelo WhatsApp",
+  invoice_paid: "Fatura paga",
+};
+
 const ClientProfile = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const profileReturn = useMemo(() => getClientProfileReturnContext(location), [location]);
+  const handleProfileBack = useCallback(() => {
+    navigateBackFromClientProfile(navigate, location);
+  }, [navigate, location]);
   const [client, setClient] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notes, setNotes] = useState<StickyNoteData[]>([]);
@@ -107,6 +127,9 @@ const ClientProfile = () => {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [timelineEvents, setTimelineEvents] = useState<ClientTimelineEvent[]>([]);
+  const [isLoadingTimeline, setIsLoadingTimeline] = useState(false);
+  const [whatsappAvatarUrl, setWhatsappAvatarUrl] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const { session } = useAuth();
@@ -147,6 +170,7 @@ const ClientProfile = () => {
     if (location.pathname.includes("/messages")) return "messages";
     if (location.pathname.includes("/calendar")) return "calendar";
     if (location.pathname.includes("/finance")) return "finance";
+    if (location.pathname.includes("/timeline")) return "timeline";
     if (location.pathname.includes("/contracts")) return "contracts";
     if (location.pathname.includes("/settings")) return "settings";
     return "overview";
@@ -194,6 +218,36 @@ const ClientProfile = () => {
       loadClientMessages();
     }
   }, [activeTab, id]);
+
+  useEffect(() => {
+    if (activeTab === "timeline" && id) {
+      void loadClientTimeline(id);
+    }
+  }, [activeTab, id]);
+
+  useEffect(() => {
+    if (client?.id) {
+      setWhatsappAvatarUrl(client.whatsapp_avatar_url ?? null);
+    }
+  }, [client?.id, client?.whatsapp_avatar_url]);
+
+  useEffect(() => {
+    if (!client?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await chatService.getCrmWhatsappIdentity({ clientId: client.id });
+        if (!cancelled) {
+          setWhatsappAvatarUrl((prev) => r.avatarUrl ?? prev ?? client.whatsapp_avatar_url ?? null);
+        }
+      } catch {
+        if (!cancelled) setWhatsappAvatarUrl(client.whatsapp_avatar_url ?? null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client?.id]);
 
   const loadClientData = async () => {
     if (!id) return;
@@ -301,6 +355,19 @@ const ClientProfile = () => {
     } catch (error) {
       console.error("Erro ao carregar tarefas:", error);
       setClientTasks([]);
+    }
+  };
+
+  const loadClientTimeline = async (clientId: string) => {
+    try {
+      setIsLoadingTimeline(true);
+      const events = await clientsService.getClientTimeline(clientId, { limit: 100 });
+      setTimelineEvents(events);
+    } catch (error) {
+      console.error("Erro ao carregar timeline:", error);
+      setTimelineEvents([]);
+    } finally {
+      setIsLoadingTimeline(false);
     }
   };
 
@@ -722,17 +789,31 @@ const ClientProfile = () => {
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <p className="text-muted-foreground mb-4">Cliente não encontrado</p>
-          <Button onClick={() => navigate("/clients")}>Voltar para Clientes</Button>
+          <Button onClick={handleProfileBack}>
+            {profileReturn.fromChat ? "Voltar ao chat" : "Voltar para Clientes"}
+          </Button>
         </div>
       </div>
     );
   }
 
+  const profileAvatar = resolveProfileAvatarUrl(
+    client,
+    whatsappAvatarUrl ?? client.whatsapp_avatar_url ?? null
+  );
+
   return (
     <div className="flex h-full w-full">
       {/* Sidebar do Cliente */}
       <div className="w-64 border-r bg-background shrink-0">
-        <ClientSidebar clientId={client.id} clientName={client.name} />
+        <ClientSidebar
+          clientId={client.id}
+          clientName={client.name}
+          avatarSrc={profileAvatar.src}
+          avatarInitials={profileAvatar.initials}
+          phone={client.phone}
+          backFromChat={profileReturn.fromChat}
+        />
       </div>
 
       {/* Conteúdo Principal */}
@@ -742,20 +823,30 @@ const ClientProfile = () => {
           <div className="mb-8 pb-6 border-b">
             <div className="flex items-start justify-between">
               <div className="flex-1">
-                <div className="flex items-center gap-3 mb-3">
-                  <h1 className="text-3xl font-bold tracking-tight">{client.name}</h1>
-                  <Badge variant="secondary" className="text-xs">Cliente</Badge>
+                <div className="flex items-start gap-4 mb-3">
+                  <Avatar className="h-14 w-14 shrink-0">
+                    {profileAvatar.src ? (
+                      <AvatarImage src={profileAvatar.src} alt={client.name} />
+                    ) : null}
+                    <AvatarFallback>{profileAvatar.initials}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                      <h1 className="text-3xl font-bold tracking-tight">{client.name}</h1>
+                      <Badge variant="secondary" className="text-xs">Cliente</Badge>
+                    </div>
+                    {client.company && (
+                      <p className="text-muted-foreground flex items-center gap-2 text-sm mt-1">
+                        <Building className="h-4 w-4 shrink-0" />
+                        {client.company}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                {client.company && (
-                  <p className="text-muted-foreground flex items-center gap-2 text-sm">
-                    <Building className="h-4 w-4" />
-                    {client.company}
-                  </p>
-                )}
               </div>
-              <Button variant="outline" size="sm" onClick={() => navigate("/clients")}>
+              <Button variant="outline" size="sm" onClick={handleProfileBack}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                Voltar
+                {profileReturn.fromChat ? "Voltar ao chat" : "Voltar"}
               </Button>
             </div>
           </div>
@@ -1512,6 +1603,44 @@ const ClientProfile = () => {
                       </form>
                     )}
                   </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {activeTab === "timeline" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Timeline</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {isLoadingTimeline ? (
+                  <p className="text-sm text-muted-foreground">Carregando timeline...</p>
+                ) : timelineEvents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhum evento encontrado.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {timelineEvents.map((event) => (
+                      <div key={event.id} className="rounded-md border p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-medium">
+                            {timelineEventLabelMap[event.event_name] || event.event_name}
+                          </p>
+                          <span className="text-xs text-muted-foreground">
+                            {format(new Date(event.created_at), "dd/MM/yyyy HH:mm")}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <Badge variant="outline">{event.source}</Badge>
+                          {event.reference_type && event.reference_id && (
+                            <span>
+                              Ref: {event.reference_type} ({event.reference_id.slice(0, 8)})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </CardContent>
             </Card>

@@ -34,7 +34,10 @@ export async function addSuperAdmin(req: AuthRequest, res: Response): Promise<vo
   try {
     const body = addSuperAdminSchema.parse(req.body);
     const email = body.email.trim().toLowerCase();
-    const existing = await pool.query('SELECT id, is_super_admin FROM users WHERE email = $1', [email]);
+    const existing = await pool.query(
+      'SELECT id, is_super_admin FROM users WHERE lower(btrim(email)) = $1',
+      [email]
+    );
     if (existing.rows.length > 0) {
       if (existing.rows[0].is_super_admin) {
         res.status(400).json({ error: 'Este usuário já é Super Admin.' });
@@ -61,6 +64,10 @@ export async function addSuperAdmin(req: AuthRequest, res: Response): Promise<vo
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    if ((error as { code?: string })?.code === '23505') {
+      res.status(400).json({ error: 'Este e-mail já está cadastrado na plataforma.' });
       return;
     }
     console.error('addSuperAdmin error:', error);

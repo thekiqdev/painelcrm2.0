@@ -98,9 +98,14 @@ const Leads = () => {
 
   // Leads em cache – ao voltar na página os dados aparecem na hora
   const { data: leadsData, isPending: leadsLoading } = useQuery({
-    queryKey: ["leads", sortField, sortDirection],
+    queryKey: ["leads", sortField, sortDirection, activeStatusFilter],
     queryFn: async () => {
-      const response = await apiClient.get("/api/leads");
+      const params = new URLSearchParams();
+      if (activeStatusFilter === "convertidos") {
+        params.set("onlyConverted", "true");
+      }
+      const qs = params.toString();
+      const response = await apiClient.get(qs ? `/api/leads?${qs}` : "/api/leads");
       if (response.error) throw new Error(response.error);
       let data = response.data || [];
       data = [...data].sort((a: any, b: any) => {
@@ -143,10 +148,16 @@ const Leads = () => {
   // Filter leads by status and search term
   const getFilteredLeads = () => {
     return leads.filter((lead) => {
-      // Filter by status if not "all"
-      const statusMatches = activeStatusFilter === "all" || lead.status.toLowerCase() === activeStatusFilter;
-      
-      // Filter by search term
+      const st = (lead.status || "").toLowerCase();
+      let statusMatches = false;
+      if (activeStatusFilter === "all") {
+        statusMatches = true;
+      } else if (activeStatusFilter === "convertidos") {
+        statusMatches = st === "convertido";
+      } else {
+        statusMatches = st === activeStatusFilter;
+      }
+
       const searchMatches = 
         lead.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
         (lead.company && lead.company.toLowerCase().includes(searchTerm.toLowerCase())) || 
@@ -157,9 +168,18 @@ const Leads = () => {
     });
   };
 
-  // View lead details
+  // View lead details — alinhar ao perfil do cliente: carregar GET /api/leads/:id para whatsapp_avatar_url atualizado
   const handleViewLead = async (lead: any) => {
-    setSelectedLead(lead);
+    try {
+      const response = await apiClient.get(`/api/leads/${lead.id}`);
+      if (!response.error && response.data) {
+        setSelectedLead(response.data);
+      } else {
+        setSelectedLead(lead);
+      }
+    } catch {
+      setSelectedLead(lead);
+    }
     setIsViewDialogOpen(true);
     setActiveTab("details");
     await fetchLeadTasks(lead.id);
@@ -373,13 +393,17 @@ const Leads = () => {
         }
       }
 
-      // Mark lead as converted
-      await apiClient.patch(`/api/leads/${selectedLead.id}`, { status: "Convertido" });
+      // Marcar convertido + migrar conversas para o cliente criado (foto WhatsApp no perfil)
+      await apiClient.patch(`/api/leads/${selectedLead.id}`, {
+        status: "Convertido",
+        migrated_client_id: newClient.id,
+      });
 
       toast.success("Lead convertido para cliente com sucesso!");
       setIsConvertDialogOpen(false);
       setIsViewDialogOpen(false);
       fetchLeads();
+      void queryClient.invalidateQueries({ queryKey: ["clients", "list"] });
     } catch (error: any) {
       console.error("Erro ao converter lead:", error.message);
       toast.error("Não foi possível converter o lead para cliente");

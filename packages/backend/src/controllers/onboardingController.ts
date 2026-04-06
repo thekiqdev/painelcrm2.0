@@ -1,6 +1,6 @@
 /**
- * Onboarding pós-pagamento: definir senha do administrador existente e finalizar.
- * O administrador já foi criado no checkout (sem senha). Aqui apenas atualizamos a senha.
+ * Onboarding legado pós-pagamento: definir senha quando o admin foi criado sem senha definitiva (fluxo antigo).
+ * Fase 1 checkout: admin já nasce com senha no plan-purchase; esta rota permanece para compatibilidade.
  * POST /api/onboarding/create-admin — sem auth (tenant_id no body).
  * GET/PATCH /api/onboarding/* — com auth (tenant do usuário).
  */
@@ -72,13 +72,28 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
       user = userRow.rows[0];
     } else {
       // Fallback: criar admin com o e-mail do checkout e associar ao tenant (garante tenant sempre com admin)
-      const created = await createTenantAdminUser({
-        tenantId: body.tenant_id,
-        tenantName: tenant.name,
-        email,
-        responsibleName: fullName,
-        password: body.password,
-      });
+      let created: { userId: string; email: string };
+      try {
+        created = await createTenantAdminUser({
+          tenantId: body.tenant_id,
+          tenantName: tenant.name,
+          email,
+          responsibleName: fullName,
+          password: body.password,
+        });
+      } catch (createErr: unknown) {
+        if (
+          createErr instanceof Error &&
+          createErr.message === 'EMAIL_ALREADY_REGISTERED_OTHER_TENANT'
+        ) {
+          res.status(400).json({
+            error:
+              'Este e-mail já está cadastrado em outra conta. Faça login com esse e-mail ou use outro endereço.',
+          });
+          return;
+        }
+        throw createErr;
+      }
       user = { id: created.userId, email: created.email };
       await pool.query(
         'UPDATE profiles SET first_name = $1, last_name = $2, registration_complete = true, updated_at = now() WHERE id = $3',

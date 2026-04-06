@@ -26,7 +26,7 @@ const Hero = () => {
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4 animate-fade-up" style={{ animationDelay: "0.3s" }}>
             <Button size="lg" className="gap-2 px-8 text-base font-semibold" asChild>
-              <Link to="/register">
+              <Link to="/checkout">
                 Começar grátis
                 <ArrowRight size={18} />
               </Link>

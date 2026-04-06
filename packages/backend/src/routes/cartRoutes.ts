@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import * as cartController from '../controllers/cartController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 router.get('/:storeUserId', cartController.getOrCreateCart);
 router.get('/:storeUserId/items', cartController.getCartItems);

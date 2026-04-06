@@ -27,6 +27,39 @@ const internalPool = new Pool({
 /** Contexto por request para RLS (Etapa 5): client com SET LOCAL app.current_tenant_id e opcionalmente app.bypass_rls. */
 export const dbRequestStorage = new AsyncLocalStorage<{ client: pg.PoolClient }>();
 
+/** Escapa valor para SET LOCAL (evita quebra de string SQL). */
+export function escapeSetLocalAppValue(value: string): string {
+  return (value ?? '').replace(/'/g, "''");
+}
+
+/**
+ * Scheduler/worker de billing: bypass RLS explícito em uma conexão dedicada.
+ * Processa todos os tenants; usar só em jobs técnicos confinados (Etapa 2).
+ */
+export async function withBillingWorkerRlsBypass<T>(work: () => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("SET LOCAL app.bypass_rls = '1'");
+    return await dbRequestStorage.run({ client }, work);
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Define app.current_tenant_id para leituras/escritas RLS (ex.: rota pública após resolver tenant por token).
+ */
+export async function withTenantRlsContext<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    const safe = escapeSetLocalAppValue(tenantId);
+    await client.query(`SET LOCAL app.current_tenant_id = '${safe}'`);
+    return await dbRequestStorage.run({ client }, work);
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Pool que, quando há contexto de request (setRequestDb), usa o client com SET LOCAL já aplicado.
  * Assim as políticas RLS enxergam app.current_tenant_id e app.bypass_rls.

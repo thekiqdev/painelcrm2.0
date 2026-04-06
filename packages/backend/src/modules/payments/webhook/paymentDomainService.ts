@@ -15,6 +15,14 @@ import {
   listPendingAttemptsForInvoiceExcept,
   markAttemptCancelledSuperseded,
 } from '../../../services/customerInvoicePaymentAttemptsService.js';
+import {
+  updateTenantBillingPaymentAttemptStatus,
+  activateTenantBillingPaymentAttempt,
+  type TbAttemptStatus,
+} from '../../../services/tenantBillingPaymentAttemptsService.js';
+import { updateInvoiceGatewayData } from '../../../services/invoiceService.js';
+import { supersedeOtherPendingTenantBillingAttemptsAfterPaid } from '../../../services/billingGatewayChargeService.js';
+import { createClientTimelineEvent } from '../../../services/clientTimelineEventsService.js';
 
 export interface ApplyPaymentEventParams {
   entityType: 'tenant_billing' | 'customer_invoice';
@@ -90,8 +98,9 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
       charge_id: string | null;
       tenant_id: string | null;
       gateway_reference_id: string | null;
+      client_id: string | null;
     }>(
-      'SELECT charge_id, tenant_id, gateway_reference_id FROM customer_invoices WHERE id = $1 LIMIT 1',
+      'SELECT charge_id, tenant_id, gateway_reference_id, client_id FROM customer_invoices WHERE id = $1 LIMIT 1',
       [entityId]
     );
     const invoice = invoiceRow.rows[0];
@@ -111,7 +120,25 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
      * - idempotente via seleção somente de tentativas pendentes (pending/waiting/processing/overdue).
      */
     const tenantId = invoice?.tenant_id;
+    const clientId = invoice?.client_id ?? null;
     const invoiceGatewayReferenceId = invoice?.gateway_reference_id ?? null;
+
+    if (tenantId && clientId) {
+      await createClientTimelineEvent({
+        tenantId,
+        clientId,
+        eventName: 'invoice_paid',
+        source: 'finance',
+        actorType: 'system',
+        actorId: null,
+        referenceType: 'customer_invoice',
+        referenceId: entityId,
+        eventKey: `invoice_paid:${entityId}`,
+        metadata: {
+          gateway_status: gatewayStatus,
+        },
+      });
+    }
 
     if (tenantId && invoiceGatewayReferenceId) {
       // Tentativa paga atual: preferimos a que bate com gateway_reference_id da invoice.
@@ -213,6 +240,85 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
  * Aplica evento em tentativa de pagamento e consolida status na fatura agregada.
  * Fase 2: tentativa é atualizada primeiro; invoice só evolui sem regressão.
  */
+/**
+ * Webhook em cobrança vinculada a `tenant_billing_payment_attempts` (checkout plano SaaS).
+ */
+export async function applyTenantBillingPaymentAttemptEvent(params: {
+  attemptId: string;
+  billingId: string;
+  billingCurrentStatus: string;
+  internalStatus: InternalPaymentStatus;
+  gatewayStatus: string | null;
+  paidAt?: Date;
+}): Promise<ProcessedResult> {
+  const { attemptId, billingId, billingCurrentStatus, internalStatus, gatewayStatus, paidAt } = params;
+
+  await updateTenantBillingPaymentAttemptStatus({
+    attemptId,
+    status: internalStatus as TbAttemptStatus,
+    gatewayStatus,
+    paidAt: internalStatus === 'paid' ? paidAt ?? new Date() : undefined,
+  });
+
+  let paymentMethodForAggregate: string | null = null;
+  if (internalStatus === 'paid') {
+    const { pool } = await import('../../../utils/db.js');
+    const attRow = await pool.query<{
+      payment_method: string;
+      gateway: string;
+      gateway_reference_id: string | null;
+      gateway_metadata: unknown;
+      idempotency_key: string | null;
+    }>(
+      `SELECT payment_method, gateway, gateway_reference_id, gateway_metadata, idempotency_key
+       FROM tenant_billing_payment_attempts WHERE id = $1 LIMIT 1`,
+      [attemptId]
+    );
+    const att = attRow.rows[0];
+    if (att) {
+      paymentMethodForAggregate = att.payment_method;
+      await activateTenantBillingPaymentAttempt(billingId, attemptId);
+      await updateInvoiceGatewayData(billingId, {
+        gateway: att.gateway,
+        payment_method: att.payment_method,
+        gateway_reference_id: att.gateway_reference_id,
+        gateway_metadata:
+          att.gateway_metadata && typeof att.gateway_metadata === 'object'
+            ? (att.gateway_metadata as Record<string, unknown>)
+            : {},
+        gateway_status: gatewayStatus,
+        idempotency_key: att.idempotency_key,
+      });
+    }
+  }
+
+  const processed = await applyPaymentEvent({
+    entityType: 'tenant_billing',
+    entityId: billingId,
+    currentStatus: billingCurrentStatus,
+    internalStatus,
+    gatewayStatus,
+    paidAt,
+    paymentMethod: paymentMethodForAggregate ?? undefined,
+  });
+
+  if (internalStatus === 'paid') {
+    const { pool } = await import('../../../utils/db.js');
+    const tid = await pool.query<{ tenant_id: string }>(
+      `SELECT tenant_id FROM tenant_billing WHERE id = $1 LIMIT 1`,
+      [billingId]
+    );
+    const tenantId = tid.rows[0]?.tenant_id;
+    if (tenantId) {
+      await supersedeOtherPendingTenantBillingAttemptsAfterPaid(billingId, attemptId, tenantId).catch((err) =>
+        console.error('[paymentDomainService] supersedeOtherPendingTenantBillingAttemptsAfterPaid failed:', err)
+      );
+    }
+  }
+
+  return processed;
+}
+
 export async function applyPaymentAttemptEvent(
   params: ApplyPaymentAttemptEventParams
 ): Promise<ProcessedResult> {
@@ -260,6 +366,27 @@ export async function applyPaymentAttemptEvent(
       [invoiceId]
     );
     const tenantId = tenantRow.rows[0]?.tenant_id;
+    const clientRow = await pool.query<{ client_id: string | null }>(
+      'SELECT client_id FROM customer_invoices WHERE id = $1',
+      [invoiceId]
+    );
+    const clientId = clientRow.rows[0]?.client_id ?? null;
+    if (tenantId && clientId) {
+      await createClientTimelineEvent({
+        tenantId,
+        clientId,
+        eventName: 'invoice_paid',
+        source: 'finance',
+        actorType: 'system',
+        actorId: null,
+        referenceType: 'customer_invoice',
+        referenceId: invoiceId,
+        eventKey: `invoice_paid:${invoiceId}`,
+        metadata: {
+          gateway_status: gatewayStatus,
+        },
+      });
+    }
     if (tenantId) {
       const { supersedeOtherPendingAttemptsAfterPaid } = await import(
         '../../../services/billingGatewayChargeService.js'

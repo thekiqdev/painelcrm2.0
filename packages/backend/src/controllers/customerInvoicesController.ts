@@ -155,7 +155,7 @@ export async function getCustomerInvoiceById(req: AuthRequest, res: Response): P
       res.status(404).json({ error: 'Fatura não encontrada' });
       return;
     }
-    const items = await getCustomerInvoiceItems(id);
+    const items = await getCustomerInvoiceItems(id, tenantId);
     res.json({ ...invoice, items });
   } catch (err) {
     console.error('[customerInvoicesController] getCustomerInvoiceById error:', err);

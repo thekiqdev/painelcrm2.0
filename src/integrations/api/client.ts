@@ -38,6 +38,8 @@ const API_URL = getApiUrl();
 export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
+  /** Código estável de erro (ex.: EMAIL_ALREADY_REGISTERED_USE_LOGIN). */
+  code?: string;
   /** Campo de formulário associado ao erro (ex.: cpf_cnpj). */
   field?: string;
   details?: any;
@@ -123,6 +125,7 @@ class ApiClient {
       if (!response.ok) {
         return {
           error: data.error || data.message || 'Request failed',
+          code: typeof data.code === 'string' ? data.code : undefined,
           field: typeof data.field === 'string' ? data.field : undefined,
           details: { 
             ...data.details, 

@@ -1,9 +1,10 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { apiClient } from '@/integrations/api/client';
 import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
+import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 
 interface User {
   id: string;
@@ -26,6 +27,10 @@ interface User {
   tenant_status?: string | null;
   /** Se false e tenant_status === 'active', redirecionar para /onboarding. */
   onboarding_completed?: boolean;
+  /** Fase 2: trial expirou ou suspenso por trial — retomar pagamento no /checkout. */
+  requires_checkout_resume?: boolean;
+  trial_ends_at?: string | null;
+  suspension_reason?: string | null;
 }
 
 interface SignUpParams {
@@ -45,7 +50,8 @@ type AuthContextType = {
   registrationComplete: boolean;
   /** Lista de feature keys habilitadas para o usuário (plano/tenant). Super admin tem todas. */
   features: string[];
-  signIn: (identifier: string, password: string) => Promise<void>;
+  /** Retorna rota para redirecionar após login (ex.: /superadmin ou /dashboard). */
+  signIn: (identifier: string, password: string) => Promise<string>;
   signUp: (params: SignUpParams) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: any) => Promise<void>;
@@ -68,6 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [features, setFeatures] = useState<string[]>([]);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     // Suporte a "Acessar como" (impersonation): token na URL aplicado antes de carregar
@@ -86,24 +93,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
-    if (user?.plan_expired && window.location.pathname !== '/meu-plano') {
+    const path = location.pathname || '';
+    // Hub comercial primeiro: trial expirado / retomada → /meu-plano (CTA leva ao /checkout?mode=resume).
+    if (user?.requires_checkout_resume === true && !path.startsWith('/checkout') && path !== '/meu-plano') {
+      navigate('/meu-plano', { replace: true });
+      return;
+    }
+    /** Plano grátis com trial vencido: hub em /meu-plano, mas /checkout (ex.: ?mode=resume) deve poder abrir — senão o 2º if desfaz a navegação que o 1º já permitiu. */
+    if (user?.plan_expired && path !== '/meu-plano' && !path.startsWith('/checkout')) {
       navigate('/meu-plano', { replace: true });
     }
-  }, [user?.plan_expired, navigate]);
+  }, [user?.requires_checkout_resume, user?.plan_expired, navigate, location.pathname]);
 
-  const fetchCurrentUser = async () => {
+  const fetchCurrentUser = async (): Promise<User | null> => {
     try {
       const response = await apiClient.get<User>('/api/auth/me');
       if (response.error) {
-        // Token invalid, clear it
-        apiClient.setToken(null);
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        setFeatures([]);
-        setRegistrationComplete(false);
+        // Só sessão realmente inválida (401) deve zerar o token; outros erros não deslogam o trial expirado por engano.
+        const status = (response.details as { status?: number } | undefined)?.status;
+        if (status === 401) {
+          apiClient.setToken(null);
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setFeatures([]);
+          setRegistrationComplete(false);
+        }
         setLoading(false);
-        return;
+        return null;
       }
 
       if (response.data) {
@@ -112,11 +129,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(response.data);
         setRegistrationComplete(response.data.registration_complete || false);
         await fetchMeFeatures();
+        setLoading(false);
+        return response.data;
       }
       setLoading(false);
+      return null;
     } catch (error) {
       console.error('Error fetching user:', error);
       setLoading(false);
+      return null;
     }
   };
 
@@ -156,7 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signIn = async (identifier: string, password: string) => {
+  const signIn = async (identifier: string, password: string): Promise<string> => {
     try {
       const response = await apiClient.post<{ user: User; token: string }>('/api/auth/login', {
         identifier: identifier.trim(),
@@ -165,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (response.error) {
         toast.error(response.error || 'Falha no login');
-        return;
+        return '/login';
       }
 
       if (response.data) {
@@ -174,12 +195,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(response.data.user.registration_complete || false);
+        const fresh = await fetchCurrentUser();
         await fetchMeFeatures();
-        await fetchCurrentUser();
+        if (!apiClient.getToken()) {
+          toast.error('Sessão inválida. Faça login novamente.');
+          return '/login';
+        }
         toast.success('Login realizado com sucesso!');
+        return getPostAuthHomePath(fresh ?? response.data.user);
       }
+      return '/login';
     } catch (error: any) {
       toast.error(error.message || 'Erro desconhecido');
+      return '/login';
     }
   };
 

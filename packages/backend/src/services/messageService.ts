@@ -70,16 +70,23 @@ async function saveMessageToConversation(
       ]
     );
 
-    // Atualizar conversa com última mensagem
+    // Atualizar conversa com última mensagem sem deixar mensagens antigas sobrescreverem a recente
     const effectiveSentAt = payload.sentAt || new Date();
-    const messagePreview = payload.body || null;
+    const normalizedBody = typeof payload.body === 'string' ? payload.body.trim() : '';
+    const messagePreview = normalizedBody || null;
 
     await pool.query(
       `
       UPDATE chat_conversations
       SET
-        last_message_preview = COALESCE($2, last_message_preview),
-        last_message_at = COALESCE($3, last_message_at),
+        last_message_preview = CASE
+          WHEN last_message_at IS NULL OR $3::timestamptz >= last_message_at THEN COALESCE($2, last_message_preview)
+          ELSE last_message_preview
+        END,
+        last_message_at = CASE
+          WHEN last_message_at IS NULL OR $3::timestamptz >= last_message_at THEN $3::timestamptz
+          ELSE last_message_at
+        END,
         unread_count = CASE
           WHEN $4 = 'incoming' THEN unread_count + 1
           ELSE unread_count

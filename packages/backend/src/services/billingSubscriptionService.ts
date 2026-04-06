@@ -103,6 +103,260 @@ export async function getActiveSaasSubscriptionByTenant(
   return r.rows[0] ?? null;
 }
 
+/** Normaliza DATE/timestamp do PG (string ou Date) para YYYY-MM-DD. */
+export function toYmd(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const t = value.trim();
+    return t.length >= 10 ? t.slice(0, 10) : null;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+/**
+ * Preenche período corrente e próxima cobrança quando a assinatura SaaS ativa está incompleta (NULL).
+ * Não altera linhas que já têm current_period_* — evita sobrescrever renovações do worker.
+ */
+export async function patchActiveSaasSubscriptionIncompletePeriods(params: {
+  tenantId: string;
+  subscriptionId: string;
+  periodStart: unknown;
+  periodEnd: unknown;
+  planId: string | null;
+  billingInterval: string;
+  amountCents: number;
+  usersCount: number | null;
+}): Promise<boolean> {
+  const ps = toYmd(params.periodStart);
+  const pe = toYmd(params.periodEnd);
+  if (!ps || !pe) return false;
+  const dayPart = parseInt(ps.slice(8, 10), 10);
+  const anchorDay =
+    Number.isFinite(dayPart) && dayPart >= 1 && dayPart <= 31 ? dayPart : null;
+  const r = await pool.query(
+    `UPDATE subscriptions
+     SET current_period_start = $1,
+         current_period_end = $2,
+         next_billing_date = $2,
+         plan_id = COALESCE($5, plan_id),
+         billing_interval = $6,
+         amount_cents = $7,
+         users_count = COALESCE($8, users_count),
+         billing_anchor_day = COALESCE(billing_anchor_day, $9::smallint),
+         updated_at = now()
+     WHERE id = $3 AND tenant_id = $4 AND type = 'saas' AND status = 'active'
+       AND (current_period_start IS NULL OR current_period_end IS NULL)
+     RETURNING id`,
+    [
+      ps,
+      pe,
+      params.subscriptionId,
+      params.tenantId,
+      params.planId,
+      params.billingInterval,
+      params.amountCents,
+      params.usersCount,
+      anchorDay,
+    ]
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/** Estima início do ciclo a partir do fim, espelhando a regra de `addInterval` no backend. */
+function subtractIntervalFromPeriodEnd(endYmd: string, interval: string): string {
+  const d = new Date(`${endYmd}T12:00:00.000Z`);
+  switch (interval as BillingInterval) {
+    case 'monthly':
+      d.setUTCMonth(d.getUTCMonth() - 1);
+      break;
+    case 'quarterly':
+      d.setUTCMonth(d.getUTCMonth() - 3);
+      break;
+    case 'semi_annual':
+      d.setUTCMonth(d.getUTCMonth() - 6);
+      break;
+    case 'yearly':
+      d.setUTCFullYear(d.getUTCFullYear() - 1);
+      break;
+    default:
+      d.setUTCMonth(d.getUTCMonth() - 1);
+  }
+  const yy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+type ResolvedSaasCycle = {
+  periodStart: string;
+  periodEnd: string;
+  planId: string | null;
+  billingInterval: string;
+  amountCents: number;
+  usersCount: number | null;
+};
+
+/**
+ * Para assinatura SaaS ativa com período incompleto: deriva ciclo na ordem
+ * tenant → fatura que ativou o plano → última fatura paga de plano/upgrade/renovação → próximo vencimento na assinatura.
+ * Cobertura explícita para contas legadas com `plan_period_*` NULL no tenant.
+ */
+async function resolveCycleForIncompleteSaasSubscription(
+  tenantId: string,
+  sub: SubscriptionRow
+): Promise<ResolvedSaasCycle | null> {
+  const t = await pool.query<{
+    plan_period_start: unknown;
+    plan_period_end: unknown;
+    activated_billing_id: string | null;
+    plan_id: string | null;
+  }>(
+    `SELECT plan_period_start, plan_period_end, activated_billing_id, plan_id
+     FROM tenants WHERE id = $1 AND status = 'active'`,
+    [tenantId]
+  );
+  const trow = t.rows[0];
+  if (!trow) return null;
+
+  let ps = toYmd(trow.plan_period_start);
+  let pe = toYmd(trow.plan_period_end);
+  if (ps && pe) {
+    return {
+      periodStart: ps,
+      periodEnd: pe,
+      planId: trow.plan_id,
+      billingInterval: sub.billing_interval,
+      amountCents: sub.amount_cents,
+      usersCount: sub.users_count ?? null,
+    };
+  }
+
+  if (trow.activated_billing_id) {
+    const b = await pool.query<{
+      period_start: unknown;
+      period_end: unknown;
+      plan_id: string;
+      billing_interval: string;
+      amount_cents: number;
+      users_count: number | null;
+      status: string;
+    }>(
+      `SELECT period_start, period_end, plan_id, billing_interval, amount_cents, users_count, status
+       FROM tenant_billing WHERE id = $1 AND tenant_id = $2`,
+      [trow.activated_billing_id, tenantId]
+    );
+    const br = b.rows[0];
+    if (br?.status === 'paid') {
+      ps = toYmd(br.period_start);
+      pe = toYmd(br.period_end);
+      if (ps && pe) {
+        return {
+          periodStart: ps,
+          periodEnd: pe,
+          planId: br.plan_id,
+          billingInterval: br.billing_interval,
+          amountCents: br.amount_cents,
+          usersCount: br.users_count ?? null,
+        };
+      }
+    }
+  }
+
+  const latest = await pool.query<{
+    period_start: unknown;
+    period_end: unknown;
+    plan_id: string;
+    billing_interval: string;
+    amount_cents: number;
+    users_count: number | null;
+  }>(
+    `SELECT period_start, period_end, plan_id, billing_interval, amount_cents, users_count
+     FROM tenant_billing
+     WHERE tenant_id = $1 AND status = 'paid'
+       AND period_start IS NOT NULL AND period_end IS NOT NULL
+       AND COALESCE(billing_reason, 'plan_purchase') IN ('plan_purchase', 'plan_upgrade', 'plan_renewal')
+     ORDER BY COALESCE(paid_at, updated_at) DESC NULLS LAST
+     LIMIT 1`,
+    [tenantId]
+  );
+  const lr = latest.rows[0];
+  if (lr) {
+    ps = toYmd(lr.period_start);
+    pe = toYmd(lr.period_end);
+    if (ps && pe) {
+      return {
+        periodStart: ps,
+        periodEnd: pe,
+        planId: lr.plan_id,
+        billingInterval: lr.billing_interval,
+        amountCents: lr.amount_cents,
+        usersCount: lr.users_count ?? null,
+      };
+    }
+  }
+
+  const nb = toYmd(sub.next_billing_date);
+  if (nb) {
+    return {
+      periodStart: subtractIntervalFromPeriodEnd(nb, sub.billing_interval),
+      periodEnd: nb,
+      planId: sub.plan_id,
+      billingInterval: sub.billing_interval,
+      amountCents: sub.amount_cents,
+      usersCount: sub.users_count ?? null,
+    };
+  }
+
+  return null;
+}
+
+async function backfillTenantPlanPeriodIfMissing(
+  tenantId: string,
+  periodStart: string,
+  periodEnd: string
+): Promise<void> {
+  await pool.query(
+    `UPDATE tenants
+     SET plan_period_start = COALESCE(plan_period_start, $1::date),
+         plan_period_end = COALESCE(plan_period_end, $2::date),
+         updated_at = now()
+     WHERE id = $3 AND status = 'active'`,
+    [periodStart, periodEnd, tenantId]
+  );
+}
+
+/**
+ * Assinatura ativa com `current_period_*` ausente: repara a partir do ciclo da conta (tenant, faturas de plano pagas)
+ * ou, em último caso, `next_billing_date` + intervalo. Alinha `tenants.plan_period_*` quando ainda estiverem vazios.
+ */
+export async function getActiveSaasSubscriptionByTenantAutoRepair(
+  tenantId: string
+): Promise<SubscriptionRow | null> {
+  let sub = await getActiveSaasSubscriptionByTenant(tenantId);
+  if (!sub) return null;
+  if (sub.current_period_start && sub.current_period_end) return sub;
+
+  const resolved = await resolveCycleForIncompleteSaasSubscription(tenantId, sub);
+  if (!resolved) return sub;
+
+  await patchActiveSaasSubscriptionIncompletePeriods({
+    tenantId,
+    subscriptionId: sub.id,
+    periodStart: resolved.periodStart,
+    periodEnd: resolved.periodEnd,
+    planId: resolved.planId ?? sub.plan_id,
+    billingInterval: resolved.billingInterval,
+    amountCents: resolved.amountCents,
+    usersCount: resolved.usersCount,
+  });
+  await backfillTenantPlanPeriodIfMissing(tenantId, resolved.periodStart, resolved.periodEnd);
+
+  return (await getActiveSaasSubscriptionByTenant(tenantId)) ?? sub;
+}
+
 /**
  * Busca assinatura por id (para o worker).
  */

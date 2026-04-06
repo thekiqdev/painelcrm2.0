@@ -5,10 +5,10 @@ import {
   createCustomerCharge,
   updateCustomerCharge,
 } from '../controllers/customerChargesController.js';
-import { tenantAuth } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
-router.use(...tenantAuth);
+router.use(...tenantAuthCrm);
 
 router.get('/', listCustomerCharges);
 router.get('/:id', getCustomerChargeById);

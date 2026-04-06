@@ -12,6 +12,7 @@
     "migrate": "node dist/migrate.js",
     "migrate:teams": "tsx src/migrate-teams.ts",
     "cancel-expired-billings": "tsx src/scripts/cancelExpiredBillings.ts",
+    "trial:expire": "tsx src/scripts/runTrialExpiration.ts",
     "billing:scheduler": "tsx src/scripts/runRecurringScheduler.ts",
     "billing:worker": "tsx src/scripts/runRecurringWorker.ts",
     "billing:reconciliation": "tsx src/scripts/runReconciliation.ts",

@@ -1,6 +1,10 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import {
+  buildActivationChecklist,
+  setActivationChecklistDismissed,
+} from '../services/activationChecklistService.js';
 
 // GET /api/dashboard/kpis
 export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
@@ -462,6 +466,39 @@ export async function getDashboardStats(req: AuthRequest, res: Response): Promis
     });
   } catch (error) {
     console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** GET /api/dashboard/activation-checklist */
+export async function getActivationChecklist(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    const userId = req.userId;
+    if (!tenantId || !userId) {
+      res.status(403).json({ error: 'TENANT_REQUIRED_FOR_OPERATION' });
+      return;
+    }
+    const payload = await buildActivationChecklist(tenantId, userId);
+    res.json(payload);
+  } catch (error) {
+    console.error('getActivationChecklist error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** POST /api/dashboard/activation-checklist/dismiss */
+export async function postDismissActivationChecklist(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    await setActivationChecklistDismissed(userId);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('postDismissActivationChecklist error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
