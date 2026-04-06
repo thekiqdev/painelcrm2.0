@@ -11,7 +11,16 @@ import {
 } from "@/components/ui/select";
 import { FileEdit, Trash2, UserPlus, Users2 } from "lucide-react";
 import { SettingsSectionProps } from "./types";
-import { getTenantLimits, getMyTenantUsers, getTenantRoles, setUserRole, type TenantUser, type TenantRole } from "@/services/tenantLimits";
+import {
+  getTenantLimits,
+  getMyTenantUsers,
+  getTenantRoles,
+  setUserRole,
+  deleteTenantUser,
+  type TenantUser,
+  type TenantRole,
+} from "@/services/tenantLimits";
+import { useAuth } from "@/contexts/AuthContext";
 import { UserTeamsDialog } from "./UserTeamsDialog";
 import { NewUserDialog } from "./NewUserDialog";
 import { toast } from "sonner";
@@ -26,6 +35,7 @@ function getInitials(user: TenantUser): string {
 }
 
 export const UsersSection: React.FC<SettingsSectionProps> = () => {
+  const { user: authUser } = useAuth();
   const [usersLimit, setUsersLimit] = useState<{ current: number; limit: number | null } | null>(null);
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [roles, setRoles] = useState<TenantRole[]>([]);
@@ -34,6 +44,7 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
   const [newUserDialogOpen, setNewUserDialogOpen] = useState(false);
   const [editingUserForTeams, setEditingUserForTeams] = useState<{ id: string; name: string } | null>(null);
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     getTenantLimits().then((limits) => {
@@ -84,6 +95,39 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
         : null;
 
   const displayName = (u: TenantUser) => (u.full_name && u.full_name.trim() ? u.full_name : u.email) || u.email;
+
+  /** Primeiro usuário da conta (ORDER BY created_at ASC no backend) = administrador principal. */
+  const primaryUserId = users.length > 0 ? users[0].id : null;
+
+  const handleDeleteUser = async (u: TenantUser) => {
+    if (u.is_super_admin) return;
+    if (primaryUserId && u.id === primaryUserId) {
+      toast.error("Não é possível excluir o administrador principal da conta.");
+      return;
+    }
+    if (authUser?.id && u.id === authUser.id) {
+      toast.error("Você não pode excluir a sua própria conta aqui.");
+      return;
+    }
+    const label = displayName(u);
+    if (!window.confirm(`Excluir o usuário "${label}" desta conta? Os registros dele passarão a aparecer como criados pelo administrador principal.`)) {
+      return;
+    }
+    setDeletingUserId(u.id);
+    try {
+      await deleteTenantUser(u.id);
+      toast.success("Usuário removido da conta.");
+      const list = await getMyTenantUsers();
+      setUsers(list);
+      getTenantLimits().then((limits) => {
+        if (limits?.users) setUsersLimit({ current: limits.users.current, limit: limits.users.limit });
+      });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Erro ao excluir usuário");
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
 
   return (
     <>
@@ -199,8 +243,15 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                       <Button variant="ghost" size="icon" title="Editar permissões (em breve)" aria-label="Editar permissões">
                         <FileEdit className="h-4 w-4" />
                       </Button>
-                      {!u.is_super_admin && (
-                        <Button variant="ghost" size="icon" title="Excluir usuário (em breve)" aria-label="Excluir usuário">
+                      {!u.is_super_admin && primaryUserId && u.id !== primaryUserId && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Excluir usuário da conta"
+                          aria-label="Excluir usuário"
+                          disabled={deletingUserId === u.id || (authUser?.id != null && u.id === authUser.id)}
+                          onClick={() => handleDeleteUser(u)}
+                        >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}

@@ -528,7 +528,9 @@ export default function MeuPlano() {
         );
         return;
       }
-      navigate('/checkout', { state: { ...ctx, focusBillingId: billingId } });
+      navigate(`/checkout?billing_id=${encodeURIComponent(billingId)}`, {
+        state: { ...ctx, focusBillingId: billingId },
+      });
     },
     [navigate, buildCheckoutState]
   );
@@ -537,14 +539,36 @@ export default function MeuPlano() {
     navigate('/checkout?mode=resume');
   }, [navigate]);
 
-  /** Pagamento/reativação na conta atual: resume (sem refazer empresa/admin) quando a flag estiver ativa. */
+  /**
+   * Concluir pagamento / ver link: se já existe cobrança interna pendente (GET plan), abre checkout com
+   * `focusBillingId` + `plan-checkout-pending?billing_id=` — sem refazer plano nem cadastro.
+   * `?mode=resume` só quando não há cobrança reapresentável (retomada trial/checkout-context).
+   */
   const goToPaymentOrResume = useCallback(() => {
+    const pendingId = myPlan?.pending_billing?.billing_id?.trim();
+    if (pendingId) {
+      const isSeatAddonBilling =
+        myPlan?.pending_seat_addon_billing?.billing_id &&
+        pendingId === myPlan.pending_seat_addon_billing.billing_id;
+      if (isSeatAddonBilling) {
+        goOpenBillingInCheckout(pendingId, { flow: 'seat_addon' });
+      } else {
+        goOpenBillingInCheckout(pendingId);
+      }
+      return;
+    }
     if (checkoutResumeEnabled) {
       goToCheckoutResume();
-    } else {
-      goToCheckoutWithPlan();
+      return;
     }
-  }, [goToCheckoutResume, goToCheckoutWithPlan]);
+    goToCheckoutWithPlan();
+  }, [
+    myPlan?.pending_billing?.billing_id,
+    myPlan?.pending_seat_addon_billing?.billing_id,
+    goOpenBillingInCheckout,
+    goToCheckoutResume,
+    goToCheckoutWithPlan,
+  ]);
 
   const scrollToId = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -930,11 +954,6 @@ export default function MeuPlano() {
   })();
 
   const HeroIcon = hero.icon;
-
-  const preferResumeOrPendingCheckout =
-    requiresCheckoutResume ||
-    commercialMode === 'payment_pending' ||
-    commercialMode === 'trial_resume_required';
 
   return (
     <div className="p-6 space-y-8 max-w-5xl">
@@ -1613,7 +1632,9 @@ export default function MeuPlano() {
                               size="sm"
                               variant="outline"
                               onClick={() =>
-                                preferResumeOrPendingCheckout ? goToPaymentOrResume() : goToCheckoutWithPlan()
+                                b.billing_reason === 'seat_addon'
+                                  ? goOpenBillingInCheckout(b.id, { flow: 'seat_addon' })
+                                  : goOpenBillingInCheckout(b.id)
                               }
                             >
                               Abrir pagamento

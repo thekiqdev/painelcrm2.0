@@ -604,7 +604,8 @@ export default function PlanCheckout() {
       let bi = state?.billingInterval ?? 'monthly';
       let uc = state?.usersCount ?? 1;
 
-      if (!planLocal && isSeatAddonMode) {
+      /** Cobrança focada (plano ou seat_addon) sem `state.plan` (ex.: refresh com só `?billing_id=`). */
+      if (!planLocal && fid) {
         const ctxRes = await apiClient.get<CheckoutContextResponse>('/api/me/tenant/checkout-context');
         if (cancelled) return;
         if (ctxRes.error || !ctxRes.data) {

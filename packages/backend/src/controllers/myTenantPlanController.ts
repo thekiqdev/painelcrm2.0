@@ -34,6 +34,7 @@ import {
 } from '../services/tenantSeatCommercialService.js';
 import { getInvoiceById } from '../services/invoiceService.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
+import { reassignTenantUserDataAndDeleteUser } from '../services/tenantUserRemovalService.js';
 
 async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
   const userId = req.userId;
@@ -445,6 +446,95 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
     }
     console.error('putMyTenantUserRole error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** DELETE /api/me/tenant/users/:userId — remove usuário do tenant (admin ou dono; não o primário). */
+export async function deleteMyTenantUser(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const requesterId = req.userId!;
+    const { userId: targetUserId } = req.params;
+    if (!targetUserId) {
+      res.status(400).json({ error: 'userId é obrigatório' });
+      return;
+    }
+    if (targetUserId === requesterId) {
+      res.status(400).json({ error: 'Você não pode excluir a sua própria conta por aqui.' });
+      return;
+    }
+
+    const profileRow = await pool.query<{ id: string; owner_id: string }>(
+      `SELECT up.id, up.owner_id FROM user_profiles up
+       JOIN users o ON o.id = up.owner_id AND o.tenant_id = $1
+       ORDER BY up.created_at ASC LIMIT 1`,
+      [tenantId]
+    );
+    if (profileRow.rows.length === 0) {
+      res.status(400).json({ error: 'Nenhum perfil encontrado no tenant' });
+      return;
+    }
+    const profileId = profileRow.rows[0].id;
+    const ownerId = profileRow.rows[0].owner_id;
+    const isOwner = ownerId === requesterId;
+    const adminRole = await pool.query(
+      `SELECT 1 FROM user_roles WHERE user_id = $1 AND profile_id = $2 AND role = 'admin'`,
+      [requesterId, profileId]
+    );
+    if (!isOwner && adminRole.rows.length === 0) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode excluir usuários' });
+      return;
+    }
+
+    const primaryRow = await pool.query<{ id: string }>(
+      `SELECT id FROM users WHERE tenant_id = $1 ORDER BY created_at ASC LIMIT 1`,
+      [tenantId]
+    );
+    const primaryUserId = primaryRow.rows[0]?.id;
+    if (!primaryUserId || primaryUserId === targetUserId) {
+      res.status(400).json({ error: 'Não é possível excluir o administrador principal da conta.' });
+      return;
+    }
+
+    const targetRow = await pool.query<{ is_super_admin: boolean }>(
+      'SELECT is_super_admin FROM users WHERE id = $1 AND tenant_id = $2',
+      [targetUserId, tenantId]
+    );
+    if (targetRow.rows.length === 0) {
+      res.status(404).json({ error: 'Usuário não encontrado' });
+      return;
+    }
+    if (targetRow.rows[0].is_super_admin) {
+      res.status(403).json({ error: 'Não é possível excluir este usuário.' });
+      return;
+    }
+
+    await reassignTenantUserDataAndDeleteUser({
+      tenantId,
+      primaryUserId,
+      targetUserId,
+    });
+    res.status(204).send();
+  } catch (error: unknown) {
+    console.error('deleteMyTenantUser error:', error);
+    const code = (error as { code?: string })?.code;
+    if (code === '23503') {
+      res.status(409).json({
+        error:
+          'Não foi possível concluir a exclusão devido a vínculos no banco. Tente novamente ou contate o suporte.',
+      });
+      return;
+    }
+    const message = error instanceof Error ? error.message : 'Erro ao excluir usuário';
+    if (message === 'USER_NOT_IN_TENANT') {
+      res.status(404).json({ error: 'Usuário não encontrado no tenant' });
+      return;
+    }
+    res.status(500).json({ error: message });
   }
 }
 

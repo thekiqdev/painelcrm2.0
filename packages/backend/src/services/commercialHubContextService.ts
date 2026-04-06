@@ -105,12 +105,15 @@ export async function getOpenTenantBillingSummary(
     if (row) return mapRow(row, true);
   }
 
+  /** Preferir cobranças de plano/upgrade/renovação ao último seat_addon; evita “Meu plano” apontar só para assentos. */
   const latest = await pool.query<BillingRow>(
     `SELECT id, status, amount_cents, due_date, payment_method, gateway, gateway_reference_id, invoice_number
      FROM tenant_billing
      WHERE tenant_id = $1
        AND status IN ('pending', 'waiting_payment', 'processing', 'overdue')
-     ORDER BY created_at DESC
+     ORDER BY
+       CASE WHEN COALESCE(billing_reason, 'plan_purchase') = 'seat_addon' THEN 1 ELSE 0 END ASC,
+       created_at DESC
      LIMIT 1`,
     [tenantId]
   );

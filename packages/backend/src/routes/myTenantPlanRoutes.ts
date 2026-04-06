@@ -36,6 +36,7 @@ router.post('/roles', ...tenantAuth, myTenantPlanController.postMyTenantRole);
 router.get('/users', ...tenantAuth, myTenantPlanController.getMyTenantUsers);
 router.post('/users', ...tenantAuth, myTenantPlanController.postMyTenantUser);
 router.put('/users/:userId/role', ...tenantAuth, myTenantPlanController.putMyTenantUserRole);
+router.delete('/users/:userId', ...tenantAuth, myTenantPlanController.deleteMyTenantUser);
 
 // Permissões por módulo (Etapa 2)
 router.get('/module-permissions-schema', ...tenantAuth, myTenantPlanController.getModulePermissionsSchemaHandler);

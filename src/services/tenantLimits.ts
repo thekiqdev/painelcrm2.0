@@ -78,6 +78,11 @@ export interface CreateTenantUserResult {
   full_name: string;
 }
 
+export async function deleteTenantUser(userId: string): Promise<void> {
+  const response = await apiClient.delete(`/api/me/tenant/users/${userId}`);
+  if (response.error) throw new Error(response.error);
+}
+
 export async function createTenantUser(
   payload: CreateTenantUserPayload
 ): Promise<CreateTenantUserResult> {
