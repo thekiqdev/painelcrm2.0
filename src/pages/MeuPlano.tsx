@@ -88,6 +88,7 @@ interface Plan {
   price_cents: number;
   billing_interval: string;
   plan_type: 'standard' | 'custom';
+  max_users?: number | null;
   is_free?: boolean;
   free_access_days?: number | null;
   benefits?: PlanBenefit[];
@@ -444,6 +445,16 @@ export default function MeuPlano() {
       setSeatAddonPreview(null);
       return;
     }
+    const contracted = Math.max(1, subscription?.users_count ?? myPlan.max_users_override ?? 1);
+    const cap = myPlan.plan.max_users ?? null;
+    if (cap != null && contracted + seatAddonExtra > cap) {
+      setSeatAddonPreview(null);
+      setSeatAddonLoading(false);
+      toast.error(
+        `Este plano suporta no máximo ${cap} assentos. Você possui ${contracted} e está tentando adicionar ${seatAddonExtra}.`
+      );
+      return;
+    }
     const seq = ++seatAddonPreviewSeq.current;
     const timer = setTimeout(async () => {
       setSeatAddonLoading(true);
@@ -454,9 +465,7 @@ export default function MeuPlano() {
       if (seq !== seatAddonPreviewSeq.current) return;
       setSeatAddonLoading(false);
       if (res.error || !res.data) {
-        toast.error(
-          'Não foi possível calcular o valor agora. Atualize a página em instantes ou tente novamente.'
-        );
+        toast.error(res.error ?? 'Não foi possível calcular o valor agora. Atualize a página em instantes ou tente novamente.');
         return;
       }
       setSeatAddonPreview(res.data);
@@ -464,14 +473,24 @@ export default function MeuPlano() {
     return () => {
       clearTimeout(timer);
     };
-  }, [seatAddonInlineExpanded, seatAddonExtra, myPlan?.tenant_id, myPlan?.plan.plan_type, commercialMode]);
+  }, [
+    seatAddonInlineExpanded,
+    seatAddonExtra,
+    myPlan,
+    myPlan?.tenant_id,
+    myPlan?.plan.plan_type,
+    myPlan?.plan.max_users,
+    myPlan?.max_users_override,
+    subscription?.users_count,
+    commercialMode,
+  ]);
 
   useEffect(() => {
     if (myPlan?.pending_seat_addon_billing) {
       setSeatAddonInlineExpanded(false);
       setSeatAddonPreview(null);
     }
-  }, [myPlan?.pending_seat_addon_billing?.billing_id]);
+  }, [myPlan?.pending_seat_addon_billing, myPlan?.pending_seat_addon_billing?.billing_id]);
 
   const buildCheckoutState = useCallback(() => {
     if (!myPlan) return null;
@@ -773,6 +792,8 @@ export default function MeuPlano() {
   const prices = plan.interval_prices ?? [];
   const priceRow = prices.find((p) => p.billing_interval === plan.billing_interval);
   const contractedSeats = Math.max(1, subscription?.users_count ?? myPlan.max_users_override ?? 1);
+  const planMaxUsers = isCustom ? plan.max_users ?? null : null;
+  const seatAddonCapacityReached = planMaxUsers != null && contractedSeats >= planMaxUsers;
   const canScheduleSeatDowngrade = isCustom && contractedSeats > (limitsUsers?.current ?? 1);
   const currentPriceCents =
     isCustom && priceRow ? priceRow.price_per_user_cents * contractedSeats : plan.price_cents;
@@ -1228,7 +1249,7 @@ export default function MeuPlano() {
                 <Button
                   type="button"
                   variant={seatAddonInlineExpanded ? 'secondary' : 'default'}
-                  disabled={!!myPlan.pending_seat_addon_billing}
+                  disabled={!!myPlan.pending_seat_addon_billing || seatAddonCapacityReached}
                   aria-expanded={seatAddonInlineExpanded}
                   onClick={() => {
                     if (seatAddonInlineExpanded) {
@@ -1243,6 +1264,11 @@ export default function MeuPlano() {
                 >
                   {seatAddonInlineExpanded ? 'Fechar' : 'Contratar novos usuários'}
                 </Button>
+                {seatAddonCapacityReached && (
+                  <p className="text-xs text-muted-foreground w-full">
+                    Seu plano atual já atingiu o limite de {planMaxUsers} assento{planMaxUsers === 1 ? '' : 's'}.
+                  </p>
+                )}
                 <Button
                   type="button"
                   variant="outline"
