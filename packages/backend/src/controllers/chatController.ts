@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import * as notificationService from '../services/notifications.js';
 import { emitConversationUpdate, emitMessageUpdated, emitNewMessage } from '../services/websocketService.js';
 import {
@@ -6486,6 +6486,30 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
   }
 }
 
+function normalizeIncomingWebhookSecret(raw: unknown): string | undefined {
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    return t.length ? t : undefined;
+  }
+  if (Array.isArray(raw) && typeof raw[0] === 'string') {
+    const t = raw[0].trim();
+    return t.length ? t : undefined;
+  }
+  return undefined;
+}
+
+/** Comparação em tempo constante; espera strings já normalizadas (trim). */
+function webhookSecretsEqual(a: string, b: string): boolean {
+  const x = a.trim();
+  const y = b.trim();
+  if (!x.length || x.length !== y.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(x, 'utf8'), Buffer.from(y, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Handler principal para webhooks da UazAPI
  * Responde rapidamente e processa eventos de forma assíncrona
@@ -6531,14 +6555,10 @@ export async function handleWebhook(req: Request, res: Response) {
       req.body?.secret ||
       req.body?.data?.secret ||
       req.query?.secret;
-    const receivedSecret = ((): string | undefined => {
-      if (typeof rawReceived === 'string') return rawReceived;
-      if (Array.isArray(rawReceived) && typeof rawReceived[0] === 'string') return rawReceived[0];
-      return undefined;
-    })();
+    const receivedSecret = normalizeIncomingWebhookSecret(rawReceived);
 
     if (isProduction && hasConfiguredSecret) {
-      if (!receivedSecret || receivedSecret !== configuredSecret) {
+      if (!receivedSecret || !webhookSecretsEqual(receivedSecret, configuredSecret)) {
         console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
           webhookId,
           ip: req.ip,
@@ -6561,7 +6581,7 @@ export async function handleWebhook(req: Request, res: Response) {
           'Webhook aceito sem secret (flag explícita). Remova UAZAPI_WEBHOOK_ALLOW_NO_SECRET e defina UAZAPI_WEBHOOK_SECRET.',
       });
     } else if (hasConfiguredSecret && receivedSecret) {
-      if (receivedSecret !== configuredSecret) {
+      if (!webhookSecretsEqual(receivedSecret, configuredSecret)) {
         console.warn(`[Webhook ${webhookId}] Invalid secret`, {
           ip: req.ip,
           receivedSecretHeader: !!req.headers['x-uazapi-secret'],
