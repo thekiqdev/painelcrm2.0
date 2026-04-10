@@ -22,6 +22,7 @@ import {
   Users,
   DollarSign,
   CalendarIcon,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -63,7 +64,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { chatService, ChatConversation, ChatInstance, ChatMessage } from '@/services/chat';
+import {
+  chatService,
+  ChatConversation,
+  ChatInstance,
+  ChatMessage,
+  coerceChatPlainText,
+  normalizeChatMessage,
+  normalizeConversation,
+  parseMediaField,
+} from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
@@ -84,6 +94,8 @@ import {
   buildClientProfileToFromChat,
   resolveRestoreConversationId,
 } from '@/utils/clientProfileNavigation';
+import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
+import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -179,7 +191,6 @@ const Chat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
-  const [newInstanceName, setNewInstanceName] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'read' | 'leads' | 'clients'>('all');
 
   const [loadingInstances, setLoadingInstances] = useState(false);
@@ -188,12 +199,12 @@ const Chat = () => {
   const [syncingConversations, setSyncingConversations] = useState(false);
   const [syncingMessages, setSyncingMessages] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
-  const [creatingInstance, setCreatingInstance] = useState(false);
   const [currentLead, setCurrentLead] = useState<any | null>(null);
   const [currentClient, setCurrentClient] = useState<any | null>(null);
   const [loadingLead, setLoadingLead] = useState(false);
   const [loadingClient, setLoadingClient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   // Refs para evitar closure stale nos handlers do Socket.IO
   const selectedConversationIdRef = useRef<string | null>(null);
@@ -207,6 +218,8 @@ const Chat = () => {
   const pendingConversationRestoreRef = useRef<PendingConversationRestore | null>(null);
   /** Evita restaurar no primeiro paint com lista vazia e loading=false (race antes do primeiro setLoading(true) aplicar). */
   const conversationsHydratedRef = useRef(false);
+  /** FIFO: um id otimista por envio em voo; o WebSocket remove o mais antigo ao chegar a mensagem real. */
+  const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
 
   // Estados para dialogs
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
@@ -297,20 +310,33 @@ const Chat = () => {
     }
   }, []);
 
-  const loadMessages = useCallback(async (conversationId: string) => {
-    setLoadingMessages(true);
-    try {
-      const data = await chatService.getConversationMessages(conversationId);
-      setMessages(data);
-    } catch (error) {
-      console.error('Erro ao carregar mensagens:', error);
-      toast.error('Erro ao carregar mensagens', {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    } finally {
-      setLoadingMessages(false);
-    }
-  }, []);
+  const loadMessages = useCallback(
+    async (conversationId: string, opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
+      if (!silent) {
+        setLoadingMessages(true);
+      }
+      try {
+        const data = await chatService.getConversationMessages(conversationId);
+        if (selectedConversationIdRef.current !== conversationId) {
+          return;
+        }
+        setMessages(data);
+      } catch (error) {
+        console.error('Erro ao carregar mensagens:', error);
+        if (!silent) {
+          toast.error('Erro ao carregar mensagens', {
+            description: error instanceof Error ? error.message : undefined,
+          });
+        }
+      } finally {
+        if (!silent) {
+          setLoadingMessages(false);
+        }
+      }
+    },
+    [],
+  );
 
   // Atualizar refs quando valores mudarem
   useEffect(() => {
@@ -576,41 +602,7 @@ const Chat = () => {
         hasLastMessageAt: !!raw?.last_message_at,
       });
 
-      // Normalizar payload do backend usando a mesma lógica do chatService
-      const metadata = raw.metadata || {};
-      const avatarUrl =
-        raw.image ||
-        raw.image_preview ||
-        raw.imagePreview ||
-        metadata.image ||
-        metadata.image_preview ||
-        metadata.imagePreview ||
-        (typeof metadata.whatsapp_profile_photo === 'string' ? metadata.whatsapp_profile_photo : null) ||
-        null;
-
-      const updatedConversation: ChatConversation = {
-        id: raw.id,
-        user_id: raw.user_id,
-        instance_id: raw.instance_id,
-        instance_name: raw.instance_name,
-        client_id: raw.client_id ?? null,
-        leadId: raw.lead_id ?? null,
-        external_chat_id: raw.external_chat_id,
-        contactName: raw.contact_name ?? null,
-        profileName: raw.profile_name ?? null,
-        phoneNumber: raw.phone_number ?? null,
-        avatarUrl,
-        status: raw.status ?? null,
-        lastMessagePreview: raw.last_message_preview ?? null,
-        lastMessageAt: raw.last_message_at ?? null,
-        unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
-        link_state: raw.link_state ?? metadata.link_state ?? null,
-        link_source: raw.link_source ?? metadata.link_source ?? null,
-        link_confidence: raw.link_confidence ?? metadata.link_confidence ?? null,
-        metadata: metadata ?? null,
-        created_at: raw.created_at,
-        updated_at: raw.updated_at,
-      };
+      const updatedConversation: ChatConversation = normalizeConversation(raw);
       
       console.log('[Chat] Normalized conversation:', {
         id: updatedConversation.id,
@@ -663,7 +655,7 @@ const Chat = () => {
       // Se a conversa atualizada é a selecionada, recarregar mensagens
       // Usar ref para evitar closure stale
       if (selectedConversationIdRef.current === updatedConversation.id) {
-        loadMessages(updatedConversation.id);
+        void loadMessages(updatedConversation.id, { silent: true });
       }
     });
 
@@ -671,18 +663,10 @@ const Chat = () => {
     socket.on('new_message', (data: { message: any; conversationId: string }) => {
       console.log('[Chat] New message via WebSocket (raw):', data.message);
       
-      // Normalizar mensagem recebida (formato semelhante ao usado no chatService)
-      const normalizedMessage: ChatMessage = {
-        id: data.message.id,
+      const normalizedMessage = normalizeChatMessage({
+        ...data.message,
         conversation_id: data.message.conversation_id || data.conversationId,
-        direction: data.message.direction === 'outgoing' ? 'outgoing' : 'incoming',
-        external_message_id: data.message.external_message_id ?? null,
-        body: data.message.body ?? null,
-        status: data.message.status ?? null,
-        sentAt: data.message.sent_at ?? data.message.created_at ?? null,
-        metadata: data.message.metadata ?? null,
-        created_at: data.message.created_at,
-      };
+      });
       
       // Usar ref para evitar closure stale
       const currentSelectedId = selectedConversationIdRef.current;
@@ -690,11 +674,22 @@ const Chat = () => {
       // Se a mensagem é da conversa selecionada, adicionar à lista
       if (currentSelectedId === data.conversationId) {
         setMessages((prev) => {
-          // Verificar se a mensagem já existe
-          if (prev.some(m => m.id === normalizedMessage.id || m.external_message_id === normalizedMessage.external_message_id)) {
-            return prev;
+          const queue = pendingOutgoingOptimisticQueueRef.current;
+          let base = prev;
+          if (queue.length > 0 && normalizedMessage.direction === 'outgoing') {
+            const pendingId = queue.shift();
+            if (pendingId) {
+              base = prev.filter((m) => m.id !== pendingId);
+            }
           }
-          return [...prev, normalizedMessage];
+          if (normalizedMessage.id && base.some((m) => m.id === normalizedMessage.id)) {
+            return base;
+          }
+          const ext = normalizedMessage.external_message_id;
+          if (ext && base.some((m) => m.external_message_id === ext)) {
+            return base;
+          }
+          return [...base, normalizedMessage];
         });
       }
 
@@ -712,7 +707,17 @@ const Chat = () => {
         if (index >= 0) {
           const updated = [...prev];
           const conv = updated[index];
-          const messagePreview = (normalizedMessage.body || '').trim() || '[Mídia]';
+          const c = normalizedMessage.message_contract;
+          const previewText =
+            coerceChatPlainText(c?.body) ||
+            coerceChatPlainText(normalizedMessage.body) ||
+            '';
+          const messagePreview =
+            previewText ||
+            (c?.kind === 'audio' ? '[Áudio]' : null) ||
+            (c?.kind === 'image' || (normalizedMessage.media && normalizedMessage.media.length > 0)
+              ? '[Imagem]'
+              : '[Mídia]');
           const updatedConv = {
             ...conv,
             lastMessagePreview: messagePreview,
@@ -748,6 +753,29 @@ const Chat = () => {
         }
         return prev;
       });
+    });
+
+    socket.on('message_updated', (data: { message: any; conversationId: string }) => {
+      const normalizedMessage = normalizeChatMessage({
+        ...data.message,
+        conversation_id: data.message?.conversation_id || data.conversationId,
+      });
+
+      const currentSelectedId = selectedConversationIdRef.current;
+      if (currentSelectedId === data.conversationId) {
+        setMessages((prev) => {
+          const idx = prev.findIndex(
+            (m) =>
+              (normalizedMessage.id && m.id === normalizedMessage.id) ||
+              (!!normalizedMessage.external_message_id &&
+                m.external_message_id === normalizedMessage.external_message_id)
+          );
+          if (idx < 0) return prev;
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...normalizedMessage };
+          return next;
+        });
+      }
     });
 
     return () => {
@@ -799,56 +827,36 @@ const Chat = () => {
     loadTicketCategories();
   }, [loadInstances, loadClients, loadLeads, loadTicketCategories]);
 
-  // Ref para rastrear IDs das instâncias para detectar mudanças
-  const previousInstancesRef = useRef<string>('');
-
+  /** Ativas no chat: `metadata.enabled_in_chat !== false` (persistido no backend). */
   useEffect(() => {
-    const instancesIds = instances.map(i => i.id).join(',');
-    
-    // Se não há instâncias, limpar tudo
     if (instances.length === 0) {
       setSelectedInstanceId(null);
       setEnabledInstanceIds(new Set());
       setConversations([]);
       setSelectedConversationId(null);
       setMessages([]);
-      previousInstancesRef.current = '';
-          return;
-        }
-        
-    // Se as instâncias mudaram, reconfigurar apenas se necessário
-    if (instancesIds !== previousInstancesRef.current) {
-      previousInstancesRef.current = instancesIds;
-      
-      // Verificar se precisa habilitar uma instância
-      setEnabledInstanceIds((prev) => {
-        if (prev.size === 0) {
-          const connected = instances.find((instance) => instance.status === 'connected');
-          const firstInstance = connected || instances[0];
-          if (firstInstance) {
-            // Usar setTimeout para evitar atualização durante render
-            setTimeout(() => {
-              setSelectedInstanceId(firstInstance.id);
-            }, 0);
-            return new Set([firstInstance.id]);
-          }
-        }
-        return prev;
-      });
+      return;
     }
+
+    const enabledIds = instances
+      .filter((inst) => (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false)
+      .map((inst) => inst.id);
+
+    setEnabledInstanceIds(new Set(enabledIds));
   }, [instances]);
 
-  // Separar a lógica de validação de selectedInstanceId em outro useEffect
   useEffect(() => {
-    if (enabledInstanceIds.size > 0) {
-      const enabledArray = Array.from(enabledInstanceIds);
-      setSelectedInstanceId((currentSelected) => {
-        if (!currentSelected || !enabledInstanceIds.has(currentSelected)) {
-          return enabledArray[0] || null;
-        }
-        return currentSelected;
-      });
+    if (enabledInstanceIds.size === 0) {
+      setSelectedInstanceId(null);
+      return;
     }
+    const enabledArray = Array.from(enabledInstanceIds);
+    setSelectedInstanceId((currentSelected) => {
+      if (!currentSelected || !enabledInstanceIds.has(currentSelected)) {
+        return enabledArray[0] || null;
+      }
+      return currentSelected;
+    });
   }, [enabledInstanceIds]);
 
   useEffect(() => {
@@ -880,21 +888,19 @@ const Chat = () => {
 
   // Scroll automático para o final quando mensagens são carregadas ou nova mensagem é enviada
   useEffect(() => {
-    if (messages.length > 0 && !loadingMessages) {
-      // Pequeno delay para garantir que o DOM foi atualizado
-      setTimeout(() => {
-        if (messagesEndRef.current) {
-          // Encontrar o viewport do ScrollArea e fazer scroll
-          const viewport = messagesEndRef.current.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
-          if (viewport) {
-            viewport.scrollTop = viewport.scrollHeight;
-            } else {
-            // Fallback para scrollIntoView
-            messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
-          }
+    if (messages.length === 0 || loadingMessages) return;
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!messagesEndRef.current) return;
+        const viewport = messagesEndRef.current.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
+        if (viewport) {
+          viewport.scrollTop = viewport.scrollHeight;
+        } else {
+          messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
         }
-      }, 100);
-    }
+      });
+    });
+    return () => cancelAnimationFrame(raf1);
   }, [messages, selectedConversationId, loadingMessages]);
 
   const filteredConversations = useMemo(() => {
@@ -1061,31 +1067,28 @@ const Chat = () => {
     null;
   const connectionStatus = activeInstance?.status || 'disconnected';
 
-  const handleSelectConversation = async (conversationId: string) => {
-    // Sincronizar mensagens automaticamente ao selecionar conversa
-    try {
-      await chatService.syncConversationMessages(conversationId, { limit: 100 });
-    } catch (error) {
-      console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
-      // Continuar mesmo se a sincronização falhar
-    }
+  const handleSelectConversation = (conversationId: string) => {
     setSelectedConversationId(conversationId);
-    await loadMessages(conversationId);
+
+    void chatService.syncConversationMessages(conversationId, { limit: 100, syncMode: 'full' }).catch((error) => {
+      console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
+    });
 
     const conversation = conversations.find((item) => item.id === conversationId);
     if (conversation && (conversation.unreadCount ?? 0) > 0) {
-      try {
-        await chatService.markConversationRead(conversationId);
-        if (enabledInstanceIds.size > 0) {
-          loadConversations(Array.from(enabledInstanceIds));
-        }
-      } catch (error) {
-        console.error('Erro ao marcar conversa como lida:', error);
-      }
+      void chatService
+        .markConversationRead(conversationId)
+        .then(() => {
+          if (enabledInstanceIdsRef.current.size > 0) {
+            loadConversations(Array.from(enabledInstanceIdsRef.current));
+          }
+        })
+        .catch((error) => {
+          console.error('Erro ao marcar conversa como lida:', error);
+        });
     }
 
-    // Buscar perfil (cliente ou lead) vinculado à conversa
-    await loadConversationProfile(conversationId);
+    void loadConversationProfile(conversationId);
   };
 
   const loadConversationProfile = useCallback(async (conversationId: string) => {
@@ -1141,18 +1144,84 @@ const Chat = () => {
       return;
     }
 
+    const text = newMessage.trim();
+    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    pendingOutgoingOptimisticQueueRef.current.push(optimisticId);
+    setNewMessage('');
+    const optimistic: ChatMessage = {
+      id: optimisticId,
+      conversation_id: selectedConversationId,
+      direction: 'outgoing',
+      body: text,
+      status: 'queued',
+      sentAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+
     try {
-      setSendingMessage(true);
-      await chatService.sendMessage(selectedConversationId, newMessage.trim());
-      setNewMessage('');
-      await loadMessages(selectedConversationId);
+      await chatService.sendMessage(selectedConversationId, text);
+      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
+        (id) => id !== optimisticId
+      );
+      await loadMessages(selectedConversationId, { silent: true });
       if (enabledInstanceIds.size > 0) {
         loadConversations(Array.from(enabledInstanceIds));
       }
       // Removido toast de sucesso para evitar notificação a cada envio
     } catch (error) {
+      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
+        (id) => id !== optimisticId
+      );
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      setNewMessage(text);
       console.error('Erro ao enviar mensagem:', error);
       toast.error('Não foi possível enviar a mensagem', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
+  const handleImageFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedConversationId) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione um arquivo de imagem');
+      return;
+    }
+    const caption = newMessage.trim();
+    setNewMessage('');
+    try {
+      setSendingMessage(true);
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = () => reject(new Error('Falha ao ler arquivo'));
+        r.readAsDataURL(file);
+      });
+      const comma = dataUrl.indexOf(',');
+      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      console.log('[Chat] Enviando imagem', {
+        fileName: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        base64Length: base64.length,
+        hasCaption: Boolean(caption),
+      });
+      await chatService.sendImageMessage(selectedConversationId, {
+        fileBase64: base64,
+        mimeType: file.type || 'image/jpeg',
+        caption: caption || undefined,
+      });
+      await loadMessages(selectedConversationId, { silent: true });
+      if (enabledInstanceIds.size > 0) {
+        loadConversations(Array.from(enabledInstanceIds));
+      }
+    } catch (error) {
+      setNewMessage(caption);
+      console.error('Erro ao enviar imagem:', error);
+      toast.error('Não foi possível enviar a imagem', {
         description: error instanceof Error ? error.message : undefined,
       });
     } finally {
@@ -1164,7 +1233,19 @@ const Chat = () => {
     if (!selectedInstanceId) return;
     try {
       setSyncingConversations(true);
-      const summary = await chatService.syncConversations(selectedInstanceId, { limit: 200 }) as { total?: number; upserted?: number };
+      const summary = (await chatService.syncConversations(selectedInstanceId, { limit: 200 })) as {
+        total?: number;
+        upserted?: number;
+        skipped?: boolean;
+        reason?: string;
+      };
+      if (summary?.skipped && summary?.reason === 'sync_mode_none') {
+        toast.message('Sincronização em lote desativada', {
+          description:
+            'Esta instância está com sync_mode=none. Use outro período nas configurações ou envie syncMode na API.',
+        });
+        return;
+      }
       if (enabledInstanceIds.size > 0) {
         loadConversations(Array.from(enabledInstanceIds));
       }
@@ -1186,14 +1267,43 @@ const Chat = () => {
     if (!selectedConversationId) return;
     try {
       setSyncingMessages(true);
-      await chatService.syncConversationMessages(selectedConversationId, { limit: 100 });
-      const identityResult = await chatService.refreshConversationIdentity(selectedConversationId);
-      if (identityResult.conversation) {
-        setConversations((prev) =>
-          prev.map((c) => (c.id === selectedConversationId ? identityResult.conversation! : c))
-        );
+      const convBefore = conversations.find((c) => c.id === selectedConversationId);
+      const syncResult = await chatService.syncConversationMessages(selectedConversationId, {
+        limit: 100,
+        syncMode: 'full',
+        force: true,
+      });
+      const identityState = convBefore?.identityState ?? convBefore?.identity_state;
+      const canonical =
+        convBefore?.canonicalChatId ?? convBefore?.canonical_chat_id ?? null;
+      const display =
+        convBefore?.displayName ?? convBefore?.display_name ?? convBefore?.contactName ?? '';
+      const nameOk = String(display || '').trim().length >= 2;
+      const meta = (convBefore?.metadata || {}) as Record<string, unknown>;
+      const portraitOk = !!(
+        convBefore?.avatarUrl ||
+        convBefore?.avatar_url ||
+        (typeof meta.whatsapp_profile_photo === 'string' && meta.whatsapp_profile_photo.trim()) ||
+        (typeof meta.image === 'string' && meta.image.trim())
+      );
+      const identityAlreadyHydrated =
+        convBefore &&
+        identityState === 'resolved' &&
+        !!String(canonical || '').trim() &&
+        nameOk &&
+        portraitOk;
+
+      const backendSkippedIdentity = syncResult?.identity_refresh_skipped === true;
+
+      if (!backendSkippedIdentity && !identityAlreadyHydrated) {
+        const identityResult = await chatService.refreshConversationIdentity(selectedConversationId);
+        if (identityResult.conversation) {
+          setConversations((prev) =>
+            prev.map((c) => (c.id === selectedConversationId ? identityResult.conversation! : c))
+          );
+        }
       }
-      await loadMessages(selectedConversationId);
+      await loadMessages(selectedConversationId, { silent: true });
       if (enabledInstanceIds.size > 0) {
         await loadConversations(Array.from(enabledInstanceIds));
       }
@@ -1426,11 +1536,11 @@ const Chat = () => {
           await new Promise(resolve => setTimeout(resolve, 500));
           
           // Sincronizar mensagens da conversa
-          await chatService.syncConversationMessages(result.conversationId, { limit: 100 });
+          await chatService.syncConversationMessages(result.conversationId, { limit: 100, syncMode: 'full' });
           
           // Se esta é a conversa selecionada, recarregar mensagens
           if (selectedConversationId === result.conversationId) {
-            await loadMessages(result.conversationId);
+            await loadMessages(result.conversationId, { silent: true });
           } else {
             // Se não é a conversa selecionada, atualizar a lista de conversas
             if (enabledInstanceIds.size > 0) {
@@ -1754,50 +1864,21 @@ const Chat = () => {
     setContractSigners(updated);
   };
 
-  const handleCreateInstance = async () => {
-    if (!newInstanceName.trim()) return;
+  const handleNavigateToSettings = () => {
+    navigate('/settings?section=whatsapp&openAddConnection=1');
+  };
+
+  const handleToggleInstance = async (instanceId: string) => {
+    const enabling = !enabledInstanceIds.has(instanceId);
     try {
-      setCreatingInstance(true);
-      const instance = await chatService.createInstance({
-        name: newInstanceName.trim(),
-        metadata: { createdFrom: 'painelcrm' },
-      });
-      toast.success('Instância criada. Gere o QR Code para conectar.');
-      setNewInstanceName('');
+      await chatService.patchInstance(instanceId, { enabledInChat: enabling });
       await loadInstances();
-      setSelectedInstanceId(instance.id);
     } catch (error) {
-      console.error('Erro ao criar instância:', error);
-      toast.error('Não foi possível criar a instância', {
+      console.error('Erro ao atualizar instância no chat:', error);
+      toast.error('Não foi possível alterar a instância', {
         description: error instanceof Error ? error.message : undefined,
       });
-    } finally {
-      setCreatingInstance(false);
     }
-  };
-
-  const handleNavigateToSettings = () => {
-    navigate('/settings?tab=whatsapp');
-  };
-
-  const handleToggleInstance = (instanceId: string) => {
-    setEnabledInstanceIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(instanceId)) {
-        newSet.delete(instanceId);
-        // Se a conexão desabilitada era a selecionada, seleciona outra
-        if (selectedInstanceId === instanceId && newSet.size > 0) {
-          setSelectedInstanceId(Array.from(newSet)[0]);
-        }
-      } else {
-        newSet.add(instanceId);
-        // Se não há conexão selecionada, seleciona esta
-        if (!selectedInstanceId) {
-          setSelectedInstanceId(instanceId);
-        }
-      }
-      return newSet;
-    });
   };
 
   const handleAddConnection = () => {
@@ -2306,17 +2387,21 @@ const Chat = () => {
                                       : 'bg-muted'
                                   }`}
                                 >
-                                      <p className="break-words whitespace-pre-wrap">
-                                        {message.body || '(mensagem sem texto)'}
-                                      </p>
+                                      <ChatBubbleContent message={message} />
                                       <span
-                                        className={`text-[10px] mt-1 block ${
+                                        className={`text-[10px] mt-1 flex items-center gap-1 ${
                                           message.direction === 'outgoing'
                                             ? 'text-primary-foreground/80'
-                                      : 'text-muted-foreground'
+                                            : 'text-muted-foreground'
                                         }`}
                                       >
-                                        {formatHour(message.sentAt)}
+                                        <span>{formatHour(message.sentAt)}</span>
+                                        {message.direction === 'outgoing' ? (
+                                          <MessageStatusIndicator
+                                            status={message.status}
+                                            className="h-3 w-3"
+                                          />
+                                        ) : null}
                                       </span>
                                 </div>
                               </div>
@@ -2328,16 +2413,32 @@ const Chat = () => {
                           </div>
                         </ScrollArea>
                         <form onSubmit={handleSendMessage} className="border-t p-3 flex gap-2 flex-shrink-0">
+                            <input
+                              ref={imageFileInputRef}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleImageFileChange}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              disabled={sendingMessage}
+                              title="Enviar imagem"
+                              onClick={() => imageFileInputRef.current?.click()}
+                            >
+                              <ImageIcon className="h-4 w-4" />
+                            </Button>
                             <Input 
-                            placeholder="Digite uma mensagem..."
+                            placeholder="Mensagem ou legenda da imagem..."
                               value={newMessage}
                             onChange={(event) => setNewMessage(event.target.value)}
-                            disabled={sendingMessage}
                             />
                             <Button 
                               type="submit" 
                               size="icon"
-                            disabled={sendingMessage || !newMessage.trim()}
+                            disabled={!newMessage.trim()}
                             >
                               <Send className="h-4 w-4" />
                             </Button>
@@ -2366,10 +2467,13 @@ const Chat = () => {
                         </div>
       ) : (
         <Card className="flex-shrink-0">
-          <CardContent className="py-10 text-center text-muted-foreground">
-            Configure sua primeira instância para começar a usar o chat.
-                  </CardContent>
-                </Card>
+          <CardContent className="py-10 text-center text-muted-foreground space-y-4">
+            <p>Configure sua primeira conexão WhatsApp em Configurações (fluxo completo com sincronização).</p>
+            <Button type="button" onClick={handleNavigateToSettings}>
+              Abrir Configurações — WhatsApp
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={unlinkConfirmOpen} onOpenChange={setUnlinkConfirmOpen}>

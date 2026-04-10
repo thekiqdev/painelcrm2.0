@@ -2,6 +2,8 @@ import { Server as HttpServer } from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { verifyToken } from '../utils/jwt.js';
 import { pool } from '../utils/db.js';
+import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
+import { conversationRowForClientApi } from '../utils/uazapiIdentityResolve.js';
 import type { Notification } from './notifications.js';
 
 interface AuthenticatedSocket extends Socket {
@@ -9,6 +11,8 @@ interface AuthenticatedSocket extends Socket {
 }
 
 let io: SocketIOServer | null = null;
+
+const wsVerbose = () => isUazIntegrationVerboseLogs();
 
 /**
  * Inicializa o servidor WebSocket
@@ -42,15 +46,17 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
   // Middleware de autenticação
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
-      console.log('[WebSocket] Connection attempt', {
-        id: socket.id,
-        transport: socket.conn.transport.name,
-        handshake: {
-          auth: socket.handshake.auth ? 'present' : 'missing',
-          headers: Object.keys(socket.handshake.headers),
-          query: socket.handshake.query,
-        },
-      });
+      if (wsVerbose()) {
+        console.log('[WebSocket] Connection attempt', {
+          id: socket.id,
+          transport: socket.conn.transport.name,
+          handshake: {
+            auth: socket.handshake.auth ? 'present' : 'missing',
+            headerKeys: Object.keys(socket.handshake.headers),
+            queryKeys: Object.keys(socket.handshake.query || {}),
+          },
+        });
+      }
 
       const token =
         socket.handshake.auth?.token ||
@@ -71,10 +77,12 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       }
 
       const payload = verifyToken(token);
-      console.log('[WebSocket] Token verified', {
-        socketId: socket.id,
-        userId: payload.userId,
-      });
+      if (wsVerbose()) {
+        console.log('[WebSocket] Token verified', {
+          socketId: socket.id,
+          userId: payload.userId,
+        });
+      }
 
       // Verificar se usuário existe
       const result = await pool.query('SELECT id FROM users WHERE id = $1', [payload.userId]);
@@ -88,10 +96,12 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       }
 
       socket.userId = payload.userId;
-      console.log('[WebSocket] Authentication successful', {
-        socketId: socket.id,
-        userId: payload.userId,
-      });
+      if (wsVerbose()) {
+        console.log('[WebSocket] Authentication successful', {
+          socketId: socket.id,
+          userId: payload.userId,
+        });
+      }
       next();
     } catch (error: any) {
       console.error('[WebSocket] Authentication error', {
@@ -105,12 +115,14 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
 
   // Log de todas as requisições de polling
   io.engine.on('connection', (socket) => {
-    console.log('[WebSocket] Engine connection:', {
-      id: socket.id,
-      transport: socket.transport?.name,
-      readyState: socket.readyState,
-    });
-    
+    if (wsVerbose()) {
+      console.log('[WebSocket] Engine connection:', {
+        id: socket.id,
+        transport: socket.transport?.name,
+        readyState: socket.readyState,
+      });
+    }
+
     socket.on('error', (err: any) => {
       console.error('[WebSocket] Socket transport error:', {
         socketId: socket.id,
@@ -132,11 +144,14 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       return;
     }
 
-    console.log(`[WebSocket] User connected: ${userId} (socket: ${socket.id}, transport: ${socket.conn.transport.name})`);
+    if (wsVerbose()) {
+      console.log(
+        `[WebSocket] User connected: ${userId} (socket: ${socket.id}, transport: ${socket.conn.transport.name})`
+      );
+    }
 
     // Juntar usuário a uma sala específica para receber suas notificações
     socket.join(`user:${userId}`);
-    console.log(`[WebSocket] User ${userId} joined room user:${userId}`);
 
     // Enviar confirmação de conexão
     socket.emit('connected', {
@@ -144,7 +159,6 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       userId,
       timestamp: new Date().toISOString(),
     });
-    console.log(`[WebSocket] Sent connected event to user ${userId}`);
 
     // Evento para ping/pong (manter conexão viva)
     socket.on('ping', () => {
@@ -153,7 +167,9 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
 
     // Desconexão
     socket.on('disconnect', (reason) => {
-      console.log(`[WebSocket] User disconnected: ${userId} (reason: ${reason})`);
+      if (wsVerbose()) {
+        console.log(`[WebSocket] User disconnected: ${userId} (reason: ${reason})`);
+      }
     });
 
     // Erro
@@ -197,10 +213,12 @@ export function emitNotification(userId: string, notification: Notification): vo
     return;
   }
 
-  console.log(`[WebSocket] Emitting notification to user ${userId}:`, {
-    notificationId: notification.id,
-    type: notification.type,
-  });
+  if (wsVerbose()) {
+    console.log(`[WebSocket] Emitting notification to user ${userId}:`, {
+      notificationId: notification.id,
+      type: notification.type,
+    });
+  }
 
   io.to(`user:${userId}`).emit('notification', notification);
 }
@@ -253,16 +271,27 @@ export function emitConversationUpdate(userId: string, conversation: any): void 
   console.log(`[WebSocket] Emitting conversation update to user ${userId}:`, {
     conversationId: conversation.id,
     externalChatId: conversation.external_chat_id,
-    lastMessagePreview: conversation.last_message_preview,
     lastMessageAt: conversation.last_message_at,
     updatedAt: conversation.updated_at,
-    hasAllFields: !!(conversation.id && conversation.last_message_preview && conversation.last_message_at),
+    previewLen:
+      typeof conversation.last_message_preview === 'string'
+        ? conversation.last_message_preview.length
+        : 0,
   });
 
-  // Log objeto completo para debug
-  console.log(`[WebSocket] Full conversation object being emitted:`, JSON.stringify(conversation, null, 2));
+  if (wsVerbose()) {
+    const prev =
+      typeof conversation.last_message_preview === 'string'
+        ? conversation.last_message_preview.slice(0, 80)
+        : undefined;
+    console.log(`[WebSocket] conversation update (verbose preview):`, prev);
+  }
 
-  io.to(`user:${userId}`).emit('conversation_updated', conversation);
+  const payload =
+    conversation && typeof conversation === 'object'
+      ? conversationRowForClientApi(conversation as Record<string, unknown>)
+      : conversation;
+  io.to(`user:${userId}`).emit('conversation_updated', payload);
 }
 
 /**
@@ -274,12 +303,39 @@ export function emitNewMessage(userId: string, message: any, conversationId: str
     return;
   }
 
-  console.log(`[WebSocket] Emitting new message to user ${userId}:`, {
-    messageId: message.id,
-    conversationId,
-  });
+  if (wsVerbose()) {
+    console.log(`[WebSocket] Emitting new message to user ${userId}:`, {
+      messageId: message.id,
+      conversationId,
+    });
+  }
 
   io.to(`user:${userId}`).emit('new_message', {
+    message,
+    conversationId,
+  });
+}
+
+/**
+ * Emite atualização de mensagem (status/metadata) para um usuário específico.
+ * Payload padronizado com `new_message` para reuso no frontend.
+ */
+export function emitMessageUpdated(userId: string, message: any, conversationId: string): void {
+  if (!io) {
+    console.warn('[WebSocket] Cannot emit message update: WebSocket server not initialized');
+    return;
+  }
+
+  if (wsVerbose()) {
+    console.log(`[WebSocket] Emitting message update to user ${userId}:`, {
+      messageId: message?.id,
+      conversationId,
+      status: message?.status,
+      externalMessageId: message?.external_message_id,
+    });
+  }
+
+  io.to(`user:${userId}`).emit('message_updated', {
     message,
     conversationId,
   });

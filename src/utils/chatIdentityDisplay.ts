@@ -13,8 +13,9 @@ function pickCrmPhoto(entity: ChatCrmEntity): string | null {
   return a && String(a).trim() ? String(a).trim() : null;
 }
 
-/** Foto WhatsApp persistida em metadata ou derivada do normalizeConversation. */
+/** Foto WhatsApp: coluna/API `avatar_url` → normalizeConversation.avatarUrl → metadata. */
 function pickWhatsAppPhoto(conv: ChatConversation): string | null {
+  if (conv.avatarUrl && String(conv.avatarUrl).trim()) return String(conv.avatarUrl).trim();
   const meta = (conv.metadata || {}) as Record<string, unknown>;
   const fromMeta =
     (typeof meta.whatsapp_profile_photo === 'string' && meta.whatsapp_profile_photo.trim()) ||
@@ -22,8 +23,7 @@ function pickWhatsAppPhoto(conv: ChatConversation): string | null {
     (typeof meta.imagePreview === 'string' && meta.imagePreview.trim()) ||
     (typeof meta.image_preview === 'string' && meta.image_preview.trim()) ||
     null;
-  if (fromMeta) return fromMeta;
-  return conv.avatarUrl && conv.avatarUrl.trim() ? conv.avatarUrl.trim() : null;
+  return fromMeta || null;
 }
 
 function firstNonEmpty(...vals: (string | null | undefined)[]): string {
@@ -98,7 +98,7 @@ export function resolveConversationIdentity(
   let displayName = '';
   let waSubtitle: string | null = null;
 
-  const waName = firstNonEmpty(conv.contactName, conv.profileName);
+  const waName = firstNonEmpty(conv.displayName, conv.contactName, conv.profileName);
 
   if (conv.client_id && client?.name) {
     displayName = String(client.name).trim();

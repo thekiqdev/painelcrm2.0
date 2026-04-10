@@ -111,6 +111,7 @@ const order = [
   '92_profiles_hide_activation_checklist.sql',
   '93_tenant_billing_payment_attempts.sql',
   '94_seats_commercial_policy.sql',
+  '95_chat_conversations_canonical_identity.sql',
   'create-admin-user.sql',
 ];
 

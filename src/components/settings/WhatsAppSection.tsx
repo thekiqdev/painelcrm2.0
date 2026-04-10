@@ -1,5 +1,5 @@
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import AddConnectionDialog from "@/components/whatsapp/AddConnectionDialog";
 import { InstancesList } from "@/components/whatsapp/InstancesList";
 import AdvancedSettings from "@/components/whatsapp/AdvancedSettings";
@@ -7,9 +7,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Settings } from "lucide-react";
 
 export const WhatsAppSection = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("instances");
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const raw = searchParams.get("openAddConnection");
+    if (raw !== "1" && raw !== "true") return;
+    setIsDialogOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("openAddConnection");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const handleInstanceCreated = () => {
     setRefreshKey(prev => prev + 1);

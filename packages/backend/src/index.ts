@@ -104,8 +104,10 @@ app.use(cors({
   origin: corsOrigins.length > 0 ? corsOrigins : true, // Se não houver URLs, aceitar todas (apenas para debug)
   credentials: true,
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+/** Base64 de imagem no JSON de POST /api/chat/messages excede o padrão do body-parser (100kb). */
+const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT || '25mb';
+app.use(express.json({ limit: jsonBodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: jsonBodyLimit }));
 
 // Rate limiting mais generoso para endpoints de teste
 const testLimiter = rateLimit({

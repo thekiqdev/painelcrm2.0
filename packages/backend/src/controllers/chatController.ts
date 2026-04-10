@@ -5,7 +5,7 @@ import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { randomUUID } from 'crypto';
 import * as notificationService from '../services/notifications.js';
-import { emitConversationUpdate, emitNewMessage } from '../services/websocketService.js';
+import { emitConversationUpdate, emitMessageUpdated, emitNewMessage } from '../services/websocketService.js';
 import {
   resolveConversationMatch,
   normalizeConversationPhone,
@@ -16,20 +16,78 @@ import {
   extractUazapiChatDisplayName,
   extractUazapiChatImageUrl,
 } from '../utils/uazapiChatIdentity.js';
+import {
+  mergeChatMetadataForIdentity,
+  mergeContactNameForUpsert,
+  mergeLastMessageAtForUpsert,
+  mergeLastMessagePreviewForUpsert,
+  mergePhoneForUpsert,
+  mergeProfileNameForUpsert,
+} from '../utils/chatIdentityQuality.js';
+import {
+  logUazChat,
+  type UazChatLogFields,
+  isUazIntegrationVerboseLogs,
+  isChatSaveVerboseLogs,
+} from '../utils/chatObservability.js';
+import {
+  buildWaLastMsgTimestampFilter,
+  extractWaLastMsgTimestampMs,
+  normalizeSyncConfigFromInput,
+  normalizeSyncMode,
+  shouldBootstrapHistory,
+  syncModeToMinTimestampMs,
+} from '../utils/instanceSyncConfig.js';
+import {
+  conversationRowForClientApi,
+  enrichNormalizedChatFromContactCatalog,
+  indexContactsByMsisdn,
+  resolveMessageFindChatId,
+  type UazContactCatalogEntry,
+} from '../utils/uazapiIdentityResolve.js';
+import {
+  computeCanonicalIdentityFromChatPayload,
+  incomingChatPayloadHasEmptyProfileImages,
+  mergeCanonicalIdentityForUpsert,
+  type CanonicalRowSnapshot,
+} from '../utils/canonicalConversationIdentity.js';
+import {
+  attachContractToMetadata,
+  buildPersistentMediaStubForKind,
+  buildMessageContract,
+  contractFromDbRow,
+  ensurePlainString,
+  extractMediaInfo,
+  extractMessageBody,
+  extractUazDownloadMessageId,
+  inferMessageTypeFromPayload,
+  mediaItemsFromDownloadPayload,
+  mergeMessageEnvelope,
+  normalizeIdForUazDownload,
+  sanitizeMediaItemsForDb,
+  type ChatMediaItem,
+  type ChatMessageKind,
+} from '../utils/chatMessageContract.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
   metadata: z.record(z.any()).optional(),
 });
 
+const syncModeSchema = z.enum(['none', 'days_7', 'days_30', 'days_90', 'full']);
+
 const connectSchema = z.object({
   phone: z.string().regex(/^\d{10,15}$/).optional().nullable(),
+  sync_on_connect: z.boolean().optional(),
+  sync_mode: syncModeSchema.optional(),
 });
 
 const syncSchema = z.object({
   instanceId: z.string().uuid(),
   limit: z.number().min(1).max(500).optional(),
   filters: z.record(z.any()).optional(),
+  /** Sobrescreve o período da instância para este sync manual (opcional). */
+  syncMode: syncModeSchema.optional(),
 });
 
 const webhookConfigSchema = z.object({
@@ -46,23 +104,63 @@ const syncMessagesSchema = z.object({
   limit: z.number().min(1).max(100).optional(),
   before: z.string().optional(),
   after: z.string().optional(),
+  syncMode: syncModeSchema.optional(),
+  /**
+   * Quando true, ignora apenas gates HTTP (recent / debounce / lock) para rodar `message/find` de novo.
+   * Não reimporta mensagens cujo `external_message_id` já existe (evita 50× save + log em conversas maduras).
+   */
+  force: z.boolean().optional(),
 });
 
 const markReadSchema = z.object({
   read: z.boolean().default(true),
 });
 
-const sendMessageSchema = z.object({
-  conversationId: z.string().uuid(),
-  text: z.string().min(1),
-  readChat: z.boolean().optional(),
-  readMessages: z.boolean().optional(),
-  delay: z.number().optional(),
-});
+const MAX_MEDIA_BASE64_CHARS = 14 * 1024 * 1024; // ~10MB binário em base64
+
+const sendMessageSchema = z
+  .object({
+    conversationId: z.string().uuid(),
+    /** Padrão: texto. Use `image` para mídia via `/send/media`. */
+    type: z.enum(['text', 'image']).optional(),
+    text: z.string().optional(),
+    caption: z.string().optional(),
+    /** Base64 cru (sem prefixo data:) ou URL pública para UazAPI */
+    fileBase64: z.string().optional(),
+    fileUrl: z.string().url().optional(),
+    mimeType: z.string().optional(),
+    readChat: z.boolean().optional(),
+    readMessages: z.boolean().optional(),
+    delay: z.number().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const t = data.type ?? 'text';
+    if (t === 'text') {
+      const txt = data.text?.trim() ?? '';
+      if (!txt) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'text é obrigatório para type=text' });
+      }
+    }
+    if (t === 'image') {
+      if (!data.fileBase64?.trim() && !data.fileUrl?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Para type=image informe fileBase64 ou fileUrl',
+        });
+      }
+      if (data.fileBase64 && data.fileBase64.length > MAX_MEDIA_BASE64_CHARS) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Arquivo muito grande' });
+      }
+    }
+  });
 
 const linkConversationSchema = z.object({
   type: z.enum(['client', 'lead']),
   id: z.string().uuid(),
+});
+
+const patchInstanceSchema = z.object({
+  enabledInChat: z.boolean(),
 });
 
 type ChatInstanceRow = {
@@ -78,6 +176,39 @@ type ChatInstanceRow = {
 };
 
 type AnyObject = Record<string, any>;
+
+type OutgoingMessageStatus = 'queued' | 'provider_sent' | 'delivered' | 'read' | 'failed';
+
+function normalizeOutgoingStatus(raw: unknown): OutgoingMessageStatus | null {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s) return null;
+  if (s === 'queued' || s === 'pending') return 'queued';
+  if (s === 'provider_sent' || s === 'sent' || s === 'server_ack') return 'provider_sent';
+  if (s === 'delivered' || s === 'delivery' || s === 'received') return 'delivered';
+  if (s === 'read' || s === 'seen') return 'read';
+  if (s === 'failed' || s === 'error' || s === 'undelivered') return 'failed';
+  return null;
+}
+
+function pickBestOutgoingStatus(
+  currentRaw: unknown,
+  incomingRaw: unknown
+): OutgoingMessageStatus | null {
+  const current = normalizeOutgoingStatus(currentRaw);
+  const incoming = normalizeOutgoingStatus(incomingRaw);
+  if (!incoming) return current ?? null;
+  if (!current) return incoming;
+  const rank: Record<OutgoingMessageStatus, number> = {
+    queued: 1,
+    provider_sent: 2,
+    delivered: 3,
+    read: 4,
+    failed: 5,
+  };
+  // "failed" deve prevalecer sobre todos os demais.
+  return rank[incoming] >= rank[current] ? incoming : current;
+}
 
 /**
  * Verifica se o token administrativo da UazAPI está configurado no servidor.
@@ -179,36 +310,289 @@ async function inheritConversationsFromPhoneKey(
   }
 }
 
+const INTERNAL_UAZ_CHAT_ID_RE = /^r[a-f0-9]{12,}$/i;
+
+function isLikelyInternalUazChatId(s: string): boolean {
+  return INTERNAL_UAZ_CHAT_ID_RE.test(s.trim());
+}
+
+function digitsOnly(s: string): string {
+  return s.replace(/\D/g, '');
+}
+
+/**
+ * JID canônico para `external_chat_id` (OpenAPI Uaz: `wa_chatid` é o identificador do chat;
+ * `id` tipo r1a2b3c4... é interno e não serve para `/message/find` nem para casar webhook).
+ */
+function pickExternalChatJidForUaz(raw: any): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const ps = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
+
+  const wa = ps(raw.wa_chatid);
+  if (wa) return wa;
+
+  for (const cand of [raw.chatid, raw.chatId, raw.jid, raw.remoteJid, raw.key?.remoteJid]) {
+    const s = ps(cand);
+    if (s && s.includes('@')) return s;
+  }
+
+  const fast = ps(raw.wa_fastid) || ps(raw.fastId) || ps(raw.fast_id);
+  if (fast && fast.includes(':')) {
+    const after = fast.split(':').slice(1).join(':');
+    if (after.includes('@')) return after.trim();
+  }
+
+  if (raw.wa_isGroup !== true) {
+    const numRaw = ps(raw.number);
+    if (numRaw) {
+      const d = digitsOnly(numRaw);
+      if (d.length >= 10 && d.length <= 15) return `${d}@s.whatsapp.net`;
+    }
+  }
+
+  const idStr = ps(raw.id);
+  if (idStr && idStr.includes('@')) return idStr;
+  if (idStr && !isLikelyInternalUazChatId(idStr)) return idStr;
+
+  return null;
+}
+
+/** Chave estável para deduplicar linhas do /chat/find ao mesclar buscas (privado + grupo). */
+function chatFindRowDedupeKey(raw: any): string {
+  const jid = pickExternalChatJidForUaz(raw);
+  if (jid) return jid;
+  if (!raw || typeof raw !== 'object') return randomUUID();
+  const k =
+    raw.wa_fastid ||
+    raw.chatid ||
+    raw.chatId ||
+    raw.jid ||
+    raw.remoteJid ||
+    raw.key?.remoteJid ||
+    raw.id;
+  return typeof k === 'string' && k.length > 0 ? k : String(raw.id ?? randomUUID());
+}
+
+/** Classificação heurística para logs (API deve enviar wa_isGroup). */
+function classifyChatRowForLog(raw: any): 'group' | 'private' | 'unknown' {
+  if (raw?.wa_isGroup === true) return 'group';
+  if (raw?.wa_isGroup === false) return 'private';
+  const jid = String(raw?.wa_chatid || raw?.chatid || raw?.jid || raw?.remoteJid || '');
+  if (jid.endsWith('@g.us')) return 'group';
+  if (jid.includes('@s.whatsapp.net') || jid.includes('@c.us') || jid.includes('@lid')) return 'private';
+  return 'unknown';
+}
+
+function extractChatsArrayFromFindResponse(remoteChats: AnyObject): any[] {
+  return (
+    (Array.isArray(remoteChats?.chats) && remoteChats?.chats) ||
+    (Array.isArray(remoteChats?.data?.chats) && remoteChats?.data?.chats) ||
+    (Array.isArray(remoteChats?.results) && remoteChats?.results) ||
+    (Array.isArray(remoteChats?.data) && remoteChats?.data) ||
+    (Array.isArray(remoteChats) ? remoteChats : [])
+  );
+}
+
+/** Auditoria de runtime: classificação direta das linhas como a UazAPI as enviou (antes do parser CRM). */
+function summarizeRemoteChatRowsFromApi(rows: any[]) {
+  let api_wa_isGroup_true = 0;
+  let api_wa_isGroup_false = 0;
+  let api_wa_isGroup_missing = 0;
+  let jid_ends_g_us = 0;
+  let jid_s_whatsapp_net = 0;
+  let jid_c_us = 0;
+  let jid_lid = 0;
+  let jid_other = 0;
+  let jid_empty = 0;
+  for (const r of rows) {
+    if (r?.wa_isGroup === true) api_wa_isGroup_true += 1;
+    else if (r?.wa_isGroup === false) api_wa_isGroup_false += 1;
+    else api_wa_isGroup_missing += 1;
+    const jid = String(r?.wa_chatid || r?.chatid || r?.jid || r?.remoteJid || '').trim();
+    if (!jid) jid_empty += 1;
+    else if (jid.endsWith('@g.us')) jid_ends_g_us += 1;
+    else if (jid.includes('@s.whatsapp.net')) jid_s_whatsapp_net += 1;
+    else if (jid.includes('@c.us')) jid_c_us += 1;
+    else if (jid.includes('@lid')) jid_lid += 1;
+    else jid_other += 1;
+  }
+  return {
+    api_wa_isGroup_true,
+    api_wa_isGroup_false,
+    api_wa_isGroup_missing,
+    jid_ends_g_us,
+    jid_s_whatsapp_net,
+    jid_c_us,
+    jid_lid,
+    jid_other,
+    jid_empty,
+  };
+}
+
+function compactChatRowForAudit(raw: any) {
+  return {
+    id: raw?.id ?? null,
+    wa_chatid: raw?.wa_chatid ?? null,
+    wa_isGroup: raw?.wa_isGroup ?? null,
+    wa_name:
+      typeof raw?.wa_name === 'string' ? raw.wa_name.slice(0, 80) : raw?.wa_name ?? null,
+    wa_lastMsgTimestamp: raw?.wa_lastMsgTimestamp ?? null,
+  };
+}
+
+function tokenSuffixForAudit(token: string | null | undefined): string | null {
+  if (!token || typeof token !== 'string') return null;
+  const t = token.trim();
+  if (t.length <= 4) return '****';
+  return `…${t.slice(-4)}`;
+}
+
+/**
+ * Prova de runtime: endpoint, body, resposta bruta (truncada), totais por campo da API e amostra de itens.
+ * `UAZ_CHAT_SYNC_DEBUG=1` aumenta truncamento da resposta e amostra por perna (até 500 itens).
+ */
+function logSyncChatFindLegAudit(params: {
+  event_type: string;
+  correlation_id: string;
+  sync_run_id: string | null;
+  tenant_id: string | null;
+  user_id: string;
+  instance_id: string;
+  external_instance_name: string | null;
+  instance_token_suffix: string | null;
+  trigger: string | null;
+  leg: string;
+  endpoint: string;
+  request_body: Record<string, unknown>;
+  raw_response: AnyObject;
+  extracted: any[];
+}) {
+  const rows = params.extracted;
+  const sum = summarizeRemoteChatRowsFromApi(rows);
+  const maxSample = process.env.UAZ_CHAT_SYNC_DEBUG === '1' ? 500 : 40;
+  const fullSample = rows.map(compactChatRowForAudit);
+  const items_sample = fullSample.length > maxSample ? fullSample.slice(0, maxSample) : fullSample;
+  const rawTruncLimit = process.env.UAZ_CHAT_SYNC_DEBUG === '1' ? 100_000 : 16_000;
+  const responseStr =
+    params.raw_response && typeof params.raw_response === 'object'
+      ? JSON.stringify(params.raw_response)
+      : String(params.raw_response);
+  const response_raw_truncated =
+    responseStr.length > rawTruncLimit ? `${responseStr.slice(0, rawTruncLimit)}…[truncated]` : responseStr;
+
+  logUazChat('info', {
+    event_type: params.event_type,
+    phase: 'sync_chat_find_leg_audit',
+    correlation_id: params.correlation_id,
+    sync_run_id: params.sync_run_id,
+    tenant_id: params.tenant_id,
+    user_id: params.user_id,
+    instance_id: params.instance_id,
+    external_instance_name: params.external_instance_name,
+    instance_token_suffix: params.instance_token_suffix,
+    trigger: params.trigger,
+    leg: params.leg,
+    uazapi_method: 'POST',
+    uazapi_endpoint: params.endpoint,
+    uazapi_request_body_json: JSON.stringify(params.request_body),
+    uazapi_response_top_level_keys:
+      params.raw_response && typeof params.raw_response === 'object'
+        ? Object.keys(params.raw_response as object)
+        : [],
+    response_totalChatsStats: (params.raw_response as AnyObject)?.totalChatsStats ?? null,
+    response_pagination: (params.raw_response as AnyObject)?.pagination ?? null,
+    extracted_chats_length: rows.length,
+    ...sum,
+    items_sample_count: items_sample.length,
+    items_sample_truncated: fullSample.length > maxSample,
+    items_sample,
+    response_raw_truncated,
+  });
+}
+
+/** Dígitos do usuário em JIDs privados (@s.whatsapp.net, @c.us). Ignora @lid. */
+function derivePhoneDigitsFromPrivateJid(jid: string): string | null {
+  const s = jid.trim();
+  const lower = s.toLowerCase();
+  if (!lower.includes('@')) return null;
+  if (lower.endsWith('@g.us')) return null;
+  if (lower.endsWith('@lid')) return null;
+  if (!lower.endsWith('@s.whatsapp.net') && !lower.endsWith('@c.us')) return null;
+  const local = s.split('@')[0] || '';
+  const d = digitsOnly(local);
+  if (d.length >= 10 && d.length <= 15) return d;
+  return null;
+}
+
+/**
+ * Evita usar `number`/`phone_number` da UazAPI quando vier ID interno ou formato inválido;
+ * prioriza JID canônico para conversas 1:1.
+ */
+function pickPhoneNumberFromChatRow(raw: any, externalChatId: string): string | null {
+  const fromJid = derivePhoneDigitsFromPrivateJid(externalChatId);
+
+  const looksLikeRealMsisdn = (v: unknown): v is string => {
+    if (typeof v !== 'string' || !v.trim()) return false;
+    const t = v.trim();
+    if (isLikelyInternalUazChatId(t)) return false;
+    const d = digitsOnly(t);
+    return d.length >= 10 && d.length <= 15;
+  };
+
+  const pickTrim = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+  const pn = pickTrim(raw?.phone_number);
+  if (pn && looksLikeRealMsisdn(pn)) return digitsOnly(pn);
+
+  const num = pickTrim(raw?.number);
+  if (num && looksLikeRealMsisdn(num)) return digitsOnly(num);
+
+  if (fromJid) return fromJid;
+
+  if (pn) return digitsOnly(pn) || pn;
+  if (num) return digitsOnly(num) || num;
+
+  return null;
+}
+
+function normalizeChatPayloadWithReason(raw: any):
+  | { ok: true; data: NonNullable<ReturnType<typeof normalizeChatPayload>> }
+  | { ok: false; reason: 'not_object' | 'no_canonical_jid' } {
+  if (!raw || typeof raw !== 'object') {
+    return { ok: false, reason: 'not_object' };
+  }
+  if (!pickExternalChatJidForUaz(raw)) {
+    return { ok: false, reason: 'no_canonical_jid' };
+  }
+  const data = normalizeChatPayload(raw);
+  if (data) {
+    return { ok: true, data };
+  }
+  return { ok: false, reason: 'no_canonical_jid' };
+}
+
 function normalizeChatPayload(raw: any) {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
 
-  const externalChatId: string | null =
-    raw.wa_chatid ||
-    raw.chatid ||
-    raw.chatId ||
-    raw.number ||
-    raw.id ||
-    raw.jid ||
-    raw.remoteJid ||
-    null;
+  const externalChatId = pickExternalChatJidForUaz(raw);
 
   if (!externalChatId) {
     return null;
   }
 
   const fastId = raw.wa_fastid || raw.fastId || raw.fast_id || null;
-  const contactName = extractUazapiChatDisplayName(raw as Record<string, unknown>);
+  let contactName = extractUazapiChatDisplayName(raw as Record<string, unknown>);
   const profileName =
     (typeof raw.wa_name === 'string' && raw.wa_name.trim()
       ? raw.wa_name.trim()
       : null) ||
     (typeof raw.profileName === 'string' && raw.profileName.trim() ? raw.profileName.trim() : null);
-  const phoneNumber =
-    raw.phone_number ||
-    raw.number ||
-    (externalChatId.includes('@') ? externalChatId.split('@')[0] : null);
+  const phoneNumber = pickPhoneNumberFromChatRow(raw, externalChatId);
+  /** Não copiar MSISDN para contact_name — evita persistir “nome” fraco como se fosse identidade real. */
   const status = raw.lead_status || raw.status || null;
   const unreadCount =
     raw.wa_unreadCount ||
@@ -341,11 +725,31 @@ async function upsertConversation(
     client_id: string | null;
     lead_id?: string | null;
     metadata: Record<string, unknown> | null;
+    contact_name: string | null;
+    profile_name: string | null;
+    phone_number: string | null;
+    display_name?: string | null;
+    avatar_url?: string | null;
+    canonical_chat_id?: string | null;
+    canonical_phone?: string | null;
+    identity_source?: string | null;
+    identity_strength?: string | null;
+    identity_state?: string | null;
+    history_sync_status?: string | null;
+    last_history_sync_reason?: string | null;
+    last_message_preview: string | null;
+    last_message_at: Date | null;
   }>(
     `
     SELECT id, client_id,
            ${leadColumnAvailable ? 'lead_id,' : ''}
-           metadata
+           metadata,
+           contact_name, profile_name, phone_number,
+           display_name, avatar_url,
+           canonical_chat_id, canonical_phone,
+           identity_source, identity_strength, identity_state,
+           history_sync_status, last_history_sync_reason,
+           last_message_preview, last_message_at
     FROM chat_conversations
     WHERE instance_id = $1 AND external_chat_id = $2
     LIMIT 1
@@ -356,9 +760,6 @@ async function upsertConversation(
   let result;
   if ((existingResult.rowCount ?? 0) > 0) {
     const current = existingResult.rows[0];
-    const whatsappProfilePhoto = extractUazapiChatImageUrl(
-      chatData.metadata as Record<string, unknown> | null
-    );
     const currentMeta = (current.metadata as Record<string, unknown> | null) ?? {};
     const currentLeadId = leadColumnAvailable ? (current.lead_id ?? null) : null;
     const currentSource = (currentMeta.link_source as LinkSource | undefined) ?? 'system';
@@ -395,16 +796,94 @@ async function upsertConversation(
             ? 'review_required'
             : 'unlinked';
 
+    const phoneDigitsForMerge =
+      chatData.phoneNumber?.trim() || current.phone_number?.trim() || null;
+
+    const mergedContactName = mergeContactNameForUpsert(
+      current.contact_name,
+      chatData.contactName,
+      phoneDigitsForMerge,
+      chatData.externalChatId
+    );
+    const mergedProfileName = mergeProfileNameForUpsert(
+      current.profile_name,
+      chatData.profileName,
+      mergedContactName,
+      phoneDigitsForMerge,
+      chatData.externalChatId
+    );
+    const mergedPhone = mergePhoneForUpsert(current.phone_number, chatData.phoneNumber);
+
+    const existingLastAt = current.last_message_at ? new Date(current.last_message_at) : null;
+    const mergedLastAt = mergeLastMessageAtForUpsert(existingLastAt, chatData.lastMessageAt);
+    const mergedPreview = mergeLastMessagePreviewForUpsert(
+      current.last_message_preview,
+      existingLastAt,
+      chatData.lastMessagePreview,
+      chatData.lastMessageAt
+    );
+
+    const mergedMetaBase = mergeChatMetadataForIdentity(
+      currentMeta,
+      chatData.metadata as Record<string, unknown> | null
+    );
     const mergedMeta = {
-      ...currentMeta,
-      ...(chatData.metadata || {}),
+      ...mergedMetaBase,
       ...buildMatchMetadata(match),
-      ...(whatsappProfilePhoto ? { whatsapp_profile_photo: whatsappProfilePhoto } : {}),
       link_source: linkSource,
       link_confidence: linkConfidence,
       link_state: linkState,
       updated_by_sync_at: new Date().toISOString(),
     };
+
+    const incomingCanon = computeCanonicalIdentityFromChatPayload({
+      external_chat_id: chatData.externalChatId,
+      phone_number: mergedPhone,
+      contact_name: mergedContactName,
+      profile_name: mergedProfileName,
+      metadata: mergedMeta,
+    });
+    const cur = current as Record<string, unknown>;
+    const snap: CanonicalRowSnapshot = {
+      display_name: (cur.display_name as string) ?? null,
+      contact_name: current.contact_name,
+      profile_name: current.profile_name,
+      phone_number: current.phone_number,
+      avatar_url: (cur.avatar_url as string) ?? null,
+      canonical_chat_id: (cur.canonical_chat_id as string) ?? null,
+      canonical_phone: (cur.canonical_phone as string) ?? null,
+      identity_source: (cur.identity_source as string) ?? null,
+      identity_strength: (cur.identity_strength as string) ?? null,
+      identity_state: (cur.identity_state as string) ?? null,
+      history_sync_status: (cur.history_sync_status as string) ?? null,
+      metadata: currentMeta,
+    };
+    const { merged: fc, degraded_write_blocked, merge_decision } = mergeCanonicalIdentityForUpsert(
+      chatData.externalChatId,
+      snap,
+      incomingCanon,
+      {
+        incomingMetadataHasEmptyImages: incomingChatPayloadHasEmptyProfileImages(
+          chatData.metadata as Record<string, unknown>
+        ),
+      }
+    );
+    logUazChat('info', {
+      event_type: 'conversation_upsert',
+      phase: 'canonical_identity_merge',
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      provider_chat_id_raw: chatData.externalChatId,
+      canonical_chat_id: fc.canonical_chat_id,
+      identity_source: fc.identity_source,
+      identity_strength: fc.identity_strength,
+      identity_state: fc.identity_state,
+      history_sync_status: fc.history_sync_status,
+      last_history_sync_reason: fc.last_history_sync_reason,
+      merge_decision,
+      degraded_write_blocked,
+    });
 
     const conversationId = current.id;
     if (leadColumnAvailable) {
@@ -412,20 +891,12 @@ async function upsertConversation(
         `
         UPDATE chat_conversations SET
           external_fast_id = COALESCE($1, external_fast_id),
-          contact_name = COALESCE(NULLIF(TRIM($2::text), ''), contact_name),
-          profile_name = COALESCE(NULLIF(TRIM($3::text), ''), profile_name),
-          phone_number = COALESCE($4, phone_number),
+          contact_name = $2,
+          profile_name = $3,
+          phone_number = $4,
           status = COALESCE($5, status),
-          last_message_preview = CASE
-            WHEN ($7::timestamptz) IS NULL THEN COALESCE($6, last_message_preview)
-            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN COALESCE($6, last_message_preview)
-            ELSE last_message_preview
-          END,
-          last_message_at = CASE
-            WHEN ($7::timestamptz) IS NULL THEN last_message_at
-            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN $7::timestamptz
-            ELSE last_message_at
-          END,
+          last_message_preview = $6,
+          last_message_at = $7::timestamptz,
           unread_count = COALESCE($8, unread_count),
           metadata = CASE
             WHEN COALESCE(metadata->>'link_source', 'system') = 'manual'
@@ -441,23 +912,41 @@ async function upsertConversation(
             ELSE $11
           END,
           phone_key = COALESCE($12, phone_key),
+          canonical_chat_id = $13,
+          canonical_phone = $14,
+          display_name = $15,
+          avatar_url = $16,
+          identity_source = $17,
+          identity_strength = $18,
+          identity_state = $19,
+          history_sync_status = $20,
+          last_history_sync_reason = $21,
           updated_at = now()
-        WHERE id = $13
+        WHERE id = $22
         RETURNING *
         `,
         [
           chatData.externalFastId,
-          chatData.contactName,
-          chatData.profileName,
-          chatData.phoneNumber,
+          mergedContactName,
+          mergedProfileName,
+          mergedPhone,
           chatData.status || 'open',
-          chatData.lastMessagePreview,
-          chatData.lastMessageAt,
+          mergedPreview,
+          mergedLastAt,
           chatData.unreadCount || 0,
           JSON.stringify(mergedMeta),
           nextClientId,
           nextLeadId,
           phoneKey,
+          fc.canonical_chat_id,
+          fc.canonical_phone,
+          fc.display_name,
+          fc.avatar_url,
+          fc.identity_source,
+          fc.identity_strength,
+          fc.identity_state,
+          fc.history_sync_status,
+          fc.last_history_sync_reason,
           conversationId,
         ]
       );
@@ -466,20 +955,12 @@ async function upsertConversation(
         `
         UPDATE chat_conversations SET
           external_fast_id = COALESCE($1, external_fast_id),
-          contact_name = COALESCE(NULLIF(TRIM($2::text), ''), contact_name),
-          profile_name = COALESCE(NULLIF(TRIM($3::text), ''), profile_name),
-          phone_number = COALESCE($4, phone_number),
+          contact_name = $2,
+          profile_name = $3,
+          phone_number = $4,
           status = COALESCE($5, status),
-          last_message_preview = CASE
-            WHEN ($7::timestamptz) IS NULL THEN COALESCE($6, last_message_preview)
-            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN COALESCE($6, last_message_preview)
-            ELSE last_message_preview
-          END,
-          last_message_at = CASE
-            WHEN ($7::timestamptz) IS NULL THEN last_message_at
-            WHEN last_message_at IS NULL OR $7::timestamptz >= last_message_at THEN $7::timestamptz
-            ELSE last_message_at
-          END,
+          last_message_preview = $6,
+          last_message_at = $7::timestamptz,
           unread_count = COALESCE($8, unread_count),
           metadata = CASE
             WHEN COALESCE(metadata->>'link_source', 'system') = 'manual'
@@ -491,22 +972,40 @@ async function upsertConversation(
             ELSE $10
           END,
           phone_key = COALESCE($11, phone_key),
+          canonical_chat_id = $12,
+          canonical_phone = $13,
+          display_name = $14,
+          avatar_url = $15,
+          identity_source = $16,
+          identity_strength = $17,
+          identity_state = $18,
+          history_sync_status = $19,
+          last_history_sync_reason = $20,
           updated_at = now()
-        WHERE id = $12
+        WHERE id = $21
         RETURNING *
         `,
         [
           chatData.externalFastId,
-          chatData.contactName,
-          chatData.profileName,
-          chatData.phoneNumber,
+          mergedContactName,
+          mergedProfileName,
+          mergedPhone,
           chatData.status || 'open',
-          chatData.lastMessagePreview,
-          chatData.lastMessageAt,
+          mergedPreview,
+          mergedLastAt,
           chatData.unreadCount || 0,
           JSON.stringify(mergedMeta),
           nextClientId,
           phoneKey,
+          fc.canonical_chat_id,
+          fc.canonical_phone,
+          fc.display_name,
+          fc.avatar_url,
+          fc.identity_source,
+          fc.identity_strength,
+          fc.identity_state,
+          fc.history_sync_status,
+          fc.last_history_sync_reason,
           conversationId,
         ]
       );
@@ -538,18 +1037,66 @@ async function upsertConversation(
           : match.confidence === 'ambiguous'
             ? 'review_required'
             : 'unlinked';
-    const whatsappProfilePhoto = extractUazapiChatImageUrl(
+
+    const insertPhoneDigits = chatData.phoneNumber?.trim() || null;
+    const insertContactName = mergeContactNameForUpsert(
+      null,
+      chatData.contactName,
+      insertPhoneDigits,
+      chatData.externalChatId
+    );
+    const insertProfileName = mergeProfileNameForUpsert(
+      null,
+      chatData.profileName,
+      insertContactName,
+      insertPhoneDigits,
+      chatData.externalChatId
+    );
+    const insertPhone = mergePhoneForUpsert(null, chatData.phoneNumber);
+
+    const insertMetaBase = mergeChatMetadataForIdentity(
+      {},
       chatData.metadata as Record<string, unknown> | null
     );
     const metadata = {
-      ...(chatData.metadata || {}),
+      ...insertMetaBase,
       ...buildMatchMetadata(match),
-      ...(whatsappProfilePhoto ? { whatsapp_profile_photo: whatsappProfilePhoto } : {}),
       link_source: linkSource,
       link_confidence: linkConfidence,
       link_state: linkState,
       created_by_sync_at: new Date().toISOString(),
     };
+
+    const insertCanon = computeCanonicalIdentityFromChatPayload({
+      external_chat_id: chatData.externalChatId,
+      phone_number: insertPhone,
+      contact_name: insertContactName,
+      profile_name: insertProfileName,
+      metadata: metadata as Record<string, unknown>,
+    });
+    const { merged: fcInsert } = mergeCanonicalIdentityForUpsert(
+      chatData.externalChatId,
+      null,
+      insertCanon,
+      {
+        incomingMetadataHasEmptyImages: incomingChatPayloadHasEmptyProfileImages(
+          chatData.metadata as Record<string, unknown>
+        ),
+      }
+    );
+    logUazChat('info', {
+      event_type: 'conversation_upsert',
+      phase: 'canonical_identity_insert',
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      provider_chat_id_raw: chatData.externalChatId,
+      canonical_chat_id: fcInsert.canonical_chat_id,
+      identity_state: fcInsert.identity_state,
+      history_sync_status: fcInsert.history_sync_status,
+      last_history_sync_reason: fcInsert.last_history_sync_reason,
+      merge_decision: 'insert_incoming_only',
+    });
 
     if (leadColumnAvailable) {
       result = await pool.query(
@@ -558,9 +1105,12 @@ async function upsertConversation(
           user_id, instance_id, external_chat_id, external_fast_id,
           contact_name, profile_name, phone_number, status,
           last_message_preview, last_message_at, unread_count, metadata,
-          client_id, lead_id, phone_key
+          client_id, lead_id, phone_key,
+          canonical_chat_id, canonical_phone, display_name, avatar_url,
+          identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15,
+          $16, $17, $18, $19, $20, $21, $22, $23, $24)
         RETURNING *
         `,
         [
@@ -568,9 +1118,9 @@ async function upsertConversation(
           instance.id,
           chatData.externalChatId,
           chatData.externalFastId,
-          chatData.contactName,
-          chatData.profileName,
-          chatData.phoneNumber,
+          insertContactName,
+          insertProfileName,
+          insertPhone,
           chatData.status,
           chatData.lastMessagePreview,
           chatData.lastMessageAt,
@@ -579,6 +1129,15 @@ async function upsertConversation(
           clientId,
           leadId,
           phoneKey,
+          fcInsert.canonical_chat_id,
+          fcInsert.canonical_phone,
+          fcInsert.display_name,
+          fcInsert.avatar_url,
+          fcInsert.identity_source,
+          fcInsert.identity_strength,
+          fcInsert.identity_state,
+          fcInsert.history_sync_status,
+          fcInsert.last_history_sync_reason,
         ]
       );
     } else {
@@ -588,9 +1147,12 @@ async function upsertConversation(
           user_id, instance_id, external_chat_id, external_fast_id,
           contact_name, profile_name, phone_number, status,
           last_message_preview, last_message_at, unread_count, metadata,
-          client_id, phone_key
+          client_id, phone_key,
+          canonical_chat_id, canonical_phone, display_name, avatar_url,
+          identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14,
+          $15, $16, $17, $18, $19, $20, $21, $22, $23)
         RETURNING *
         `,
         [
@@ -598,9 +1160,9 @@ async function upsertConversation(
           instance.id,
           chatData.externalChatId,
           chatData.externalFastId,
-          chatData.contactName,
-          chatData.profileName,
-          chatData.phoneNumber,
+          insertContactName,
+          insertProfileName,
+          insertPhone,
           chatData.status,
           chatData.lastMessagePreview,
           chatData.lastMessageAt,
@@ -608,6 +1170,15 @@ async function upsertConversation(
           JSON.stringify(metadata),
           clientId,
           phoneKey,
+          fcInsert.canonical_chat_id,
+          fcInsert.canonical_phone,
+          fcInsert.display_name,
+          fcInsert.avatar_url,
+          fcInsert.identity_source,
+          fcInsert.identity_strength,
+          fcInsert.identity_state,
+          fcInsert.history_sync_status,
+          fcInsert.last_history_sync_reason,
         ]
       );
     }
@@ -690,16 +1261,42 @@ async function saveMessage(
     metadata?: any;
     skipUnreadUpdate?: boolean;
     resetUnread?: boolean;
+    /** Força kind no contrato (ex.: image no envio pelo painel). */
+    messageKind?: ChatMessageKind | null;
   }
-) {
+): Promise<string | null> {
   const saveId = randomUUID().substring(0, 8);
-  console.log(`[SaveMessage ${saveId}] Starting save`, {
-    conversationId,
+  const rawMeta =
+    payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
+  let mediaArr: ChatMediaItem[] = Array.isArray(payload.media)
+    ? (payload.media as ChatMediaItem[])
+    : payload.media
+      ? [payload.media as ChatMediaItem]
+      : [];
+  mediaArr = sanitizeMediaItemsForDb(mediaArr);
+  const bodyCoerced = ensurePlainString(payload.body ?? '');
+  const bodyForInsert = bodyCoerced.length > 0 ? bodyCoerced : null;
+  const messageContract = buildMessageContract({
     direction,
-    externalMessageId: payload.externalMessageId,
-    bodyPreview: payload.body?.substring(0, 50),
-    hasMedia: !!payload.media,
+    body: bodyForInsert,
+    media: mediaArr,
+    kindHint: payload.messageKind ?? null,
+    externalMessageId: payload.externalMessageId ?? null,
+    status: payload.status ?? null,
   });
+  const metadataMerged = attachContractToMetadata(rawMeta as Record<string, unknown>, messageContract);
+
+  const saveVerbose = isChatSaveVerboseLogs();
+  if (saveVerbose) {
+    console.log(`[SaveMessage ${saveId}] Starting save`, {
+      conversationId,
+      direction,
+      externalMessageId: payload.externalMessageId,
+      bodyPreview: (bodyForInsert ?? '').substring(0, 50),
+      hasMedia: mediaArr.length > 0,
+      kind: messageContract.kind,
+    });
+  }
 
   try {
     const messageResult = await pool.query(
@@ -714,29 +1311,34 @@ async function saveMessage(
       status = COALESCE(EXCLUDED.status, chat_messages.status),
       metadata = EXCLUDED.metadata,
       sent_at = COALESCE(EXCLUDED.sent_at, chat_messages.sent_at),
-      body = COALESCE(EXCLUDED.body, chat_messages.body)
+      body = COALESCE(EXCLUDED.body, chat_messages.body),
+      media = CASE
+        WHEN EXCLUDED.media IS NOT NULL
+          AND jsonb_typeof(EXCLUDED.media) = 'array'
+          AND jsonb_array_length(EXCLUDED.media) > 0
+        THEN EXCLUDED.media
+        ELSE COALESCE(chat_messages.media, EXCLUDED.media)
+      END
       RETURNING id, created_at
   `,
     [
       conversationId,
       direction,
       payload.externalMessageId,
-      payload.body,
-      JSON.stringify(payload.media || []),
+      bodyForInsert,
+      JSON.stringify(mediaArr.length > 0 ? mediaArr : []),
       payload.status,
       payload.sentAt,
-      JSON.stringify(payload.metadata || {}),
+      JSON.stringify(metadataMerged),
     ]
   );
 
     if (messageResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] No row returned from message insert`);
-    } else {
-      // Verificar se foi insert ou update comparando created_at com o timestamp atual
+    } else if (saveVerbose) {
       const messageCreatedAt = new Date(messageResult.rows[0]?.created_at).getTime();
       const now = Date.now();
-      const wasInsert = (now - messageCreatedAt) < 2000; // Se foi criado há menos de 2 segundos, provavelmente foi insert
-      
+      const wasInsert = (now - messageCreatedAt) < 2000;
       console.log(`[SaveMessage ${saveId}] Message saved successfully`, {
         messageId: messageResult.rows[0]?.id,
         wasInsert,
@@ -747,10 +1349,9 @@ async function saveMessage(
     const unreadShouldReset = payload.resetUnread === true;
     const skipUnread = payload.skipUnreadUpdate === true;
     const effectiveSentAt = payload.sentAt || new Date();
-    const normalizedBody = typeof payload.body === 'string' ? payload.body.trim() : '';
-    const hasMedia =
-      Array.isArray(payload.media) ? payload.media.length > 0 : Boolean(payload.media);
-    const messagePreview = normalizedBody || (hasMedia ? '[Mídia]' : null);
+    const hasMedia = mediaArr.length > 0;
+    const messagePreview =
+      bodyCoerced.length > 0 ? bodyCoerced : hasMedia ? '[Mídia]' : null;
 
     const conversationResult = await pool.query(
       `
@@ -786,7 +1387,7 @@ async function saveMessage(
 
     if (conversationResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] Conversation not found for update`, { conversationId });
-    } else {
+    } else if (saveVerbose) {
       const updated = conversationResult.rows[0];
       console.log(`[SaveMessage ${saveId}] Conversation updated successfully`, {
         conversationId: updated?.id,
@@ -798,6 +1399,8 @@ async function saveMessage(
         newMessagePreview: messagePreview?.substring(0, 50),
       });
     }
+
+    return messageResult.rows[0]?.id ?? null;
   } catch (error: any) {
     console.error(`[SaveMessage ${saveId}] Database error:`, {
       error: error.message,
@@ -850,9 +1453,12 @@ export async function listInstances(req: AuthRequest, res: Response) {
 }
 
 export async function createInstance(req: AuthRequest, res: Response) {
+  const verboseCreate = isUazIntegrationVerboseLogs();
   try {
-    console.log('[CreateInstance] Starting instance creation...');
-    
+    if (verboseCreate) {
+      console.log('[CreateInstance] Starting instance creation...');
+    }
+
     if (!isUazapiAdminConfigured()) {
       console.error('[CreateInstance] UAZAPI_ADMIN_TOKEN ausente ou em branco no servidor');
       res.status(503).json({
@@ -866,13 +1472,14 @@ export async function createInstance(req: AuthRequest, res: Response) {
     }
 
     const userId = req.userId!;
-    console.log('[CreateInstance] User ID:', userId);
-    
+
     // Validar dados
     let data;
     try {
       data = instanceSchema.parse(req.body);
-      console.log('[CreateInstance] Validated data:', { name: data.name });
+      if (verboseCreate) {
+        console.log('[CreateInstance] Validated data:', { name: data.name });
+      }
     } catch (validationError: any) {
       console.error('[CreateInstance] Validation error:', validationError.errors);
       res.status(400).json({ 
@@ -882,20 +1489,36 @@ export async function createInstance(req: AuthRequest, res: Response) {
       return;
     }
 
+    const dupEarly = await pool.query(`SELECT id FROM chat_instances WHERE user_id = $1 AND name = $2`, [
+      userId,
+      data.name,
+    ]);
+    if (dupEarly.rowCount && dupEarly.rowCount > 0) {
+      res.status(409).json({
+        error: 'Já existe uma instância com este nome para sua conta.',
+        code: 'DUPLICATE_INSTANCE_NAME',
+      });
+      return;
+    }
+
     // Criar instância na UazAPI
     let remoteInstance: AnyObject;
     try {
-      console.log('[CreateInstance] Calling UazAPI createInstance...');
+      if (verboseCreate) {
+        console.log('[CreateInstance] Calling UazAPI createInstance...');
+      }
       remoteInstance = (await uazapiService.createInstance(
       data.name,
       data.metadata
     )) as AnyObject;
-      
-      console.log('[CreateInstance] UazAPI response received:', {
-        hasInstance: !!remoteInstance?.instance,
-        hasToken: !!(remoteInstance?.instance?.token || remoteInstance?.token),
-        keys: Object.keys(remoteInstance || {}),
-      });
+
+      if (verboseCreate) {
+        console.log('[CreateInstance] UazAPI response received:', {
+          hasInstance: !!remoteInstance?.instance,
+          hasToken: !!(remoteInstance?.instance?.token || remoteInstance?.token),
+          keys: Object.keys(remoteInstance || {}),
+        });
+      }
     } catch (uazapiError: any) {
       console.error('[CreateInstance] UazAPI error:', {
         message: uazapiError.message,
@@ -917,15 +1540,20 @@ export async function createInstance(req: AuthRequest, res: Response) {
     const instanceName = instanceInfo?.name || instanceInfo?.instanceName || data.name;
     const instanceStatus = instanceInfo?.status || 'disconnected';
     
-    console.log('[CreateInstance] Extracted info:', {
-      instanceToken: instanceToken ? '***' + instanceToken.slice(-4) : 'MISSING',
-      instanceName,
-      instanceStatus,
-    });
-    
+    if (verboseCreate) {
+      console.log('[CreateInstance] Extracted info:', {
+        instanceToken: instanceToken ? '***' + instanceToken.slice(-4) : 'MISSING',
+        instanceName,
+        instanceStatus,
+      });
+    }
+
     if (!instanceToken) {
-      console.error('[CreateInstance] No token returned from UazAPI:', {
-        remoteInstance: JSON.stringify(remoteInstance).substring(0, 500),
+      logUazChat('error', {
+        event_type: 'create_instance_no_token',
+        user_id: userId,
+        phase: 'uazapi_response',
+        detail: 'resposta sem token; keys=' + Object.keys(remoteInstance || {}).join(','),
       });
       res.status(500).json({ 
         error: 'Token da instância não foi retornado pela UazAPI',
@@ -933,6 +1561,31 @@ export async function createInstance(req: AuthRequest, res: Response) {
       });
       return;
     }
+
+    const userMeta = (data.metadata || {}) as Record<string, unknown>;
+    const remoteObj =
+      remoteInstance && typeof remoteInstance === 'object' && !Array.isArray(remoteInstance)
+        ? { ...(remoteInstance as Record<string, unknown>) }
+        : {};
+    const syncCfg = normalizeSyncConfigFromInput(userMeta);
+    const mergedMetadata: Record<string, unknown> = {
+      ...remoteObj,
+      phoneNumber: userMeta.phoneNumber ?? remoteObj.phoneNumber,
+      connectionName: userMeta.connectionName ?? remoteObj.connectionName,
+      sync_on_connect: syncCfg.sync_on_connect,
+      sync_mode: syncCfg.sync_mode,
+      /** Chat: instância visível/ativa no painel (padrão true; Etapa 4 correção). */
+      enabled_in_chat: true,
+    };
+
+    logUazChat('info', {
+      event_type: 'instance_sync_config_persisted',
+      user_id: userId,
+      phase: 'create_instance',
+      sync_on_connect: syncCfg.sync_on_connect,
+      sync_mode: syncCfg.sync_mode,
+      detail: 'metadata mesclado com resposta UazAPI + Etapa 4',
+    });
 
     // Salvar no banco
     try {
@@ -942,13 +1595,6 @@ export async function createInstance(req: AuthRequest, res: Response) {
         user_id, name, external_instance_name, instance_token, status, metadata
       )
       VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (user_id, name)
-      DO UPDATE SET
-        external_instance_name = EXCLUDED.external_instance_name,
-        instance_token = EXCLUDED.instance_token,
-        status = EXCLUDED.status,
-        metadata = EXCLUDED.metadata,
-        updated_at = now()
       RETURNING *
     `,
       [
@@ -957,13 +1603,25 @@ export async function createInstance(req: AuthRequest, res: Response) {
           instanceName,
           instanceToken,
           instanceStatus,
-        JSON.stringify(remoteInstance || {}),
+        JSON.stringify(mergedMetadata),
       ]
     );
 
-      console.log('[CreateInstance] Instance saved to database:', {
-        id: inserted.rows[0]?.id,
-        name: inserted.rows[0]?.name,
+      if (verboseCreate) {
+        console.log('[CreateInstance] Instance saved to database:', {
+          id: inserted.rows[0]?.id,
+          name: inserted.rows[0]?.name,
+        });
+      }
+
+      const tenantId = await resolveTenantIdForUser(userId);
+      logUazChat('info', {
+        event_type: 'create_instance_success',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: inserted.rows[0]?.id,
+        external_instance_name: inserted.rows[0]?.external_instance_name ?? null,
+        phase: 'persisted',
       });
 
     res.status(201).json(inserted.rows[0]);
@@ -971,8 +1629,33 @@ export async function createInstance(req: AuthRequest, res: Response) {
       console.error('[CreateInstance] Database error:', {
         message: dbError.message,
         code: dbError.code,
-        detail: dbError.detail,
       });
+      try {
+        await uazapiService.disconnectInstance(instanceToken);
+        logUazChat('warn', {
+          event_type: 'create_instance_remote_disconnect_after_db_fail',
+          user_id: userId,
+          external_instance_name: instanceName,
+          phase: 'compensation',
+          detail:
+            'INSERT local falhou; best-effort disconnect na UazAPI para reduzir instância órfã ativa',
+        });
+      } catch (cleanupErr: any) {
+        logUazChat('warn', {
+          event_type: 'create_instance_remote_cleanup_failed',
+          user_id: userId,
+          external_instance_name: instanceName,
+          phase: 'compensation',
+          detail: cleanupErr?.message || 'disconnect após falha no banco',
+        });
+      }
+      if (dbError.code === '23505') {
+        res.status(409).json({
+          error: 'Já existe uma instância com este nome para sua conta.',
+          code: 'DUPLICATE_INSTANCE_NAME',
+        });
+        return;
+      }
       res.status(500).json({ 
         error: 'Failed to save instance to database',
         details: dbError.message,
@@ -991,11 +1674,73 @@ export async function createInstance(req: AuthRequest, res: Response) {
   }
 }
 
+const BOOTSTRAP_CONV_LIMIT = 200;
+/** Máximo de conversas não-grupo para tentar `/message/find` no bootstrap (evita N chamadas em grupos). */
+const BOOTSTRAP_MAX_CHATS_FOR_MESSAGES = 40;
+/** Últimas N mensagens por chat no bootstrap e default do sync manual de mensagens. */
+const BOOTSTRAP_MSG_LIMIT = 50;
+/** Teto do body enviado ao POST /message/find (a UazAPI costuma ecoar o limit na resposta). */
+const UAZ_MESSAGE_FIND_MAX_LIMIT = 100;
+/** Após sync manual de conversas: no máximo N chats recebem /message/find em lote (só candidatos). */
+const MANUAL_POST_SYNC_MESSAGE_BATCH_MAX = 10;
+/** Debounce do POST /conversations/:id/messages/sync (evita duplo disparo do frontend). */
+const MESSAGE_SYNC_HTTP_DEBOUNCE_MS = 30_000;
+/** Conversa já `synced` + identidade resolvida: não repetir full logo em seguida sem `force`. */
+const MESSAGE_SYNC_RECENT_FULL_SKIP_MS = 30_000;
+/** Evita duas execuções HTTP sobrepostas da mesma conversa (lock por processo). */
+const MESSAGE_SYNC_IN_FLIGHT_LOCK_MS = 12_000;
+
+/** conversation_id → timestamp ms do início do último sync em andamento (ou muito recente). */
+const conversationMessageSyncInFlight = new Map<string, number>();
+
+function shouldSkipTerminalIdentityRefreshAfterMessageSync(crow: {
+  identity_state: string | null;
+  canonical_chat_id: string | null;
+  display_name: string | null;
+  contact_name: string | null;
+  avatar_url: string | null;
+  metadata: Record<string, unknown> | null;
+}): boolean {
+  if (crow.identity_state !== 'resolved') return false;
+  if (!crow.canonical_chat_id || !String(crow.canonical_chat_id).trim()) return false;
+  const name = String(crow.display_name || crow.contact_name || '').trim();
+  if (name.length < 2) return false;
+  const meta = crow.metadata || {};
+  const portrait =
+    (crow.avatar_url && String(crow.avatar_url).trim()) ||
+    (typeof meta.whatsapp_profile_photo === 'string' && meta.whatsapp_profile_photo.trim()) ||
+    (typeof meta.image === 'string' && meta.image.trim());
+  return !!portrait;
+}
+
+function mediaItemsHaveRenderableUrl(items: ChatMediaItem[]): boolean {
+  return items.some((it) => typeof it.url === 'string' && it.url.trim().length > 0);
+}
+
+const IDENTITY_BATCH_CONCURRENCY = 5;
+
+function classifyWebhookError(error: any): UazChatLogFields['webhook_result'] {
+  const st = error?.status as number | undefined;
+  if (st === 401 || st === 403) return 'auth_error';
+  if (st === 400) return 'invalid_payload';
+  return 'failed';
+}
+
 /**
  * Função auxiliar para configurar webhook automaticamente
  * Não falha se houver erro, apenas loga
  */
 async function autoConfigureWebhook(instance: ChatInstanceRow) {
+  const tenantId = await resolveTenantIdForUser(instance.user_id);
+  const baseLog: UazChatLogFields = {
+    event_type: 'webhook_auto_configure',
+    tenant_id: tenantId,
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    phase: 'start',
+  };
+
   try {
     const resolvedUrl =
       process.env.UAZAPI_WEBHOOK_URL ||
@@ -1004,6 +1749,11 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         : null);
 
     if (!resolvedUrl) {
+      logUazChat('warn', {
+        ...baseLog,
+        webhook_result: 'no_url',
+        detail: 'UAZAPI_WEBHOOK_URL/PUBLIC_API_URL ausente',
+      });
       console.warn('[Auto-Webhook] Skipped: URL not configured', {
         instance: instance.external_instance_name,
         hasUAZAPI_WEBHOOK_URL: !!process.env.UAZAPI_WEBHOOK_URL,
@@ -1012,22 +1762,28 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       return;
     }
 
-    // Verificar se webhook já está configurado
-    // NOTA: Não pular se a instância foi recriada (token mudou), pois o webhook precisa ser reconfigurado
-    // NOTA: Sempre reconfigurar se o token mudou (instância foi recriada)
     const existingWebhook = instance.metadata?.webhook;
     const tokenChanged = instance.metadata?.tokenChanged || false;
-    
-    // Se o token mudou, SEMPRE reconfigurar (instância foi recriada)
+
     if (tokenChanged) {
+      logUazChat('info', {
+        ...baseLog,
+        phase: 'token_changed',
+        detail: 'forçando reconfiguração após troca de token',
+      });
       console.log('[Auto-Webhook] Token changed, forcing webhook reconfiguration', {
         instance: instance.external_instance_name,
         instanceId: instance.id,
         oldWebhookUrl: existingWebhook?.url,
         newWebhookUrl: resolvedUrl,
       });
-      // Continuar para reconfigurar
     } else if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure) {
+      logUazChat('info', {
+        ...baseLog,
+        webhook_result: 'skipped',
+        phase: 'already_configured',
+        detail: resolvedUrl,
+      });
       console.log('[Auto-Webhook] Already configured, skipping', {
         instance: instance.external_instance_name,
         url: resolvedUrl,
@@ -1036,6 +1792,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       return;
     }
 
+    logUazChat('info', { ...baseLog, phase: 'calling_uazapi', detail: resolvedUrl });
     console.log('[Auto-Webhook] Configuring webhook...', {
       instance: instance.external_instance_name,
       instanceId: instance.id,
@@ -1060,22 +1817,19 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       webhookBody.secret = secret;
     }
 
-    console.log('[Auto-Webhook] Sending webhook configuration to UazAPI:', {
-      instanceId: instance.id,
-      webhookUrl: resolvedUrl,
-      events: defaultEvents,
-      hasSecret: !!secret,
-    });
-
     const webhookResponse = await uazapiService.configureWebhook(instance.instance_token, webhookBody);
-    
+
+    logUazChat('info', {
+      ...baseLog,
+      phase: 'uazapi_response',
+      webhook_result: 'success',
+      detail: JSON.stringify(webhookResponse).substring(0, 400),
+    });
     console.log('[Auto-Webhook] UazAPI webhook configuration response:', {
       instanceId: instance.id,
       response: JSON.stringify(webhookResponse).substring(0, 500),
     });
 
-    // Salvar no banco
-    // Remover flag tokenChanged após configurar webhook com sucesso
     await pool.query(
       `
       UPDATE chat_instances
@@ -1097,15 +1851,1364 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       ]
     );
 
+    logUazChat('info', {
+      ...baseLog,
+      phase: 'persisted',
+      webhook_result: 'success',
+      detail: 'webhook salvo em metadata',
+    });
     console.log('Webhook auto-configured successfully', {
       instance: instance.external_instance_name,
       url: resolvedUrl,
     });
   } catch (error: any) {
-    // Não falhar o processo principal se webhook falhar
+    const wr = classifyWebhookError(error);
+    logUazChat('warn', {
+      ...baseLog,
+      phase: 'error',
+      webhook_result: wr,
+      detail: error?.message || String(error),
+    });
     console.warn('Failed to auto-configure webhook (non-critical):', {
       error: error.message,
       instance: instance.external_instance_name,
+    });
+  }
+}
+
+type BootstrapSyncTrigger = 'instance_connected' | 'status_poll_connected' | string;
+
+async function mergeInstanceMetadata(instanceId: string, patch: Record<string, unknown>) {
+  await pool.query(
+    `UPDATE chat_instances SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(patch), instanceId]
+  );
+}
+
+/**
+ * Agenda bootstrap sync assíncrona (Etapa 1). Idempotente: não duplica run recente queued/running.
+ */
+async function scheduleBootstrapSyncIfNeeded(
+  userId: string,
+  instanceId: string,
+  trigger: BootstrapSyncTrigger
+): Promise<void> {
+  const tenantId = await resolveTenantIdForUser(userId);
+  const mdRes = await pool.query<{ metadata: any }>(
+    `SELECT metadata FROM chat_instances WHERE id = $1 AND user_id = $2`,
+    [instanceId, userId]
+  );
+  const md = mdRes.rows[0]?.metadata || {};
+  const soc = md.sync_on_connect;
+  const sm = normalizeSyncMode(md.sync_mode);
+  if (!shouldBootstrapHistory(md)) {
+    logUazChat('info', {
+      event_type: 'bootstrap_sync_skipped_by_config',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      phase: 'pre_schedule',
+      sync_on_connect: typeof soc === 'boolean' ? soc : null,
+      sync_mode: sm,
+      detail: 'sync_on_connect=false ou sync_mode=none — bootstrap de histórico não agendado',
+    });
+    return;
+  }
+
+  logUazChat('info', {
+    event_type: 'bootstrap_sync_config_resolved',
+    tenant_id: tenantId,
+    user_id: userId,
+    instance_id: instanceId,
+    sync_on_connect: typeof soc === 'boolean' ? soc : true,
+    sync_mode: sm,
+    detail: 'agendando bootstrap conforme metadata da instância',
+  });
+
+  const syncRunId = randomUUID();
+  const queuedAt = new Date().toISOString();
+  const bootstrapPatch = {
+    sync_run_id: syncRunId,
+    status: 'queued' as const,
+    queued_at: queuedAt,
+    trigger,
+  };
+
+  const r = await pool.query<ChatInstanceRow>(
+    `UPDATE chat_instances
+     SET metadata = jsonb_set(
+       COALESCE(metadata, '{}'::jsonb),
+       '{bootstrap_sync}',
+       $1::jsonb,
+       true
+     ),
+     updated_at = now()
+     WHERE id = $2 AND user_id = $3
+       AND status IN ('connected', 'open')
+       AND (
+         metadata->'bootstrap_sync' IS NULL
+         OR (metadata->'bootstrap_sync'->>'status') IN ('completed', 'failed')
+         OR (
+           (metadata->'bootstrap_sync'->>'status') IN ('running', 'queued')
+           AND (
+             COALESCE(
+               NULLIF(trim(metadata->'bootstrap_sync'->>'started_at'), ''),
+               NULLIF(trim(metadata->'bootstrap_sync'->>'queued_at'), '')
+             ) IS NULL
+             OR COALESCE(
+               (NULLIF(trim(metadata->'bootstrap_sync'->>'started_at'), ''))::timestamptz,
+               (NULLIF(trim(metadata->'bootstrap_sync'->>'queued_at'), ''))::timestamptz
+             ) < now() - interval '30 minutes'
+           )
+         )
+       )
+     RETURNING *`,
+    [JSON.stringify(bootstrapPatch), instanceId, userId]
+  );
+
+  if (r.rowCount === 0) {
+    logUazChat('info', {
+      event_type: 'bootstrap_sync_schedule_skip',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      sync_run_id: syncRunId,
+      phase: 'claim_failed',
+      detail: 'já em progresso ou instância não conectada',
+    });
+    return;
+  }
+
+  logUazChat('info', {
+    event_type: 'bootstrap_sync_scheduled',
+    tenant_id: tenantId,
+    user_id: userId,
+    instance_id: instanceId,
+    sync_run_id: syncRunId,
+    phase: 'queued',
+    trigger,
+  });
+
+  setImmediate(() => {
+    void runBootstrapSyncJob(userId, instanceId, syncRunId, trigger).catch(err => {
+      logUazChat('error', {
+        event_type: 'bootstrap_sync_unhandled',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: instanceId,
+        sync_run_id: syncRunId,
+        detail: err?.message || String(err),
+      });
+    });
+  });
+}
+
+/**
+ * Carrega GET /contacts (ou POST /contacts/list paginado) e indexa por MSISDN.
+ * Fonte oficial de agenda: nome + `jid` …@s.whatsapp.net para resolver histórico em conversas @lid.
+ */
+async function fetchUazContactCatalogMap(instanceToken: string): Promise<Map<string, UazContactCatalogEntry>> {
+  const rows: Record<string, unknown>[] = [];
+  try {
+    const raw = await uazapiService.getContacts(instanceToken);
+    if (Array.isArray(raw)) {
+      for (const r of raw) {
+        if (r && typeof r === 'object') rows.push(r as Record<string, unknown>);
+      }
+    }
+  } catch (e: unknown) {
+    logUazChat('warn', {
+      event_type: 'contacts_catalog',
+      phase: 'contacts_get_failed',
+      detail: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  if (rows.length === 0) {
+    let page = 1;
+    for (let guard = 0; guard < 60; guard++) {
+      try {
+        const resp = await uazapiService.listContactsPage(instanceToken, { page, pageSize: 1000 });
+        const contacts = (resp?.contacts as unknown[]) || [];
+        for (const c of contacts) {
+          if (c && typeof c === 'object') rows.push(c as Record<string, unknown>);
+        }
+        const pag = resp?.pagination as Record<string, unknown> | undefined;
+        if (pag?.hasNextPage !== true) break;
+        page += 1;
+      } catch (e: unknown) {
+        logUazChat('warn', {
+          event_type: 'contacts_catalog',
+          phase: 'contacts_list_page_failed',
+          detail: e instanceof Error ? e.message : String(e),
+        });
+        break;
+      }
+    }
+  }
+
+  return indexContactsByMsisdn(rows);
+}
+
+/**
+ * Segunda passagem: POST /chat/find com `wa_chatid` por JID — preenche nome/foto quando a lista
+ * agregada veio incompleta (comum em chats antigos).
+ */
+async function batchHydrateIdentitiesAfterChatListSync(
+  instance: ChatInstanceRow,
+  externalChatJids: string[],
+  ctx: {
+    tenantId: string | null;
+    syncRunId?: string | null;
+    trigger?: string | null;
+    eventType: string;
+    contactCatalog?: Map<string, UazContactCatalogEntry>;
+  }
+): Promise<{ attempted: number; updated: number }> {
+  const unique = [
+    ...new Set(
+      externalChatJids
+        .map(j => String(j).trim())
+        .filter(j => j.length > 0 && !j.endsWith('@g.us'))
+    ),
+  ];
+  const attempted = unique.length;
+  let updated = 0;
+  for (let i = 0; i < unique.length; i += IDENTITY_BATCH_CONCURRENCY) {
+    const chunk = unique.slice(i, i + IDENTITY_BATCH_CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map(async jid => {
+        try {
+          const row = await fetchAndUpsertRemoteChatIdentity(instance, jid, {
+            contactCatalog: ctx.contactCatalog,
+          });
+          return row ? 1 : 0;
+        } catch {
+          return 0;
+        }
+      })
+    );
+    for (const hit of results) updated += hit;
+    if (i + IDENTITY_BATCH_CONCURRENCY < unique.length) {
+      await new Promise(r => setTimeout(r, 80));
+    }
+  }
+  logUazChat('info', {
+    event_type: ctx.eventType,
+    phase: 'batch_identity_hydration_done',
+    tenant_id: ctx.tenantId,
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    sync_run_id: ctx.syncRunId ?? null,
+    trigger: ctx.trigger ?? null,
+    detail: `uniqueJids=${unique.length} upsertHits=${updated}`,
+  });
+  return { attempted, updated };
+}
+
+async function runBatchMessageSyncForRecentConversations(
+  instance: ChatInstanceRow,
+  userId: string,
+  ctx: {
+    tenantId: string | null;
+    syncRunId?: string | null;
+    trigger?: string;
+    eventType: string;
+    minTimestampMs?: number | null;
+    maxChats?: number;
+    /**
+     * Só conversas sem mensagens locais (evita fan-out inútil quando message.find volta vazio).
+     * Bootstrap e pós-sync manual: default true.
+     */
+    onlyWithoutLocalMessages?: boolean;
+  }
+): Promise<{ conversationsTried: number; messagesSaved: number }> {
+  const limitChats = ctx.maxChats ?? BOOTSTRAP_MAX_CHATS_FOR_MESSAGES;
+  const onlyEmpty = ctx.onlyWithoutLocalMessages !== false;
+  const emptyFilter = onlyEmpty
+    ? `AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.conversation_id = c.id)`
+    : '';
+
+  const convRows = await pool.query<{
+    id: string;
+    external_chat_id: string;
+    instance_id: string;
+    instance_token: string;
+  }>(
+    `
+      SELECT c.id, c.external_chat_id, c.instance_id, i.instance_token
+      FROM chat_conversations c
+      INNER JOIN chat_instances i ON i.id = c.instance_id
+      WHERE c.user_id = $1 AND c.instance_id = $2
+        AND c.external_chat_id NOT LIKE '%@g.us'
+        AND c.identity_state = 'resolved'
+        AND c.canonical_chat_id IS NOT NULL
+        ${emptyFilter}
+      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+      LIMIT $3
+    `,
+    [userId, instance.id, limitChats]
+  );
+
+  let messagesSaved = 0;
+  for (const row of convRows.rows) {
+    const r = await performSyncConversationMessagesForConversation(row, userId, {
+      limit: BOOTSTRAP_MSG_LIMIT,
+      syncRunId: ctx.syncRunId ?? null,
+      tenantId: ctx.tenantId,
+      trigger: ctx.trigger,
+      eventType: ctx.eventType,
+      minTimestampMs: ctx.minTimestampMs ?? null,
+      skipTerminalIdentityRefresh: true,
+    });
+    messagesSaved += r.synced;
+  }
+
+  logUazChat('info', {
+    event_type: ctx.eventType,
+    phase: 'batch_messages_after_chat_sync_done',
+    tenant_id: ctx.tenantId,
+    user_id: userId,
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    sync_run_id: ctx.syncRunId ?? null,
+    trigger: ctx.trigger ?? null,
+    detail: `chatsTried=${convRows.rows.length} messagesSaved=${messagesSaved} limitPerChat=${BOOTSTRAP_MSG_LIMIT} onlyWithoutLocalMessages=${onlyEmpty} maxChats=${limitChats}`,
+  });
+
+  return { conversationsTried: convRows.rows.length, messagesSaved };
+}
+
+async function performSyncConversationsForInstance(
+  instance: ChatInstanceRow,
+  opts: {
+    limit?: number;
+    filters?: Record<string, unknown>;
+    syncRunId?: string | null;
+    tenantId?: string | null;
+    trigger?: string;
+    eventType?: string;
+    /** Janela mínima (Etapa 4): filtra `wa_lastMsgTimestamp` na UazAPI e pós-filtro no app. */
+    sinceTimestampMs?: number | null;
+    /**
+     * Após upsert da lista do /chat/find, reconsulta cada JID para nome/foto/metadata completos.
+     * Default true.
+     */
+    hydrateIdentitiesAfterList?: boolean;
+    /**
+     * Após hidratação, executa /message/find nas conversas privadas mais recentes (teto BOOTSTRAP_MAX_CHATS_FOR_MESSAGES).
+     * Bootstrap mantém false e usa seu próprio loop (evita duplicar).
+     */
+    batchSyncRecentMessagesAfterList?: boolean;
+  }
+): Promise<{
+  total: number;
+  upserted: number;
+  identityHydrationAttempted?: number;
+  identityHydrationUpdated?: number;
+  batchMessagesSaved?: number;
+  batchConversationsTried?: number;
+}> {
+  const tenantId = opts.tenantId ?? (await resolveTenantIdForUser(instance.user_id));
+  const event_type = opts.eventType || 'sync_conversations';
+  const filters = opts.filters || {};
+  const limit = opts.limit ?? BOOTSTRAP_CONV_LIMIT;
+  const sort =
+    typeof filters.sort === 'string' && filters.sort.trim() ? filters.sort : '-wa_lastMsgTimestamp';
+  const offset = typeof filters.offset === 'number' ? filters.offset : 0;
+  const correlation_id = opts.syncRunId ?? randomUUID();
+  const instance_token_suffix = tokenSuffixForAudit(instance.instance_token);
+
+  let contactCatalog = new Map<string, UazContactCatalogEntry>();
+  try {
+    contactCatalog = await fetchUazContactCatalogMap(instance.instance_token);
+    logUazChat('info', {
+      event_type,
+      phase: 'contacts_catalog_ready',
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      sync_run_id: opts.syncRunId ?? null,
+      correlation_id,
+      contacts_index_size: contactCatalog.size,
+      uazapi_endpoint_primary: 'GET /contacts',
+      uazapi_endpoint_fallback: 'POST /contacts/list',
+      detail: 'agenda indexada por MSISDN para enriquecimento e uaz_message_find_chatid em @lid',
+    });
+  } catch (e: unknown) {
+    logUazChat('warn', {
+      event_type,
+      phase: 'contacts_catalog_unavailable',
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      sync_run_id: opts.syncRunId ?? null,
+      detail: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  const extraFilters: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(filters)) {
+    if (['sort', 'offset', 'limit', 'wa_isGroup'].includes(k)) continue;
+    extraFilters[k] = v;
+  }
+
+  if (opts.sinceTimestampMs != null && opts.sinceTimestampMs > 0) {
+    extraFilters['wa_lastMsgTimestamp'] = buildWaLastMsgTimestampFilter(opts.sinceTimestampMs);
+    logUazChat('info', {
+      event_type,
+      phase: 'sync_window_filter',
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      sync_run_id: opts.syncRunId ?? null,
+      detail: `UazAPI /chat/find: wa_lastMsgTimestamp ${extraFilters['wa_lastMsgTimestamp']}; fallback: pós-filtro por timestamp da linha`,
+    });
+  }
+
+  const explicitWaIsGroup = Object.prototype.hasOwnProperty.call(filters, 'wa_isGroup');
+
+  logUazChat('info', {
+    event_type,
+    phase: 'fetch_remote_chats',
+    tenant_id: tenantId,
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    sync_run_id: opts.syncRunId ?? null,
+    correlation_id,
+    trigger: opts.trigger ?? null,
+    detail: explicitWaIsGroup
+      ? 'single_request (wa_isGroup definido pelo cliente; grupos filtrados antes do upsert)'
+      : 'somente_nao_grupo (sem perna wa_isGroup:true; doc /chat/find)',
+  });
+
+  let chatsArray: any[] = [];
+  let remotePrivateRows = 0;
+  let remoteGroupRows = 0;
+  let remoteSupplementRows = 0;
+  let mergedAfterDedupe = 0;
+
+  if (explicitWaIsGroup) {
+    const payload: Record<string, unknown> = {
+      ...extraFilters,
+      limit,
+      sort,
+      offset,
+      wa_isGroup: filters.wa_isGroup,
+    };
+    const remoteChats = (await uazapiService.findChats(instance.instance_token, payload)) as AnyObject;
+    chatsArray = extractChatsArrayFromFindResponse(remoteChats).filter(
+      row => classifyChatRowForLog(row) !== 'group'
+    );
+    remotePrivateRows = chatsArray.filter(c => classifyChatRowForLog(c) === 'private').length;
+    remoteGroupRows = 0;
+    mergedAfterDedupe = chatsArray.length;
+    logSyncChatFindLegAudit({
+      event_type,
+      correlation_id,
+      sync_run_id: opts.syncRunId ?? null,
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      external_instance_name: instance.external_instance_name,
+      instance_token_suffix,
+      trigger: opts.trigger ?? null,
+      leg: 'explicit_wa_isGroup_client',
+      endpoint: '/chat/find',
+      request_body: payload,
+      raw_response: remoteChats,
+      extracted: chatsArray,
+    });
+  } else {
+    /**
+     * Sincronizamos apenas chats não-grupo: não chamamos `wa_isGroup: true` (evita poluir CRM com grupos).
+     * Perna principal: `wa_isGroup: false`; suplemento `!~@g.us` se a primeira vier vazia.
+     */
+    const payloadPrivate: Record<string, unknown> = {
+      ...extraFilters,
+      limit,
+      sort,
+      offset,
+      wa_isGroup: false,
+    };
+
+    const privResp = (await uazapiService.findChats(instance.instance_token, payloadPrivate)) as AnyObject;
+
+    const arrPriv = extractChatsArrayFromFindResponse(privResp);
+    remotePrivateRows = arrPriv.length;
+    remoteGroupRows = 0;
+
+    logSyncChatFindLegAudit({
+      event_type,
+      correlation_id,
+      sync_run_id: opts.syncRunId ?? null,
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      external_instance_name: instance.external_instance_name,
+      instance_token_suffix,
+      trigger: opts.trigger ?? null,
+      leg: 'wa_isGroup_false',
+      endpoint: '/chat/find',
+      request_body: payloadPrivate,
+      raw_response: privResp,
+      extracted: arrPriv,
+    });
+
+    const merged = new Map<string, any>();
+    for (const row of arrPriv) merged.set(chatFindRowDedupeKey(row), row);
+
+    /**
+     * Se `wa_isGroup: false` não retorna linhas (comportamento observado na API em algumas contas),
+     * usamos filtro no `wa_chatid` com operador `!~` (NOT LIKE), conforme documentação de `/chat/find`,
+     * para excluir JIDs de grupo (`@g.us`) e recuperar conversas 1:1 / não-grupo.
+     */
+    if (arrPriv.length === 0) {
+      const payloadSupplement: Record<string, unknown> = {
+        ...extraFilters,
+        limit,
+        sort,
+        offset,
+        wa_chatid: '!~@g.us',
+      };
+      try {
+        const suppResp = (await uazapiService.findChats(
+          instance.instance_token,
+          payloadSupplement
+        )) as AnyObject;
+        const arrSupp = extractChatsArrayFromFindResponse(suppResp);
+        remoteSupplementRows = arrSupp.length;
+        for (const row of arrSupp) merged.set(chatFindRowDedupeKey(row), row);
+        logSyncChatFindLegAudit({
+          event_type,
+          correlation_id,
+          sync_run_id: opts.syncRunId ?? null,
+          tenant_id: tenantId,
+          user_id: instance.user_id,
+          instance_id: instance.id,
+          external_instance_name: instance.external_instance_name,
+          instance_token_suffix,
+          trigger: opts.trigger ?? null,
+          leg: 'wa_chatid_not_like_g_us',
+          endpoint: '/chat/find',
+          request_body: payloadSupplement,
+          raw_response: suppResp,
+          extracted: arrSupp,
+        });
+        logUazChat('info', {
+          event_type,
+          phase: 'find_chats_supplement',
+          tenant_id: tenantId,
+          user_id: instance.user_id,
+          instance_id: instance.id,
+          external_instance_name: instance.external_instance_name,
+          sync_run_id: opts.syncRunId ?? null,
+          correlation_id,
+          remote_supplement_rows: remoteSupplementRows,
+          detail:
+            'POST /chat/find com wa_chatid !~@g.us porque wa_isGroup:false retornou 0 linhas',
+        });
+      } catch (supErr: unknown) {
+        logUazChat('warn', {
+          event_type,
+          phase: 'find_chats_supplement_error',
+          tenant_id: tenantId,
+          user_id: instance.user_id,
+          instance_id: instance.id,
+          external_instance_name: instance.external_instance_name,
+          sync_run_id: opts.syncRunId ?? null,
+          correlation_id,
+          detail: supErr instanceof Error ? supErr.message : String(supErr),
+        });
+      }
+    } else {
+      logUazChat('info', {
+        event_type,
+        phase: 'find_chats_supplement_skipped',
+        tenant_id: tenantId,
+        user_id: instance.user_id,
+        instance_id: instance.id,
+        external_instance_name: instance.external_instance_name,
+        sync_run_id: opts.syncRunId ?? null,
+        correlation_id,
+        remote_private_rows: arrPriv.length,
+        detail:
+          'perna suplementar wa_chatid !~@g.us não executada: wa_isGroup:false já retornou linhas',
+      });
+    }
+
+    chatsArray = Array.from(merged.values()).filter(row => classifyChatRowForLog(row) !== 'group');
+    mergedAfterDedupe = chatsArray.length;
+  }
+
+  if (opts.sinceTimestampMs != null && opts.sinceTimestampMs > 0) {
+    const beforeLen = chatsArray.length;
+    chatsArray = chatsArray.filter(row => {
+      const ts = extractWaLastMsgTimestampMs(row as Record<string, unknown>);
+      if (ts == null) return true;
+      return ts >= opts.sinceTimestampMs!;
+    });
+    logUazChat('info', {
+      event_type,
+      phase: 'sync_window_post_filter_chats',
+      tenant_id: tenantId,
+      user_id: instance.user_id,
+      instance_id: instance.id,
+      sync_run_id: opts.syncRunId ?? null,
+      detail: `chats antes=${beforeLen} depois=${chatsArray.length} (minMs=${opts.sinceTimestampMs})`,
+    });
+  }
+
+  const classifiedPrivate = chatsArray.filter(c => classifyChatRowForLog(c) === 'private').length;
+  const classifiedGroup = chatsArray.filter(c => classifyChatRowForLog(c) === 'group').length;
+  const classifiedUnknown = Math.max(0, chatsArray.length - classifiedPrivate - classifiedGroup);
+
+  let skippedNormalizeNull = 0;
+  let upsertedPrivate = 0;
+  let upsertedGroup = 0;
+  let upsertedUnknownKind = 0;
+
+  logUazChat('info', {
+    event_type,
+    phase: 'find_chats_merged',
+    tenant_id: tenantId,
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    sync_run_id: opts.syncRunId ?? null,
+    correlation_id,
+    trigger: opts.trigger ?? null,
+    remote_private_rows: remotePrivateRows,
+    remote_group_rows: remoteGroupRows,
+    remote_supplement_rows: remoteSupplementRows,
+    merged_after_dedupe: mergedAfterDedupe,
+    classified_private: classifiedPrivate,
+    classified_group: classifiedGroup,
+    classified_unknown: classifiedUnknown,
+  });
+
+  let upserted = 0;
+  const batchSize = 10;
+  const discardReasons: Record<string, number> = {};
+  let upsertFailed = 0;
+  const upsertErrorSamples: { external_chat_id: string | null; message: string }[] = [];
+
+  for (let i = 0; i < chatsArray.length; i += batchSize) {
+    const batch = chatsArray.slice(i, i + batchSize);
+    const promises = batch.map(async (item: any) => {
+      const norm = normalizeChatPayloadWithReason(item);
+      if (!norm.ok) {
+        skippedNormalizeNull += 1;
+        discardReasons[norm.reason] = (discardReasons[norm.reason] ?? 0) + 1;
+        return null;
+      }
+      const normalized = norm.data;
+      enrichNormalizedChatFromContactCatalog(normalized, contactCatalog);
+      const rowKind = classifyChatRowForLog(item);
+      try {
+        await upsertConversation(instance, normalized);
+        if (rowKind === 'group') upsertedGroup += 1;
+        else if (rowKind === 'private') upsertedPrivate += 1;
+        else upsertedUnknownKind += 1;
+        return true;
+      } catch (error) {
+        upsertFailed += 1;
+        if (upsertErrorSamples.length < 15) {
+          upsertErrorSamples.push({
+            external_chat_id: normalized.externalChatId,
+            message: (error as Error)?.message || String(error),
+          });
+        }
+        logUazChat('error', {
+          event_type,
+          phase: 'upsert_conversation_error',
+          tenant_id: tenantId,
+          user_id: instance.user_id,
+          instance_id: instance.id,
+          external_instance_name: instance.external_instance_name,
+          external_chat_id: normalized.externalChatId,
+          sync_run_id: opts.syncRunId ?? null,
+          correlation_id,
+          detail: (error as Error)?.message,
+        });
+        console.error(`Error upserting conversation:`, error);
+        return false;
+      }
+    });
+
+    const results = await Promise.all(promises);
+    upserted += results.filter(r => r === true).length;
+
+    if (i + batchSize < chatsArray.length) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
+
+  logUazChat('info', {
+    event_type,
+    phase: 'sync_conversations_pipeline_audit',
+    tenant_id: tenantId,
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    sync_run_id: opts.syncRunId ?? null,
+    correlation_id,
+    trigger: opts.trigger ?? null,
+    merged_input_rows: chatsArray.length,
+    backend_classified_private: classifiedPrivate,
+    backend_classified_group: classifiedGroup,
+    backend_classified_unknown: classifiedUnknown,
+    discard_reasons: discardReasons,
+    skipped_normalize_total: skippedNormalizeNull,
+    upserted_total: upserted,
+    upserted_private: upsertedPrivate,
+    upserted_group: upsertedGroup,
+    upserted_unknown_kind: upsertedUnknownKind,
+    upsert_failed_count: upsertFailed,
+    upsert_error_samples: upsertErrorSamples,
+    detail:
+      'API→merged→classify→normalize(discard)→upsert; comparar com sync_chat_find_leg_audit',
+  });
+
+  logUazChat('info', {
+    event_type,
+    phase: 'conversations_done',
+    tenant_id: tenantId,
+    user_id: instance.user_id,
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    sync_run_id: opts.syncRunId ?? null,
+    correlation_id,
+    skipped_normalize_null: skippedNormalizeNull,
+    upserted_total: upserted,
+    upserted_private: upsertedPrivate,
+    upserted_group: upsertedGroup,
+    upserted_unknown_kind: upsertedUnknownKind,
+    detail: `merged=${chatsArray.length} upserted=${upserted} skippedNull=${skippedNormalizeNull}`,
+  });
+
+  const jidsForHydration = chatsArray
+    .map((row: any) => pickExternalChatJidForUaz(row))
+    .filter((j): j is string => typeof j === 'string' && j.length > 0);
+
+  let identityHydrationAttempted = 0;
+  let identityHydrationUpdated = 0;
+  let batchMessagesSaved = 0;
+  let batchConversationsTried = 0;
+
+  if (opts.hydrateIdentitiesAfterList !== false) {
+    const idRes = await batchHydrateIdentitiesAfterChatListSync(instance, jidsForHydration, {
+      tenantId,
+      syncRunId: opts.syncRunId ?? null,
+      trigger: opts.trigger ?? null,
+      eventType: `${event_type}_identity_batch`,
+      contactCatalog,
+    });
+    identityHydrationAttempted = idRes.attempted;
+    identityHydrationUpdated = idRes.updated;
+  }
+
+  if (opts.batchSyncRecentMessagesAfterList === true) {
+    const msgRes = await runBatchMessageSyncForRecentConversations(instance, instance.user_id, {
+      tenantId,
+      syncRunId: opts.syncRunId ?? null,
+      trigger: opts.trigger ?? 'post_chat_sync',
+      eventType: `${event_type}_messages_batch`,
+      minTimestampMs: opts.sinceTimestampMs ?? null,
+      maxChats: MANUAL_POST_SYNC_MESSAGE_BATCH_MAX,
+      onlyWithoutLocalMessages: true,
+    });
+    batchMessagesSaved = msgRes.messagesSaved;
+    batchConversationsTried = msgRes.conversationsTried;
+  }
+
+  return {
+    total: chatsArray.length,
+    upserted,
+    identityHydrationAttempted,
+    identityHydrationUpdated,
+    batchMessagesSaved,
+    batchConversationsTried,
+  };
+}
+
+async function performSyncConversationMessagesForConversation(
+  conversation: {
+    id: string;
+    external_chat_id: string;
+    instance_id: string;
+    instance_token: string;
+  },
+  userId: string,
+  opts: {
+    limit?: number;
+    before?: string;
+    after?: string;
+    syncRunId?: string | null;
+    tenantId?: string | null;
+    trigger?: string;
+    eventType?: string;
+    /** Etapa 4: não persiste mensagens anteriores a este instante (corte no app; /message/find pode não filtrar por data). */
+    minTimestampMs?: number | null;
+    /**
+     * Quando true, não chama fetchAndUpsertRemoteChatIdentity ao final (ex.: lote de mensagens
+     * já precedido de hidratação em lote).
+     */
+    skipTerminalIdentityRefresh?: boolean;
+    /** Só para gates HTTP em `syncConversationMessages` (não reabilita re-save de todas as mensagens). */
+    force?: boolean;
+    /** Origem para logs (`sync_trigger_source`). */
+    syncTriggerSource?: string;
+  }
+): Promise<{
+  synced: number;
+  totalReturned: number;
+  messagesResponse: AnyObject;
+  history_sync_blocked?: boolean;
+  history_sync_reason?: string;
+  /** True quando o sync não disparou `fetchAndUpsertRemoteChatIdentity` ao final (identidade já ok ou opt-out). */
+  identity_refresh_skipped?: boolean;
+  skipped_existing_remote?: number;
+}> {
+  const tenantId = opts.tenantId ?? (await resolveTenantIdForUser(userId));
+  const event_type = opts.eventType || 'sync_messages';
+  const syncTriggerSource = opts.syncTriggerSource ?? opts.trigger ?? 'unspecified';
+
+  const requestedLimit = opts.limit ?? BOOTSTRAP_MSG_LIMIT;
+  /** Teto operacional 50: mesmo que o cliente ou a UazAPI sugira 100, não forçar carga maior. */
+  const effectiveLimit = Math.min(
+    BOOTSTRAP_MSG_LIMIT,
+    Math.min(UAZ_MESSAGE_FIND_MAX_LIMIT, Math.max(1, requestedLimit))
+  );
+
+  const convRow = await pool.query<{
+    phone_number: string | null;
+    metadata: Record<string, unknown> | null;
+    external_chat_id: string;
+    canonical_chat_id: string | null;
+    identity_state: string | null;
+    history_sync_status: string | null;
+    last_history_sync_reason: string | null;
+    display_name: string | null;
+    contact_name: string | null;
+    avatar_url: string | null;
+  }>(
+    `SELECT phone_number, metadata, external_chat_id,
+            canonical_chat_id, identity_state, history_sync_status, last_history_sync_reason,
+            display_name, contact_name, avatar_url
+     FROM chat_conversations WHERE id = $1 LIMIT 1`,
+    [conversation.id]
+  );
+  const crow = convRow.rows[0];
+  const extId = crow?.external_chat_id || conversation.external_chat_id;
+
+  if (!crow?.canonical_chat_id || crow?.identity_state === 'unresolved') {
+    const reason =
+      crow?.last_history_sync_reason ||
+      'history_sync_blocked_until_canonical_identity';
+    logUazChat('warn', {
+      event_type,
+      phase: 'history_sync_skipped_unresolved_identity',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: conversation.instance_id,
+      conversation_id: conversation.id,
+      provider_chat_id_raw: extId,
+      canonical_chat_id: crow?.canonical_chat_id ?? null,
+      identity_state: crow?.identity_state ?? null,
+      history_sync_status: crow?.history_sync_status ?? null,
+      history_sync_reason: reason,
+      uazapi_endpoint: 'POST /message/find',
+      sync_run_id: opts.syncRunId ?? null,
+      trigger: opts.trigger ?? null,
+      sync_trigger_source: syncTriggerSource,
+      detail:
+        'Fase C não executada: canonical_chat_id ausente ou identidade não resolvida — sem chamada a message/find',
+    });
+    return {
+      synced: 0,
+      totalReturned: 0,
+      messagesResponse: {},
+      history_sync_blocked: true,
+      history_sync_reason: reason,
+    };
+  }
+
+  const resolution = resolveMessageFindChatId({
+    external_chat_id: extId,
+    phone_number: crow?.phone_number,
+    metadata: crow?.metadata || {},
+    canonical_chat_id: crow?.canonical_chat_id,
+  });
+
+  const body: Record<string, unknown> = {
+    chatid: resolution.chatid,
+    limit: effectiveLimit,
+  };
+  if (opts.before) body.before = opts.before;
+  if (opts.after) body.after = opts.after;
+
+  logUazChat('info', {
+    event_type,
+    phase: 'fetch_remote_messages',
+    tenant_id: tenantId,
+    user_id: userId,
+    instance_id: conversation.instance_id,
+    conversation_id: conversation.id,
+    provider_chat_id_raw: extId,
+    canonical_chat_id: crow?.canonical_chat_id,
+    message_find_chatid: resolution.chatid,
+    message_find_strategy: resolution.strategy,
+    message_find_jid_class: resolution.jid_class,
+    identity_state: crow?.identity_state,
+    history_sync_status: crow?.history_sync_status,
+    uazapi_endpoint: 'POST /message/find',
+    sync_run_id: opts.syncRunId ?? null,
+    trigger: opts.trigger ?? null,
+    sync_trigger_source: syncTriggerSource,
+    detail: `message_find_limit_requested=${requestedLimit} effective=${effectiveLimit}`,
+  });
+
+  const messagesResponse = (await uazapiService.findMessages(
+    conversation.instance_token,
+    body
+  )) as AnyObject;
+
+  const extractMessages = (resp: AnyObject) =>
+    (Array.isArray(resp?.messages) && resp.messages) ||
+    (Array.isArray(resp?.data?.messages) && resp.data.messages) ||
+    (Array.isArray(resp?.data) && resp.data) ||
+    (Array.isArray(resp) ? resp : []);
+
+  const remoteMessages = extractMessages(messagesResponse) as AnyObject[];
+
+  const exRows = await pool.query<{ external_message_id: string }>(
+    `SELECT external_message_id FROM chat_messages
+     WHERE conversation_id = $1 AND external_message_id IS NOT NULL`,
+    [conversation.id]
+  );
+  const existingExternalIds = new Set(
+    exRows.rows
+      .map((r) => r.external_message_id)
+      .filter((id): id is string => Boolean(id && String(id).trim()))
+  );
+
+  if (
+    (typeof messagesResponse?.returnedMessages === 'number'
+      ? messagesResponse.returnedMessages
+      : remoteMessages.length) === 0
+  ) {
+    logUazChat('warn', {
+      event_type,
+      phase: 'message_find_empty',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: conversation.instance_id,
+      conversation_id: conversation.id,
+      provider_chat_id_raw: extId,
+      canonical_chat_id: crow?.canonical_chat_id ?? null,
+      message_find_chatid_used: resolution.chatid,
+      message_find_strategy: resolution.strategy,
+      message_find_jid_class: resolution.jid_class,
+      returnedMessages: messagesResponse?.returnedMessages ?? 0,
+      uazapi_endpoint: 'POST /message/find',
+      sync_run_id: opts.syncRunId ?? null,
+      trigger: opts.trigger ?? null,
+      sync_trigger_source: syncTriggerSource,
+      detail:
+        'sem mensagens retornadas para o canonical_chat_id (janela vazia ou provedor sem índice para este JID)',
+    });
+  }
+
+  /** Evita N chamadas à Uaz em sync grande; foco em mídia recebida sem URL no payload. */
+  const MAX_INCOMING_MEDIA_DOWNLOAD_PER_SYNC = 60;
+  let syncIncomingMediaDownloads = 0;
+
+  let saved = 0;
+  let skippedExistingRemote = 0;
+  for (const entry of remoteMessages) {
+    const message = mergeMessageEnvelope(entry);
+    if (!message) continue;
+
+    const direction = message.fromMe || message.wasSentByApi ? 'outgoing' : 'incoming';
+    const timestamp = message.timestamp || message.messageTimestamp;
+    let sentAt: Date | null = null;
+    if (timestamp) {
+      const numeric = Number(timestamp);
+      if (!Number.isNaN(numeric)) {
+        sentAt = new Date(numeric > 1e12 ? numeric : numeric * 1000);
+      }
+    }
+
+    if (
+      opts.minTimestampMs != null &&
+      opts.minTimestampMs > 0 &&
+      sentAt &&
+      sentAt.getTime() < opts.minTimestampMs
+    ) {
+      continue;
+    }
+
+    const msgExternalId =
+      message.id ||
+      message.messageId ||
+      message.messageid ||
+      message.key?.id ||
+      randomUUID();
+    const extIdStr = String(msgExternalId);
+    if (existingExternalIds.has(extIdStr)) {
+      skippedExistingRemote += 1;
+      continue;
+    }
+
+    const syncBody = extractMessageBody(message) || null;
+    let syncMedia = extractMediaInfo(message);
+    const syncKind = inferMessageTypeFromPayload(message);
+    const syncBodyPlain = ensurePlainString(syncBody ?? '');
+    if (syncMedia.length === 0 && syncKind !== 'text' && syncKind !== 'unknown') {
+      syncMedia = buildPersistentMediaStubForKind(message, syncKind);
+    }
+    const hasRenderableUrl = mediaItemsHaveRenderableUrl(syncMedia);
+    const tryMediaDownload =
+      !hasRenderableUrl &&
+      !syncBodyPlain &&
+      syncIncomingMediaDownloads < MAX_INCOMING_MEDIA_DOWNLOAD_PER_SYNC &&
+      ((direction === 'incoming' &&
+        (syncKind === 'image' ||
+          syncKind === 'video' ||
+          syncKind === 'audio' ||
+          syncKind === 'document' ||
+          syncKind === 'sticker' ||
+          syncKind === 'unknown')) ||
+        (direction === 'outgoing' && syncKind === 'unknown'));
+    if (tryMediaDownload) {
+      const hint: ChatMessageKind = syncKind === 'unknown' ? 'image' : syncKind;
+      const fromDl = await fetchIncomingMediaViaDownload(
+        conversation.instance_token,
+        message,
+        hint
+      );
+      if (fromDl.length > 0) {
+        syncMedia = fromDl;
+        syncIncomingMediaDownloads += 1;
+      } else {
+        const stubLeft =
+          syncMedia.length > 0 &&
+          syncMedia.some(
+            (it) =>
+              (it as ChatMediaItem & { persistentStub?: boolean }).persistentStub === true ||
+              (typeof it.url === 'string' && it.url.startsWith('data:'))
+          );
+        if (stubLeft) {
+          logUazChat('warn', {
+            event_type,
+            phase: 'media_download_failed_preserved_stub',
+            tenant_id: tenantId,
+            user_id: userId,
+            instance_id: conversation.instance_id,
+            conversation_id: conversation.id,
+            sync_run_id: opts.syncRunId ?? null,
+            sync_trigger_source: syncTriggerSource,
+            detail: `kind=${syncKind} external_message_id=${extIdStr}`,
+          });
+        } else if (syncKind !== 'unknown') {
+          syncMedia = buildPersistentMediaStubForKind(message, syncKind);
+          logUazChat('warn', {
+            event_type,
+            phase: 'media_download_failed_preserved_stub',
+            tenant_id: tenantId,
+            user_id: userId,
+            instance_id: conversation.instance_id,
+            conversation_id: conversation.id,
+            sync_run_id: opts.syncRunId ?? null,
+            sync_trigger_source: syncTriggerSource,
+            detail: `kind=${syncKind} external_message_id=${extIdStr} rebuilt_minimal_stub`,
+          });
+        }
+      }
+    }
+    await saveMessage(conversation.id, direction, {
+      externalMessageId: msgExternalId,
+      body: syncBody,
+      media: syncMedia.length > 0 ? syncMedia : [],
+      messageKind: inferMessageTypeFromPayload(message),
+      status:
+        direction === 'outgoing'
+          ? (pickBestOutgoingStatus('provider_sent', message.status) ?? 'provider_sent')
+          : (message.status || null),
+      sentAt,
+      metadata: message,
+      skipUnreadUpdate: true,
+    });
+    saved += 1;
+    existingExternalIds.add(extIdStr);
+  }
+
+  if (remoteMessages.length > 0) {
+    logUazChat('info', {
+      event_type,
+      phase: 'sync_messages_batch_summary',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: conversation.instance_id,
+      conversation_id: conversation.id,
+      sync_trigger_source: syncTriggerSource,
+      detail: `saved=${saved} skipped_existing_remote=${skippedExistingRemote} remote_batch=${remoteMessages.length}`,
+    });
+  }
+
+  if (saved > 0) {
+    await reconcileConversationLastMessage(conversation.id);
+  }
+
+  await pool.query(
+    `
+    UPDATE chat_conversations SET
+      history_sync_status = 'synced',
+      last_history_sync_reason = $2,
+      last_history_sync_at = now(),
+      updated_at = now()
+    WHERE id = $1
+    `,
+    [
+      conversation.id,
+      saved > 0 ? 'messages_imported' : 'messages_sync_no_new_rows',
+    ]
+  );
+
+  const skipTerminalIdentity =
+    opts.skipTerminalIdentityRefresh === true ||
+    shouldSkipTerminalIdentityRefreshAfterMessageSync({
+      identity_state: crow?.identity_state ?? null,
+      canonical_chat_id: crow?.canonical_chat_id ?? null,
+      display_name: crow?.display_name ?? null,
+      contact_name: crow?.contact_name ?? null,
+      avatar_url: crow?.avatar_url ?? null,
+      metadata: crow?.metadata ?? null,
+    });
+
+  if (skipTerminalIdentity) {
+    logUazChat('info', {
+      event_type,
+      phase: 'identity_refresh_skipped_resolved',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: conversation.instance_id,
+      conversation_id: conversation.id,
+      sync_trigger_source: syncTriggerSource,
+      detail: opts.skipTerminalIdentityRefresh
+        ? 'skipTerminalIdentityRefresh_opt'
+        : 'resolved_identity_name_and_portrait_present',
+    });
+  } else {
+    try {
+      const instRes = await pool.query<ChatInstanceRow>(
+        `SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2`,
+        [conversation.instance_id, userId]
+      );
+      if (instRes.rows[0]) {
+        await fetchAndUpsertRemoteChatIdentity(instRes.rows[0], conversation.external_chat_id);
+      }
+    } catch (idErr: any) {
+      logUazChat('warn', {
+        event_type,
+        phase: 'identity_refresh_failed',
+        tenant_id: tenantId,
+        conversation_id: conversation.id,
+        detail: idErr?.message,
+      });
+      console.warn('[SyncMessages] identity refresh failed:', idErr?.message);
+    }
+  }
+
+  return {
+    synced: saved,
+    totalReturned: remoteMessages.length,
+    messagesResponse,
+    history_sync_blocked: false,
+    identity_refresh_skipped: skipTerminalIdentity,
+    skipped_existing_remote: skippedExistingRemote,
+  };
+}
+
+async function runBootstrapSyncJob(
+  userId: string,
+  instanceId: string,
+  syncRunId: string,
+  trigger: BootstrapSyncTrigger
+): Promise<void> {
+  const tenantId = await resolveTenantIdForUser(userId);
+  const instRes = await pool.query<ChatInstanceRow>(
+    'SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2',
+    [instanceId, userId]
+  );
+  const instance = instRes.rows[0];
+  if (!instance) {
+    logUazChat('warn', {
+      event_type: 'bootstrap_sync_aborted',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      sync_run_id: syncRunId,
+      detail: 'instância não encontrada',
+    });
+    return;
+  }
+
+  const bs = instance.metadata?.bootstrap_sync;
+  if (!bs || bs.sync_run_id !== syncRunId) {
+    logUazChat('info', {
+      event_type: 'bootstrap_sync_skip',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      sync_run_id: syncRunId,
+      detail: 'sync_run_id não confere (job obsoleto)',
+    });
+    return;
+  }
+
+  if (instance.status !== 'connected' && instance.status !== 'open') {
+    await mergeInstanceMetadata(instanceId, {
+      bootstrap_sync: {
+        ...bs,
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        error: 'instance_not_connected',
+      },
+    });
+    logUazChat('warn', {
+      event_type: 'bootstrap_sync_failed',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      sync_run_id: syncRunId,
+      phase: 'pre_check',
+      detail: 'status não é connected/open',
+    });
+    return;
+  }
+
+  const startedAt = new Date().toISOString();
+  await mergeInstanceMetadata(instanceId, {
+    bootstrap_sync: {
+      ...bs,
+      status: 'running',
+      started_at: startedAt,
+    },
+  });
+
+  const effectiveSyncMode = normalizeSyncMode(instance.metadata?.sync_mode);
+  const bootstrapSinceMs = syncModeToMinTimestampMs(effectiveSyncMode);
+
+  logUazChat('info', {
+    event_type: 'bootstrap_sync_started',
+    tenant_id: tenantId,
+    user_id: userId,
+    instance_id: instanceId,
+    external_instance_name: instance.external_instance_name,
+    sync_run_id: syncRunId,
+    phase: 'running',
+    trigger,
+    sync_mode: effectiveSyncMode,
+    sync_on_connect: instance.metadata?.sync_on_connect ?? true,
+    detail:
+      bootstrapSinceMs != null
+        ? `janela=${effectiveSyncMode} min_iso=${new Date(bootstrapSinceMs).toISOString()}`
+        : `janela=${effectiveSyncMode} (sem filtro de data além dos limites padrão)`,
+  });
+
+  try {
+    const convResult = await performSyncConversationsForInstance(instance, {
+      limit: BOOTSTRAP_CONV_LIMIT,
+      syncRunId,
+      tenantId,
+      trigger,
+      eventType: 'bootstrap_sync_conversations',
+      sinceTimestampMs: bootstrapSinceMs,
+    });
+
+    const convRows = await pool.query<{ id: string; external_chat_id: string; instance_id: string; instance_token: string }>(
+      `
+      SELECT c.id, c.external_chat_id, c.instance_id, i.instance_token
+      FROM chat_conversations c
+      INNER JOIN chat_instances i ON i.id = c.instance_id
+      WHERE c.user_id = $1 AND c.instance_id = $2
+        AND c.external_chat_id NOT LIKE '%@g.us'
+        AND c.identity_state = 'resolved'
+        AND c.canonical_chat_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.conversation_id = c.id)
+      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+      LIMIT $3
+      `,
+      [userId, instanceId, BOOTSTRAP_MAX_CHATS_FOR_MESSAGES]
+    );
+
+    let messagesSynced = 0;
+    for (const row of convRows.rows) {
+      const r = await performSyncConversationMessagesForConversation(row, userId, {
+        limit: BOOTSTRAP_MSG_LIMIT,
+        syncRunId,
+        tenantId,
+        trigger,
+        eventType: 'bootstrap_sync_messages',
+        minTimestampMs: bootstrapSinceMs,
+        skipTerminalIdentityRefresh: true,
+      });
+      messagesSynced += r.synced;
+    }
+
+    const finishedAt = new Date().toISOString();
+    await mergeInstanceMetadata(instanceId, {
+      bootstrap_sync: {
+        ...bs,
+        sync_run_id: syncRunId,
+        status: 'completed',
+        started_at: startedAt,
+        finished_at: finishedAt,
+        trigger,
+        applied_sync_mode: effectiveSyncMode,
+        applied_since_ms: bootstrapSinceMs,
+        conversations_total: convResult.total,
+        conversations_upserted: convResult.upserted,
+        messages_synced: messagesSynced,
+        chats_messages_tried: convRows.rows.length,
+      },
+    });
+
+    logUazChat('info', {
+      event_type: 'bootstrap_sync_completed',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      external_instance_name: instance.external_instance_name,
+      sync_run_id: syncRunId,
+      phase: 'completed',
+      detail: `conv_total=${convResult.total} conv_upserted=${convResult.upserted} msgs=${messagesSynced} chats_tried=${convRows.rows.length}`,
+    });
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    await mergeInstanceMetadata(instanceId, {
+      bootstrap_sync: {
+        ...instance.metadata?.bootstrap_sync,
+        sync_run_id: syncRunId,
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        error: msg,
+        trigger,
+      },
+    });
+    logUazChat('error', {
+      event_type: 'bootstrap_sync_failed',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      external_instance_name: instance.external_instance_name,
+      sync_run_id: syncRunId,
+      phase: 'error',
+      detail: msg,
     });
   }
 }
@@ -1118,6 +3221,16 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
     const instance = await loadInstance(userId, id, res);
     if (!instance) return;
+
+    const tenantId = await resolveTenantIdForUser(userId);
+    logUazChat('info', {
+      event_type: 'connect_instance_start',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instance.id,
+      external_instance_name: instance.external_instance_name,
+      phase: 'request',
+    });
 
     let response: AnyObject;
     let instanceToUse = instance;
@@ -1320,7 +3433,9 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       }
     }
 
-    console.log('UazAPI connectInstance response:', JSON.stringify(response, null, 2));
+    if (isUazIntegrationVerboseLogs()) {
+      console.log('UazAPI connectInstance response (verbose):', JSON.stringify(response, null, 2));
+    }
 
     // Extrair informações do perfil conectado da resposta
     const instanceData = response?.instance || response;
@@ -1397,6 +3512,25 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         instanceDataKeys: instanceData ? Object.keys(instanceData) : [],
         responseInstance: response?.instance ? Object.keys(response.instance) : null,
         instanceDataInstance: instanceData?.instance ? Object.keys(instanceData.instance) : null,
+      });
+    }
+
+    if (data.sync_on_connect !== undefined) {
+      updatedMetadata.sync_on_connect = data.sync_on_connect;
+    }
+    if (data.sync_mode !== undefined) {
+      updatedMetadata.sync_mode = normalizeSyncMode(data.sync_mode);
+    }
+    if (data.sync_on_connect !== undefined || data.sync_mode !== undefined) {
+      logUazChat('info', {
+        event_type: 'instance_sync_config_persisted',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: instanceToUse.id,
+        phase: 'connect_instance',
+        sync_on_connect: updatedMetadata.sync_on_connect ?? null,
+        sync_mode: updatedMetadata.sync_mode ?? null,
+        detail: 'Etapa 4: campos opcionais no POST /instances/:id/connect',
       });
     }
 
@@ -1480,8 +3614,27 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         });
     }
 
+    if (response?.status === 'connected' || response?.status === 'open') {
+      logUazChat('info', {
+        event_type: 'connect_instance_connected',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: instanceToUse.id,
+        external_instance_name: instanceToUse.external_instance_name,
+        phase: 'response',
+        detail: String(response?.status),
+      });
+      await scheduleBootstrapSyncIfNeeded(userId, instanceToUse.id, 'instance_connected');
+    }
+
     res.json(response);
   } catch (error: any) {
+    logUazChat('error', {
+      event_type: 'connect_instance_error',
+      user_id: req.userId ?? null,
+      phase: 'exception',
+      detail: error?.message,
+    });
     console.error('Error connecting instance:', error);
     res.status(500).json({ error: error.message || 'Failed to connect instance' });
   }
@@ -1506,6 +3659,46 @@ export async function deleteInstance(req: AuthRequest, res: Response) {
   } catch (error: any) {
     console.error('Error deleting instance:', error);
     res.status(500).json({ error: error.message || 'Failed to delete instance' });
+  }
+}
+
+/** PATCH: ativar/desativar instância no chat (metadata.enabled_in_chat). */
+export async function patchInstance(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+    const body = patchInstanceSchema.parse(req.body || {});
+
+    const instance = await loadInstance(userId, id, res);
+    if (!instance) return;
+
+    await pool.query(
+      `UPDATE chat_instances
+       SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+           updated_at = now()
+       WHERE id = $2 AND user_id = $3`,
+      [JSON.stringify({ enabled_in_chat: body.enabledInChat }), id, userId]
+    );
+
+    const tenantId = await resolveTenantIdForUser(userId);
+    logUazChat('info', {
+      event_type: 'instance_chat_enabled_updated',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: id,
+      enabled_in_chat: body.enabledInChat,
+      detail: 'PATCH /instances/:id enabledInChat',
+    });
+
+    const out = await pool.query('SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2', [id, userId]);
+    res.json(out.rows[0]);
+  } catch (error: any) {
+    if (error?.name === 'ZodError') {
+      res.status(400).json({ error: 'Payload inválido', details: error.errors });
+      return;
+    }
+    console.error('Error patching instance:', error);
+    res.status(500).json({ error: error.message || 'Failed to update instance' });
   }
 }
 
@@ -1905,6 +4098,14 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
           console.log('Instance status changed to connected, auto-configuring webhook...');
           await autoConfigureWebhook(updatedInstance.rows[0]);
         }
+        const shouldBootstrapPoll =
+          instance.status === 'connecting' ||
+          instance.status === 'disconnected' ||
+          instance.status === 'close' ||
+          instance.status === 'closed';
+        if (shouldBootstrapPoll) {
+          await scheduleBootstrapSyncIfNeeded(userId, instance.id, 'status_poll_connected');
+        }
       }
 
       // Se phone_key foi gerado, herdar conversas de outras instâncias com mesmo número (em background)
@@ -1941,55 +4142,83 @@ export async function syncConversations(req: AuthRequest, res: Response) {
     const instance = await loadInstance(userId, data.data.instanceId, res);
     if (!instance) return;
 
-    const payload = {
-      limit: data.data.limit ?? 200,
-      ...(data.data.filters || {}),
-      sort: data.data.filters?.sort || '-wa_lastMsgTimestamp',
-    };
+    const tenantId = await resolveTenantIdForUser(userId);
 
-    const remoteChats = (await uazapiService.findChats(
-      instance.instance_token,
-      payload
-    )) as AnyObject;
-    const chatsArray =
-      (Array.isArray(remoteChats?.chats) && remoteChats?.chats) ||
-      (Array.isArray(remoteChats?.data?.chats) && remoteChats?.data?.chats) ||
-      (Array.isArray(remoteChats?.results) && remoteChats?.results) ||
-      (Array.isArray(remoteChats?.data) && remoteChats?.data) ||
-      (Array.isArray(remoteChats) ? remoteChats : []);
+    const explicitMode = data.data.syncMode != null;
+    const effectiveMode = explicitMode
+      ? normalizeSyncMode(data.data.syncMode)
+      : normalizeSyncMode((instance.metadata as any)?.sync_mode);
 
-    let upserted = 0;
-    const batchSize = 10; // Processar em lotes para evitar sobrecarga
-    
-    // Processar em lotes para evitar sobrecarga de memória e conexões
-    for (let i = 0; i < chatsArray.length; i += batchSize) {
-      const batch = chatsArray.slice(i, i + batchSize);
-      const promises = batch.map(async (item: any) => {
-      const normalized = normalizeChatPayload(item);
-        if (!normalized) return null;
-        try {
-      await upsertConversation(instance, normalized);
-          return true;
-        } catch (error) {
-          console.error(`Error upserting conversation:`, error);
-          return false;
-        }
+    if (effectiveMode === 'none') {
+      logUazChat('info', {
+        event_type: 'sync_conversations_skipped_none',
+        phase: 'manual',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: instance.id,
+        detail:
+          'sync_mode=none — nada sincronizado. Envie syncMode no body para forçar janela (ex.: full, days_30).',
       });
-      
-      const results = await Promise.all(promises);
-      upserted += results.filter(r => r === true).length;
-      
-      // Pequeno delay entre lotes para evitar sobrecarga
-      if (i + batchSize < chatsArray.length) {
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+      res.json({
+        total: 0,
+        upserted: 0,
+        skipped: true,
+        reason: 'sync_mode_none',
+      });
+      return;
     }
 
-    res.json({
-      total: chatsArray.length,
+    const manualSinceMs = syncModeToMinTimestampMs(effectiveMode);
+
+    logUazChat('info', {
+      event_type: 'sync_conversations_http',
+      phase: 'start',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instance.id,
+      external_instance_name: instance.external_instance_name,
+      trigger: 'manual',
+      sync_mode: effectiveMode,
+      sync_mode_explicit: explicitMode,
+      detail:
+        manualSinceMs != null
+          ? `janela manual min_iso=${new Date(manualSinceMs).toISOString()}`
+          : 'janela manual sem filtro de data (full)',
+    });
+
+    const {
+      total,
       upserted,
+      identityHydrationAttempted,
+      identityHydrationUpdated,
+      batchMessagesSaved,
+      batchConversationsTried,
+    } = await performSyncConversationsForInstance(instance, {
+      limit: data.data.limit ?? 200,
+      filters: data.data.filters,
+      tenantId,
+      trigger: 'manual',
+      eventType: 'sync_conversations_http',
+      sinceTimestampMs: manualSinceMs,
+      batchSyncRecentMessagesAfterList: true,
+    });
+
+    res.json({
+      total,
+      upserted,
+      syncMode: effectiveMode,
+      identityHydrationAttempted,
+      identityHydrationUpdated,
+      batchMessagesSaved,
+      batchConversationsTried,
     });
   } catch (error: any) {
+    logUazChat('error', {
+      event_type: 'sync_conversations_http',
+      phase: 'error',
+      detail: error?.message,
+      user_id: req.userId ?? null,
+    });
     console.error('Error syncing conversations:', error);
     res.status(500).json({ error: error.message || 'Failed to sync conversations' });
   }
@@ -2061,6 +4290,12 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.contact_name,
         c.profile_name,
         c.phone_number,
+        c.display_name,
+        c.canonical_phone,
+        c.avatar_url,
+        c.identity_state,
+        c.history_sync_status,
+        c.last_history_sync_reason,
         c.status,
         c.last_message_preview,
         c.last_message_at,
@@ -2150,7 +4385,11 @@ export async function getConversations(req: AuthRequest, res: Response) {
     });
 
     const conversations = await pool.query(query, params);
-    
+
+    const rowsForClient = conversations.rows.map((r: Record<string, unknown>) =>
+      conversationRowForClientApi(r)
+    );
+
     console.log('[GetConversations] Query result', {
       userId,
       instanceId,
@@ -2187,7 +4426,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
       });
     }
 
-    res.json(conversations.rows);
+    res.json(rowsForClient);
   } catch (error: any) {
     console.error('[GetConversations] Error fetching conversations:', {
       error: error.message,
@@ -2232,7 +4471,32 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
       [id]
     );
 
-    res.json(messages.rows.reverse());
+    const ordered = messages.rows.reverse().map((row: any) => ({
+      ...row,
+      message_contract: contractFromDbRow(row),
+    }));
+
+    if (process.env.CHAT_MESSAGES_DEBUG === '1') {
+      for (const r of ordered) {
+        const m = r.media;
+        const len = Array.isArray(m) ? m.length : typeof m === 'string' ? m.length : 0;
+        if (r.message_contract?.kind === 'image' || len > 0) {
+          logUazChat('info', {
+            event_type: 'get_conversation_messages_debug',
+            conversation_id: id,
+            message_id: r.id,
+            contract_kind: r.message_contract?.kind ?? null,
+            media_array_len: Array.isArray(m) ? m.length : null,
+            media_col_type: m == null ? 'null' : Array.isArray(m) ? 'array' : typeof m,
+            first_url_len:
+              Array.isArray(m) && m[0]?.url && typeof m[0].url === 'string' ? m[0].url.length : null,
+            body_len: typeof r.body === 'string' ? r.body.length : 0,
+          });
+        }
+      }
+    }
+
+    res.json(ordered);
   } catch (error: any) {
     console.error('Error fetching conversation messages:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
@@ -2595,9 +4859,14 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
 
     // Retornar mensagens e também a primeira conversation_id encontrada para facilitar envio
     const firstConversationId = conversationIds.length > 0 ? conversationIds[0] : null;
-    
+
+    const rows = messagesResult.rows.reverse().map((row: any) => ({
+      ...row,
+      message_contract: contractFromDbRow(row),
+    }));
+
     res.json({
-      messages: messagesResult.rows.reverse(),
+      messages: rows,
       conversationId: firstConversationId,
       conversationIds: conversationIds,
     });
@@ -2620,12 +4889,23 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
 }
 
 /**
- * POST /chat/find na UazAPI (wa_chatid) + upsert local — fonte de nome/foto conforme schema Chat.
+ * POST /chat/find (wa_chatid) + merge com agenda GET/POST contacts quando disponível + upsert local.
+ * `chat/find` complementa foto/metadata; agenda é fonte preferida de nome e JID PN para @lid.
  */
 async function fetchAndUpsertRemoteChatIdentity(
   instance: ChatInstanceRow,
-  externalChatId: string
+  externalChatId: string,
+  opts?: { contactCatalog?: Map<string, UazContactCatalogEntry> }
 ): Promise<AnyObject | null> {
+  let catalog = opts?.contactCatalog;
+  if (!catalog || catalog.size === 0) {
+    try {
+      catalog = await fetchUazContactCatalogMap(instance.instance_token);
+    } catch {
+      catalog = new Map();
+    }
+  }
+
   const remoteChats = (await uazapiService.findChats(instance.instance_token, {
     wa_chatid: externalChatId,
     limit: 20,
@@ -2655,6 +4935,7 @@ async function fetchAndUpsertRemoteChatIdentity(
   if (!normalized) {
     return null;
   }
+  enrichNormalizedChatFromContactCatalog(normalized, catalog ?? new Map());
   return (await upsertConversation(instance, normalized)) as AnyObject | null;
 }
 
@@ -2671,7 +4952,7 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
 
     const conversationResult = await pool.query(
       `
-        SELECT c.*, i.instance_token
+        SELECT c.*, i.instance_token, i.metadata AS instance_metadata
         FROM chat_conversations c
         INNER JOIN chat_instances i ON i.id = c.instance_id
         WHERE c.id = $1 AND c.user_id = $2
@@ -2685,79 +4966,269 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
     }
 
     const conversation = conversationResult.rows[0];
-    const body: Record<string, unknown> = {
-      chatid: conversation.external_chat_id,
-      limit: payload.data.limit ?? 50,
-    };
+    const instMeta = (conversation as any).instance_metadata as Record<string, unknown> | undefined;
+    const explicitMsgMode = payload.data.syncMode != null;
+    const effectiveMsgMode = explicitMsgMode
+      ? normalizeSyncMode(payload.data.syncMode)
+      : normalizeSyncMode(instMeta?.sync_mode);
 
-    if (payload.data.before) {
-      body.before = payload.data.before;
-    }
-    if (payload.data.after) {
-      body.after = payload.data.after;
-    }
-
-    const messagesResponse = await uazapiService.findMessages(conversation.instance_token, body);
-    const remoteMessages =
-      (Array.isArray((messagesResponse as AnyObject)?.messages) && (messagesResponse as AnyObject).messages) ||
-      (Array.isArray((messagesResponse as AnyObject)?.data?.messages) && (messagesResponse as AnyObject).data.messages) ||
-      (Array.isArray((messagesResponse as AnyObject)?.data) && (messagesResponse as AnyObject).data) ||
-      (Array.isArray(messagesResponse) ? (messagesResponse as AnyObject[]) : []);
-
-    let saved = 0;
-    for (const entry of remoteMessages) {
-      const message = (entry as AnyObject)?.message || entry;
-      if (!message) continue;
-
-      const direction = message.fromMe || message.wasSentByApi ? 'outgoing' : 'incoming';
-      const timestamp = message.timestamp || message.messageTimestamp;
-      let sentAt: Date | null = null;
-      if (timestamp) {
-        const numeric = Number(timestamp);
-        if (!Number.isNaN(numeric)) {
-          sentAt = new Date(numeric > 1e12 ? numeric : numeric * 1000);
-        }
-      }
-
-      await saveMessage(conversation.id, direction, {
-        externalMessageId: message.id || message.messageId || message.key?.id || randomUUID(),
-        body: message.text || message.body || message.caption || null,
-        media: message.media || [],
-        status: message.status || null,
-        sentAt,
-        metadata: message,
-        skipUnreadUpdate: true,
+    if (effectiveMsgMode === 'none') {
+      logUazChat('info', {
+        event_type: 'sync_messages_skipped_none',
+        phase: 'manual',
+        user_id: userId,
+        instance_id: conversation.instance_id,
+        conversation_id: conversation.id,
+        detail:
+          'sync_mode=none — use syncMode no body para forçar (ex.: full).',
       });
-      saved += 1;
+      res.json({
+        synced: 0,
+        totalReturned: 0,
+        skipped: true,
+        reason: 'sync_mode_none',
+        pagination: null,
+      });
+      return;
     }
 
-    if (saved > 0) {
-      await reconcileConversationLastMessage(conversation.id);
-      try {
-        const instRes = await pool.query<ChatInstanceRow>(
-          `SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2`,
-          [conversation.instance_id, userId]
-        );
-        if (instRes.rows[0]) {
-          await fetchAndUpsertRemoteChatIdentity(instRes.rows[0], conversation.external_chat_id);
-        }
-      } catch (idErr: any) {
-        console.warn('[SyncMessages] identity refresh failed:', idErr?.message);
+    const msgMinTs = syncModeToMinTimestampMs(effectiveMsgMode);
+
+    const tenantId = await resolveTenantIdForUser(userId);
+
+    const rawLimitRequested = payload.data.limit ?? BOOTSTRAP_MSG_LIMIT;
+    const effectiveHttpLimit = Math.min(
+      BOOTSTRAP_MSG_LIMIT,
+      Math.min(UAZ_MESSAGE_FIND_MAX_LIMIT, Math.max(1, rawLimitRequested))
+    );
+
+    const forceSync = payload.data.force === true;
+    const syncTriggerSource = forceSync ? 'sync_forced_manual' : 'http_auto';
+
+    const convMeta = (conversation.metadata as Record<string, unknown>) || {};
+    const lastAtStr =
+      typeof convMeta._last_messages_sync_http_at === 'string'
+        ? convMeta._last_messages_sync_http_at
+        : null;
+    const lastLim = convMeta._last_messages_sync_http_limit;
+    const lastLimit =
+      typeof lastLim === 'number'
+        ? lastLim
+        : typeof lastLim === 'string'
+          ? parseInt(lastLim, 10)
+          : null;
+
+    if (!forceSync) {
+      const lockTs = conversationMessageSyncInFlight.get(conversation.id);
+      if (
+        lockTs != null &&
+        Date.now() - lockTs < MESSAGE_SYNC_IN_FLIGHT_LOCK_MS
+      ) {
+        logUazChat('info', {
+          event_type: 'sync_messages_http',
+          phase: 'sync_skipped_lock',
+          tenant_id: tenantId,
+          user_id: userId,
+          instance_id: conversation.instance_id,
+          conversation_id: conversation.id,
+          sync_trigger_source: syncTriggerSource,
+          detail: `within_${MESSAGE_SYNC_IN_FLIGHT_LOCK_MS}ms_in_flight`,
+        });
+        res.json({
+          synced: 0,
+          totalReturned: 0,
+          skipped: true,
+          reason: 'sync_skipped_lock',
+          sync_trigger_source: syncTriggerSource,
+          syncMode: effectiveMsgMode,
+          pagination: null,
+        });
+        return;
       }
+
+      const lastHistRaw = (conversation as { last_history_sync_at?: string | Date | null })
+        .last_history_sync_at;
+      const lastHistMs =
+        lastHistRaw != null ? Date.parse(String(lastHistRaw)) : NaN;
+      if (
+        conversation.history_sync_status === 'synced' &&
+        conversation.identity_state === 'resolved' &&
+        conversation.canonical_chat_id &&
+        !Number.isNaN(lastHistMs) &&
+        Date.now() - lastHistMs < MESSAGE_SYNC_RECENT_FULL_SKIP_MS
+      ) {
+        logUazChat('info', {
+          event_type: 'sync_messages_http',
+          phase: 'sync_skipped_recent',
+          tenant_id: tenantId,
+          user_id: userId,
+          instance_id: conversation.instance_id,
+          conversation_id: conversation.id,
+          sync_trigger_source: syncTriggerSource,
+          detail: `history_sync_status=synced within_${MESSAGE_SYNC_RECENT_FULL_SKIP_MS}ms`,
+        });
+        res.json({
+          synced: 0,
+          totalReturned: 0,
+          skipped: true,
+          reason: 'sync_skipped_recent',
+          sync_trigger_source: syncTriggerSource,
+          syncMode: effectiveMsgMode,
+          pagination: null,
+        });
+        return;
+      }
+    } else {
+      logUazChat('info', {
+        event_type: 'sync_messages_http',
+        phase: 'sync_forced_manual',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: conversation.instance_id,
+        conversation_id: conversation.id,
+        sync_trigger_source: syncTriggerSource,
+        detail: 'force=true',
+      });
     }
+
+    if (
+      lastAtStr &&
+      lastLimit === effectiveHttpLimit &&
+      !Number.isNaN(Date.parse(lastAtStr)) &&
+      Date.now() - Date.parse(lastAtStr) < MESSAGE_SYNC_HTTP_DEBOUNCE_MS &&
+      !forceSync
+    ) {
+      logUazChat('info', {
+        event_type: 'sync_messages_http',
+        phase: 'debounced',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: conversation.instance_id,
+        conversation_id: conversation.id,
+        sync_trigger_source: syncTriggerSource,
+        detail: `within_${MESSAGE_SYNC_HTTP_DEBOUNCE_MS}ms_same_limit=${effectiveHttpLimit}`,
+      });
+      res.json({
+        synced: 0,
+        totalReturned: 0,
+        skipped: true,
+        reason: 'debounce',
+        sync_trigger_source: syncTriggerSource,
+        syncMode: effectiveMsgMode,
+        pagination: null,
+      });
+      return;
+    }
+
+    logUazChat('info', {
+      event_type: 'sync_messages_http',
+      phase: 'start',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: conversation.instance_id,
+      conversation_id: conversation.id,
+      external_chat_id: conversation.external_chat_id,
+      trigger: 'manual',
+      sync_mode: effectiveMsgMode,
+      sync_trigger_source: syncTriggerSource,
+      detail:
+        (msgMinTs != null
+          ? `corte de mensagens min_iso=${new Date(msgMinTs).toISOString()} (app-side); `
+          : 'sem corte por data (full); ') +
+        `limit_requested=${rawLimitRequested} effective=${effectiveHttpLimit}`,
+    });
+
+    conversationMessageSyncInFlight.set(conversation.id, Date.now());
+    let performResult: Awaited<
+      ReturnType<typeof performSyncConversationMessagesForConversation>
+    >;
+    try {
+      performResult = await performSyncConversationMessagesForConversation(
+        {
+          id: conversation.id,
+          external_chat_id: conversation.external_chat_id,
+          instance_id: conversation.instance_id,
+          instance_token: conversation.instance_token,
+        },
+        userId,
+        {
+          limit: effectiveHttpLimit,
+          before: payload.data.before,
+          after: payload.data.after,
+          tenantId,
+          trigger: 'manual',
+          eventType: 'sync_messages_http',
+          minTimestampMs: msgMinTs,
+          force: forceSync,
+          syncTriggerSource,
+        }
+      );
+    } finally {
+      conversationMessageSyncInFlight.delete(conversation.id);
+    }
+
+    const {
+      synced: saved,
+      totalReturned,
+      messagesResponse,
+      history_sync_blocked,
+      history_sync_reason,
+      identity_refresh_skipped,
+      skipped_existing_remote,
+    } = performResult;
+
+    if (history_sync_blocked) {
+      res.json({
+        synced: 0,
+        totalReturned: 0,
+        skipped: true,
+        reason: 'unresolved_identity',
+        history_sync_reason: history_sync_reason ?? null,
+        syncMode: effectiveMsgMode,
+        sync_trigger_source: syncTriggerSource,
+        pagination: null,
+      });
+      return;
+    }
+
+    await pool.query(
+      `UPDATE chat_conversations
+       SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+           updated_at = now()
+       WHERE id = $2 AND user_id = $3`,
+      [
+        JSON.stringify({
+          _last_messages_sync_http_at: new Date().toISOString(),
+          _last_messages_sync_http_limit: effectiveHttpLimit,
+        }),
+        conversation.id,
+        userId,
+      ]
+    );
 
     res.json({
       synced: saved,
-      totalReturned: remoteMessages.length,
+      totalReturned,
+      syncMode: effectiveMsgMode,
+      skipped: false,
+      sync_trigger_source: syncTriggerSource,
+      identity_refresh_skipped: identity_refresh_skipped === true,
+      skipped_existing_remote: skipped_existing_remote ?? 0,
       pagination: {
-        returnedMessages: (messagesResponse as AnyObject)?.returnedMessages,
-        limit: (messagesResponse as AnyObject)?.limit,
-        offset: (messagesResponse as AnyObject)?.offset,
-        nextOffset: (messagesResponse as AnyObject)?.nextOffset,
-        hasMore: (messagesResponse as AnyObject)?.hasMore,
+        returnedMessages: messagesResponse?.returnedMessages,
+        limit: messagesResponse?.limit,
+        offset: messagesResponse?.offset,
+        nextOffset: messagesResponse?.nextOffset,
+        hasMore: messagesResponse?.hasMore,
       },
     });
   } catch (error: any) {
+    logUazChat('error', {
+      event_type: 'sync_messages_http',
+      phase: 'error',
+      detail: error?.message,
+      user_id: req.userId ?? null,
+    });
     console.error('Error syncing messages:', error);
     res.status(500).json({ error: error.message || 'Failed to sync messages' });
   }
@@ -2797,7 +5268,40 @@ export async function refreshConversationIdentity(req: AuthRequest, res: Respons
   }
 }
 
+/**
+ * Resposta de `/send/text` e `/send/media` varia; sem id persistido a busca
+ * `external_message_id = null` não encontra linha e o WebSocket não emite a mensagem.
+ */
+function extractUazOutgoingMessageId(res: AnyObject | null | undefined): string | null {
+  if (!res || typeof res !== 'object') return null;
+  const o = res as Record<string, any>;
+  const pick = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  return (
+    pick(o.id) ||
+    pick(o.messageId) ||
+    pick(o.message_id) ||
+    (o.key && pick(o.key.id)) ||
+    (o.message && pick(o.message.id)) ||
+    (o.message && o.message.key && pick(o.message.key.id)) ||
+    (o.data && pick(o.data.id)) ||
+    (o.response && pick(o.response.id)) ||
+    (o.response && o.response.key && pick(o.response.key.id)) ||
+    null
+  );
+}
+
+/** OpenAPI: `number` internacional; JID 1:1 costuma ir sem sufixo. Grupos mantêm `@g.us`. */
+function toUazRecipientNumber(phone: string | null | undefined, externalChatId: string | null | undefined): string {
+  const raw = String(phone || externalChatId || '').trim();
+  if (!raw) return raw;
+  if (raw.endsWith('@g.us') || raw.endsWith('@broadcast')) return raw;
+  if (raw.endsWith('@s.whatsapp.net')) return raw.replace(/@s\.whatsapp\.net$/i, '');
+  if (raw.endsWith('@c.us')) return raw.replace(/@c\.us$/i, '');
+  return raw;
+}
+
 export async function sendMessage(req: AuthRequest, res: Response) {
+  let queuedMessageRowId: string | null = null;
   try {
     const userId = req.userId!;
     const data = sendMessageSchema.parse(req.body);
@@ -2818,29 +5322,170 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     }
 
     const conversation = conversationResult.rows[0];
-    const messageResponse = (await uazapiService.sendTextMessage(
-      conversation.instance_token,
-      {
-        number: conversation.phone_number || conversation.external_chat_id,
-        text: data.text,
+    const numberTo = toUazRecipientNumber(
+      (conversation as { canonical_phone?: string }).canonical_phone || conversation.phone_number,
+      conversation.external_chat_id
+    );
+    const msgType = data.type ?? 'text';
+
+    let messageResponse: AnyObject;
+    let savedRowId: string | null = null;
+    const localTrackId = `track_${randomUUID()}`;
+    const provisionalExternalId = `local:${randomUUID()}`;
+
+    if (msgType === 'image') {
+      const caption = (data.caption ?? '').trim();
+      const file: string | null =
+        data.fileUrl ||
+        (data.fileBase64
+          ? `data:${data.mimeType || 'image/jpeg'};base64,${data.fileBase64}`
+          : null);
+      if (!file) {
+        res.status(400).json({ error: 'Informe fileBase64 ou fileUrl para envio de imagem' });
+        return;
+      }
+
+      // 1) Persistência local imediata (estado inicial)
+      savedRowId = await saveMessage(conversation.id, 'outgoing', {
+        externalMessageId: provisionalExternalId,
+        body: caption || null,
+        media: [
+          {
+            type: 'image',
+            url: file,
+            mimetype: data.mimeType || 'image/jpeg',
+          },
+        ],
+        messageKind: 'image',
+        status: 'queued',
+        sentAt: new Date(),
+        metadata: { source: 'send/media', track_id: localTrackId, provisional: true },
+      });
+      queuedMessageRowId = savedRowId;
+
+      messageResponse = (await uazapiService.sendMediaMessage(conversation.instance_token, {
+        number: numberTo,
+        type: 'image',
+        file,
+        ...(caption ? { text: caption } : {}),
         readchat: data.readChat,
         readmessages: data.readMessages,
         delay: data.delay,
         track_source: 'painelcrm',
-      }
-    )) as AnyObject;
+        track_id: localTrackId,
+      })) as AnyObject;
 
-    await saveMessage(conversation.id, 'outgoing', {
-      externalMessageId:
-        messageResponse?.id ||
-        messageResponse?.messageId ||
-        messageResponse?.key?.id ||
-        null,
-      body: data.text,
-      status: 'sent',
-      sentAt: new Date(),
-      metadata: messageResponse,
-    });
+      const extId = extractUazOutgoingMessageId(messageResponse);
+
+      const remoteUrl =
+        (messageResponse as any)?.response?.fileUrl ||
+        (messageResponse as any)?.fileUrl ||
+        (messageResponse as any)?.url ||
+        data.fileUrl ||
+        null;
+
+      const mediaItems: ChatMediaItem[] = [
+        {
+          type: 'image',
+          url: remoteUrl || file,
+          mimetype: data.mimeType || 'image/jpeg',
+        },
+      ];
+
+      logUazChat('info', {
+        event_type: 'send_message_image',
+        phase: 'uazapi_ok',
+        user_id: userId,
+        instance_id: conversation.instance_id,
+        conversation_id: conversation.id,
+        external_id_extracted: extId,
+        uaz_response_top_keys:
+          messageResponse && typeof messageResponse === 'object'
+            ? Object.keys(messageResponse as object).slice(0, 25)
+            : [],
+        file_is_data_url: file.startsWith('data:'),
+        mime_type: data.mimeType || 'image/jpeg',
+        caption_len: caption.length,
+      });
+
+      if (savedRowId) {
+        const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
+        await pool.query(
+          `
+          UPDATE chat_messages
+          SET
+            external_message_id = COALESCE($1, external_message_id),
+            status = $2,
+            media = CASE
+              WHEN $4::jsonb IS NOT NULL
+                AND jsonb_typeof($4::jsonb) = 'array'
+                AND jsonb_array_length($4::jsonb) > 0
+              THEN $4::jsonb
+              ELSE media
+            END,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+            sent_at = COALESCE(sent_at, $5::timestamptz)
+          WHERE id = $6
+          `,
+          [
+            extId,
+            nextStatus,
+            JSON.stringify({ ...messageResponse, source: 'send/media', track_id: localTrackId }),
+            JSON.stringify(mediaItems),
+            new Date(),
+            savedRowId,
+          ]
+        );
+      }
+    } else {
+      const text = (data.text ?? '').trim();
+
+      // 1) Persistência local imediata (estado inicial)
+      savedRowId = await saveMessage(conversation.id, 'outgoing', {
+        externalMessageId: provisionalExternalId,
+        body: text,
+        media: [],
+        messageKind: 'text',
+        status: 'queued',
+        sentAt: new Date(),
+        metadata: { source: 'send/text', track_id: localTrackId, provisional: true },
+      });
+      queuedMessageRowId = savedRowId;
+
+      messageResponse = (await uazapiService.sendTextMessage(conversation.instance_token, {
+        number: numberTo,
+        text,
+        readchat: data.readChat,
+        readmessages: data.readMessages,
+        delay: data.delay,
+        track_source: 'painelcrm',
+        track_id: localTrackId,
+      })) as AnyObject;
+
+      const extId = extractUazOutgoingMessageId(messageResponse);
+
+      if (savedRowId) {
+        const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
+        await pool.query(
+          `
+          UPDATE chat_messages
+          SET
+            external_message_id = COALESCE($1, external_message_id),
+            status = $2,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+            sent_at = COALESCE(sent_at, $4::timestamptz)
+          WHERE id = $5
+          `,
+          [
+            extId,
+            nextStatus,
+            JSON.stringify({ ...messageResponse, track_id: localTrackId }),
+            new Date(),
+            savedRowId,
+          ]
+        );
+      }
+    }
 
     try {
       const instRes = await pool.query<ChatInstanceRow>(
@@ -2906,23 +5551,9 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         `,
         [data.conversationId]
       ),
-      pool.query(
-        `
-          SELECT id, sent_at, external_message_id
-          FROM chat_messages
-          WHERE conversation_id = $1
-            AND external_message_id = $2
-          ORDER BY created_at DESC
-          LIMIT 1
-        `,
-        [
-          conversation.id,
-          messageResponse?.id ||
-          messageResponse?.messageId ||
-          messageResponse?.key?.id ||
-          null,
-        ]
-      ),
+      savedRowId
+        ? pool.query(`SELECT * FROM chat_messages WHERE id = $1`, [savedRowId])
+        : Promise.resolve({ rows: [] as any[] }),
     ]);
 
     if (updatedConversationResult.rows.length > 0) {
@@ -2952,19 +5583,26 @@ export async function sendMessage(req: AuthRequest, res: Response) {
 
       // Emitir nova mensagem via WebSocket
       if (savedMessageResult.rows.length > 0) {
-        const savedMessage: any = savedMessageResult.rows[0];
+        const row: any = savedMessageResult.rows[0];
         try {
-          emitNewMessage(userId, {
-            id: savedMessage.id,
-            conversation_id: conversation.id,
-            direction: 'outgoing',
-            body: data.text,
-            sent_at: savedMessage.sent_at || new Date(),
-            status: 'sent',
-            external_message_id: savedMessage.external_message_id,
-          }, conversation.id);
+          const contract = contractFromDbRow(row);
+          emitNewMessage(
+            userId,
+            {
+              id: row.id,
+              conversation_id: conversation.id,
+              direction: row.direction,
+              body: row.body,
+              sent_at: row.sent_at || new Date(),
+              status: row.status,
+              external_message_id: row.external_message_id,
+              media: row.media,
+              message_contract: contract,
+            },
+            conversation.id
+          );
           console.log('[SendMessage] New message emitted via WebSocket', {
-            messageId: savedMessage.id,
+            messageId: row.id,
             conversationId: conversation.id,
             userId,
           });
@@ -2979,6 +5617,22 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     });
   } catch (error: any) {
     console.error('Error sending message:', error);
+    if (queuedMessageRowId) {
+      try {
+        await pool.query(
+          `
+          UPDATE chat_messages
+          SET
+            status = 'failed',
+            metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+          WHERE id = $2
+          `,
+          [JSON.stringify({ send_error: error?.message || String(error) }), queuedMessageRowId]
+        );
+      } catch (markErr: any) {
+        console.warn('[SendMessage] Failed to mark queued message as failed:', markErr?.message);
+      }
+    }
     res.status(500).json({ error: error.message || 'Failed to send message' });
   }
 }
@@ -3085,20 +5739,19 @@ function extractMessageData(payload: any): {
   isGroup: boolean;
 } {
   // Tentar diferentes formatos de payload
-      const data = payload.data || payload.message || payload;
-      const message = data.message || data;
+  const data = payload.data || payload.message || payload;
+  const message = mergeMessageEnvelope(data);
 
-  // Extrair chatId de múltiplas fontes
-      const chatId =
-        data.wa_chatid ||
-        message.chatid ||
-        message.chatId ||
-        message.chat?.id ||
-        message.key?.remoteJid ||
+  // Extrair chatId de múltiplas fontes (envelope já unificado em `message`)
+  const chatId =
+    message.wa_chatid ||
+    message.chatid ||
+    message.chatId ||
+    message.chat?.id ||
+    message.key?.remoteJid ||
     message.remoteJid ||
-        message.number ||
-    data.number ||
-        null;
+    message.number ||
+    null;
 
   // Determinar direção
   const direction: 'incoming' | 'outgoing' =
@@ -3110,11 +5763,11 @@ function extractMessageData(payload: any): {
     message.messageType ||
     message.msgType ||
     (message.text ? 'text' : null) ||
-    (message.image ? 'image' : null) ||
-    (message.video ? 'video' : null) ||
-    (message.audio ? 'audio' : null) ||
-    (message.document ? 'document' : null) ||
-    (message.sticker ? 'sticker' : null) ||
+    (message.image || message.imageMessage ? 'image' : null) ||
+    (message.video || message.videoMessage ? 'video' : null) ||
+    (message.audio || message.audioMessage || message.pttMessage ? 'audio' : null) ||
+    (message.document || message.documentMessage ? 'document' : null) ||
+    (message.sticker || message.stickerMessage ? 'sticker' : null) ||
     (message.location ? 'location' : null) ||
     (message.contact ? 'contact' : null) ||
     null;
@@ -3124,7 +5777,6 @@ function extractMessageData(payload: any): {
     chatId?.endsWith('@g.us') ||
     chatId?.includes('@g.us') ||
     message.isGroup ||
-    data.isGroup ||
     false;
 
   return {
@@ -3137,91 +5789,32 @@ function extractMessageData(payload: any): {
 }
 
 /**
- * Extrai corpo da mensagem de diferentes tipos
+ * Obtém URL de mídia via `POST /message/download` quando find/webhook não traz `fileURL`.
+ * Testa id normalizado (`5511…:3EB0…` → só `3EB0…`) e o id completo.
  */
-function extractMessageBody(message: any): string {
-  // Texto direto
-  if (message.text) return message.text;
-  if (message.body) return message.body;
-
-  // Caption de mídia
-  if (message.caption) return message.caption;
-
-  // Mensagens de sistema
-  if (message.notify) return message.notify;
-  if (message.content) return String(message.content);
-
-  // Tipos específicos
-  if (message.type === 'location') {
-    return `📍 Localização: ${message.latitude}, ${message.longitude}`;
-  }
-  if (message.type === 'contact') {
-    return `👤 Contato: ${message.displayName || message.name || 'Contato compartilhado'}`;
-  }
-  if (message.type === 'document') {
-    return `📄 ${message.fileName || 'Documento'}`;
-  }
-  if (message.type === 'image') {
-    return message.caption || '🖼️ Imagem';
-  }
-  if (message.type === 'video') {
-    return message.caption || '🎥 Vídeo';
-  }
-  if (message.type === 'audio') {
-    return '🎵 Áudio';
-  }
-  if (message.type === 'sticker') {
-    return '🎨 Sticker';
-  }
-
-  return '';
-}
-
-/**
- * Extrai informações de mídia da mensagem
- */
-function extractMediaInfo(message: any): any[] {
-  const media: any[] = [];
-
-  // Se já existe array de media
-  if (Array.isArray(message.media)) {
-    return message.media;
-  }
-
-  // Extrair mídia individual
-  if (message.image || message.video || message.audio || message.document || message.sticker) {
-    const mediaItem: any = {};
-
-    if (message.image) {
-      mediaItem.type = 'image';
-      mediaItem.url = message.image.url || message.image;
-      mediaItem.mimetype = message.image.mimetype || 'image/jpeg';
-    } else if (message.video) {
-      mediaItem.type = 'video';
-      mediaItem.url = message.video.url || message.video;
-      mediaItem.mimetype = message.video.mimetype || 'video/mp4';
-    } else if (message.audio) {
-      mediaItem.type = 'audio';
-      mediaItem.url = message.audio.url || message.audio;
-      mediaItem.mimetype = message.audio.mimetype || 'audio/ogg';
-      mediaItem.seconds = message.audio.seconds;
-    } else if (message.document) {
-      mediaItem.type = 'document';
-      mediaItem.url = message.document.url || message.document;
-      mediaItem.mimetype = message.document.mimetype;
-      mediaItem.fileName = message.document.fileName || message.fileName;
-    } else if (message.sticker) {
-      mediaItem.type = 'sticker';
-      mediaItem.url = message.sticker.url || message.sticker;
-      mediaItem.mimetype = message.sticker.mimetype || 'image/webp';
-    }
-
-    if (Object.keys(mediaItem).length > 0) {
-      media.push(mediaItem);
+async function fetchIncomingMediaViaDownload(
+  instanceToken: string,
+  message: any,
+  kindHint: ChatMessageKind
+): Promise<ChatMediaItem[]> {
+  const rawId = extractUazDownloadMessageId(message);
+  if (!rawId) return [];
+  const norm = normalizeIdForUazDownload(rawId);
+  const idVariants = norm === rawId ? [rawId] : [norm, rawId];
+  const uniqueIds = Array.from(new Set(idVariants.filter((x) => x.length > 0)));
+  for (const id of uniqueIds) {
+    try {
+      const dl = (await uazapiService.downloadMessageMedia(instanceToken, {
+        id,
+        return_link: true,
+      })) as AnyObject;
+      const items = mediaItemsFromDownloadPayload(dl, kindHint);
+      if (items.length > 0) return items;
+    } catch {
+      continue;
     }
   }
-
-  return media;
+  return [];
 }
 
 /**
@@ -3353,11 +5946,66 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
 
       // Extrair informações da mensagem
       const messageBody = extractMessageBody(message);
-      const media = extractMediaInfo(message);
+      let media = extractMediaInfo(message);
+      const msgKind = inferMessageTypeFromPayload(message);
+      const msgBodyPlain = ensurePlainString(messageBody ?? '');
+      if (media.length === 0 && msgKind !== 'text' && msgKind !== 'unknown') {
+        media = buildPersistentMediaStubForKind(message, msgKind);
+      }
+      const hasRenderableUrl = mediaItemsHaveRenderableUrl(media);
+      const tryMediaDownload =
+        !hasRenderableUrl &&
+        !msgBodyPlain &&
+        instance.instance_token &&
+        ((extracted.direction === 'incoming' &&
+          (msgKind === 'image' ||
+            msgKind === 'video' ||
+            msgKind === 'audio' ||
+            msgKind === 'document' ||
+            msgKind === 'sticker' ||
+            msgKind === 'unknown')) ||
+          (extracted.direction === 'outgoing' && msgKind === 'unknown'));
+      if (tryMediaDownload) {
+        const hint: ChatMessageKind = msgKind === 'unknown' ? 'image' : msgKind;
+        const fromDl = await fetchIncomingMediaViaDownload(
+          instance.instance_token,
+          message,
+          hint
+        );
+        if (fromDl.length > 0) {
+          media = fromDl;
+          console.log(`[Webhook ${webhookId}] Media resolved via /message/download`, {
+            kind: hint,
+            direction: extracted.direction,
+          });
+        } else {
+          const stubLeft =
+            media.length > 0 &&
+            media.some(
+              (it) =>
+                (it as ChatMediaItem & { persistentStub?: boolean }).persistentStub === true ||
+                (typeof it.url === 'string' && it.url.startsWith('data:'))
+            );
+          if (stubLeft) {
+            console.warn(`[Webhook ${webhookId}] media_download_failed_preserved_stub`, {
+              kind: hint,
+              direction: extracted.direction,
+            });
+          } else if (msgKind !== 'unknown') {
+            media = buildPersistentMediaStubForKind(message, msgKind);
+            console.warn(`[Webhook ${webhookId}] media_download_failed_preserved_stub rebuilt`, {
+              kind: msgKind,
+              direction: extracted.direction,
+            });
+          }
+        }
+      }
+
       const sentAt = parseTimestamp(message.timestamp || message.messageTimestamp);
       const messageId =
         message.id ||
         message.messageId ||
+        message.messageid ||
         message.key?.id ||
         data.external_message_id ||
         null;
@@ -3382,11 +6030,15 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         messageId ||
         randomUUID();
 
-      await saveMessage(conversation.id, extracted.direction, {
+      const savedRowId = await saveMessage(conversation.id, extracted.direction, {
         externalMessageId: effectiveMessageId,
         body: messageBody || null,
-        media: media.length > 0 ? media : null,
-        status: message.status || (extracted.direction === 'outgoing' ? 'sent' : null),
+        media: media.length > 0 ? media : [],
+        messageKind: inferMessageTypeFromPayload(message),
+        status:
+          extracted.direction === 'outgoing'
+            ? (pickBestOutgoingStatus('provider_sent', message.status) ?? 'provider_sent')
+            : (message.status || null),
         sentAt: sentAt || new Date(),
         metadata: {
           ...message,
@@ -3399,6 +6051,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       console.log(`[Webhook ${webhookId}] Message saved successfully`, {
         conversationId: conversation.id,
         messageId: effectiveMessageId,
+        savedRowId,
       });
 
       // Emitir WebSocket com conversa recalculada (last_message_* após saveMessage)
@@ -3414,20 +6067,39 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           conversationId: conversation.id,
         });
         emitConversationUpdate(instance.user_id, conversationWithInstance);
-        
-        console.log(`[Webhook ${webhookId}] Emitting new message via WebSocket`, {
-          userId: instance.user_id,
-          conversationId: conversation.id,
-          messageId: effectiveMessageId,
-        });
-        // Enviar apenas dados essenciais (leve para produção)
-        emitNewMessage(instance.user_id, {
+
+        let wsMessagePayload: Record<string, unknown> = {
           id: effectiveMessageId,
           conversation_id: conversation.id,
           direction: extracted.direction,
           body: messageBody,
           sent_at: sentAt || new Date(),
-        }, conversation.id);
+        };
+        if (savedRowId) {
+          const msgRow = await pool.query(`SELECT * FROM chat_messages WHERE id = $1`, [savedRowId]);
+          const row = msgRow.rows[0];
+          if (row) {
+            const contract = contractFromDbRow(row);
+            wsMessagePayload = {
+              id: row.id,
+              conversation_id: conversation.id,
+              direction: row.direction,
+              body: row.body,
+              sent_at: row.sent_at,
+              status: row.status,
+              external_message_id: row.external_message_id,
+              media: row.media,
+              message_contract: contract,
+            };
+          }
+        }
+
+        console.log(`[Webhook ${webhookId}] Emitting new message via WebSocket`, {
+          userId: instance.user_id,
+          conversationId: conversation.id,
+          wsId: wsMessagePayload.id,
+        });
+        emitNewMessage(instance.user_id, wsMessagePayload, conversation.id);
       } catch (wsError: any) {
         console.error(`[Webhook ${webhookId}] Failed to emit WebSocket events:`, {
           error: wsError.message,
@@ -3441,7 +6113,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           await notificationService.notifyNewMessage(instance.user_id, {
             conversationId: conversation.id,
             conversationName: conversation.contact_name || conversation.profile_name || conversation.phone_number,
-            messagePreview: messageBody,
+            messagePreview: ensurePlainString(messageBody),
             messageId: effectiveMessageId,
             isGroup: extracted.isGroup,
           });
@@ -3466,81 +6138,111 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
     } else if (event === 'messages_update') {
       // Atualizar status de mensagens existentes
       const data = payload.data || payload;
-      const messageUpdate = data.message || data;
+      const mergedUpdate = mergeMessageEnvelope(data);
+      const messageUpdate = mergedUpdate && typeof mergedUpdate === 'object' ? mergedUpdate : (data.message || data);
 
-      const messageId =
-        messageUpdate.id ||
-        messageUpdate.messageId ||
-        messageUpdate.key?.id ||
+      const rawMessageId =
+        messageUpdate?.id ||
+        messageUpdate?.messageId ||
+        messageUpdate?.messageid ||
+        messageUpdate?.key?.id ||
         data.external_message_id ||
         null;
 
-      if (!messageId) {
+      if (!rawMessageId) {
         console.warn(`[Webhook ${webhookId}] No messageId in messages_update event`);
         return;
       }
 
-      const status = messageUpdate.status || messageUpdate.messageStatus;
-      const readAt = messageUpdate.readTimestamp
+      const normalizedId = normalizeIdForUazDownload(String(rawMessageId));
+      const idVariants = Array.from(new Set([String(rawMessageId), normalizedId]));
+
+      const readAt = messageUpdate?.readTimestamp
         ? parseTimestamp(messageUpdate.readTimestamp)
         : null;
-      const deliveredAt = messageUpdate.deliveredTimestamp
+      const deliveredAt = messageUpdate?.deliveredTimestamp
         ? parseTimestamp(messageUpdate.deliveredTimestamp)
         : null;
+      const statusHintRaw =
+        readAt ? 'read' : deliveredAt ? 'delivered' : (messageUpdate?.status || messageUpdate?.messageStatus);
+      const statusIncoming = pickBestOutgoingStatus(null, statusHintRaw);
 
-      // Atualizar mensagem
       const updateResult = await pool.query(
         `
-        UPDATE chat_messages
-        SET 
-          status = COALESCE($1, status),
-          metadata = metadata || $2::jsonb,
-          updated_at = now()
-        WHERE external_message_id = $3
-        RETURNING conversation_id, direction
+        UPDATE chat_messages m
+        SET
+          status = CASE
+            WHEN $1::text IS NULL THEN m.status
+            ELSE $1::text
+          END,
+          metadata = COALESCE(m.metadata, '{}'::jsonb) || $2::jsonb
+        FROM chat_conversations c
+        WHERE
+          m.conversation_id = c.id
+          AND c.instance_id = $3
+          AND (
+            m.external_message_id = ANY($4::text[])
+            OR COALESCE(m.metadata->>'track_id', '') = COALESCE($5, '__none__')
+          )
+        RETURNING
+          m.id,
+          m.conversation_id,
+          m.direction,
+          m.external_message_id,
+          m.status
         `,
         [
-          status,
+          statusIncoming,
           JSON.stringify({
-            ...messageUpdate,
+            webhook_messages_update: messageUpdate,
             readAt: readAt?.toISOString(),
             deliveredAt: deliveredAt?.toISOString(),
             updatedAt: new Date().toISOString(),
           }),
-          messageId,
+          instance.id,
+          idVariants,
+          (typeof messageUpdate?.track_id === 'string' && messageUpdate.track_id.trim())
+            ? messageUpdate.track_id.trim()
+            : null,
         ]
       );
 
       if (updateResult.rowCount === 0) {
         console.warn(`[Webhook ${webhookId}] Message not found for update`, {
-          messageId,
+          rawMessageId,
+          idVariants,
         });
         return;
       }
 
-      const updatedMessage = updateResult.rows[0];
-
-      // Se mensagem foi lida e é incoming, atualizar contador de não lidas
-      if (status === 'read' && updatedMessage.direction === 'incoming' && readAt) {
-        await pool.query(
-          `
-          UPDATE chat_conversations
-          SET 
-            unread_count = GREATEST(0, unread_count - 1),
-            updated_at = now()
-          WHERE id = $1 AND unread_count > 0
-          `,
-          [updatedMessage.conversation_id]
-        );
+      for (const updatedMessage of updateResult.rows) {
+        const rowRes = await pool.query(`SELECT * FROM chat_messages WHERE id = $1`, [updatedMessage.id]);
+        const row = rowRes.rows[0];
+        if (row) {
+          const contract = contractFromDbRow(row);
+          emitMessageUpdated(
+            instance.user_id,
+            {
+              id: row.id,
+              conversation_id: row.conversation_id,
+              direction: row.direction,
+              body: row.body,
+              sent_at: row.sent_at,
+              status: row.status,
+              external_message_id: row.external_message_id,
+              media: row.media,
+              message_contract: contract,
+            },
+            row.conversation_id
+          );
+        }
       }
 
-      // NOTA: Notificações de mensagem entregue/lida removidas
-      // O cliente já visualiza o status na conversa, não precisa de notificação separada
-
       console.log(`[Webhook ${webhookId}] Message status updated`, {
-        messageId,
-        status,
-        conversationId: updatedMessage.conversation_id,
+        rawMessageId,
+        idVariants,
+        normalizedStatus: statusIncoming,
+        updatedRows: updateResult.rowCount,
         readAt: readAt?.toISOString(),
         deliveredAt: deliveredAt?.toISOString(),
         processingTime: Date.now() - startTime,
@@ -3571,7 +6273,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
             await notificationService.notifyNewConversation(instance.user_id, {
               conversationId: conversation.id,
               conversationName: chatData.contactName || chatData.profileName,
-              phoneNumber: chatData.phoneNumber,
+              phoneNumber: chatData.phoneNumber ?? undefined,
               isGroup: chatData.externalChatId?.endsWith('@g.us') || false,
             });
           } catch (notifError: any) {
@@ -3684,15 +6386,16 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       });
     } else if (event === 'leads') {
       const data = payload.data || payload;
-      console.log(`[Webhook ${webhookId}] Lead event received`, {
-        leadData: data,
+      const keys = data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data) : [];
+      console.log(`[Webhook ${webhookId}] Lead event received (keys only)`, {
+        dataKeys: keys.slice(0, 20),
         processingTime: Date.now() - startTime,
       });
       // TODO: Implementar processamento de leads quando necessário
     } else {
       console.log(`[Webhook ${webhookId}] Unhandled event type`, {
         event,
-        payload: JSON.stringify(payload).substring(0, 200),
+        payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 30) : [],
       });
     }
   } catch (error: any) {
@@ -3714,29 +6417,31 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
 export async function handleWebhook(req: Request, res: Response) {
   const startTime = Date.now();
   const webhookId = randomUUID();
-
-  // Log inicial de TODAS as requisições recebidas
-  console.log(`[Webhook ${webhookId}] ===== WEBHOOK RECEIVED =====`, {
-    method: req.method,
-    path: req.path,
-    ip: req.ip,
-    userAgent: req.get('user-agent'),
-    contentType: req.get('content-type'),
-    headers: {
-      'x-uazapi-instance': req.headers['x-uazapi-instance'],
-      'x-uazapi-secret': req.headers['x-uazapi-secret'] ? '***' : undefined,
-    },
-    query: req.query,
-    bodyKeys: req.body ? Object.keys(req.body) : [],
-    timestamp: new Date().toISOString(),
-  });
+  const webhookVerbose = isUazIntegrationVerboseLogs();
 
   try {
-    // 1. Secret: em produção, se UAZAPI_WEBHOOK_SECRET estiver definido, validação obrigatória (presente e igual).
+    // 1. Secret e endurecimento de produção (antes de logs com corpo/headers detalhados)
     const isProduction = process.env.NODE_ENV === 'production';
-    const configuredSecret = process.env.UAZAPI_WEBHOOK_SECRET;
-    const hasConfiguredSecret =
-      typeof configuredSecret === 'string' && configuredSecret.length > 0;
+    const configuredSecret = process.env.UAZAPI_WEBHOOK_SECRET?.trim();
+    const hasConfiguredSecret = typeof configuredSecret === 'string' && configuredSecret.length > 0;
+    const allowNoSecretInProd =
+      process.env.UAZAPI_WEBHOOK_ALLOW_NO_SECRET === 'true' ||
+      process.env.UAZAPI_WEBHOOK_ALLOW_NO_SECRET === '1';
+
+    if (isProduction && !hasConfiguredSecret && !allowNoSecretInProd) {
+      logUazChat('error', {
+        event_type: 'webhook_rejected_no_secret',
+        phase: 'auth',
+        detail:
+          'NODE_ENV=production sem UAZAPI_WEBHOOK_SECRET. Defina o secret ou UAZAPI_WEBHOOK_ALLOW_NO_SECRET=true (transição).',
+      });
+      res.status(503).json({
+        error: 'Webhook misconfigured: UAZAPI_WEBHOOK_SECRET is required in production',
+        code: 'WEBHOOK_SECRET_REQUIRED',
+      });
+      return;
+    }
+
     const rawReceived =
       req.headers['x-uazapi-secret'] ||
       req.body?.secret ||
@@ -3759,19 +6464,20 @@ export async function handleWebhook(req: Request, res: Response) {
         res.status(401).json({ error: 'Invalid or missing webhook secret' });
         return;
       }
-      console.log(`[Webhook ${webhookId}] Secret validated successfully`);
-    } else if (isProduction && !hasConfiguredSecret) {
-      console.warn(`[Webhook ${webhookId}] UAZAPI_WEBHOOK_SECRET_NOT_SET_IN_PRODUCTION`, {
+      if (webhookVerbose) {
+        console.log(`[Webhook ${webhookId}] Secret validated successfully`);
+      }
+    } else if (isProduction && !hasConfiguredSecret && allowNoSecretInProd) {
+      console.warn(`[Webhook ${webhookId}] UAZAPI_WEBHOOK_ALLOW_NO_SECRET active in production`, {
         webhookId,
         ip: req.ip,
         message:
-          'Webhook aceito sem secret configurado. Configure UAZAPI_WEBHOOK_SECRET para endurecer a segurança.',
+          'Webhook aceito sem secret (flag explícita). Remova UAZAPI_WEBHOOK_ALLOW_NO_SECRET e defina UAZAPI_WEBHOOK_SECRET.',
       });
     } else if (hasConfiguredSecret && receivedSecret) {
       if (receivedSecret !== configuredSecret) {
         console.warn(`[Webhook ${webhookId}] Invalid secret`, {
           ip: req.ip,
-          userAgent: req.get('user-agent'),
           receivedSecretHeader: !!req.headers['x-uazapi-secret'],
           receivedSecretBody: !!req.body?.secret,
           receivedSecretQuery: !!req.query?.secret,
@@ -3779,14 +6485,35 @@ export async function handleWebhook(req: Request, res: Response) {
         res.status(401).json({ error: 'Invalid webhook secret' });
         return;
       }
-      console.log(`[Webhook ${webhookId}] Secret validated successfully`);
+      if (webhookVerbose) {
+        console.log(`[Webhook ${webhookId}] Secret validated successfully`);
+      }
     } else if (hasConfiguredSecret && !receivedSecret) {
-      console.log(`[Webhook ${webhookId}] Secret configured but not received, allowing webhook`, {
-        receivedSecretHeader: !!req.headers['x-uazapi-secret'],
-        receivedSecretBody: !!req.body?.secret,
+      if (webhookVerbose) {
+        console.log(`[Webhook ${webhookId}] Secret configured but not received, allowing webhook`, {
+          receivedSecretHeader: !!req.headers['x-uazapi-secret'],
+          receivedSecretBody: !!req.body?.secret,
+        });
+      }
+    } else if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] No secret configured, skipping validation`);
+    }
+
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] received`, {
+        method: req.method,
+        path: req.path,
+        ip: req.ip,
+        contentType: req.get('content-type'),
+        xUazapiInstance: req.headers['x-uazapi-instance'],
+        bodyKeys: req.body ? Object.keys(req.body) : [],
       });
     } else {
-      console.log(`[Webhook ${webhookId}] No secret configured, skipping validation`);
+      logUazChat('info', {
+        event_type: 'webhook_request',
+        phase: 'received',
+        detail: `${req.method} ${req.path} webhookId=${webhookId}`,
+      });
     }
 
     // 2. Validar e extrair payload
@@ -3815,15 +6542,12 @@ export async function handleWebhook(req: Request, res: Response) {
           ? rawInstanceId[0]
           : null;
 
-    console.log(`[Webhook ${webhookId}] Instance identification attempt:`, {
-      fromPayloadInstance: payload.instance,
-      fromPayloadInstanceName: payload.instanceName,
-      fromPayloadDataInstance: payload.data?.instance,
-      fromPayloadDataInstanceName: payload.data?.instanceName,
-      fromQuery: req.query.instance,
-      fromHeader: req.headers['x-uazapi-instance'],
-      resolvedInstanceName: instanceName,
-    });
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] Instance identification`, {
+        resolvedInstanceName: instanceName,
+        fromHeader: !!req.headers['x-uazapi-instance'],
+      });
+    }
 
     if (!instanceName || typeof instanceName !== 'string') {
       console.warn(`[Webhook ${webhookId}] Missing instance identifier`, {
@@ -3879,18 +6603,20 @@ export async function handleWebhook(req: Request, res: Response) {
     // 5. Identificar tipo de evento
     const event = payload.event || req.query.event || payload.type || 'unknown';
 
-    // 6. Log do recebimento com mais detalhes
-    console.log(`[Webhook ${webhookId}] Webhook received and instance found`, {
-      instanceName: externalKey,
-      instanceId: instance.id,
-      instanceExternalName: instance.external_instance_name,
-      event,
-      ip: req.ip,
-      userAgent: req.get('user-agent'),
-      payloadSize: JSON.stringify(payload).length,
-      payloadPreview: JSON.stringify(payload).substring(0, 300),
-      receiveTime: Date.now() - startTime,
+    logUazChat('info', {
+      event_type: 'webhook_instance_matched',
+      instance_id: instance.id,
+      external_instance_name: instance.external_instance_name,
+      phase: event,
+      detail: `receiveTimeMs=${Date.now() - startTime} payloadBytes=${JSON.stringify(payload).length}`,
     });
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] instance matched`, {
+        instanceName: externalKey,
+        instanceId: instance.id,
+        event,
+      });
+    }
 
     // 7. Responder rapidamente (antes de processar)
     res.status(200).json({

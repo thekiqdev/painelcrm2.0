@@ -12,10 +12,17 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { InfoIcon, CheckCircle2, QrCode, RefreshCw } from "lucide-react";
-import { ConnectionType } from "@/components/settings/types";
 import { toast } from "sonner";
-import { chatService } from "@/services/chat";
+import { chatService, type InstanceSyncMode } from "@/services/chat";
 import QRCodePopup from "./QRCodePopup";
 
 interface AddConnectionDialogProps {
@@ -39,7 +46,9 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [isGeneratingQR, setIsGeneratingQR] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<string>("created");
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
-  
+  const [syncOnConnect, setSyncOnConnect] = useState(true);
+  const [syncMode, setSyncMode] = useState<InstanceSyncMode>("full");
+
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
     return phone.replace(/\D/g, '');
@@ -68,6 +77,8 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       setIsGeneratingQR(false);
       setConnectionStatus("created");
       setQrCodeData(null);
+      setSyncOnConnect(true);
+      setSyncMode("full");
     }
   }, [isOpen]);
   
@@ -79,19 +90,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     try {
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       const instanceName = createInstanceName(connectionName, phoneNumber);
-      
-      console.log("Criando instância UazAPI com:", { 
-        connectionName, 
-        instanceName, 
-        cleanPhoneNumber 
-      });
-      
+
       // Criar instância via backend (chatService)
       const instance = await chatService.createInstance({ 
         name: instanceName,
         metadata: {
           phoneNumber: cleanPhoneNumber,
-          connectionName: connectionName
+          connectionName: connectionName,
+          sync_on_connect: syncOnConnect,
+          sync_mode: syncOnConnect ? syncMode : "none",
         }
       });
       
@@ -224,6 +231,49 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                   <p className="text-xs text-muted-foreground">
                     Digite o número no formato (XX) 9 XXXX-XXXX. O código do país (+55) será adicionado automaticamente.
                   </p>
+                </div>
+
+                <div className="flex flex-col gap-3 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="syncOnConnect" className="text-sm font-medium">
+                        Sincronizar histórico ao conectar
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Após escanear o QR, o sistema pode buscar conversas e mensagens antigas conforme o período.
+                      </p>
+                    </div>
+                    <Switch
+                      id="syncOnConnect"
+                      checked={syncOnConnect}
+                      onCheckedChange={setSyncOnConnect}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="syncMode">Período do histórico</Label>
+                    <Select
+                      value={syncMode}
+                      onValueChange={(v) => setSyncMode(v as InstanceSyncMode)}
+                      disabled={!syncOnConnect}
+                    >
+                      <SelectTrigger id="syncMode" className="w-full">
+                        <SelectValue placeholder="Período" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="days_7">Últimos 7 dias</SelectItem>
+                        <SelectItem value="days_30">Últimos 30 dias</SelectItem>
+                        <SelectItem value="days_90">Últimos 90 dias</SelectItem>
+                        <SelectItem value="full">Completo (respeitando limites do sistema)</SelectItem>
+                        <SelectItem value="none">Sem histórico (só mensagens novas em tempo real)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {!syncOnConnect ? (
+                      <p className="text-xs text-muted-foreground">
+                        Com a sincronização automática desligada, nenhum histórico é puxado na conexão; você pode
+                        sincronizar depois pelo painel.
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               

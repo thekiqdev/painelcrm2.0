@@ -32,7 +32,7 @@ import {
   User,
 } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { chatService, ChatInstance, ChatConversation } from "@/services/chat";
+import { chatService, ChatInstance, ChatConversation, type BootstrapSyncMeta } from "@/services/chat";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -64,7 +64,7 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
 
   useEffect(() => {
     if (isOpen && instance) {
-      loadConversations();
+      void fetchConversationsFromDb();
     } else {
       setConversations([]);
       setPeriod("all");
@@ -73,68 +73,78 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     }
   }, [isOpen, instance]);
 
-  const loadConversations = async () => {
-    if (!instance) return;
+  const buildConversationFilters = (): {
+    instanceId: string;
+    startDate?: string;
+    endDate?: string;
+  } => {
+    if (!instance) return { instanceId: "" };
+    const filters: { instanceId: string; startDate?: string; endDate?: string } = {
+      instanceId: instance.id,
+    };
+    if (period === "today") {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      filters.startDate = today.toISOString();
+      filters.endDate = new Date().toISOString();
+    } else if (period === "week") {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      weekAgo.setHours(0, 0, 0, 0);
+      filters.startDate = weekAgo.toISOString();
+      filters.endDate = new Date().toISOString();
+    } else if (period === "month") {
+      const monthAgo = new Date();
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      monthAgo.setHours(0, 0, 0, 0);
+      filters.startDate = monthAgo.toISOString();
+      filters.endDate = new Date().toISOString();
+    } else if (period === "custom" && startDate && endDate) {
+      filters.startDate = new Date(startDate).toISOString();
+      filters.endDate = new Date(endDate).toISOString();
+    }
+    return filters;
+  };
 
+  /** Apenas lista do CRM (sem chamar UazAPI). */
+  const fetchConversationsFromDb = async (showLoading = true): Promise<ChatConversation[]> => {
+    if (!instance) return [];
+
+    if (showLoading) setLoadingConversations(true);
     try {
-      setLoadingConversations(true);
-      
-      // PRIMEIRO: Sincronizar conversas do WhatsApp com o banco de dados
-      console.log('[InstanceDetailsDialog] Sincronizando conversas do WhatsApp...');
-      try {
-        const syncResult = await chatService.syncConversations(instance.id, { limit: 200 });
-        console.log('[InstanceDetailsDialog] Conversas sincronizadas:', {
-          total: syncResult?.total || 0,
-          upserted: syncResult?.upserted || 0,
-        });
-      } catch (syncError) {
-        console.error('[InstanceDetailsDialog] Erro ao sincronizar conversas:', syncError);
-        // Continuar mesmo se a sincronização falhar, para mostrar o que já está no banco
-        toast.warning("Aviso: Não foi possível sincronizar todas as conversas do WhatsApp", {
-          description: syncError instanceof Error ? syncError.message : "Algumas conversas podem estar desatualizadas",
-        });
-      }
-      
-      // SEGUNDO: Buscar conversas do banco de dados (agora atualizadas)
-      let filters: { instanceId: string; startDate?: string; endDate?: string } = {
-        instanceId: instance.id,
-      };
-
-      // Aplicar filtro de período
-      if (period === "today") {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        filters.startDate = today.toISOString();
-        filters.endDate = new Date().toISOString();
-      } else if (period === "week") {
-        const weekAgo = new Date();
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        weekAgo.setHours(0, 0, 0, 0);
-        filters.startDate = weekAgo.toISOString();
-        filters.endDate = new Date().toISOString();
-      } else if (period === "month") {
-        const monthAgo = new Date();
-        monthAgo.setMonth(monthAgo.getMonth() - 1);
-        monthAgo.setHours(0, 0, 0, 0);
-        filters.startDate = monthAgo.toISOString();
-        filters.endDate = new Date().toISOString();
-      } else if (period === "custom" && startDate && endDate) {
-        filters.startDate = new Date(startDate).toISOString();
-        filters.endDate = new Date(endDate).toISOString();
-      }
-
+      const filters = buildConversationFilters();
       const data = await chatService.getConversations(filters);
-      setConversations(data || []);
-      
-      // TERCEIRO: Após buscar conversas, sincronizar mensagens de cada uma
-      if (data && data.length > 0) {
-        await syncAllConversationMessages(data);
-      }
+      const list = data || [];
+      setConversations(list);
+      return list;
     } catch (error) {
       console.error("Erro ao carregar conversas:", error);
       toast.error("Erro ao carregar conversas", {
         description: error instanceof Error ? error.message : "Ocorreu um erro",
       });
+      return [];
+    } finally {
+      if (showLoading) setLoadingConversations(false);
+    }
+  };
+
+  /** Sincronização completa com o provedor (só por clique explícito): conversas + lista + mensagens. */
+  const handleFullWhatsAppSync = async () => {
+    if (!instance) return;
+    try {
+      setLoadingConversations(true);
+      try {
+        await chatService.syncConversations(instance.id, { limit: 200, syncMode: "full" });
+      } catch (syncError) {
+        console.error("[InstanceDetailsDialog] Erro ao sincronizar conversas:", syncError);
+        toast.warning("Não foi possível sincronizar todas as conversas no provedor", {
+          description: syncError instanceof Error ? syncError.message : undefined,
+        });
+      }
+      const list = await fetchConversationsFromDb(false);
+      if (list.length > 0) {
+        await syncAllConversationMessages(list);
+      }
     } finally {
       setLoadingConversations(false);
     }
@@ -155,7 +165,7 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
         await Promise.allSettled(
           batch.map(async (conversation) => {
             try {
-              await chatService.syncConversationMessages(conversation.id, { limit: 100 });
+              await chatService.syncConversationMessages(conversation.id, { limit: 100, syncMode: 'full' });
             } catch (error) {
               console.error(`Erro ao sincronizar mensagens da conversa ${conversation.id}:`, error);
               // Não interromper o processo se uma conversa falhar
@@ -318,90 +328,6 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
       pictureUrl = metadata.lastStatusCheck.profilePicUrl;
     }
     
-    // Debug: log detalhado para verificar o que está sendo encontrado
-    const lastConnectInstance = metadata?.lastConnect?.instance;
-    const lastStatusCheckInstance = metadata?.lastStatusCheck?.instance;
-    
-    // Log completo para debug - mostrar JSON completo em logs separados
-    console.log('[InstanceDetailsDialog] ===== PROFILE DEBUG START =====');
-    console.log('[InstanceDetailsDialog] Metadata completo:', JSON.stringify(metadata, null, 2));
-    
-    if (metadata?.lastConnect) {
-      console.log('[InstanceDetailsDialog] lastConnect completo:', JSON.stringify(metadata.lastConnect, null, 2));
-    }
-    
-    if (lastConnectInstance) {
-      console.log('[InstanceDetailsDialog] lastConnect.instance completo:', JSON.stringify(lastConnectInstance, null, 2));
-      console.log('[InstanceDetailsDialog] lastConnect.instance.keys:', Object.keys(lastConnectInstance));
-      
-      // MOSTRAR TODOS OS CAMPOS E VALORES PARA DEBUG
-      console.log('[InstanceDetailsDialog] ===== TODOS OS CAMPOS DE lastConnect.instance =====');
-      Object.keys(lastConnectInstance).forEach(key => {
-        const value = lastConnectInstance[key];
-        if (typeof value === 'string' && value.length > 0 && value.length < 500) {
-          console.log(`[InstanceDetailsDialog] ${key}:`, value);
-        } else if (typeof value === 'string' && value.length >= 500) {
-          console.log(`[InstanceDetailsDialog] ${key}:`, value.substring(0, 200) + '... (truncado, tamanho: ' + value.length + ')');
-        }
-      });
-      console.log('[InstanceDetailsDialog] ===== FIM DOS CAMPOS =====');
-      
-      // Procurar qualquer campo que contenha "pic", "picture", "image", "photo", "avatar"
-      const picFields = Object.keys(lastConnectInstance).filter(key => 
-        /pic|picture|image|photo|avatar/i.test(key)
-      );
-      console.log('[InstanceDetailsDialog] Campos relacionados a imagem em lastConnect.instance:', picFields);
-      picFields.forEach(field => {
-        const value = lastConnectInstance[field];
-        console.log(`[InstanceDetailsDialog] ${field}:`, value, `(tipo: ${typeof value}, vazio: ${value === ''}, válido: ${typeof value === 'string' && value.trim().length > 0})`);
-      });
-      
-      // Procurar também em todos os campos que possam conter URL
-      const urlFields = Object.keys(lastConnectInstance).filter(key => 
-        /url|link|src|href/i.test(key)
-      );
-      console.log('[InstanceDetailsDialog] Campos relacionados a URL em lastConnect.instance:', urlFields);
-      urlFields.forEach(field => {
-        const value = lastConnectInstance[field];
-        if (typeof value === 'string' && value.trim().length > 0) {
-          console.log(`[InstanceDetailsDialog] ${field}:`, value);
-        }
-      });
-    }
-    
-    if (metadata?.lastStatusCheck) {
-      console.log('[InstanceDetailsDialog] lastStatusCheck completo:', JSON.stringify(metadata.lastStatusCheck, null, 2));
-    }
-    
-    if (lastStatusCheckInstance) {
-      console.log('[InstanceDetailsDialog] lastStatusCheck.instance completo:', JSON.stringify(lastStatusCheckInstance, null, 2));
-      console.log('[InstanceDetailsDialog] lastStatusCheck.instance.keys:', Object.keys(lastStatusCheckInstance));
-      // Procurar qualquer campo que contenha "pic", "picture", "image", "photo", "avatar"
-      const picFields = Object.keys(lastStatusCheckInstance).filter(key => 
-        /pic|picture|image|photo|avatar/i.test(key)
-      );
-      console.log('[InstanceDetailsDialog] Campos relacionados a imagem em lastStatusCheck.instance:', picFields);
-      picFields.forEach(field => {
-        const value = lastStatusCheckInstance[field];
-        console.log(`[InstanceDetailsDialog] ${field}:`, value, `(tipo: ${typeof value}, vazio: ${value === ''}, válido: ${typeof value === 'string' && value.trim().length > 0})`);
-      });
-      
-      // Procurar também em todos os campos que possam conter URL
-      const urlFields = Object.keys(lastStatusCheckInstance).filter(key => 
-        /url|link|src|href/i.test(key)
-      );
-      console.log('[InstanceDetailsDialog] Campos relacionados a URL em lastStatusCheck.instance:', urlFields);
-      urlFields.forEach(field => {
-        const value = lastStatusCheckInstance[field];
-        if (typeof value === 'string' && value.trim().length > 0) {
-          console.log(`[InstanceDetailsDialog] ${field}:`, value);
-        }
-      });
-    }
-    
-    console.log('[InstanceDetailsDialog] Foto encontrada:', pictureUrl);
-    console.log('[InstanceDetailsDialog] ===== PROFILE DEBUG END =====');
-    
     return { phone, name, pictureUrl };
   };
 
@@ -421,6 +347,24 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
             <DialogDescription>
               Informações detalhadas e gerenciamento da instância WhatsApp
             </DialogDescription>
+            {(() => {
+              const bs = instance.metadata?.bootstrap_sync as BootstrapSyncMeta | undefined;
+              if (!bs?.status) return null;
+              const labels: Record<string, string> = {
+                queued: "Sincronização inicial na fila",
+                running: "Sincronizando histórico inicial…",
+                completed: "Sincronização inicial concluída",
+                failed: "Sincronização inicial falhou",
+              };
+              return (
+                <p className="text-xs text-muted-foreground pt-1">
+                  <span className="font-medium text-foreground">{labels[bs.status] ?? bs.status}</span>
+                  {bs.status === "failed" && typeof bs.error === "string"
+                    ? ` — ${bs.error}`
+                    : null}
+                </p>
+              );
+            })()}
           </DialogHeader>
 
           <div className="space-y-6">
@@ -439,15 +383,6 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                       <AvatarImage 
                         src={profilePictureUrl || undefined} 
                         alt={profileName || phoneNumber || "Perfil"}
-                        onError={(e) => {
-                          console.log('[InstanceDetailsDialog] Avatar image error:', {
-                            src: profilePictureUrl,
-                            error: e,
-                          });
-                        }}
-                        onLoad={() => {
-                          console.log('[InstanceDetailsDialog] Avatar image loaded:', profilePictureUrl);
-                        }}
                       />
                       <AvatarFallback className="text-lg">
                         {profileName 
@@ -561,8 +496,9 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={loadConversations}
-                    disabled={loadingConversations}
+                    onClick={() => void fetchConversationsFromDb()}
+                    disabled={loadingConversations || syncingMessages}
+                    title="Recarregar lista do banco (sem sincronizar com o WhatsApp)"
                   >
                     {loadingConversations ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -611,12 +547,13 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                   )}
 
                   <Button
-                    onClick={loadConversations}
+                    onClick={() => void fetchConversationsFromDb()}
                     disabled={loadingConversations || syncingMessages || (period === "custom" && (!startDate || !endDate))}
                     size="sm"
+                    variant="secondary"
                     className="w-full"
                   >
-                    {loadingConversations ? (
+                    {loadingConversations && !syncingMessages ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         Carregando...
@@ -629,10 +566,25 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                     ) : (
                       <>
                         <MessageSquare className="h-4 w-4 mr-2" />
-                        Buscar Conversas
+                        Aplicar filtro (dados locais)
                       </>
                     )}
                   </Button>
+
+                  <Button
+                    type="button"
+                    onClick={() => void handleFullWhatsAppSync()}
+                    disabled={loadingConversations || syncingMessages}
+                    size="sm"
+                    className="w-full"
+                    variant="default"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Sincronizar com WhatsApp
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Busca conversas e mensagens no provedor. A abertura deste painel não sincroniza sozinha.
+                  </p>
                   
                   {/* Indicador de progresso da sincronização */}
                   {syncingMessages && syncProgress && (

@@ -63,7 +63,8 @@ export default function SettingsLayout() {
     if (!location.pathname.startsWith("/settings") || location.pathname.startsWith("/settings/payments")) {
       return;
     }
-    const s = sectionFromQuery(searchParams.get("section"));
+    const s =
+      sectionFromQuery(searchParams.get("section")) ?? sectionFromQuery(searchParams.get("tab"));
     if (s) setActiveSection(s);
   }, [location.pathname, searchParams]);
 

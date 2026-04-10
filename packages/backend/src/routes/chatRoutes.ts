@@ -6,6 +6,7 @@ import {
   connectInstance,
   getInstanceStatus,
   deleteInstance,
+  patchInstance,
   syncConversations,
   getConversations,
   getConversationMessages,
@@ -34,6 +35,7 @@ router.post('/instances', createInstance);
 router.post('/instances/:id/connect', connectInstance);
 router.get('/instances/:id/status', getInstanceStatus);
 router.delete('/instances/:id', deleteInstance);
+router.patch('/instances/:id', patchInstance);
 router.get('/instances/:id/webhook', getInstanceWebhook);
 router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/instances/:id/webhook/force', forceConfigureWebhook);

@@ -5,7 +5,9 @@ import { clientsService, type ClientTimelineEvent } from "@/services/clients";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
-import { chatService, ChatMessage } from "@/services/chat";
+import { chatService, ChatMessage, normalizeChatMessage } from "@/services/chat";
+import { ChatBubbleContent } from "@/components/chat/ChatBubbleContent";
+import { MessageStatusIndicator } from "@/components/chat/MessageStatusIndicator";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -126,12 +128,12 @@ const ClientProfile = () => {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
-  const [sendingMessage, setSendingMessage] = useState(false);
   const [timelineEvents, setTimelineEvents] = useState<ClientTimelineEvent[]>([]);
   const [isLoadingTimeline, setIsLoadingTimeline] = useState(false);
   const [whatsappAvatarUrl, setWhatsappAvatarUrl] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   const { session } = useAuth();
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
@@ -592,18 +594,43 @@ const ClientProfile = () => {
       return;
     }
 
+    const text = newMessage.trim();
+    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    pendingOutgoingOptimisticQueueRef.current.push(optimisticId);
+    setNewMessage("");
+    const optimistic: ChatMessage = {
+      id: optimisticId,
+      conversation_id: conversationId,
+      direction: "outgoing",
+      body: text,
+      status: "queued",
+      sentAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    setClientMessages((prev) =>
+      [...prev, optimistic].sort((a, b) => {
+        const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
+        const dateB = b.sentAt ? new Date(b.sentAt).getTime() : 0;
+        return dateA - dateB;
+      })
+    );
+
     try {
-      setSendingMessage(true);
-      await chatService.sendMessage(conversationId, newMessage.trim());
-      setNewMessage('');
+      await chatService.sendMessage(conversationId, text);
+      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
+        (id) => id !== optimisticId
+      );
       await loadClientMessages();
     } catch (error) {
+      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
+        (id) => id !== optimisticId
+      );
+      setClientMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      setNewMessage(text);
       console.error('Erro ao enviar mensagem:', error);
       toast.error('Não foi possível enviar a mensagem', {
         description: error instanceof Error ? error.message : undefined,
       });
-    } finally {
-      setSendingMessage(false);
     }
   };
 
@@ -646,32 +673,63 @@ const ClientProfile = () => {
       console.log('[ClientProfile] WebSocket disconnected');
     });
 
-    socket.on('new_message', (data: any) => {
-      // Normalizar dados recebidos (snake_case para camelCase)
-      const normalizedData = {
-        id: data.id || data.message_id,
-        conversationId: data.conversation_id || data.conversationId,
-        direction: data.direction,
-        body: data.body || data.text,
-        sentAt: data.sent_at || data.sentAt || data.created_at || data.createdAt,
-        status: data.status,
-        metadata: data.metadata,
-      };
+    socket.on('new_message', (data: { message?: any; conversationId?: string }) => {
+      const msg = data.message;
+      const convId = data.conversationId;
+      if (!msg || !convId) return;
 
-      // Verificar se a mensagem pertence à conversa atual
-      if (normalizedData.conversationId === conversationId) {
+      const normalizedData = normalizeChatMessage({
+        ...msg,
+        conversation_id: msg.conversation_id || convId,
+      });
+
+      if (convId === conversationId) {
         setClientMessages((prev) => {
-          // Evitar duplicatas
-          if (prev.some((m) => m.id === normalizedData.id)) {
-            return prev;
+          const queue = pendingOutgoingOptimisticQueueRef.current;
+          let base = prev;
+          if (queue.length > 0 && normalizedData.direction === "outgoing") {
+            const pendingId = queue.shift();
+            if (pendingId) {
+              base = prev.filter((m) => m.id !== pendingId);
+            }
           }
-          return [...prev, normalizedData as ChatMessage].sort((a, b) => {
+          if (base.some((m) => m.id === normalizedData.id)) {
+            return base;
+          }
+          return [...base, normalizedData].sort((a, b) => {
             const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
             const dateB = b.sentAt ? new Date(b.sentAt).getTime() : 0;
             return dateA - dateB;
           });
         });
       }
+    });
+
+    socket.on('message_updated', (data: { message?: any; conversationId?: string }) => {
+      const msg = data.message;
+      const convId = data.conversationId;
+      if (!msg || !convId || convId !== conversationId) return;
+
+      const normalizedData = normalizeChatMessage({
+        ...msg,
+        conversation_id: msg.conversation_id || convId,
+      });
+
+      setClientMessages((prev) => {
+        const idx = prev.findIndex(
+          (m) =>
+            (normalizedData.id && m.id === normalizedData.id) ||
+            (!!normalizedData.external_message_id &&
+              m.external_message_id === normalizedData.external_message_id)
+        );
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          ...normalizedData,
+        };
+        return next;
+      });
     });
 
     socket.on('conversation_updated', (data: any) => {
@@ -1563,19 +1621,27 @@ const ClientProfile = () => {
                                       : 'bg-muted'
                                   }`}
                                 >
-                                  <p className="break-words">{message.body || '(mensagem sem texto)'}</p>
+                                  <ChatBubbleContent message={message} />
                                   <span
-                                    className={`text-[10px] mt-1 block ${
+                                    className={`text-[10px] mt-1 flex items-center gap-1 ${
                                       message.direction === 'outgoing'
                                         ? 'text-primary-foreground/80'
                                         : 'text-muted-foreground'
                                     }`}
                                   >
-                                    {message.sentAt ? (
-                                      <>
-                                        {formatRelativeDate(message.sentAt)} • {formatHour(message.sentAt)}
-                                      </>
-                                    ) : 'Data não disponível'}
+                                    <span>
+                                      {message.sentAt ? (
+                                        <>
+                                          {formatRelativeDate(message.sentAt)} • {formatHour(message.sentAt)}
+                                        </>
+                                      ) : 'Data não disponível'}
+                                    </span>
+                                    {message.direction === 'outgoing' ? (
+                                      <MessageStatusIndicator
+                                        status={message.status}
+                                        className="h-3 w-3"
+                                      />
+                                    ) : null}
                                   </span>
                                 </div>
                               </div>
@@ -1591,12 +1657,11 @@ const ClientProfile = () => {
                           placeholder="Digite uma mensagem..."
                           value={newMessage}
                           onChange={(event) => setNewMessage(event.target.value)}
-                          disabled={sendingMessage}
                         />
                         <Button 
                           type="submit" 
                           size="icon"
-                          disabled={sendingMessage || !newMessage.trim()}
+                          disabled={!newMessage.trim()}
                         >
                           <Send className="h-4 w-4" />
                         </Button>

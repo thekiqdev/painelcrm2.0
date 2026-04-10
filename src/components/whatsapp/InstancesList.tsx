@@ -24,7 +24,7 @@ import {
   Calendar,
   Hash
 } from "lucide-react";
-import { chatService, ChatInstance } from "@/services/chat";
+import { chatService, ChatInstance, type BootstrapSyncMeta } from "@/services/chat";
 import { toast } from "sonner";
 import QRCodePopup from "./QRCodePopup";
 import { InstanceDetailsDialog } from "./InstanceDetailsDialog";
@@ -70,6 +70,19 @@ export const InstancesList: React.FC<InstancesListProps> = ({
   useEffect(() => {
     loadInstances();
   }, []);
+
+  // Atualiza lista enquanto bootstrap sync estiver em fila ou em execução (metadata do backend)
+  useEffect(() => {
+    const needsBootstrapPoll = instances.some((inst) => {
+      const bs = inst.metadata?.bootstrap_sync as BootstrapSyncMeta | undefined;
+      return bs?.status === "queued" || bs?.status === "running";
+    });
+    if (!needsBootstrapPoll) return;
+    const id = setInterval(() => {
+      void loadInstances();
+    }, 8000);
+    return () => clearInterval(id);
+  }, [instances]);
 
   // Polling otimizado - apenas para instâncias que realmente precisam (conectando ou com QR code aberto)
   useEffect(() => {
@@ -202,6 +215,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({
       toast.success("Status atualizado", {
         description: `Status: ${newStatus === 'connected' ? 'Conectado' : newStatus === 'connecting' ? 'Conectando' : 'Desconectado'}`
       });
+      await loadInstances();
     } catch (error) {
       console.error("Erro ao verificar status:", error);
       toast.error("Erro ao verificar status", {
@@ -246,6 +260,36 @@ export const InstancesList: React.FC<InstancesListProps> = ({
     } else {
       return <Badge variant="secondary" className="text-xs font-medium px-2 py-0.5">Desconectado</Badge>;
     }
+  };
+
+  const getBootstrapSyncBadge = (meta: ChatInstance["metadata"]) => {
+    const bs = meta?.bootstrap_sync as BootstrapSyncMeta | undefined;
+    if (!bs?.status) return null;
+    const map: Record<string, { label: string; className: string }> = {
+      queued: {
+        label: "Sync inicial",
+        className: "bg-slate-500/90 text-white border-0",
+      },
+      running: {
+        label: "Sincronizando…",
+        className: "bg-sky-600 text-white border-0",
+      },
+      completed: {
+        label: "Histórico inicial ok",
+        className: "bg-emerald-600/90 text-white border-0",
+      },
+      failed: {
+        label: "Sync inicial falhou",
+        className: "bg-red-600 text-white border-0",
+      },
+    };
+    const v = map[bs.status];
+    if (!v) return null;
+    return (
+      <Badge variant="outline" className={`text-[10px] font-medium px-1.5 py-0 ${v.className}`}>
+        {v.label}
+      </Badge>
+    );
   };
 
   const getStatusIcon = (status: string) => {
@@ -318,8 +362,9 @@ export const InstancesList: React.FC<InstancesListProps> = ({
                         {getStatusIcon(instance.status)}
                       </div>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {getStatusBadge(instance.status)}
+                      {getBootstrapSyncBadge(instance.metadata)}
                     </div>
                   </CardHeader>
                   <CardContent className="pt-0 space-y-0">

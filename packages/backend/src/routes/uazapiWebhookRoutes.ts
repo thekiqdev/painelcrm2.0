@@ -1,18 +1,19 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { handleWebhook } from '../controllers/chatController.js';
+import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
 
 const router = Router();
 
 // Middleware de logging específico para webhooks
 router.use((req: Request, res: Response, next: NextFunction) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[Webhook Route] ${req.method} ${req.path}`, {
-    timestamp,
-    ip: req.ip,
-    userAgent: req.get('user-agent'),
-    contentType: req.get('content-type'),
-    contentLength: req.get('content-length'),
-  });
+  if (isUazIntegrationVerboseLogs()) {
+    console.log(`[Webhook Route] ${req.method} ${req.path}`, {
+      timestamp: new Date().toISOString(),
+      ip: req.ip,
+      contentType: req.get('content-type'),
+      contentLength: req.get('content-length'),
+    });
+  }
   next();
 });
 

@@ -1,3 +1,5 @@
+import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
+
 interface RequestOptions {
   method?: string;
   headers?: Record<string, string>;
@@ -44,11 +46,14 @@ export class UazapiService {
     }
 
     const url = `${this.baseUrl}${path}`;
-    console.log(`[UazAPI] ${options.method || 'GET'} ${url}`, {
-      hasBody: !!options.body,
-      useAdminToken: options.useAdminToken,
-      hasToken: !!options.token,
-    });
+    const verbose = isUazIntegrationVerboseLogs();
+    if (verbose) {
+      console.log(`[UazAPI] ${options.method || 'GET'} ${url}`, {
+        hasBody: !!options.body,
+        useAdminToken: options.useAdminToken,
+        hasToken: !!options.token,
+      });
+    }
 
     let response: Response;
     try {
@@ -79,22 +84,45 @@ export class UazapiService {
       }
     }
 
-    console.log(`[UazAPI] Response ${response.status}:`, {
-      ok: response.ok,
-      payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : 'not-object',
-      payloadPreview: typeof payload === 'string' ? payload.substring(0, 200) : JSON.stringify(payload).substring(0, 200),
-    });
+    if (verbose) {
+      const payloadPreview = (() => {
+        if (payload == null) return String(payload);
+        if (typeof payload === 'string') return payload.substring(0, 200);
+        if (typeof payload === 'object' && !Array.isArray(payload) && Array.isArray((payload as any).messages)) {
+          const p = payload as Record<string, unknown> & { messages: unknown[] };
+          const { messages: _m, ...rest } = p;
+          return `${JSON.stringify({ ...rest, messages_count: _m.length, messages_omitted: true }).substring(0, 220)}`;
+        }
+        return JSON.stringify(payload).substring(0, 200);
+      })();
+      console.log(`[UazAPI] Response ${response.status}:`, {
+        ok: response.ok,
+        payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : 'not-object',
+        payloadPreview,
+      });
+    } else if (!response.ok) {
+      console.warn(`[UazAPI] Response ${response.status} (keys only)`, {
+        payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : typeof payload,
+      });
+    }
 
     if (!response.ok) {
       const error = new Error(payload?.error || payload?.message || response.statusText || 'UazAPI request failed');
       (error as any).status = response.status;
       (error as any).payload = payload;
       (error as any).responseText = text;
-      console.error('[UazAPI] Request failed:', {
-        status: response.status,
-        statusText: response.statusText,
-        payload,
-      });
+      if (verbose) {
+        console.error('[UazAPI] Request failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          payload,
+        });
+      } else {
+        console.error('[UazAPI] Request failed:', {
+          status: response.status,
+          message: payload?.error || payload?.message || response.statusText,
+        });
+      }
       throw error;
     }
 
@@ -159,6 +187,15 @@ export class UazapiService {
     });
   }
 
+  /** Imagem, vídeo, documento, áudio etc. — ver OpenAPI `/send/media` */
+  async sendMediaMessage(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request('/send/media', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
   async findChats(instanceToken: string, payload: Record<string, unknown>) {
     return this.request('/chat/find', {
       method: 'POST',
@@ -167,8 +204,34 @@ export class UazapiService {
     });
   }
 
+  /** GET /contacts — agenda completa (sem paginação). Doc: lista de contatos do WhatsApp com jid + nome. */
+  async getContacts(instanceToken: string) {
+    return this.request<unknown>('/contacts', {
+      method: 'GET',
+      token: instanceToken,
+    });
+  }
+
+  /** POST /contacts/list — mesma lista com paginação (pageSize até 1000). */
+  async listContactsPage(instanceToken: string, body: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>('/contacts/list', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      token: instanceToken,
+    });
+  }
+
   async findMessages(instanceToken: string, payload: Record<string, unknown>) {
     return this.request('/message/find', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  /** Baixa mídia e obtém URL pública — ver OpenAPI `POST /message/download` */
+  async downloadMessageMedia(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request('/message/download', {
       method: 'POST',
       body: JSON.stringify(payload),
       token: instanceToken,

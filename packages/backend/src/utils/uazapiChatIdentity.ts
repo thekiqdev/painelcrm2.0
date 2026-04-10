@@ -11,6 +11,9 @@ export function extractUazapiChatImageUrl(meta: Record<string, unknown> | null |
     meta.image,
     meta.imagePreview,
     meta.image_preview,
+    meta.profilePicUrl,
+    meta.profilePicture,
+    meta.pictureUrl,
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim()) return c.trim();
@@ -24,9 +27,23 @@ export function extractUazapiChatImageUrl(meta: Record<string, unknown> | null |
  */
 export function extractUazapiChatDisplayName(raw: Record<string, unknown> | null | undefined): string | null {
   if (!raw || typeof raw !== 'object') return null;
-  const candidates = [raw.name, raw.wa_contactName, raw.wa_name, raw.contactName, raw.lead_name];
+  const candidates = [
+    raw.name,
+    raw.wa_contactName,
+    raw.wa_name,
+    raw.contactName,
+    raw.lead_name,
+    raw.displayName,
+    raw.pushName,
+    raw.notifyName,
+  ];
   for (const c of candidates) {
-    if (typeof c === 'string' && c.trim()) return c.trim();
+    if (typeof c === 'string' && c.trim()) {
+      const t = c.trim();
+      if (t.toLowerCase().includes('@lid')) continue;
+      if (/^\d{12,22}$/.test(t.replace(/\s/g, ''))) continue;
+      return t;
+    }
   }
   return null;
 }
