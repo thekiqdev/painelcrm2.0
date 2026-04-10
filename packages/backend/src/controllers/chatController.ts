@@ -6511,6 +6511,38 @@ function webhookSecretsEqual(a: string, b: string): boolean {
 }
 
 /**
+ * Várias fontes podem vir no mesmo POST (ex.: query ?secret= da URL + campo `secret` no JSON da Uaz).
+ * Antes o body tinha prioridade sobre a query; um valor errado no payload fazia falhar mesmo com URL correta.
+ * Aceitamos se qualquer fonte coincidir com UAZAPI_WEBHOOK_SECRET.
+ */
+function collectWebhookSecretCandidates(req: Request): string[] {
+  const authHdr = req.headers['authorization'];
+  const bearerSecret =
+    typeof authHdr === 'string' && authHdr.toLowerCase().startsWith('bearer ')
+      ? authHdr.slice(7).trim()
+      : undefined;
+  const raw: unknown[] = [
+    req.query?.secret,
+    req.headers['x-uazapi-secret'],
+    req.headers['x-webhook-secret'],
+    req.headers['x-api-secret'],
+    bearerSecret,
+    req.body?.secret,
+    req.body?.data?.secret,
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of raw) {
+    const n = normalizeIncomingWebhookSecret(r);
+    if (n && !seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
+/**
  * Handler principal para webhooks da UazAPI
  * Responde rapidamente e processa eventos de forma assíncrona
  */
@@ -6542,30 +6574,25 @@ export async function handleWebhook(req: Request, res: Response) {
       return;
     }
 
-    const authHdr = req.headers['authorization'];
-    const bearerSecret =
-      typeof authHdr === 'string' && authHdr.toLowerCase().startsWith('bearer ')
-        ? authHdr.slice(7).trim()
-        : undefined;
-    const rawReceived =
-      req.headers['x-uazapi-secret'] ||
-      req.headers['x-webhook-secret'] ||
-      req.headers['x-api-secret'] ||
-      bearerSecret ||
-      req.body?.secret ||
-      req.body?.data?.secret ||
-      req.query?.secret;
-    const receivedSecret = normalizeIncomingWebhookSecret(rawReceived);
+    const secretCandidates = collectWebhookSecretCandidates(req);
+    const secretMatchesConfigured =
+      hasConfiguredSecret &&
+      secretCandidates.some((c) => webhookSecretsEqual(c, configuredSecret as string));
 
     if (isProduction && hasConfiguredSecret) {
-      if (!receivedSecret || !webhookSecretsEqual(receivedSecret, configuredSecret)) {
+      if (secretCandidates.length === 0 || !secretMatchesConfigured) {
         console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
           webhookId,
           ip: req.ip,
-          reason: !receivedSecret ? 'missing_secret' : 'invalid_secret',
+          reason: secretCandidates.length === 0 ? 'missing_secret' : 'invalid_secret',
           hasXUazapiSecret: !!req.headers['x-uazapi-secret'],
-          hasQuerySecret: !!req.query?.secret,
-          hasBodySecret: !!(req.body?.secret || req.body?.data?.secret),
+          hasQuerySecret: !!normalizeIncomingWebhookSecret(req.query?.secret),
+          hasBodySecret: !!(
+            normalizeIncomingWebhookSecret(req.body?.secret) ||
+            normalizeIncomingWebhookSecret(req.body?.data?.secret)
+          ),
+          distinctCandidateLengths: secretCandidates.map((c) => c.length),
+          configuredSecretLen: configuredSecret.length,
         });
         res.status(401).json({ error: 'Invalid or missing webhook secret' });
         return;
@@ -6580,8 +6607,8 @@ export async function handleWebhook(req: Request, res: Response) {
         message:
           'Webhook aceito sem secret (flag explícita). Remova UAZAPI_WEBHOOK_ALLOW_NO_SECRET e defina UAZAPI_WEBHOOK_SECRET.',
       });
-    } else if (hasConfiguredSecret && receivedSecret) {
-      if (!webhookSecretsEqual(receivedSecret, configuredSecret)) {
+    } else if (hasConfiguredSecret && secretCandidates.length > 0) {
+      if (!secretMatchesConfigured) {
         console.warn(`[Webhook ${webhookId}] Invalid secret`, {
           ip: req.ip,
           receivedSecretHeader: !!req.headers['x-uazapi-secret'],
@@ -6594,7 +6621,7 @@ export async function handleWebhook(req: Request, res: Response) {
       if (webhookVerbose) {
         console.log(`[Webhook ${webhookId}] Secret validated successfully`);
       }
-    } else if (hasConfiguredSecret && !receivedSecret) {
+    } else if (hasConfiguredSecret && secretCandidates.length === 0) {
       if (webhookVerbose) {
         console.log(`[Webhook ${webhookId}] Secret configured but not received, allowing webhook`, {
           receivedSecretHeader: !!req.headers['x-uazapi-secret'],
