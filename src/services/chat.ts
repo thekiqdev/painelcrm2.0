@@ -320,7 +320,12 @@ export const chatService = {
 
   async connectInstance(
     id: string,
-    data?: { phone?: string; sync_on_connect?: boolean; sync_mode?: InstanceSyncMode }
+    data?: {
+      phone?: string;
+      sync_on_connect?: boolean;
+      sync_mode?: InstanceSyncMode;
+      reset_chat_history?: boolean;
+    }
   ) {
     const response = await apiClient.post(`/api/chat/instances/${id}/connect`, data || {});
     if (response.error) {
@@ -332,7 +337,8 @@ export const chatService = {
   async getInstanceStatus(id: string) {
     const response = await apiClient.get(`/api/chat/instances/${id}/status`);
     if (response.error) {
-      throw new Error(response.error);
+      const suffix = response.hint ? ` ${response.hint}` : '';
+      throw new Error(`${response.error}${suffix}`);
     }
     return response.data;
   },

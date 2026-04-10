@@ -40,6 +40,8 @@ export interface ApiResponse<T = any> {
   error?: string;
   /** Código estável de erro (ex.: EMAIL_ALREADY_REGISTERED_USE_LOGIN). */
   code?: string;
+  /** Dica curta do backend (ex.: renovar token UazAPI). */
+  hint?: string;
   /** Campo de formulário associado ao erro (ex.: cpf_cnpj). */
   field?: string;
   details?: any;
@@ -126,6 +128,7 @@ class ApiClient {
         return {
           error: data.error || data.message || 'Request failed',
           code: typeof data.code === 'string' ? data.code : undefined,
+          hint: typeof data.hint === 'string' ? data.hint : undefined,
           field: typeof data.field === 'string' ? data.field : undefined,
           details: { 
             ...data.details, 

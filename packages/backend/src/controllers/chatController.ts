@@ -80,6 +80,8 @@ const connectSchema = z.object({
   phone: z.string().regex(/^\d{10,15}$/).optional().nullable(),
   sync_on_connect: z.boolean().optional(),
   sync_mode: syncModeSchema.optional(),
+  /** Apaga conversas e mensagens locais desta instância antes de conectar (histórico “novo”). */
+  reset_chat_history: z.boolean().optional(),
 });
 
 const syncSchema = z.object({
@@ -308,6 +310,26 @@ async function inheritConversationsFromPhoneKey(
     // Não lançar erro - herança é opcional e não deve quebrar o fluxo
     return 0;
   }
+}
+
+/**
+ * Remove conversas e mensagens locais da instância (`chat_messages` em CASCADE).
+ * Limpa `bootstrap_sync` no metadata para permitir novo bootstrap.
+ */
+async function purgeChatHistoryForInstance(instanceId: string, userId: string): Promise<number> {
+  const del = await pool.query(
+    `DELETE FROM chat_conversations WHERE instance_id = $1 AND user_id = $2 RETURNING id`,
+    [instanceId, userId]
+  );
+  const n = del.rowCount ?? 0;
+  await pool.query(
+    `UPDATE chat_instances
+     SET metadata = COALESCE(metadata, '{}'::jsonb) - 'bootstrap_sync',
+         updated_at = now()
+     WHERE id = $1 AND user_id = $2`,
+    [instanceId, userId]
+  );
+  return n;
 }
 
 const INTERNAL_UAZ_CHAT_ID_RE = /^r[a-f0-9]{12,}$/i;
@@ -1762,6 +1784,19 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       return;
     }
 
+    const secretTrim = process.env.UAZAPI_WEBHOOK_SECRET?.trim();
+    let webhookUrl = resolvedUrl;
+    if (secretTrim) {
+      try {
+        const u = new URL(resolvedUrl);
+        u.searchParams.set('secret', secretTrim);
+        webhookUrl = u.toString();
+      } catch {
+        const sep = resolvedUrl.includes('?') ? '&' : '?';
+        webhookUrl = `${resolvedUrl}${sep}secret=${encodeURIComponent(secretTrim)}`;
+      }
+    }
+
     const existingWebhook = instance.metadata?.webhook;
     const tokenChanged = instance.metadata?.tokenChanged || false;
 
@@ -1775,9 +1810,13 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         instance: instance.external_instance_name,
         instanceId: instance.id,
         oldWebhookUrl: existingWebhook?.url,
-        newWebhookUrl: resolvedUrl,
+        newWebhookUrl: webhookUrl.split('?')[0],
       });
-    } else if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure) {
+    } else if (
+      existingWebhook?.url === resolvedUrl &&
+      !!existingWebhook?.webhookSecretInQuery === !!secretTrim &&
+      !existingWebhook?.needsReconfigure
+    ) {
       logUazChat('info', {
         ...baseLog,
         webhook_result: 'skipped',
@@ -1792,12 +1831,17 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       return;
     }
 
-    logUazChat('info', { ...baseLog, phase: 'calling_uazapi', detail: resolvedUrl });
+    logUazChat('info', {
+      ...baseLog,
+      phase: 'calling_uazapi',
+      detail: secretTrim ? `${webhookUrl.split('?')[0]}?secret=(redacted)` : webhookUrl,
+    });
     console.log('[Auto-Webhook] Configuring webhook...', {
       instance: instance.external_instance_name,
       instanceId: instance.id,
       instanceToken: '***' + instance.instance_token.slice(-4),
-      url: resolvedUrl,
+      url: webhookUrl.split('?')[0],
+      secretInQuery: !!secretTrim,
     });
 
     const defaultEvents = ['messages', 'messages_update', 'chats', 'connection', 'leads'];
@@ -1805,16 +1849,15 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
 
     const webhookBody: Record<string, any> = {
       enabled: true,
-      url: resolvedUrl,
+      url: webhookUrl,
       events: defaultEvents,
       excludeMessages: defaultExcludeMessages,
       addUrlEvents: true,
       AddUrlTypesMessages: true,
     };
 
-    const secret = process.env.UAZAPI_WEBHOOK_SECRET;
-    if (secret) {
-      webhookBody.secret = secret;
+    if (secretTrim) {
+      webhookBody.secret = secretTrim;
     }
 
     const webhookResponse = await uazapiService.configureWebhook(instance.instance_token, webhookBody);
@@ -1841,6 +1884,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         JSON.stringify({
           webhook: {
             url: resolvedUrl,
+            webhookSecretInQuery: !!secretTrim,
             events: defaultEvents,
             excludeMessages: defaultExcludeMessages,
             configuredAt: new Date().toISOString(),
@@ -1859,7 +1903,8 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     });
     console.log('Webhook auto-configured successfully', {
       instance: instance.external_instance_name,
-      url: resolvedUrl,
+      url: webhookUrl.split('?')[0],
+      secretInQuery: !!secretTrim,
     });
   } catch (error: any) {
     const wr = classifyWebhookError(error);
@@ -3223,6 +3268,18 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     if (!instance) return;
 
     const tenantId = await resolveTenantIdForUser(userId);
+
+    if (data.reset_chat_history === true) {
+      const removed = await purgeChatHistoryForInstance(instance.id, userId);
+      logUazChat('info', {
+        event_type: 'connect_reset_chat_history',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: instance.id,
+        phase: 'before_connect',
+        detail: `conversations_removed=${removed}`,
+      });
+    }
     logUazChat('info', {
       event_type: 'connect_instance_start',
       tenant_id: tenantId,
@@ -3348,25 +3405,15 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
           instanceToUse = updatedInstanceResult.rows[0];
 
-          // Se houver phone_key, herdar conversas
-          const currentMetadata = instance.metadata || {};
-          const phoneKey = (instance as any).phone_key || 
-            (currentMetadata?.connectedPhone 
-              ? `${instance.user_id}:${normalizePhoneNumber(currentMetadata.connectedPhone)}`
-              : null);
-
-          if (phoneKey) {
-            console.log('[ConnectInstance] Herdando conversas para nova instância...', { phoneKey });
-            await inheritConversationsFromPhoneKey(userId, instance.id, phoneKey)
-              .then(count => {
-                if (count > 0) {
-                  console.log(`[ConnectInstance] ${count} conversas herdadas após recriar instância`);
-                }
-              })
-              .catch(err => {
-                console.error('[ConnectInstance] Erro ao herdar conversas (não crítico):', err);
-              });
-          }
+          const purged = await purgeChatHistoryForInstance(instance.id, userId);
+          logUazChat('info', {
+            event_type: 'instance_token_recreated_purged_local_chat',
+            tenant_id: tenantId,
+            user_id: userId,
+            instance_id: instance.id,
+            phase: 'after_new_token',
+            detail: `conversations_removed=${purged} (histórico local limpo; sem herança por phone_key)`,
+          });
 
           // Tentar conectar novamente com o novo token
           response = (await uazapiService.connectInstance(
@@ -3959,7 +4006,36 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
     const instance = await loadInstance(userId, id, res);
     if (!instance) return;
 
-    const result = (await uazapiService.getInstanceStatus(instance.instance_token)) as AnyObject;
+    let result: AnyObject;
+    try {
+      result = (await uazapiService.getInstanceStatus(instance.instance_token)) as AnyObject;
+    } catch (apiErr: any) {
+      const msg = String(apiErr?.message ?? '');
+      const st = apiErr?.status as number | undefined;
+      if (
+        st === 401 ||
+        st === 403 ||
+        /invalid token/i.test(msg) ||
+        /token inválido/i.test(msg)
+      ) {
+        const tid = await resolveTenantIdForUser(userId);
+        logUazChat('warn', {
+          event_type: 'instance_status_uaz_token_invalid',
+          tenant_id: tid,
+          user_id: userId,
+          instance_id: instance.id,
+          phase: 'uazapi',
+          detail: msg.slice(0, 240),
+        });
+        res.status(401).json({
+          error: 'Invalid token',
+          code: 'UAZ_INSTANCE_TOKEN_INVALID',
+          hint: 'Gere o QR code novamente (Conectar) para renovar o token na UazAPI.',
+        });
+        return;
+      }
+      throw apiErr;
+    }
     
     // Atualizar status no banco se mudou
     const instanceData = result?.instance || result;
@@ -6442,8 +6518,16 @@ export async function handleWebhook(req: Request, res: Response) {
       return;
     }
 
+    const authHdr = req.headers['authorization'];
+    const bearerSecret =
+      typeof authHdr === 'string' && authHdr.toLowerCase().startsWith('bearer ')
+        ? authHdr.slice(7).trim()
+        : undefined;
     const rawReceived =
       req.headers['x-uazapi-secret'] ||
+      req.headers['x-webhook-secret'] ||
+      req.headers['x-api-secret'] ||
+      bearerSecret ||
       req.body?.secret ||
       req.body?.data?.secret ||
       req.query?.secret;
@@ -6459,7 +6543,9 @@ export async function handleWebhook(req: Request, res: Response) {
           webhookId,
           ip: req.ip,
           reason: !receivedSecret ? 'missing_secret' : 'invalid_secret',
-          hasHeader: !!req.headers['x-uazapi-secret'],
+          hasXUazapiSecret: !!req.headers['x-uazapi-secret'],
+          hasQuerySecret: !!req.query?.secret,
+          hasBodySecret: !!(req.body?.secret || req.body?.data?.secret),
         });
         res.status(401).json({ error: 'Invalid or missing webhook secret' });
         return;

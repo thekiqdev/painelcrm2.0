@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -61,6 +62,8 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
   const [period, setPeriod] = useState<"all" | "today" | "week" | "month" | "custom">("all");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
+  /** Ao conectar/gerar QR: apaga conversas e mensagens locais desta instância antes do fluxo. */
+  const [resetHistoryOnConnect, setResetHistoryOnConnect] = useState(false);
 
   useEffect(() => {
     if (isOpen && instance) {
@@ -70,6 +73,7 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
       setPeriod("all");
       setStartDate("");
       setEndDate("");
+      setResetHistoryOnConnect(false);
     }
   }, [isOpen, instance]);
 
@@ -195,7 +199,9 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
 
     setGeneratingQR(true);
     try {
-      const connectResponse = await chatService.connectInstance(instance.id);
+      const connectResponse = await chatService.connectInstance(instance.id, {
+        reset_chat_history: resetHistoryOnConnect,
+      });
       
       const instanceData = connectResponse?.instance || {};
       const qrData = instanceData?.qrcode || connectResponse?.qrcode || connectResponse?.code;
@@ -464,7 +470,23 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
               <CardHeader>
                 <CardTitle className="text-lg">Ações</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="reset-history-connect" className="text-sm font-medium">
+                      Limpar histórico do CRM ao conectar
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Remove conversas e mensagens salvas desta instância antes de gerar o QR. Use ao trocar de
+                      número ou sessão WhatsApp.
+                    </p>
+                  </div>
+                  <Switch
+                    id="reset-history-connect"
+                    checked={resetHistoryOnConnect}
+                    onCheckedChange={setResetHistoryOnConnect}
+                  />
+                </div>
                 <Button
                   onClick={handleGenerateQRCode}
                   disabled={generatingQR}
