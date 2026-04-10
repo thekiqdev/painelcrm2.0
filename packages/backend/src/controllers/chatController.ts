@@ -1873,6 +1873,17 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       response: JSON.stringify(webhookResponse).substring(0, 500),
     });
 
+    let uazDeliverySecrets: string[] = [];
+    try {
+      const remote = await uazapiService.getWebhook(instance.instance_token);
+      uazDeliverySecrets = extractWebhookDeliverySecretsFromUazRemote(remote);
+    } catch (syncErr: any) {
+      console.warn('[Auto-Webhook] getWebhook após configurar falhou (uazDeliverySecrets não sincronizados)', {
+        instanceId: instance.id,
+        message: syncErr?.message,
+      });
+    }
+
     await pool.query(
       `
       UPDATE chat_instances
@@ -1889,6 +1900,12 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
             excludeMessages: defaultExcludeMessages,
             configuredAt: new Date().toISOString(),
             autoConfigured: true,
+            ...(uazDeliverySecrets.length
+              ? {
+                  uazDeliverySecrets,
+                  uazDeliverySecretsSyncedAt: new Date().toISOString(),
+                }
+              : {}),
           },
         }),
         instance.id,
@@ -6564,6 +6581,116 @@ function collectWebhookSecretCandidates(req: Request): string[] {
   return out;
 }
 
+/** Secret(s) que a Uaz passa a usar na entrega — extraído do GET /webhook após configurar. */
+function extractWebhookDeliverySecretsFromUazRemote(remote: unknown): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (s: string | undefined | null) => {
+    const n = normalizeIncomingWebhookSecret(s);
+    if (n && !seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  };
+  const visit = (obj: unknown) => {
+    if (!obj || typeof obj !== 'object') return;
+    const o = obj as Record<string, unknown>;
+    if (typeof o.secret === 'string') push(o.secret);
+    if (typeof o.url === 'string') {
+      try {
+        const u = new URL(o.url);
+        push(u.searchParams.get('secret'));
+      } catch {
+        const m = o.url.match(/[?&]secret=([^&]+)/i);
+        if (m?.[1]) {
+          try {
+            push(decodeURIComponent(m[1]));
+          } catch {
+            push(m[1]);
+          }
+        }
+      }
+    }
+  };
+  if (Array.isArray(remote)) {
+    for (const item of remote) visit(item);
+  } else {
+    visit(remote);
+  }
+  return out;
+}
+
+function collectMetadataWebhookSecretCandidates(metadata: unknown): string[] {
+  const m =
+    metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : null;
+  const wh = m?.webhook;
+  if (!wh || typeof wh !== 'object' || Array.isArray(wh)) return [];
+  const w = wh as Record<string, unknown>;
+  const raw = w.uazDeliverySecrets;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    const n = normalizeIncomingWebhookSecret(typeof item === 'string' ? item : undefined);
+    if (n && !seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
+function instanceTokenSecretVariants(token: string): string[] {
+  const t = token.trim();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (s: string) => {
+    const x = s.trim();
+    if (!x || seen.has(x)) return;
+    seen.add(x);
+    out.push(x);
+  };
+  push(t);
+  const noHyp = t.replace(/-/g, '');
+  if (noHyp && noHyp !== t) push(noHyp);
+  if (noHyp.length >= 25) {
+    push(noHyp.slice(0, 25));
+    push(noHyp.slice(-25));
+  }
+  return out;
+}
+
+function secretCandidatesMatchAnyVariantCaseRelaxed(candidates: string[], variants: string[]): boolean {
+  if (!variants.length) return false;
+  return candidates.some((c) =>
+    variants.some(
+      (v) => webhookSecretsEqual(c, v) || webhookSecretsEqual(c.toLowerCase(), v.toLowerCase())
+    )
+  );
+}
+
+function parseUazWebhookTrustIps(): string[] {
+  const raw = process.env.UAZAPI_WEBHOOK_TRUST_IPS?.trim();
+  if (!raw) return [];
+  return raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+function clientIpForWebhookTrust(req: Request): string {
+  const raw = (req.ip || req.socket?.remoteAddress || '').toString();
+  return raw.replace(/^::ffff:/i, '');
+}
+
+/** Quando a Uaz envia um secret de entrega que não coincide com token nem env, permite validar por IP fixo do provedor (opt-in). */
+function isUazWebhookTrustedProviderIp(req: Request): boolean {
+  const allowed = parseUazWebhookTrustIps();
+  if (!allowed.length) return false;
+  const ip = clientIpForWebhookTrust(req);
+  if (!ip) return false;
+  return allowed.some((a) => ip === a || ip.endsWith(a));
+}
+
 /**
  * Handler principal para webhooks da UazAPI
  * Responde rapidamente e processa eventos de forma assíncrona
@@ -6618,20 +6745,39 @@ export async function handleWebhook(req: Request, res: Response) {
     const instanceTokenForSecret =
       instanceMatchCount === 1 ? instanceRows[0].instance_token : undefined;
 
-    // Uaz costuma enviar o token da instância em ?secret= (não o valor de webhookBody.secret).
+    const uazMetaSecrets =
+      instanceMatchCount === 1 ? collectMetadataWebhookSecretCandidates(instanceRows[0].metadata) : [];
+
+    // Uaz pode enviar em ?secret= um valor distinto do instance_token (ex. 25 chars vs UUID 36).
     const secretMatchesEnv =
       hasConfiguredSecret &&
       secretCandidates.some((c) => webhookSecretsEqual(c, configuredSecret as string));
     const secretMatchesInstanceToken =
+      instanceMatchCount === 1 &&
       !!instanceTokenForSecret &&
-      secretCandidates.some((c) => webhookSecretsEqual(c, instanceTokenForSecret));
-    const secretOk = secretMatchesEnv || secretMatchesInstanceToken;
+      secretCandidatesMatchAnyVariantCaseRelaxed(
+        secretCandidates,
+        instanceTokenSecretVariants(instanceTokenForSecret)
+      );
+    const secretMatchesUazMetadata =
+      instanceMatchCount === 1 &&
+      uazMetaSecrets.length > 0 &&
+      secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, uazMetaSecrets);
+    const secretMatchesTrustedIp =
+      isUazWebhookTrustedProviderIp(req) && secretCandidates.length > 0 && instanceMatchCount === 1;
+
+    const secretOk =
+      secretMatchesEnv ||
+      secretMatchesInstanceToken ||
+      secretMatchesUazMetadata ||
+      secretMatchesTrustedIp;
 
     if (isProduction && hasConfiguredSecret) {
       if (secretCandidates.length === 0 || !secretOk) {
         console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
           webhookId,
           ip: req.ip,
+          clientIpTrust: clientIpForWebhookTrust(req),
           reason: secretCandidates.length === 0 ? 'missing_secret' : 'invalid_secret',
           hasXUazapiSecret: !!req.headers['x-uazapi-secret'],
           hasQuerySecret: !!normalizeIncomingWebhookSecret(req.query?.secret),
@@ -6643,6 +6789,10 @@ export async function handleWebhook(req: Request, res: Response) {
           configuredSecretLen: configuredSecret.length,
           secretMatchesEnv,
           secretMatchesInstanceToken,
+          secretMatchesUazMetadata,
+          secretMatchesTrustedIp,
+          uazMetaSecretsCount: uazMetaSecrets.length,
+          trustIpsConfigured: parseUazWebhookTrustIps().length > 0,
           instanceRowsForToken: instanceMatchCount,
           instanceTokenLenForCompare: instanceTokenForSecret?.length ?? null,
         });
@@ -6653,6 +6803,8 @@ export async function handleWebhook(req: Request, res: Response) {
         console.log(`[Webhook ${webhookId}] Secret validated successfully`, {
           viaEnv: secretMatchesEnv,
           viaInstanceToken: secretMatchesInstanceToken,
+          viaUazMetadata: secretMatchesUazMetadata,
+          viaTrustedIp: secretMatchesTrustedIp,
         });
       }
     } else if (isProduction && !hasConfiguredSecret && allowNoSecretInProd) {
@@ -6677,6 +6829,8 @@ export async function handleWebhook(req: Request, res: Response) {
         console.log(`[Webhook ${webhookId}] Secret validated successfully`, {
           viaEnv: secretMatchesEnv,
           viaInstanceToken: secretMatchesInstanceToken,
+          viaUazMetadata: secretMatchesUazMetadata,
+          viaTrustedIp: secretMatchesTrustedIp,
         });
       }
     } else if (hasConfiguredSecret && secretCandidates.length === 0) {
