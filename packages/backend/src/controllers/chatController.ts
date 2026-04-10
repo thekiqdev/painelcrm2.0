@@ -6581,6 +6581,9 @@ function collectWebhookSecretCandidates(req: Request): string[] {
   return out;
 }
 
+/** Egress IPv4 observado nos webhooks Uaz (pode mudar; sobrescreva com UAZAPI_WEBHOOK_TRUST_IPS). */
+const UAZ_DEFAULT_WEBHOOK_EGRESS_IPV4 = ['116.202.152.37'];
+
 /** Secret(s) que a Uaz passa a usar na entrega — extraído do GET /webhook após configurar. */
 function extractWebhookDeliverySecretsFromUazRemote(remote: unknown): string[] {
   const seen = new Set<string>();
@@ -6592,10 +6595,12 @@ function extractWebhookDeliverySecretsFromUazRemote(remote: unknown): string[] {
       out.push(n);
     }
   };
-  const visit = (obj: unknown) => {
-    if (!obj || typeof obj !== 'object') return;
+  const visitObject = (obj: unknown) => {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
     const o = obj as Record<string, unknown>;
-    if (typeof o.secret === 'string') push(o.secret);
+    for (const key of ['secret', 'webhookSecret', 'querySecret', 'signingSecret'] as const) {
+      if (typeof o[key] === 'string') push(o[key]);
+    }
     if (typeof o.url === 'string') {
       try {
         const u = new URL(o.url);
@@ -6612,11 +6617,20 @@ function extractWebhookDeliverySecretsFromUazRemote(remote: unknown): string[] {
       }
     }
   };
-  if (Array.isArray(remote)) {
-    for (const item of remote) visit(item);
-  } else {
-    visit(remote);
-  }
+  const walk = (node: unknown, depth: number) => {
+    if (depth > 8 || node == null) return;
+    if (Array.isArray(node)) {
+      for (const x of node) walk(x, depth + 1);
+      return;
+    }
+    if (typeof node === 'object') {
+      visitObject(node);
+      for (const v of Object.values(node as Record<string, unknown>)) {
+        if (v != null && typeof v === 'object') walk(v, depth + 1);
+      }
+    }
+  };
+  walk(remote, 0);
   return out;
 }
 
@@ -6671,10 +6685,24 @@ function secretCandidatesMatchAnyVariantCaseRelaxed(candidates: string[], varian
   );
 }
 
+/**
+ * IPs confiáveis para validar webhooks quando o ?secret= não bate com env/token/metadata.
+ * Em produção, se a env não estiver definida, usa o egress IPv4 típico da Uaz (evita fricção; a Uaz nem sempre devolve secret no GET /webhook).
+ * Desligar: UAZAPI_WEBHOOK_TRUST_IPS=false (ou 0, off, none). Sobrescrever: lista separada por vírgula.
+ */
 function parseUazWebhookTrustIps(): string[] {
-  const raw = process.env.UAZAPI_WEBHOOK_TRUST_IPS?.trim();
-  if (!raw) return [];
-  return raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  const raw = process.env.UAZAPI_WEBHOOK_TRUST_IPS;
+  if (raw !== undefined && raw !== null) {
+    const t = String(raw).trim();
+    if (t === '' || /^false$/i.test(t) || t === '0' || /^off$/i.test(t) || /^none$/i.test(t)) {
+      return [];
+    }
+    return t.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return [...UAZ_DEFAULT_WEBHOOK_EGRESS_IPV4];
+  }
+  return [];
 }
 
 function clientIpForWebhookTrust(req: Request): string {
