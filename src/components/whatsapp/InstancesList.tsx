@@ -395,7 +395,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({
                         size="sm"
                         className="flex-1 h-9 text-xs font-medium"
                         onClick={() => handleGenerateQRCode(instance)}
-                        disabled={generatingQR === instance.id}
+                        disabled={generatingQR === instance.id || instance.can_manage === false}
                       >
                         {generatingQR === instance.id ? (
                           <>
@@ -428,7 +428,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({
                         size="sm"
                         className="h-9 w-9 p-0 hover:bg-destructive hover:text-destructive-foreground hover:border-destructive transition-colors"
                         onClick={() => handleDeleteClick(instance)}
-                        disabled={deletingId === instance.id}
+                        disabled={deletingId === instance.id || instance.can_manage === false}
                         title="Deletar instância"
                       >
                         {deletingId === instance.id ? (

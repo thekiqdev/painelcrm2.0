@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { pool } from '../utils/db.js';
+import { hasAssignedTeamColumn, hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { randomUUID, timingSafeEqual } from 'crypto';
@@ -68,6 +69,13 @@ import {
   type ChatMediaItem,
   type ChatMessageKind,
 } from '../utils/chatMessageContract.js';
+import { SQL_CHAT_ACCESS_PREDICATE, sqlChatAccessPredicate } from '../utils/chatConversationAccess.js';
+import {
+  decorateInstanceForApi,
+  fetchInstanceForOperate,
+  fetchInstanceForManage,
+  listInstancesForActor,
+} from '../utils/chatInstanceAccess.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -661,16 +669,30 @@ function normalizeChatPayload(raw: any) {
   };
 }
 
-async function loadInstance(userId: string, instanceId: string, res: Response) {
-  const result = await pool.query<ChatInstanceRow>(
-    'SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2',
-    [instanceId, userId]
-  );
-  if (result.rowCount === 0) {
+/** Instância acessível para operar (atendimento, sync, estado) — dono ou mesmo tenant. */
+async function loadInstanceForOperate(userId: string, instanceId: string, res: Response) {
+  const row = await fetchInstanceForOperate(userId, instanceId);
+  if (!row) {
     res.status(404).json({ error: 'Instância não encontrada' });
     return null;
   }
-  return result.rows[0];
+  return row as ChatInstanceRow;
+}
+
+/** Apenas o dono da instância — QR, apagar, webhook, patch. */
+async function loadInstanceForManage(userId: string, instanceId: string, res: Response) {
+  const row = await fetchInstanceForManage(userId, instanceId);
+  if (row) return row as ChatInstanceRow;
+  const canOperate = await fetchInstanceForOperate(userId, instanceId);
+  if (canOperate) {
+    res.status(403).json({
+      error: 'Sem permissão para gerir esta instância',
+      code: 'INSTANCE_MANAGE_FORBIDDEN',
+    });
+    return null;
+  }
+  res.status(404).json({ error: 'Instância não encontrada' });
+  return null;
 }
 
 async function resolveTenantIdForUser(userId: string): Promise<string | null> {
@@ -1467,11 +1489,9 @@ async function reconcileConversationLastMessage(conversationId: string): Promise
 
 export async function listInstances(req: AuthRequest, res: Response) {
   const userId = req.userId!;
-  const instances = await pool.query(
-    'SELECT * FROM chat_instances WHERE user_id = $1 ORDER BY created_at DESC',
-    [userId]
-  );
-  res.json(instances.rows);
+  const rows = await listInstancesForActor(userId);
+  const out = rows.map((row) => decorateInstanceForApi(row, userId));
+  res.json(out);
 }
 
 export async function createInstance(req: AuthRequest, res: Response) {
@@ -1956,11 +1976,11 @@ async function scheduleBootstrapSyncIfNeeded(
   trigger: BootstrapSyncTrigger
 ): Promise<void> {
   const tenantId = await resolveTenantIdForUser(userId);
-  const mdRes = await pool.query<{ metadata: any }>(
-    `SELECT metadata FROM chat_instances WHERE id = $1 AND user_id = $2`,
-    [instanceId, userId]
-  );
-  const md = mdRes.rows[0]?.metadata || {};
+  const instPeek = await fetchInstanceForOperate(userId, instanceId);
+  if (!instPeek) {
+    return;
+  }
+  const md = (instPeek.metadata as Record<string, unknown>) || {};
   const soc = md.sync_on_connect;
   const sm = normalizeSyncMode(md.sync_mode);
   if (!shouldBootstrapHistory(md)) {
@@ -2005,7 +2025,7 @@ async function scheduleBootstrapSyncIfNeeded(
        true
      ),
      updated_at = now()
-     WHERE id = $2 AND user_id = $3
+     WHERE id = $2
        AND status IN ('connected', 'open')
        AND (
          metadata->'bootstrap_sync' IS NULL
@@ -2025,7 +2045,7 @@ async function scheduleBootstrapSyncIfNeeded(
          )
        )
      RETURNING *`,
-    [JSON.stringify(bootstrapPatch), instanceId, userId]
+    [JSON.stringify(bootstrapPatch), instanceId]
   );
 
   if (r.rowCount === 0) {
@@ -3066,12 +3086,9 @@ async function performSyncConversationMessagesForConversation(
     });
   } else {
     try {
-      const instRes = await pool.query<ChatInstanceRow>(
-        `SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2`,
-        [conversation.instance_id, userId]
-      );
-      if (instRes.rows[0]) {
-        await fetchAndUpsertRemoteChatIdentity(instRes.rows[0], conversation.external_chat_id);
+      const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
+      if (instRow) {
+        await fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id);
       }
     } catch (idErr: any) {
       logUazChat('warn', {
@@ -3103,8 +3120,8 @@ async function runBootstrapSyncJob(
 ): Promise<void> {
   const tenantId = await resolveTenantIdForUser(userId);
   const instRes = await pool.query<ChatInstanceRow>(
-    'SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2',
-    [instanceId, userId]
+    'SELECT * FROM chat_instances WHERE id = $1',
+    [instanceId]
   );
   const instance = instRes.rows[0];
   if (!instance) {
@@ -3281,7 +3298,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
     const { id } = req.params;
     const data = connectSchema.parse(req.body || {});
 
-    const instance = await loadInstance(userId, id, res);
+    const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
     const tenantId = await resolveTenantIdForUser(userId);
@@ -3709,7 +3726,7 @@ export async function deleteInstance(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { id } = req.params;
 
-    const instance = await loadInstance(userId, id, res);
+    const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
     // Deletar instância na UazAPI (se necessário)
@@ -3733,7 +3750,7 @@ export async function patchInstance(req: AuthRequest, res: Response) {
     const { id } = req.params;
     const body = patchInstanceSchema.parse(req.body || {});
 
-    const instance = await loadInstance(userId, id, res);
+    const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
     await pool.query(
@@ -3795,7 +3812,7 @@ export async function configureInstanceWebhook(req: AuthRequest, res: Response) 
     });
 
     // Carregar instância
-    const instance = await loadInstance(userId, id, res);
+    const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
     // Resolver URL do webhook
@@ -3946,7 +3963,7 @@ export async function getInstanceWebhook(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { id } = req.params;
 
-    const instance = await loadInstance(userId, id, res);
+    const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
     // Buscar configuração do banco de dados
@@ -3987,7 +4004,7 @@ export async function forceConfigureWebhook(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { id } = req.params;
 
-    const instance = await loadInstance(userId, id, res);
+    const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
     console.log('[Force-Webhook] Forcing webhook configuration', {
@@ -4020,7 +4037,7 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { id } = req.params;
 
-    const instance = await loadInstance(userId, id, res);
+    const instance = await loadInstanceForOperate(userId, id, res);
     if (!instance) return;
 
     let result: AnyObject;
@@ -4232,7 +4249,7 @@ export async function syncConversations(req: AuthRequest, res: Response) {
       return;
     }
 
-    const instance = await loadInstance(userId, data.data.instanceId, res);
+    const instance = await loadInstanceForOperate(userId, data.data.instanceId, res);
     if (!instance) return;
 
     const tenantId = await resolveTenantIdForUser(userId);
@@ -4367,11 +4384,73 @@ export async function getCrmWhatsappIdentity(req: AuthRequest, res: Response) {
 export async function getConversations(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
-    const { instanceId, search, assignedTo, unassigned, status, queue, startDate, endDate } = req.query;
+    const { instanceId, search, status, startDate, endDate } = req.query;
+    const inboxScope = req.query.inboxScope === 'tenant' ? 'tenant' : 'owner';
+    const attendanceFilter = typeof req.query.attendanceFilter === 'string' ? req.query.attendanceFilter : '';
+    const diagDeep = String(req.query.diag || '') === '1';
+    const logChatList = diagDeep || process.env.CHAT_LIST_LOG === '1';
+
+    if (instanceId && typeof instanceId === 'string' && instanceId.trim()) {
+      const instOk = await fetchInstanceForOperate(userId, instanceId.trim());
+      if (!instOk) {
+        res.status(404).json({ error: 'Instância não encontrada ou sem acesso' });
+        return;
+      }
+    }
+
     const params: any[] = [userId];
     let paramIndex = 2;
     const leadColumnAvailable = await hasLeadIdColumn();
     const leadSelect = leadColumnAvailable ? 'c.lead_id' : 'NULL::uuid as lead_id';
+    const attendanceCols = await hasAttendanceColumns();
+    const teamCols = attendanceCols && (await hasAssignedTeamColumn());
+
+    const attendanceSelectAndJoins = attendanceCols
+      ? {
+          select: `c.attendance_status,
+        c.assigned_to_user_id,
+        c.queue_id,
+        ${teamCols ? 'c.assigned_team_id,\n        t_chat_team.name AS assigned_team_name,' : 'NULL::uuid AS assigned_team_id,\n        NULL::text AS assigned_team_name,'}
+        c.assigned_at,
+        c.closed_at,
+        c.last_assignment_reason,
+        assignee.email AS assignee_email,
+        COALESCE(
+          NULLIF(TRIM(COALESCE(pf.first_name, '') || ' ' || COALESCE(pf.last_name, '')), ''),
+          assignee.email
+        ) AS assignee_display,`,
+          joins: `
+      LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
+      LEFT JOIN profiles pf ON pf.id = assignee.id${teamCols ? '\n      LEFT JOIN teams t_chat_team ON t_chat_team.id = c.assigned_team_id' : ''}`,
+        }
+      : {
+          select: `'unassigned'::text AS attendance_status,
+        NULL::uuid AS assigned_to_user_id,
+        NULL::uuid AS queue_id,
+        NULL::timestamptz AS assigned_at,
+        NULL::timestamptz AS closed_at,
+        NULL::text AS last_assignment_reason,
+        NULL::text AS assignee_email,
+        NULL::text AS assignee_display,`,
+          joins: '',
+        };
+
+    // tenant: sempre inclui conversas do próprio utilizador (evita lista vazia se EXISTS falha por
+    // tenant_id NULL na BD, legado, ou divergência JWT vs users). Partilha = OR mesmo tenant.
+    const whereOwnerOrTenant =
+      inboxScope === 'owner'
+        ? 'c.user_id = $1'
+        : `(
+      c.user_id = $1
+      OR EXISTS (
+        SELECT 1 FROM users u_owner
+        INNER JOIN users u_me ON u_me.id = $1
+        WHERE u_owner.id = c.user_id
+          AND u_owner.tenant_id IS NOT NULL
+          AND u_me.tenant_id IS NOT NULL
+          AND u_owner.tenant_id = u_me.tenant_id
+      )
+    )`;
 
     let query = `
       SELECT
@@ -4397,6 +4476,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.created_at,
         c.updated_at,
         c.client_id,
+        ${attendanceSelectAndJoins.select}
         ${leadSelect},
         i.name as instance_name,
         CASE
@@ -4414,8 +4494,8 @@ export async function getConversations(req: AuthRequest, res: Response) {
           ELSE NULL
         END as lead_status
       FROM chat_conversations c
-      INNER JOIN chat_instances i ON i.id = c.instance_id
-      WHERE c.user_id = $1
+      INNER JOIN chat_instances i ON i.id = c.instance_id${attendanceSelectAndJoins.joins}
+      WHERE ${whereOwnerOrTenant}
     `;
 
     if (instanceId) {
@@ -4424,27 +4504,55 @@ export async function getConversations(req: AuthRequest, res: Response) {
       paramIndex++;
     }
 
-    // Filtros opcionais - removidos assigned_to e queue pois podem não existir
-    // TODO: Reativar quando a migration 16 for executada
-    // if (assignedTo === 'me') {
-    //   params.push(userId);
-    //   query += ` AND c.assigned_to = $${params.length}`;
-    //   paramIndex++;
-    // } else if (unassigned === 'true') {
-    //   query += ` AND (c.assigned_to IS NULL OR c.assigned_to = '00000000-0000-0000-0000-000000000000'::uuid)`;
-    // }
+    if (attendanceCols) {
+      if (attendanceFilter === 'mine') {
+        params.push(userId);
+        query += ` AND c.assigned_to_user_id = $${params.length} AND c.attendance_status = 'in_service'`;
+        paramIndex++;
+      } else if (attendanceFilter === 'unassigned') {
+        query += ` AND c.assigned_to_user_id IS NULL
+          AND (c.attendance_status IS NULL OR c.attendance_status = 'unassigned')
+          AND (c.attendance_status IS DISTINCT FROM 'closed')`;
+        if (teamCols) {
+          query += ` AND (c.assigned_team_id IS NULL)`;
+        }
+      } else if (attendanceFilter === 'queue' || attendanceFilter === 'queued') {
+        /** Fila geral: sem operador e sem fila de equipe */
+        query += ` AND c.assigned_to_user_id IS NULL
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
+          AND (c.attendance_status IS DISTINCT FROM 'closed')`;
+        if (teamCols) {
+          query += ` AND (c.assigned_team_id IS NULL)`;
+        }
+      } else if (attendanceFilter === 'closed') {
+        query += ` AND c.attendance_status = 'closed'`;
+      } else if (attendanceFilter === 'team') {
+        /** Equipe: conversas na fila da equipe (transferidas para equipe), visível só a membros */
+        if (teamCols) {
+          params.push(userId);
+          query += ` AND c.assigned_team_id IS NOT NULL
+          AND c.assigned_to_user_id IS NULL
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
+          AND EXISTS (
+            SELECT 1 FROM team_members tm
+            WHERE tm.team_id = c.assigned_team_id AND tm.user_id = $${params.length}
+          )`;
+          paramIndex++;
+        } else {
+          query += ` AND FALSE`;
+        }
+      }
+    } else if (attendanceFilter && attendanceFilter.length > 0) {
+      console.warn(
+        '[GetConversations] attendanceFilter ignorado: migration Etapa 5 não aplicada (sem coluna assigned_to_user_id)'
+      );
+    }
 
     if (status && typeof status === 'string') {
       params.push(status);
       query += ` AND c.status = $${params.length}`;
       paramIndex++;
     }
-
-    // if (queue && typeof queue === 'string') {
-    //   params.push(queue);
-    //   query += ` AND c.queue = $${params.length}`;
-    //   paramIndex++;
-    // }
 
     if (search && typeof search === 'string') {
       params.push(`%${search.toLowerCase()}%`);
@@ -4482,6 +4590,104 @@ export async function getConversations(req: AuthRequest, res: Response) {
     const rowsForClient = conversations.rows.map((r: Record<string, unknown>) =>
       conversationRowForClientApi(r)
     );
+
+    const tenantRow = await pool.query<{ tenant_id: string | null }>(
+      'SELECT tenant_id FROM users WHERE id = $1',
+      [userId]
+    );
+    const dbTenantId = tenantRow.rows[0]?.tenant_id ?? null;
+
+    if (logChatList) {
+      console.log('[ChatListDiag] getConversations result', {
+        userId,
+        reqTenantId: req.tenantId ?? null,
+        dbTenantId,
+        attendanceColumnsInDb: attendanceCols,
+        instanceId: instanceId ?? null,
+        inboxScope,
+        attendanceFilter: attendanceFilter || '(none)',
+        search: typeof search === 'string' ? search : null,
+        status: typeof status === 'string' ? status : null,
+        finalRowCount: conversations.rowCount,
+        whereSnippet: inboxScope === 'owner' ? 'owner:c.user_id=$1' : 'tenant:c.user_id=$1 OR EXISTS(tenant peers)',
+      });
+    }
+
+    if (diagDeep && instanceId && typeof instanceId === 'string') {
+      const raw = await pool.connect();
+      try {
+        await raw.query("SET LOCAL app.bypass_rls = '1'");
+        const baseTotal = await raw.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM chat_conversations WHERE instance_id = $1`,
+          [instanceId]
+        );
+        const forOwnerUser = await raw.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM chat_conversations WHERE instance_id = $1 AND user_id = $2`,
+          [instanceId, userId]
+        );
+        const tenantPeerSql = `
+          SELECT COUNT(*)::text AS n FROM chat_conversations c
+          WHERE c.instance_id = $1
+            AND EXISTS (
+              SELECT 1 FROM users u_owner
+              INNER JOIN users u_me ON u_me.id = $2
+              WHERE u_owner.id = c.user_id
+                AND u_owner.tenant_id IS NOT NULL
+                AND u_me.tenant_id IS NOT NULL
+                AND u_owner.tenant_id = u_me.tenant_id
+            )`;
+        const tenantScopeSim = await raw.query<{ n: string }>(tenantPeerSql, [instanceId, userId]);
+        const ownerScopeSim = await raw.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM chat_conversations c WHERE c.instance_id = $1 AND c.user_id = $2`,
+          [instanceId, userId]
+        );
+        let attendance_null = 0;
+        let attendance_unassigned = 0;
+        let assigned_to_user_id_null = 0;
+        if (attendanceCols) {
+          const nullAtt = await raw.query<{ n: string }>(
+            `SELECT COUNT(*)::text AS n FROM chat_conversations c
+           WHERE c.instance_id = $1 AND c.attendance_status IS NULL`,
+            [instanceId]
+          );
+          const unassignedAtt = await raw.query<{ n: string }>(
+            `SELECT COUNT(*)::text AS n FROM chat_conversations c
+           WHERE c.instance_id = $1 AND c.attendance_status = 'unassigned'`,
+            [instanceId]
+          );
+          const nullAssignee = await raw.query<{ n: string }>(
+            `SELECT COUNT(*)::text AS n FROM chat_conversations c
+           WHERE c.instance_id = $1 AND c.assigned_to_user_id IS NULL`,
+            [instanceId]
+          );
+          attendance_null = Number(nullAtt.rows[0]?.n ?? 0);
+          attendance_unassigned = Number(unassignedAtt.rows[0]?.n ?? 0);
+          assigned_to_user_id_null = Number(nullAssignee.rows[0]?.n ?? 0);
+        }
+        const convOwnerNullTenant = await raw.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n
+           FROM chat_conversations c
+           INNER JOIN users u ON u.id = c.user_id
+           WHERE c.instance_id = $1 AND u.tenant_id IS NULL`,
+          [instanceId]
+        );
+        console.log('[ChatListDiag] bypass_counts (RLS off)', {
+          instanceId,
+          attendance_columns: attendanceCols,
+          base_total_for_instance: Number(baseTotal.rows[0]?.n ?? 0),
+          owner_scope_total: Number(ownerScopeSim.rows[0]?.n ?? 0),
+          tenant_scope_total_sim: Number(tenantScopeSim.rows[0]?.n ?? 0),
+          attendance_null,
+          attendance_unassigned,
+          assigned_to_user_id_null,
+          conversations_whose_owner_has_null_tenant_id: Number(convOwnerNullTenant.rows[0]?.n ?? 0),
+          for_owner_user_id: Number(forOwnerUser.rows[0]?.n ?? 0),
+          final_after_app_filters: conversations.rowCount,
+        });
+      } finally {
+        raw.release();
+      }
+    }
 
     console.log('[GetConversations] Query result', {
       userId,
@@ -4539,13 +4745,131 @@ export async function getConversations(req: AuthRequest, res: Response) {
   }
 }
 
+/** Contagens por filtro de atendimento + não lidas (mesmo escopo inbox/instance que a listagem). */
+export async function getConversationAttendanceCounts(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const inboxScope = req.query.inboxScope === 'tenant' ? 'tenant' : 'owner';
+    const raw = req.query.instanceIds ?? req.query.instanceId;
+    let instanceIds: string[] = [];
+    if (typeof raw === 'string') {
+      instanceIds = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    } else if (Array.isArray(raw)) {
+      instanceIds = raw.flatMap((s) => String(s).split(',')).map((s) => s.trim()).filter(Boolean);
+    }
+    if (instanceIds.length === 0) {
+      res.status(400).json({ error: 'Informe instanceIds (UUIDs separados por vírgula)' });
+      return;
+    }
+
+    const attendanceCols = await hasAttendanceColumns();
+    const teamCols = attendanceCols && (await hasAssignedTeamColumn());
+    const whereOwnerOrTenant =
+      inboxScope === 'owner'
+        ? 'c.user_id = $1'
+        : `(
+      c.user_id = $1
+      OR EXISTS (
+        SELECT 1 FROM users u_owner
+        INNER JOIN users u_me ON u_me.id = $1
+        WHERE u_owner.id = c.user_id
+          AND u_owner.tenant_id IS NOT NULL
+          AND u_me.tenant_id IS NOT NULL
+          AND u_owner.tenant_id = u_me.tenant_id
+      )
+    )`;
+
+    const params: unknown[] = [userId, instanceIds];
+
+    let selectCounts: string;
+    if (attendanceCols) {
+      const queueTeamExcl = teamCols
+        ? `AND (c.assigned_team_id IS NULL)`
+        : '';
+      const unassTeamExcl = teamCols
+        ? `AND (c.assigned_team_id IS NULL)`
+        : '';
+      const teamInboxCount = teamCols
+        ? `COUNT(*) FILTER (
+        WHERE c.assigned_team_id IS NOT NULL
+          AND c.assigned_to_user_id IS NULL
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
+          AND EXISTS (
+            SELECT 1 FROM team_members tm
+            WHERE tm.team_id = c.assigned_team_id AND tm.user_id = $1
+          )
+      )::int AS team,`
+        : `0::int AS team,`;
+      selectCounts = `
+      COUNT(*) FILTER (
+        WHERE c.assigned_to_user_id IS NULL
+          ${queueTeamExcl}
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
+          AND (c.attendance_status IS DISTINCT FROM 'closed')
+      )::int AS queue,
+      COUNT(*) FILTER (
+        WHERE c.assigned_to_user_id = $1 AND c.attendance_status = 'in_service'
+      )::int AS mine,
+      ${teamInboxCount}
+      COUNT(*) FILTER (
+        WHERE c.assigned_to_user_id IS NULL
+          ${unassTeamExcl}
+          AND (c.attendance_status IS NULL OR c.attendance_status = 'unassigned')
+          AND (c.attendance_status IS DISTINCT FROM 'closed')
+      )::int AS unassigned,
+      COUNT(*) FILTER (WHERE c.attendance_status = 'closed')::int AS closed,
+      `;
+    } else {
+      selectCounts = `
+      0::int AS queue,
+      0::int AS mine,
+      0::int AS team,
+      0::int AS unassigned,
+      0::int AS closed,
+      `;
+    }
+
+    const q = `
+      SELECT
+        ${selectCounts}
+        COUNT(*) FILTER (WHERE COALESCE(c.unread_count, 0) > 0)::int AS unread
+      FROM chat_conversations c
+      INNER JOIN chat_instances i ON i.id = c.instance_id
+      WHERE ${whereOwnerOrTenant}
+        AND c.instance_id = ANY($2::uuid[])
+    `;
+
+    const r = await pool.query<{
+      queue: number;
+      mine: number;
+      team: number;
+      unassigned: number;
+      closed: number;
+      unread: number;
+    }>(q, params);
+
+    const row = r.rows[0];
+    res.json({
+      queue: row?.queue ?? 0,
+      mine: row?.mine ?? 0,
+      team: row?.team ?? 0,
+      unassigned: row?.unassigned ?? 0,
+      closed: row?.closed ?? 0,
+      unread: row?.unread ?? 0,
+    });
+  } catch (e: any) {
+    console.error('[getConversationAttendanceCounts]', e);
+    res.status(500).json({ error: e.message || 'Falha ao contar filtros' });
+  }
+}
+
 export async function getConversationMessages(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
     const { id } = req.params;
 
     const conversation = await pool.query(
-      'SELECT id FROM chat_conversations WHERE id = $1 AND user_id = $2',
+      `SELECT id FROM chat_conversations c WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}`,
       [id, userId]
     );
     if (conversation.rowCount === 0) {
@@ -4605,6 +4929,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { id } = req.params;
     const leadColumnAvailable = await hasLeadIdColumn();
+    /** Mesmo predicado que getConversations / inbox partilhado (não só c.user_id = ator). */
     const conversationResult = await pool.query<{
       id: string;
       client_id: string | null;
@@ -4617,7 +4942,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
              ${leadColumnAvailable ? 'c.lead_id,' : ''}
              c.phone_number, c.metadata
       FROM chat_conversations c
-      WHERE c.id = $1 AND c.user_id = $2
+      WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}
       `,
       [id, userId]
     );
@@ -4633,12 +4958,26 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
 
     // Hardening: GET não deve mutar vínculo. Migração lead->cliente ocorre por função explícita de domínio.
 
+    /** CRM: dono do registo OU mesmo tenant que o utilizador (equipa). */
+    const crmActorScopeSql = (table: 'clients' | 'leads') => `
+      SELECT t.*
+      FROM ${table} t
+      INNER JOIN users owner ON owner.id = t.user_id
+      INNER JOIN users actor ON actor.id = $2
+      WHERE t.id = $1
+        AND (
+          t.user_id = $2
+          OR (
+            owner.tenant_id IS NOT NULL
+            AND actor.tenant_id IS NOT NULL
+            AND owner.tenant_id = actor.tenant_id
+          )
+        )
+    `;
+
     // Priorizar cliente sobre lead
     if (clientId) {
-      const clientResult = await pool.query(
-        'SELECT * FROM clients WHERE id = $1 AND user_id = $2',
-        [clientId, userId]
-      );
+      const clientResult = await pool.query(crmActorScopeSql('clients'), [clientId, userId]);
       if ((clientResult.rowCount ?? 0) > 0) {
         res.json({
           type: 'client',
@@ -4649,10 +4988,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
     }
 
     if (leadId) {
-      const leadResult = await pool.query(
-        'SELECT * FROM leads WHERE id = $1 AND user_id = $2',
-        [leadId, userId]
-      );
+      const leadResult = await pool.query(crmActorScopeSql('leads'), [leadId, userId]);
       if ((leadResult.rowCount ?? 0) > 0) {
         res.json({
           type: 'lead',
@@ -5048,7 +5384,7 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
         SELECT c.*, i.instance_token, i.metadata AS instance_metadata
         FROM chat_conversations c
         INNER JOIN chat_instances i ON i.id = c.instance_id
-        WHERE c.id = $1 AND c.user_id = $2
+        WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}
       `,
       [id, userId]
     );
@@ -5288,7 +5624,12 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
       `UPDATE chat_conversations
        SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
            updated_at = now()
-       WHERE id = $2 AND user_id = $3`,
+       WHERE id = $2
+         AND EXISTS (
+           SELECT 1 FROM chat_conversations c
+           WHERE c.id = $2
+             AND ${sqlChatAccessPredicate('$3')}
+         )`,
       [
         JSON.stringify({
           _last_messages_sync_http_at: new Date().toISOString(),
@@ -5336,7 +5677,7 @@ export async function refreshConversationIdentity(req: AuthRequest, res: Respons
     const { id } = req.params;
 
     const convRow = await pool.query<{ external_chat_id: string; instance_id: string }>(
-      `SELECT external_chat_id, instance_id FROM chat_conversations WHERE id = $1 AND user_id = $2`,
+      `SELECT c.external_chat_id, c.instance_id FROM chat_conversations c WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}`,
       [id, userId]
     );
     if (convRow.rowCount === 0) {
@@ -5345,7 +5686,7 @@ export async function refreshConversationIdentity(req: AuthRequest, res: Respons
     }
 
     const { external_chat_id: externalChatId, instance_id: instanceId } = convRow.rows[0]!;
-    const instance = await loadInstance(userId, instanceId, res);
+    const instance = await loadInstanceForOperate(userId, instanceId, res);
     if (!instance) return;
 
     const upserted = await fetchAndUpsertRemoteChatIdentity(instance, externalChatId);
@@ -5404,7 +5745,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         SELECT c.*, i.instance_token, i.external_instance_name
         FROM chat_conversations c
         INNER JOIN chat_instances i ON i.id = c.instance_id
-        WHERE c.id = $1 AND c.user_id = $2
+        WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}
       `,
       [data.conversationId, userId]
     );
@@ -5581,12 +5922,9 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     }
 
     try {
-      const instRes = await pool.query<ChatInstanceRow>(
-        `SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2`,
-        [conversation.instance_id, userId]
-      );
-      if (instRes.rows[0]) {
-        void fetchAndUpsertRemoteChatIdentity(instRes.rows[0], conversation.external_chat_id).catch(
+      const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
+      if (instRow) {
+        void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
           (idErr: any) => console.warn('[SendMessage] identity refresh failed:', idErr?.message)
         );
       }
@@ -5747,7 +6085,7 @@ export async function markConversationRead(req: AuthRequest, res: Response) {
         SELECT c.*, i.instance_token
         FROM chat_conversations c
         INNER JOIN chat_instances i ON i.id = c.instance_id
-        WHERE c.id = $1 AND c.user_id = $2
+        WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}
       `,
       [id, userId]
     );

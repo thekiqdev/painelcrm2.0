@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Package, Wrench, Phone, Mail, MessageSquare, Clock, ShoppingCart } from "lucide-react";
-import { Product, StoreProfile } from "@/types/products";
+import { PublicCatalogProduct, StoreProfile } from "@/types/products";
 import { productsService } from "@/services/products";
 
 export const PublicStore = () => {
   const { storeSlug } = useParams<{ storeSlug: string }>();
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<PublicCatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -43,7 +43,7 @@ export const PublicStore = () => {
     }
   };
 
-  const handleWhatsAppContact = (product?: Product) => {
+  const handleWhatsAppContact = (product?: PublicCatalogProduct) => {
     if (!storeProfile?.contact_whatsapp) return;
     
     const phone = storeProfile.contact_whatsapp.replace(/\D/g, '');

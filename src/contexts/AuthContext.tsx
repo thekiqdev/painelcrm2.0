@@ -19,6 +19,8 @@ interface User {
   created_at?: string;
   default_profile_id?: string | null;
   is_super_admin?: boolean;
+  /** Role `admin` no tenant (user_roles) — supervisão no chat (transferir, ver equipa). */
+  is_tenant_admin?: boolean;
   /** Se true, o usuário é o administrador da conta (primary user do tenant) e pode acessar a tela de planos. */
   can_manage_plan?: boolean;
   /** Se true, o plano grátis expirou e o usuário deve ser direcionado para contratação. */

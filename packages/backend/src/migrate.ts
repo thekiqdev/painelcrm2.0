@@ -112,6 +112,11 @@ const order = [
   '93_tenant_billing_payment_attempts.sql',
   '94_seats_commercial_policy.sql',
   '95_chat_conversations_canonical_identity.sql',
+  /** Etapa 5 — atendimento / fila em `chat_conversations` + histórico auditável */
+  '96_chat_conversations_attendance_etapa5.sql',
+  /** RLS chat: `app.actor_user_id` + políticas SELECT/INSERT separadas */
+  '97_rls_chat_app_actor_visibility.sql',
+  '98_chat_conversations_assigned_team.sql',
   'create-admin-user.sql',
 ];
 

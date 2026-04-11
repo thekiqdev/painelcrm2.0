@@ -42,6 +42,25 @@ export interface Product {
   updated_at?: string;
 }
 
+/** Resposta das APIs públicas de catálogo (V2-1); sem dados internos nem variations. */
+export interface PublicCatalogProduct {
+  id: string;
+  name: string;
+  type: 'product' | 'service';
+  short_description?: string;
+  description?: string;
+  price?: number | null;
+  discount_price?: number | null;
+  currency: string;
+  category?: string | null;
+  images: string[];
+  secondary_images?: string[];
+  features: string[];
+  duration_hours?: number | null;
+  is_recurring?: boolean | null;
+  recurrence_interval?: string | null;
+}
+
 export interface StoreProfile {
   id: string;
   user_id: string;

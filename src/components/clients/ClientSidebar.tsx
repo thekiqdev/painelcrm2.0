@@ -4,7 +4,6 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
@@ -139,16 +138,16 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   };
 
   return (
-    <div className="h-full flex flex-col">
-      <SidebarContent className="flex-1">
+    <div className="flex h-full min-h-0 flex-col">
+      <SidebarContent className="min-h-0 flex-1">
         {/* Header com botão voltar */}
-        <SidebarGroup>
-          <div className="px-2 py-4 border-b">
+        <SidebarGroup className="p-0">
+          <div className="border-b border-border/70 px-2 pb-1.5 pt-1">
             <button
               type="button"
               onClick={() => navigateBackFromClientProfile(navigate, location)}
               className={cn(
-                "flex items-center gap-2 w-full px-2 py-2 rounded-md text-sm font-medium transition-colors",
+                "flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm font-medium transition-colors",
                 "hover:bg-accent hover:text-accent-foreground",
                 "text-muted-foreground"
               )}
@@ -162,9 +161,9 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         </SidebarGroup>
 
         {/* Nome do cliente */}
-        <SidebarGroup>
+        <SidebarGroup className="p-0">
           <div
-            className={cn("px-2 py-3 flex gap-3 items-start", collapsed && "justify-center px-1")}
+            className={cn("flex items-start gap-2.5 px-2 py-2", collapsed && "justify-center px-1")}
             title={collapsed ? clientName : undefined}
           >
             <Avatar className="h-10 w-10 shrink-0">
@@ -174,7 +173,6 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
             {!collapsed && (
               <div className="min-w-0 flex-1">
                 <h2 className="font-semibold text-base truncate">{clientName}</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">Perfil do Cliente</p>
                 {phone ? (
                   <p className="text-xs text-muted-foreground mt-1 truncate" title={phone}>
                     {phone}
@@ -185,11 +183,8 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
           </div>
         </SidebarGroup>
 
-        {/* Menu de navegação */}
+        {/* Navegação */}
         <SidebarGroup>
-          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>
-            Menu
-          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {menuItems.map((item) => {

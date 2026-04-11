@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -17,12 +17,15 @@ import {
   Receipt,
   FileSignature,
   User,
-  ExternalLink,
   Trash2,
   Users,
   DollarSign,
   CalendarIcon,
   Image as ImageIcon,
+  UserCheck,
+  XCircle,
+  Headphones,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -33,6 +36,7 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Popover,
   PopoverContent,
@@ -96,6 +100,8 @@ import {
 } from '@/utils/clientProfileNavigation';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
+import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
+import { teamsService, type Team } from '@/services/teams';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -176,6 +182,29 @@ const statusBadgeClass = (status?: string | null) => {
   return 'bg-gray-100 text-gray-700 border-gray-200';
 };
 
+/** Etapa 5 — rótulo curto para badge de atendimento (evita confundir com `status` da conversa Uaz). */
+const attendanceStatusLabel = (s?: string | null) => {
+  switch (s) {
+    case 'unassigned':
+      return 'Sem responsável';
+    case 'queued':
+      return 'Fila';
+    case 'in_service':
+      return 'Em atendimento';
+    case 'closed':
+      return 'Encerrada';
+    default:
+      return null;
+  }
+};
+
+/** Nome curto do operador (lista / cabeçalho). */
+const shortOperatorName = (display?: string | null) => {
+  if (!display?.trim()) return '';
+  const first = display.trim().split(/\s+/)[0];
+  return first.length > 18 ? `${first.slice(0, 16)}…` : first;
+};
+
 const Chat = () => {
   const { user, session } = useAuth();
   const navigate = useNavigate();
@@ -191,7 +220,28 @@ const Chat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'read' | 'leads' | 'clients'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'leads' | 'clients'>('all');
+  /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
+  const [chatInboxScope, setChatInboxScope] = useState<'owner' | 'tenant'>('tenant');
+  const [chatAttendanceFilter, setChatAttendanceFilter] = useState<
+    '' | 'queue' | 'team' | 'mine' | 'closed'
+  >('');
+  const [attendanceCounts, setAttendanceCounts] = useState({
+    queue: 0,
+    team: 0,
+    mine: 0,
+    unassigned: 0,
+    closed: 0,
+    unread: 0,
+  });
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [transferUsers, setTransferUsers] = useState<TenantUser[]>([]);
+  const [transferTeams, setTransferTeams] = useState<Team[]>([]);
+  const [transferTargetId, setTransferTargetId] = useState('');
+  const [transferTeamId, setTransferTeamId] = useState('');
+  const [transferMode, setTransferMode] = useState<'operator' | 'team'>('operator');
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [attendingConversation, setAttendingConversation] = useState(false);
 
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [loadingConversations, setLoadingConversations] = useState(false);
@@ -275,20 +325,45 @@ const Chat = () => {
     try {
       const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
       const allConversations: ChatConversation[] = [];
-      
+      const effectiveInboxScope =
+        user?.tenant_id && chatInboxScope === 'tenant' ? 'tenant' : 'owner';
+      const attendanceFilterParam = chatAttendanceFilter || undefined;
+
+      const chatListDiag =
+        import.meta.env.DEV || import.meta.env.VITE_CHAT_LIST_DIAG === '1';
+
       // Carregar conversas de todas as instâncias habilitadas
       for (const instanceId of ids) {
         try {
-          const data = await chatService.getConversations({ instanceId });
+          if (chatListDiag) {
+            console.log('[ChatListDiag] frontend request', {
+              instanceId,
+              inboxScope: effectiveInboxScope,
+              attendanceFilter: attendanceFilterParam ?? '(none)',
+              activeTab,
+              searchTerm: searchTerm.trim() || '(empty)',
+            });
+          }
+          const data = await chatService.getConversations({
+            instanceId,
+            inboxScope: effectiveInboxScope,
+            attendanceFilter: attendanceFilterParam,
+          });
+          if (chatListDiag) {
+            console.log('[ChatListDiag] frontend raw response count', {
+              instanceId,
+              count: data.length,
+            });
+          }
           allConversations.push(...data);
         } catch (error) {
           console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
         }
       }
-      
-      // Remover duplicatas baseado no external_chat_id e ordenar por última mensagem
+
+      // Remover duplicatas por id da conversa (evita colapsar várias linhas com external_chat_id vazio/repetido)
       const uniqueConversations = Array.from(
-        new Map(allConversations.map((conv) => [conv.external_chat_id, conv])).values()
+        new Map(allConversations.map((conv) => [conv.id, conv])).values()
       ).sort((a, b) => {
         const dateA = a.lastMessageAt || a.created_at || a.updated_at;
         const dateB = b.lastMessageAt || b.created_at || b.updated_at;
@@ -297,8 +372,27 @@ const Chat = () => {
         if (!dateB) return -1;
         return new Date(dateB).getTime() - new Date(dateA).getTime();
       });
-      
+
+      if (chatListDiag) {
+        console.log('[ChatListDiag] frontend after merge+dedupe', {
+          mergedCount: allConversations.length,
+          uniqueCount: uniqueConversations.length,
+        });
+      }
+
       setConversations(uniqueConversations);
+
+      try {
+        const scope =
+          user?.tenant_id && chatInboxScope === 'tenant' ? ('tenant' as const) : ('owner' as const);
+        const c = await chatService.getConversationAttendanceCounts({
+          instanceIds: ids,
+          inboxScope: scope,
+        });
+        setAttendanceCounts(c);
+      } catch {
+        /* contagens são auxiliares */
+      }
     } catch (error) {
       console.error('Erro ao carregar conversas:', error);
       toast.error('Erro ao carregar conversas', {
@@ -308,7 +402,7 @@ const Chat = () => {
       setLoadingConversations(false);
       conversationsHydratedRef.current = true;
     }
-  }, []);
+  }, [user?.tenant_id, chatInboxScope, chatAttendanceFilter, activeTab, searchTerm]);
 
   const loadMessages = useCallback(
     async (conversationId: string, opts?: { silent?: boolean }) => {
@@ -659,6 +753,41 @@ const Chat = () => {
       }
     });
 
+    socket.on('conversation_attendance_updated', (payload: { conversation?: Record<string, unknown> }) => {
+      const conv = payload?.conversation;
+      if (!conv || typeof conv.id !== 'string') return;
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== conv.id) return c;
+          return {
+            ...c,
+            attendance_status:
+              (conv.attendance_status as ChatConversation['attendance_status']) ?? c.attendance_status,
+            assigned_to_user_id:
+              (conv.assigned_to_user_id as string | null | undefined) ?? c.assigned_to_user_id,
+            queue_id: (conv.queue_id as string | null | undefined) ?? c.queue_id,
+            assigned_at: (conv.assigned_at as string | undefined) ?? c.assigned_at,
+            closed_at: (conv.closed_at as string | null | undefined) ?? c.closed_at,
+            last_assignment_reason:
+              (conv.last_assignment_reason as string | undefined) ?? c.last_assignment_reason,
+            assignee_email: (conv.assignee_email as string | undefined) ?? c.assignee_email,
+            assignee_display: (conv.assignee_display as string | undefined) ?? c.assignee_display,
+            assigned_team_id:
+              (conv.assigned_team_id as string | null | undefined) ?? c.assigned_team_id,
+            assigned_team_name:
+              (conv.assigned_team_name as string | null | undefined) ?? c.assigned_team_name,
+          };
+        }),
+      );
+      const ids = Array.from(enabledInstanceIdsRef.current);
+      if (ids.length === 0) return;
+      const scope = user?.tenant_id && chatInboxScope === 'tenant' ? ('tenant' as const) : ('owner' as const);
+      void chatService
+        .getConversationAttendanceCounts({ instanceIds: ids, inboxScope: scope })
+        .then(setAttendanceCounts)
+        .catch(() => {});
+    });
+
     // Escutar novas mensagens
     socket.on('new_message', (data: { message: any; conversationId: string }) => {
       console.log('[Chat] New message via WebSocket (raw):', data.message);
@@ -786,7 +915,7 @@ const Chat = () => {
         socketRef.current = null;
       }
     };
-  }, [session?.token, loadMessages]); // Reconectar se token ou loadMessages mudar
+  }, [session?.token, loadMessages, user?.tenant_id, chatInboxScope]);
 
   const loadClients = useCallback(async () => {
     try {
@@ -886,22 +1015,34 @@ const Chat = () => {
     }
   }, [conversations, selectedConversationId]);
 
-  // Scroll automático para o final quando mensagens são carregadas ou nova mensagem é enviada
-  useEffect(() => {
-    if (messages.length === 0 || loadingMessages) return;
-    const raf1 = requestAnimationFrame(() => {
+  /** Mantém o viewport no fim do histórico (mensagem mais recente visível). */
+  const scrollMessagesToBottom = useCallback(() => {
+    const run = () => {
+      const end = messagesEndRef.current;
+      if (!end) return;
+      const viewport = end.closest('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      } else {
+        end.scrollIntoView({ behavior: 'auto', block: 'end' });
+      }
+    };
+    requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        if (!messagesEndRef.current) return;
-        const viewport = messagesEndRef.current.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
-        if (viewport) {
-          viewport.scrollTop = viewport.scrollHeight;
-        } else {
-          messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
-        }
+        run();
+        // Segundo tick: após layout/pintura (Radix ScrollArea, mídia nas bolhas)
+        requestAnimationFrame(run);
       });
     });
-    return () => cancelAnimationFrame(raf1);
-  }, [messages, selectedConversationId, loadingMessages]);
+  }, []);
+
+  // Scroll para o fim: mensagens novas, troca de conversa, fim do carregamento, ou volta ao painel da conversa
+  // (ex.: criar fatura desmonta o ScrollArea — sem mudar `messages`, o efeito antigo não corria e o scroll ia ao topo)
+  useLayoutEffect(() => {
+    if (messages.length === 0 || loadingMessages) return;
+    if (viewMode !== 'conversation') return;
+    scrollMessagesToBottom();
+  }, [messages, selectedConversationId, loadingMessages, viewMode, scrollMessagesToBottom]);
 
   const filteredConversations = useMemo(() => {
     if (!searchTerm.trim()) return conversations;
@@ -921,14 +1062,6 @@ const Chat = () => {
     () =>
       filteredConversations.filter(
         (conversation) => (conversation.unreadCount ?? 0) > 0,
-      ),
-    [filteredConversations],
-  );
-
-  const readConversations = useMemo(
-    () =>
-      filteredConversations.filter(
-        (conversation) => (conversation.unreadCount ?? 0) === 0,
       ),
     [filteredConversations],
   );
@@ -990,9 +1123,6 @@ const Chat = () => {
       case 'unread':
         result = unreadConversations;
         break;
-      case 'read':
-        result = readConversations;
-        break;
       case 'leads':
         result = leadConversations;
         break;
@@ -1004,7 +1134,41 @@ const Chat = () => {
     }
     // Garantir que está ordenado por última mensagem (mais recente primeiro)
     return sortConversationsByLastMessage(result);
-  }, [activeTab, unreadConversations, readConversations, filteredConversations, leadConversations, clientConversations]);
+  }, [activeTab, unreadConversations, filteredConversations, leadConversations, clientConversations]);
+
+  useEffect(() => {
+    const chatListDiag =
+      import.meta.env.DEV || import.meta.env.VITE_CHAT_LIST_DIAG === '1';
+    if (!chatListDiag) return;
+    console.log('[ChatListDiag] render pipeline', {
+      activeTab,
+      conversationsState: conversations.length,
+      afterSearch: filteredConversations.length,
+      conversationsToShow: conversationsToShow.length,
+    });
+  }, [
+    activeTab,
+    conversations.length,
+    filteredConversations.length,
+    conversationsToShow.length,
+  ]);
+
+  useEffect(() => {
+    if (attendanceCounts.queue === 0 && chatAttendanceFilter === 'queue') {
+      setChatAttendanceFilter('');
+    }
+  }, [attendanceCounts.queue, chatAttendanceFilter]);
+
+  useEffect(() => {
+    if (attendanceCounts.team === 0 && chatAttendanceFilter === 'team') {
+      setChatAttendanceFilter('');
+    }
+  }, [attendanceCounts.team, chatAttendanceFilter]);
+
+  useEffect(() => {
+    setChatAttendanceFilter((prev) => ((prev as string) === 'unassigned' ? '' : prev));
+  }, []);
+
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
@@ -1262,7 +1426,7 @@ const Chat = () => {
     }
   };
 
-  /** Um único ícone: mensagens remotas + dados do contato (nome/foto) na UazAPI, depois recarrega lista. */
+  /** Um único ícone: mensagens remotas + dados do contato, depois recarrega lista. */
   const handleSyncConversation = async () => {
     if (!selectedConversationId) return;
     try {
@@ -1541,6 +1705,9 @@ const Chat = () => {
           // Se esta é a conversa selecionada, recarregar mensagens
           if (selectedConversationId === result.conversationId) {
             await loadMessages(result.conversationId, { silent: true });
+            // Reforço: novo conteúdo + Radix às vezes só estabiliza scrollHeight no frame seguinte
+            queueMicrotask(() => scrollMessagesToBottom());
+            setTimeout(() => scrollMessagesToBottom(), 50);
           } else {
             // Se não é a conversa selecionada, atualizar a lista de conversas
             if (enabledInstanceIds.size > 0) {
@@ -1868,6 +2035,147 @@ const Chat = () => {
     navigate('/settings?section=whatsapp&openAddConnection=1');
   };
 
+  const mergeAttendanceFromPayload = useCallback((raw: Record<string, unknown>) => {
+    const id = typeof raw.id === 'string' ? raw.id : null;
+    if (!id) return;
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        return {
+          ...c,
+          attendance_status:
+            (raw.attendance_status as ChatConversation['attendance_status']) ?? c.attendance_status,
+          assigned_to_user_id:
+            (raw.assigned_to_user_id as string | null | undefined) ?? c.assigned_to_user_id,
+          queue_id: (raw.queue_id as string | null | undefined) ?? c.queue_id,
+          assigned_at: (raw.assigned_at as string | undefined) ?? c.assigned_at,
+          closed_at: (raw.closed_at as string | null | undefined) ?? c.closed_at,
+          last_assignment_reason:
+            (raw.last_assignment_reason as string | undefined) ?? c.last_assignment_reason,
+          assignee_email:
+            raw.assignee_email !== undefined ? (raw.assignee_email as string | null | undefined) : c.assignee_email,
+          assignee_display:
+            raw.assignee_display !== undefined
+              ? (raw.assignee_display as string | null | undefined)
+              : c.assignee_display,
+          assigned_team_id:
+            raw.assigned_team_id !== undefined
+              ? (raw.assigned_team_id as string | null | undefined)
+              : c.assigned_team_id,
+          assigned_team_name:
+            raw.assigned_team_name !== undefined
+              ? (raw.assigned_team_name as string | null | undefined)
+              : c.assigned_team_name,
+        };
+      }),
+    );
+  }, []);
+
+  const handleAttendConversation = useCallback(async () => {
+    if (!selectedConversationId || !user?.id) return;
+    setAttendingConversation(true);
+    try {
+      await chatService.attendConversation(selectedConversationId);
+      toast.success('Você assumiu o atendimento desta conversa');
+      mergeAttendanceFromPayload({
+        id: selectedConversationId,
+        attendance_status: 'in_service',
+        assigned_to_user_id: user.id,
+        assigned_team_id: null,
+        assigned_team_name: null,
+        assignee_email: user.email,
+        assignee_display:
+          [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.email,
+      });
+    } catch (error) {
+      toast.error('Não foi possível atender', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setAttendingConversation(false);
+    }
+  }, [selectedConversationId, user, mergeAttendanceFromPayload]);
+
+  const handleCloseAttendance = useCallback(async () => {
+    if (!selectedConversationId) return;
+    try {
+      await chatService.patchConversationAttendance(selectedConversationId, { action: 'close' });
+      toast.success('Atendimento encerrado');
+      mergeAttendanceFromPayload({
+        id: selectedConversationId,
+        attendance_status: 'closed',
+        closed_at: new Date().toISOString(),
+        assigned_to_user_id: null,
+        queue_id: null,
+        assigned_team_id: null,
+        assigned_team_name: null,
+        assignee_email: null,
+        assignee_display: null,
+      });
+    } catch (error) {
+      toast.error('Não foi possível encerrar', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  }, [selectedConversationId, mergeAttendanceFromPayload]);
+
+  const openTransferDialog = useCallback(async () => {
+    if (!user?.tenant_id) {
+      toast.info('A transferência requer conta com equipa (tenant).');
+      return;
+    }
+    setTransferMode('operator');
+    setTransferTargetId('');
+    setTransferTeamId('');
+    setTransferDialogOpen(true);
+    try {
+      const [list, teamsList] = await Promise.all([
+        getMyTenantUsers(),
+        teamsService.getTeams().catch(() => [] as Team[]),
+      ]);
+      const others = list.filter((u) => u.id !== user.id);
+      setTransferUsers(others);
+      setTransferTeams(teamsList);
+      if (others.length === 1) {
+        setTransferTargetId(others[0].id);
+      }
+      if (teamsList.length === 1) {
+        setTransferTeamId(teamsList[0].id);
+      }
+    } catch (e) {
+      toast.error('Não foi possível carregar dados para transferência', {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    }
+  }, [user?.id, user?.tenant_id]);
+
+  const handleConfirmTransfer = useCallback(async () => {
+    if (!selectedConversationId) return;
+    if (transferMode === 'operator' && !transferTargetId) return;
+    if (transferMode === 'team' && !transferTeamId) return;
+    setTransferSubmitting(true);
+    try {
+      if (transferMode === 'operator') {
+        await chatService.transferConversation(selectedConversationId, { toUserId: transferTargetId });
+        toast.success('Atendimento transferido para o operador');
+      } else {
+        await chatService.transferConversation(selectedConversationId, { toTeamId: transferTeamId });
+        toast.success('Conversa transferida para a equipe');
+      }
+      setTransferDialogOpen(false);
+      const ids = Array.from(enabledInstanceIdsRef.current);
+      if (ids.length > 0) {
+        await loadConversations(ids);
+      }
+    } catch (error) {
+      toast.error('Não foi possível transferir', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setTransferSubmitting(false);
+    }
+  }, [selectedConversationId, transferMode, transferTargetId, transferTeamId, loadConversations]);
+
   const handleToggleInstance = async (instanceId: string) => {
     const enabling = !enabledInstanceIds.has(instanceId);
     try {
@@ -1923,8 +2231,10 @@ const Chat = () => {
       key={conversation.id}
         type="button"
         onClick={() => handleSelectConversation(conversation.id)}
-        className={`w-full text-left px-4 py-3 border-b transition-colors ${
-          isActive ? 'bg-muted' : 'hover:bg-muted/60'
+        className={`w-full min-w-0 max-w-full box-border text-left my-1 rounded-lg px-3 py-2.5 border border-transparent transition-colors ${
+          isActive
+            ? 'bg-primary/10 shadow-none'
+            : 'bg-background/50 hover:bg-muted/70 hover:border-border/40'
         }`}
       >
       <div className="flex items-start gap-3">
@@ -1950,9 +2260,6 @@ const Chat = () => {
                 onClick={hasProfile ? handleNameClick : undefined}
               >
                 {identity.displayName}
-                {hasProfile && (
-                  <ExternalLink className="inline-block h-3 w-3 ml-1 text-muted-foreground" />
-                )}
               </div>
               <span className="text-xs text-muted-foreground whitespace-nowrap">
                 {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
@@ -1988,6 +2295,32 @@ const Chat = () => {
                   {unread} novas
               </Badge>
             )}
+              {conversation.assigned_team_id && !conversation.assignee_display && conversation.assigned_team_name ? (
+                <span
+                  className="inline-flex max-w-[140px] items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-900"
+                  title={`Fila da equipe: ${conversation.assigned_team_name}`}
+                >
+                  <Users className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
+                  <span className="truncate">{conversation.assigned_team_name}</span>
+                </span>
+              ) : null}
+              {conversation.attendance_status === 'in_service' && conversation.assignee_display ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-900 max-w-[160px]"
+                  title={conversation.assignee_display}
+                >
+                  <Headphones className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
+                  <span className="truncate font-medium">{shortOperatorName(conversation.assignee_display)}</span>
+                </span>
+              ) : attendanceStatusLabel(conversation.attendance_status) ? (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] border-violet-200 text-violet-900 bg-violet-50 max-w-[200px] truncate"
+                  title={attendanceStatusLabel(conversation.attendance_status) || undefined}
+                >
+                  {attendanceStatusLabel(conversation.attendance_status)}
+                </Badge>
+              ) : null}
           </div>
         </div>
         </div>
@@ -2052,7 +2385,9 @@ const Chat = () => {
                           >
                             <Checkbox
                               checked={isEnabled}
+                              disabled={instance.can_manage === false}
                               onCheckedChange={() => {
+                                if (instance.can_manage === false) return;
                                 handleToggleInstance(instance.id);
                                 if (!isEnabled) {
                                   setSelectedInstanceId(instance.id);
@@ -2095,27 +2430,6 @@ const Chat = () => {
             </div>
           )}
 
-          {/* Filtros (Tabs) */}
-          {enabledInstanceIds.size > 0 && (
-            <div className="flex-1 flex items-center">
-              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'all' | 'unread' | 'read' | 'leads' | 'clients')} className="w-full">
-                <TabsList className="h-9">
-                  <TabsTrigger value="all" className="text-sm">Todos</TabsTrigger>
-                  <TabsTrigger value="unread" className="text-sm">
-                    Não lidos
-                    {unreadConversations.length > 0 && (
-                      <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0 h-4">
-                        {unreadConversations.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-                  <TabsTrigger value="read" className="text-sm">Lidos</TabsTrigger>
-                  <TabsTrigger value="leads" className="text-sm">Leads</TabsTrigger>
-                  <TabsTrigger value="clients" className="text-sm">Clientes</TabsTrigger>
-            </TabsList>
-              </Tabs>
-            </div>
-          )}
         </div>
       </div>
 
@@ -2124,16 +2438,130 @@ const Chat = () => {
           {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
           <div className="flex-1 flex flex-col min-h-0 px-6 pb-6 overflow-hidden">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
-                <Card className="md:col-span-1 flex flex-col min-h-0">
-                  <CardHeader className="px-4 py-3 border-b flex-shrink-0">
+                <Card className="md:col-span-1 flex flex-col min-h-0 border-border/80 shadow-sm">
+                  <CardHeader className="px-3 py-3 border-b flex-shrink-0 space-y-3 bg-muted/20">
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                        Tipo de conversa
+                      </p>
+                      <Tabs
+                        value={activeTab}
+                        onValueChange={(value) =>
+                          setActiveTab(value as 'all' | 'unread' | 'leads' | 'clients')
+                        }
+                        className="w-full"
+                      >
+                        <TabsList className="h-auto w-full flex flex-wrap gap-1 justify-start bg-background/70 p-1">
+                          <TabsTrigger value="all" className="text-xs px-2.5 py-1.5 h-8">
+                            Todas
+                          </TabsTrigger>
+                          <TabsTrigger value="unread" className="text-xs px-2.5 py-1.5 h-8 gap-1">
+                            Não lidas
+                            {attendanceCounts.unread > 0 && (
+                              <Badge
+                                variant="destructive"
+                                className="text-[10px] px-1.5 py-0 h-4 min-w-[1.25rem] justify-center"
+                              >
+                                {attendanceCounts.unread > 99 ? '99+' : attendanceCounts.unread}
+                              </Badge>
+                            )}
+                          </TabsTrigger>
+                          <TabsTrigger value="leads" className="text-xs px-2.5 py-1.5 h-8">
+                            Leads
+                          </TabsTrigger>
+                          <TabsTrigger value="clients" className="text-xs px-2.5 py-1.5 h-8">
+                            Clientes
+                          </TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                    </div>
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
-                        placeholder="Buscar conversas..."
-                        className="pl-9 h-9"
+                        placeholder="Buscar por nome ou telefone..."
+                        className="pl-9 h-9 bg-background"
                       />
+                    </div>
+                    {user?.tenant_id ? (
+                      <div className="space-y-1.5">
+                        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                          Inbox
+                        </p>
+                        <Select
+                          value={chatInboxScope}
+                          onValueChange={(v) => setChatInboxScope(v as 'owner' | 'tenant')}
+                        >
+                          <SelectTrigger className="h-9 w-full text-xs">
+                            <SelectValue placeholder="Inbox" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="owner">Só as minhas (criador da conversa)</SelectItem>
+                            <SelectItem value="tenant">Equipa — mesmo tenant</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                        Atendimento
+                      </p>
+                      <div className="overflow-x-auto -mx-0.5 px-0.5 pb-0.5">
+                        <ToggleGroup
+                          type="single"
+                          value={chatAttendanceFilter === '' ? 'all' : chatAttendanceFilter}
+                          onValueChange={(v) => {
+                            if (!v) return;
+                            setChatAttendanceFilter(v === 'all' ? '' : (v as typeof chatAttendanceFilter));
+                          }}
+                          variant="outline"
+                          size="sm"
+                          className="inline-flex w-max min-w-full justify-start gap-1"
+                        >
+                          {(attendanceCounts.queue > 0 || chatAttendanceFilter === 'queue') && (
+                            <ToggleGroupItem value="queue" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                              Fila
+                              {attendanceCounts.queue > 0 && (
+                                <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                                  {attendanceCounts.queue > 99 ? '99+' : attendanceCounts.queue}
+                                </span>
+                              )}
+                            </ToggleGroupItem>
+                          )}
+                          {user?.tenant_id &&
+                            chatInboxScope === 'tenant' &&
+                            (attendanceCounts.team > 0 || chatAttendanceFilter === 'team') && (
+                              <ToggleGroupItem value="team" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                                Equipe
+                                {attendanceCounts.team > 0 && (
+                                  <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                                    {attendanceCounts.team > 99 ? '99+' : attendanceCounts.team}
+                                  </span>
+                                )}
+                              </ToggleGroupItem>
+                            )}
+                          <ToggleGroupItem value="mine" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                            Minhas
+                            {attendanceCounts.mine > 0 && (
+                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                                {attendanceCounts.mine > 99 ? '99+' : attendanceCounts.mine}
+                              </span>
+                            )}
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value="all" className="text-xs px-2.5 h-8 shrink-0">
+                            Todas
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value="closed" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                            Encerradas
+                            {attendanceCounts.closed > 0 && (
+                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                                {attendanceCounts.closed > 99 ? '99+' : attendanceCounts.closed}
+                              </span>
+                            )}
+                          </ToggleGroupItem>
+                        </ToggleGroup>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
@@ -2148,13 +2576,13 @@ const Chat = () => {
                           Nenhuma conversa encontrada
                         </div>
                       ) : (
-                        <div>{conversationsToShow.map(renderConversationItem)}</div>
+                        <div className="px-1.5 pb-2 min-w-0">{conversationsToShow.map(renderConversationItem)}</div>
                       )}
                     </ScrollArea>
                   </CardContent>
                 </Card>
 
-                <Card className="md:col-span-2 flex flex-col min-h-0">
+                <Card className="md:col-span-2 flex flex-col min-h-0 border-border/80 shadow-sm">
                   {selectedConversation ? (
                     <>
                       {viewMode === 'invoice-create' ? (
@@ -2175,11 +2603,11 @@ const Chat = () => {
                         </CardContent>
                       ) : (
                         <>
-                      <CardHeader className="px-4 py-3 border-b space-y-2 flex-shrink-0">
-                        <div className="flex items-start justify-between gap-2 flex-wrap">
-                          <div className="flex items-center gap-3">
+                      <CardHeader className="px-4 py-3 border-b space-y-3 flex-shrink-0 bg-muted/15">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
                             <Avatar 
-                              className={`h-10 w-10 ${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                              className={`h-11 w-11 shrink-0 ${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
                               onClick={() => {
                                 if (currentClient && selectedConversation) {
                                   goToClientProfileFromChat(currentClient.id, selectedConversation);
@@ -2250,33 +2678,126 @@ const Chat = () => {
                                   {selectedIdentity.phoneLine}
                               </p>
                               )}
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className="inline-flex items-center rounded-md border border-border/60 bg-background/90 px-2 py-0.5 text-[11px] text-muted-foreground">
+                                  WhatsApp
+                                  {selectedConversation.instance_name
+                                    ? ` · ${selectedConversation.instance_name}`
+                                    : ''}
+                                </span>
+                                {selectedConversation.assigned_team_id &&
+                                !selectedConversation.assignee_display &&
+                                selectedConversation.assigned_team_name ? (
+                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] text-sky-900">
+                                    <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                    <span className="font-medium truncate max-w-[200px]">
+                                      Fila {selectedConversation.assigned_team_name}
+                                    </span>
+                                  </span>
+                                ) : selectedConversation.attendance_status === 'in_service' &&
+                                selectedConversation.assignee_display ? (
+                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] text-violet-900">
+                                    <Headphones className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                    <span className="font-medium truncate max-w-[200px]">
+                                      {shortOperatorName(selectedConversation.assignee_display)}
+                                    </span>
+                                  </span>
+                                ) : attendanceStatusLabel(selectedConversation.attendance_status) ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] border-violet-200 text-violet-900 bg-violet-50"
+                                  >
+                                    {attendanceStatusLabel(selectedConversation.attendance_status)}
+                                  </Badge>
+                                ) : null}
+                                {!(
+                                  selectedConversation.attendance_status === 'in_service' &&
+                                  selectedConversation.assignee_display?.trim()
+                                ) &&
+                                  !(
+                                    selectedConversation.assigned_team_id &&
+                                    !selectedConversation.assignee_display &&
+                                    selectedConversation.assigned_team_name
+                                  ) && (
+                                  <span className="text-[11px] text-muted-foreground">
+                                    <span className="font-medium text-foreground/85">Responsável</span>
+                                    {' · '}
+                                    {selectedConversation.assignee_display?.trim() ||
+                                      (selectedConversation.assigned_to_user_id ? 'Atribuído' : '—')}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <div className="flex flex-wrap gap-2 items-center">
-                            {(currentClient || currentLead) && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => {
-                                  if (currentClient && selectedConversation) {
-                                    goToClientProfileFromChat(currentClient.id, selectedConversation);
-                                  } else if (currentLead) {
-                                    toast.info('Visualização de perfil de lead em desenvolvimento');
-                                  }
-                                }}
-                                className="h-8 w-8"
-                                title={currentClient ? 'Ver perfil do cliente' : 'Ver perfil do lead'}
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                              </Button>
-                            )}
+                          <div className="flex flex-wrap gap-2 items-center shrink-0 justify-end">
+                            {user &&
+                              selectedConversation &&
+                              (() => {
+                                const takenByOther =
+                                  selectedConversation.attendance_status === 'in_service' &&
+                                  selectedConversation.assigned_to_user_id &&
+                                  selectedConversation.assigned_to_user_id !== user.id;
+                                const adminBypass = user.is_tenant_admin === true;
+                                const hideAttendEncerrarSlot = takenByOther && !adminBypass;
+                                const canCloseAttendance =
+                                  selectedConversation.attendance_status === 'in_service' &&
+                                  (selectedConversation.user_id === user.id ||
+                                    selectedConversation.assigned_to_user_id === user.id ||
+                                    adminBypass);
+                                const canTransferAttendance =
+                                  !!user.tenant_id &&
+                                  selectedConversation.attendance_status === 'in_service' &&
+                                  !!selectedConversation.assigned_to_user_id &&
+                                  (selectedConversation.assigned_to_user_id === user.id || adminBypass);
+                                return (
+                                  <>
+                                    {!hideAttendEncerrarSlot && (
+                                      <>
+                                        {canCloseAttendance ? (
+                                          <Button
+                                            variant="destructive"
+                                            size="sm"
+                                            className="h-8 gap-1"
+                                            onClick={() => void handleCloseAttendance()}
+                                          >
+                                            <XCircle className="h-3.5 w-3.5" />
+                                            Encerrar
+                                          </Button>
+                                        ) : (
+                                          <Button
+                                            variant="secondary"
+                                            size="sm"
+                                            className="h-8 gap-1"
+                                            disabled={attendingConversation}
+                                            onClick={() => void handleAttendConversation()}
+                                          >
+                                            <UserCheck className="h-3.5 w-3.5" />
+                                            Atender
+                                          </Button>
+                                        )}
+                                      </>
+                                    )}
+                                    {canTransferAttendance && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 gap-1"
+                                        onClick={() => void openTransferDialog()}
+                                      >
+                                        <ArrowRightLeft className="h-3.5 w-3.5" />
+                                        Transferir
+                                      </Button>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => void handleSyncConversation()}
                               disabled={syncingMessages}
                               className="h-8 w-8"
-                              title="Sincronizar mensagens e identidade do contato (UazAPI)"
+                              title="Sincronizar mensagens e identidade do contato"
                             >
                               <RefreshCw className={`h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`} />
                             </Button>
@@ -2374,17 +2895,17 @@ const Chat = () => {
                                 Nenhuma mensagem disponível para esta conversa
                         </div>
                       ) : (
-                              <div className="space-y-4 pb-4">
+                              <div className="space-y-3 pb-6 max-w-3xl mx-auto w-full">
                             {messages.map((message) => (
                               <div 
                                     key={message.id}
                                     className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                               >
                                 <div 
-                                      className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                                      className={`max-w-[min(82%,28rem)] rounded-xl px-3.5 py-2.5 text-sm shadow-sm leading-relaxed ${
                                         message.direction === 'outgoing'
                                       ? 'bg-primary text-primary-foreground' 
-                                      : 'bg-muted'
+                                      : 'bg-muted/90 border border-border/40'
                                   }`}
                                 >
                                       <ChatBubbleContent message={message} />
@@ -2475,6 +2996,85 @@ const Chat = () => {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Transferir</DialogTitle>
+            <DialogDescription>
+              Envie para um operador específico ou para a fila de uma equipe (membros veem na aba Equipe).
+            </DialogDescription>
+          </DialogHeader>
+          <Tabs
+            value={transferMode}
+            onValueChange={(v) => setTransferMode(v as 'operator' | 'team')}
+            className="w-full"
+          >
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="operator" className="text-xs sm:text-sm">
+                Operador
+              </TabsTrigger>
+              <TabsTrigger value="team" className="text-xs sm:text-sm">
+                Equipe
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="operator" className="mt-3 space-y-2">
+              <Label htmlFor="transfer-to">Operador</Label>
+              <Select value={transferTargetId} onValueChange={setTransferTargetId}>
+                <SelectTrigger id="transfer-to">
+                  <SelectValue placeholder="Escolha um operador" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.full_name?.trim() || u.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {transferUsers.length === 0 && (
+                <p className="text-xs text-muted-foreground">Não há outros utilizadores na conta para receber.</p>
+              )}
+            </TabsContent>
+            <TabsContent value="team" className="mt-3 space-y-2">
+              <Label htmlFor="transfer-team">Equipe de atendimento</Label>
+              <Select value={transferTeamId} onValueChange={setTransferTeamId}>
+                <SelectTrigger id="transfer-team">
+                  <SelectValue placeholder="Escolha uma equipe" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferTeams.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {transferTeams.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Crie equipes em Configurações e adicione membros para usar esta opção.
+                </p>
+              )}
+            </TabsContent>
+          </Tabs>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setTransferDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                transferSubmitting ||
+                (transferMode === 'operator' && !transferTargetId) ||
+                (transferMode === 'team' && !transferTeamId)
+              }
+              onClick={() => void handleConfirmTransfer()}
+            >
+              {transferSubmitting ? 'A transferir…' : 'Confirmar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={unlinkConfirmOpen} onOpenChange={setUnlinkConfirmOpen}>
         <DialogContent className="sm:max-w-md">

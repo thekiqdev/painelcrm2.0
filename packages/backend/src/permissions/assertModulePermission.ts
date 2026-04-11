@@ -37,6 +37,7 @@ const OWN_MESSAGES: Record<'edit' | 'delete', string> = {
 /**
  * Garante que o usuário tem permissão para a ação no módulo.
  * Para create: exige can_create.
+ * Para view: exige can_view.
  * Para edit/delete: exige can_edit/can_delete; se edit_own_only/delete_own_only, exige ownerId === userId ou assigneeId === userId.
  * Passar req em fluxo HTTP para request cache e para preencher tenantId/role no contexto.
  *
@@ -45,7 +46,7 @@ const OWN_MESSAGES: Record<'edit' | 'delete', string> = {
 export async function assertModulePermission(
   userId: string,
   moduleId: ModuleId | string,
-  action: 'create' | 'edit' | 'delete',
+  action: 'create' | 'view' | 'edit' | 'delete',
   options?: AssertModulePermissionOptions,
   req?: ReqWithContext
 ): Promise<void> {
@@ -64,6 +65,9 @@ export async function assertModulePermission(
 
   if (action === 'create') {
     throw new ModulePermissionError(403, ACTION_MESSAGES.create);
+  }
+  if (action === 'view') {
+    throw new ModulePermissionError(403, ACTION_MESSAGES.view);
   }
   throw new ModulePermissionError(403, OWN_MESSAGES[action]);
 }

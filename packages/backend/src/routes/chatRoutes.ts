@@ -9,6 +9,7 @@ import {
   patchInstance,
   syncConversations,
   getConversations,
+  getConversationAttendanceCounts,
   getConversationMessages,
   getConversationProfile,
   getClientMessages,
@@ -23,6 +24,12 @@ import {
   unlinkConversation,
   getCrmWhatsappIdentity,
 } from '../controllers/chatController.js';
+import {
+  attendConversation,
+  patchConversationAttendance,
+  transferConversation,
+  getConversationAssignmentHistory,
+} from '../controllers/chatAttendanceController.js';
 
 const router = Router();
 
@@ -40,7 +47,12 @@ router.get('/instances/:id/webhook', getInstanceWebhook);
 router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/instances/:id/webhook/force', forceConfigureWebhook);
 router.post('/conversations/sync', syncConversations);
+router.get('/conversations/attendance-counts', getConversationAttendanceCounts);
 router.get('/conversations', getConversations);
+router.post('/conversations/:id/attend', attendConversation);
+router.post('/conversations/:id/transfer', transferConversation);
+router.patch('/conversations/:id/attendance', patchConversationAttendance);
+router.get('/conversations/:id/attendance/history', getConversationAssignmentHistory);
 router.get('/conversations/:id/messages', getConversationMessages);
 router.get('/conversations/:id/profile', getConversationProfile);
 router.post('/conversations/:id/link', linkConversation);

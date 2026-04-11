@@ -133,7 +133,7 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
   });
 
   // Gerenciar conexões
-  io.on('connection', (socket: AuthenticatedSocket) => {
+  io.on('connection', async (socket: AuthenticatedSocket) => {
     const userId = socket.userId;
 
     if (!userId) {
@@ -152,6 +152,23 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
 
     // Juntar usuário a uma sala específica para receber suas notificações
     socket.join(`user:${userId}`);
+
+    // Etapa 5 — sala por tenant para eventos de atendimento (inbox partilhado)
+    try {
+      const tq = await pool.query<{ tenant_id: string | null }>(
+        `SELECT tenant_id FROM users WHERE id = $1 LIMIT 1`,
+        [userId]
+      );
+      const tid = tq.rows[0]?.tenant_id;
+      if (tid) {
+        socket.join(`tenant:${tid}`);
+      }
+    } catch (e) {
+      console.warn('[WebSocket] Falha ao resolver tenant_id para sala de atendimento', {
+        userId,
+        message: (e as Error)?.message,
+      });
+    }
 
     // Enviar confirmação de conexão
     socket.emit('connected', {
@@ -339,6 +356,31 @@ export function emitMessageUpdated(userId: string, message: any, conversationId:
     message,
     conversationId,
   });
+}
+
+/**
+ * Etapa 5 — evento único de atendimento (merge no cliente com a conversa existente).
+ * Com tenant: emite para `tenant:{id}`; sem tenant (conta isolada): só para o dono da instância.
+ */
+export function emitConversationAttendanceUpdated(
+  tenantId: string | null,
+  ownerUserId: string,
+  conversationPartial: Record<string, unknown>
+): void {
+  if (!io) {
+    return;
+  }
+  const payload = {
+    v: 1 as const,
+    type: 'conversation_attendance_updated' as const,
+    conversation: conversationPartial,
+    ts: new Date().toISOString(),
+  };
+  if (tenantId) {
+    io.to(`tenant:${tenantId}`).emit('conversation_attendance_updated', payload);
+  } else {
+    io.to(`user:${ownerUserId}`).emit('conversation_attendance_updated', payload);
+  }
 }
 
 /**

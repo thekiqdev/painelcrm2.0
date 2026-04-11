@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Package, Wrench, Phone, Mail, MessageSquare, Clock, ShoppingCart, ArrowLeft, CheckCircle } from "lucide-react";
-import { Product, StoreProfile } from "@/types/products";
+import { PublicCatalogProduct, StoreProfile } from "@/types/products";
 import { productsService } from "@/services/products";
 
 export const PublicProduct = () => {
   const { storeSlug, productId } = useParams<{ storeSlug: string; productId: string }>();
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
-  const [product, setProduct] = useState<Product | null>(null);
+  const [product, setProduct] = useState<PublicCatalogProduct | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -25,18 +25,16 @@ export const PublicProduct = () => {
     try {
       setLoading(true);
       
-      const store = await productsService.getPublicStoreBySlug(storeSlug);
-      if (!store) {
+      const [store, productData] = await Promise.all([
+        productsService.getPublicStoreBySlug(storeSlug),
+        productsService.getPublicProductByStoreSlugAndProductId(storeSlug, productId),
+      ]);
+
+      if (!store || !productData) {
         setNotFound(true);
         return;
       }
 
-      const productData = await productsService.getProductById(productId);
-      if (!productData || productData.user_id !== store.user_id || !productData.is_public || productData.status !== 'active') {
-        setNotFound(true);
-        return;
-      }
-      
       setStoreProfile(store);
       setProduct(productData);
     } catch (error) {

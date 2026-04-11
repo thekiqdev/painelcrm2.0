@@ -31,7 +31,14 @@ export interface ChatInstance {
   metadata?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
+  /** Mesmo tenant: pode usar no chat / sync; sempre true quando a linha é devolvida. */
+  can_operate?: boolean;
+  /** Apenas o criador da instância: QR, apagar, webhook, ativar no chat. */
+  can_manage?: boolean;
 }
+
+/** Etapa 5 — estado de atendimento na conversa (chat Uaz). */
+export type ChatAttendanceStatus = 'unassigned' | 'queued' | 'in_service' | 'closed';
 
 export interface ChatConversation {
   id: string;
@@ -80,6 +87,18 @@ export interface ChatConversation {
   metadata?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
+  /** Etapa 5 */
+  attendance_status?: ChatAttendanceStatus | null;
+  assigned_to_user_id?: string | null;
+  /** Fila de equipe (transferência para equipe); sem operador até assumir */
+  assigned_team_id?: string | null;
+  assigned_team_name?: string | null;
+  queue_id?: string | null;
+  assigned_at?: string | null;
+  closed_at?: string | null;
+  last_assignment_reason?: string | null;
+  assignee_email?: string | null;
+  assignee_display?: string | null;
 }
 
 export interface ConversationProfile {
@@ -199,6 +218,16 @@ export function normalizeConversation(raw: any): ChatConversation {
     metadata: metadata ?? null,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
+    attendance_status: (raw.attendance_status as ChatAttendanceStatus | undefined) ?? null,
+    assigned_to_user_id: raw.assigned_to_user_id ?? null,
+    assigned_team_id: raw.assigned_team_id ?? null,
+    assigned_team_name: raw.assigned_team_name ?? null,
+    queue_id: raw.queue_id ?? null,
+    assigned_at: raw.assigned_at ?? null,
+    closed_at: raw.closed_at ?? null,
+    last_assignment_reason: raw.last_assignment_reason ?? null,
+    assignee_email: raw.assignee_email ?? null,
+    assignee_display: raw.assignee_display ?? null,
   };
 }
 
@@ -363,12 +392,30 @@ export const chatService = {
     return response.data;
   },
 
-  async getConversations(filters?: { instanceId?: string; search?: string; startDate?: string; endDate?: string }) {
+  async getConversations(filters?: {
+    instanceId?: string;
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    /** Etapa 5: `tenant` = inbox do tenant; padrão `owner` */
+    inboxScope?: 'owner' | 'tenant';
+    /** `queue` = fila operacional (Etapa 5); `queued` aceite por compatibilidade */
+    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team';
+  }) {
     const params = new URLSearchParams();
     if (filters?.instanceId) params.append('instanceId', filters.instanceId);
     if (filters?.search) params.append('search', filters.search);
     if (filters?.startDate) params.append('startDate', filters.startDate);
     if (filters?.endDate) params.append('endDate', filters.endDate);
+    if (filters?.inboxScope) params.append('inboxScope', filters.inboxScope);
+    if (filters?.attendanceFilter) {
+      const af =
+        filters.attendanceFilter === 'queued' ? 'queue' : filters.attendanceFilter;
+      params.append('attendanceFilter', af);
+    }
+    const chatListDiag =
+      import.meta.env.DEV || import.meta.env.VITE_CHAT_LIST_DIAG === '1';
+    if (chatListDiag) params.append('diag', '1');
 
     const url = `/api/chat/conversations${params.toString() ? `?${params.toString()}` : ''}`;
     const response = await apiClient.get<ChatConversation[]>(url);
@@ -376,6 +423,89 @@ export const chatService = {
       throw new Error(response.error);
     }
     return (response.data || []).map(normalizeConversation);
+  },
+
+  /** Etapa 5 — contagens por filtro (mesmo escopo que a listagem). */
+  async getConversationAttendanceCounts(filters: {
+    instanceIds: string[];
+    inboxScope?: 'owner' | 'tenant';
+  }): Promise<{
+    queue: number;
+    mine: number;
+    unassigned: number;
+    closed: number;
+    unread: number;
+  }> {
+    const params = new URLSearchParams();
+    params.set('instanceIds', filters.instanceIds.join(','));
+    if (filters.inboxScope) params.append('inboxScope', filters.inboxScope);
+    const response = await apiClient.get<{
+      queue: number;
+      mine: number;
+      team: number;
+      unassigned: number;
+      closed: number;
+      unread: number;
+    }>(`/api/chat/conversations/attendance-counts?${params.toString()}`);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    const d = response.data;
+    return {
+      queue: d?.queue ?? 0,
+      mine: d?.mine ?? 0,
+      team: d?.team ?? 0,
+      unassigned: d?.unassigned ?? 0,
+      closed: d?.closed ?? 0,
+      unread: d?.unread ?? 0,
+    };
+  },
+
+  /** Transferir para operador (`toUserId`) ou para fila de equipe (`toTeamId`). */
+  async transferConversation(
+    conversationId: string,
+    body: { toUserId: string; reason?: string } | { toTeamId: string; reason?: string }
+  ) {
+    const response = await apiClient.post<{
+      ok: boolean;
+      conversation?: Record<string, unknown>;
+    }>(`/api/chat/conversations/${conversationId}/transfer`, body);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data;
+  },
+
+  /** Etapa 5 — assume atendimento (atómico no servidor). */
+  async attendConversation(conversationId: string, body?: { reason?: string }) {
+    const response = await apiClient.post<{
+      ok: boolean;
+      conversation?: Record<string, unknown>;
+    }>(`/api/chat/conversations/${conversationId}/attend`, body ?? {});
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data;
+  },
+
+  /** Etapa 5 — fila / encerrar / desatribuir / reatribuir. */
+  async patchConversationAttendance(
+    conversationId: string,
+    body:
+      | { action: 'queue'; queueId?: string | null; reason?: string }
+      | { action: 'close'; reason?: string }
+      | { action: 'unassign'; reason?: string }
+      | { action: 'reassign'; toUserId: string; reason?: string }
+      | { action: 'reassign_team'; toTeamId: string; reason?: string }
+  ) {
+    const response = await apiClient.patch<{
+      ok: boolean;
+      conversation?: Record<string, unknown>;
+    }>(`/api/chat/conversations/${conversationId}/attendance`, body);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data;
   },
 
   async getConversationMessages(conversationId: string) {

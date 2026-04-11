@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
+import { isTenantAdmin } from '../utils/tenant.js';
 import { insertTenantPlanHistory } from '../services/auditLogService.js';
 import { hashPassword, comparePassword } from '../utils/bcrypt.js';
 import { generateToken } from '../utils/jwt.js';
@@ -519,6 +520,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       }
     }
 
+    const tenantAdmin = await isTenantAdmin(userId);
+
     res.json({
       id: user.id,
       email: user.email,
@@ -532,6 +535,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       tenant_id: user.tenant_id ?? null,
       default_profile_id: defaultProfileId,
       is_super_admin: user.is_super_admin === true,
+      /** Role admin no tenant (user_roles) — supervisão no chat (transferir, ver equipa). */
+      is_tenant_admin: tenantAdmin,
       can_manage_plan: canManagePlan,
       plan_expired: planExpired,
       tenant_status: tenantStatus,

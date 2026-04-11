@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, ArrowLeft, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, Send } from "lucide-react";
+import { Plus, Edit2, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, Send } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { io, Socket } from "socket.io-client";
@@ -30,7 +30,6 @@ import {
   getClientProfileReturnContext,
   navigateBackFromClientProfile,
 } from "@/utils/clientProfileNavigation";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useForm } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -861,9 +860,16 @@ const ClientProfile = () => {
   );
 
   return (
-    <div className="flex h-full w-full">
+    <div
+      className={cn(
+        "flex w-full min-h-0 flex-col bg-background lg:flex-row",
+        /* Desktop: altura fixa útil ≈ viewport − header (4rem) − padding do main (3rem) */
+        "min-h-0 lg:min-h-[calc(100dvh-4rem-3rem)] lg:max-h-[calc(100dvh-4rem-3rem)]",
+        activeTab === "messages" && "lg:overflow-hidden"
+      )}
+    >
       {/* Sidebar do Cliente */}
-      <div className="w-64 border-r bg-background shrink-0">
+      <aside className="flex w-full shrink-0 flex-col border-b border-border/80 bg-background lg:w-[min(17.5rem,34vw)] lg:max-w-[20rem] lg:border-b-0 lg:border-r">
         <ClientSidebar
           clientId={client.id}
           clientName={client.name}
@@ -872,43 +878,23 @@ const ClientProfile = () => {
           phone={client.phone}
           backFromChat={profileReturn.fromChat}
         />
-      </div>
+      </aside>
 
       {/* Conteúdo Principal */}
-      <div className="flex-1 overflow-y-auto bg-background">
-        <div className="max-w-7xl mx-auto p-6">
-          {/* Header */}
-          <div className="mb-8 pb-6 border-b">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <div className="flex items-start gap-4 mb-3">
-                  <Avatar className="h-14 w-14 shrink-0">
-                    {profileAvatar.src ? (
-                      <AvatarImage src={profileAvatar.src} alt={client.name} />
-                    ) : null}
-                    <AvatarFallback>{profileAvatar.initials}</AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                      <h1 className="text-3xl font-bold tracking-tight">{client.name}</h1>
-                      <Badge variant="secondary" className="text-xs">Cliente</Badge>
-                    </div>
-                    {client.company && (
-                      <p className="text-muted-foreground flex items-center gap-2 text-sm mt-1">
-                        <Building className="h-4 w-4 shrink-0" />
-                        {client.company}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleProfileBack}>
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                {profileReturn.fromChat ? "Voltar ao chat" : "Voltar"}
-              </Button>
-            </div>
-          </div>
-
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+          activeTab === "messages"
+            ? "overflow-hidden p-2 sm:p-3 lg:pl-3 lg:pr-4 lg:pt-2 lg:pb-3"
+            : "overflow-y-auto px-3 py-2 sm:px-4 sm:py-3"
+        )}
+      >
+        <div
+          className={cn(
+            "w-full min-h-0 flex-1 flex flex-col",
+            activeTab !== "messages" && "mx-auto max-w-7xl"
+          )}
+        >
           {/* Conteúdo baseado na aba ativa */}
           {activeTab === "overview" && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
@@ -1587,35 +1573,42 @@ const ClientProfile = () => {
             </Card>
           )}
 
-          {/* Aba de Mensagens */}
+          {/* Aba de Mensagens — painel tipo inbox: cabeçalho + área com scroll + input fixo */}
           {activeTab === "messages" && (
-            <Card className="flex flex-col h-[calc(100vh-200px)]">
-              <CardHeader className="flex-shrink-0">
-                <CardTitle>Mensagens do WhatsApp</CardTitle>
+            <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border border-border/80 bg-card shadow-sm lg:rounded-xl">
+              <CardHeader className="flex shrink-0 flex-row items-center justify-between space-y-0 border-b border-border/60 px-4 py-2.5">
+                <div className="space-y-0.5">
+                  <CardTitle className="text-sm font-semibold leading-tight tracking-tight">
+                    Mensagens do WhatsApp
+                  </CardTitle>
+                  <p className="text-[11px] text-muted-foreground">
+                    Conversa vinculada ao cliente
+                  </p>
+                </div>
               </CardHeader>
-              <CardContent className="flex-1 flex flex-col min-h-0 p-0">
+              <CardContent className="flex min-h-0 flex-1 flex-col p-0">
                 {isLoadingMessages ? (
-                  <div className="text-center text-muted-foreground flex items-center justify-center gap-2 py-8">
+                  <div className="flex flex-1 items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
                     <RefreshCw className="h-4 w-4 animate-spin" />
                     Carregando mensagens...
                   </div>
                 ) : (
                   <>
-                    <ScrollArea className="flex-1 min-h-0 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
-                      <div className="p-4">
+                    <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
+                      <div className="px-3 py-3 sm:px-4">
                         {clientMessages.length === 0 ? (
-                          <div className="text-center text-muted-foreground text-sm py-8">
+                          <div className="py-12 text-center text-sm text-muted-foreground">
                             Nenhuma mensagem do WhatsApp encontrada para este cliente
                           </div>
                         ) : (
-                          <div className="space-y-4 pb-4">
+                          <div className="space-y-3 pb-2">
                             {clientMessages.map((message) => (
                               <div 
                                 key={message.id}
                                 className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                               >
                                 <div 
-                                  className={`max-w-[75%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                                  className={`max-w-[min(85%,28rem)] rounded-lg px-3 py-2 text-sm shadow-sm ${
                                     message.direction === 'outgoing'
                                       ? 'bg-primary text-primary-foreground' 
                                       : 'bg-muted'
@@ -1623,7 +1616,7 @@ const ClientProfile = () => {
                                 >
                                   <ChatBubbleContent message={message} />
                                   <span
-                                    className={`text-[10px] mt-1 flex items-center gap-1 ${
+                                    className={`mt-1 flex items-center gap-1 text-[10px] ${
                                       message.direction === 'outgoing'
                                         ? 'text-primary-foreground/80'
                                         : 'text-muted-foreground'
@@ -1652,15 +1645,20 @@ const ClientProfile = () => {
                       </div>
                     </ScrollArea>
                     {conversationId && (
-                      <form onSubmit={handleSendMessage} className="border-t p-3 flex gap-2 flex-shrink-0">
+                      <form
+                        onSubmit={handleSendMessage}
+                        className="flex shrink-0 gap-2 border-t border-border/80 bg-muted/20 px-3 py-2.5 backdrop-blur-sm sm:px-4"
+                      >
                         <Input 
                           placeholder="Digite uma mensagem..."
                           value={newMessage}
                           onChange={(event) => setNewMessage(event.target.value)}
+                          className="min-h-10 bg-background"
                         />
                         <Button 
                           type="submit" 
                           size="icon"
+                          className="shrink-0"
                           disabled={!newMessage.trim()}
                         >
                           <Send className="h-4 w-4" />

@@ -339,6 +339,8 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
 
   if (!instance) return null;
 
+  const canManage = instance.can_manage !== false;
+
   const { phone: phoneNumber, name: profileName, pictureUrl: profilePictureUrl } = getProfileInfo();
 
   return (
@@ -352,6 +354,11 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
             </DialogTitle>
             <DialogDescription>
               Informações detalhadas e gerenciamento da instância WhatsApp
+              {!canManage && (
+                <span className="block text-amber-800 dark:text-amber-200 mt-1">
+                  Conexão da equipe: você pode operar o atendimento; só o criador pode gerar QR e alterar a sessão.
+                </span>
+              )}
             </DialogDescription>
             {(() => {
               const bs = instance.metadata?.bootstrap_sync as BootstrapSyncMeta | undefined;
@@ -465,47 +472,62 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
               </CardContent>
             </Card>
 
-            {/* Ações */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Ações</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between gap-3 rounded-md border p-3">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="reset-history-connect" className="text-sm font-medium">
-                      Limpar histórico do CRM ao conectar
-                    </Label>
-                    <p className="text-xs text-muted-foreground">
-                      Remove conversas e mensagens salvas desta instância antes de gerar o QR. Use ao trocar de
-                      número ou sessão WhatsApp.
-                    </p>
+            {/* Ações — QR / reset só para quem criou a instância */}
+            {canManage ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Ações</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="reset-history-connect" className="text-sm font-medium">
+                        Limpar histórico do CRM ao conectar
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Remove conversas e mensagens salvas desta instância antes de gerar o QR. Use ao trocar de
+                        número ou sessão WhatsApp.
+                      </p>
+                    </div>
+                    <Switch
+                      id="reset-history-connect"
+                      checked={resetHistoryOnConnect}
+                      onCheckedChange={setResetHistoryOnConnect}
+                    />
                   </div>
-                  <Switch
-                    id="reset-history-connect"
-                    checked={resetHistoryOnConnect}
-                    onCheckedChange={setResetHistoryOnConnect}
-                  />
-                </div>
-                <Button
-                  onClick={handleGenerateQRCode}
-                  disabled={generatingQR}
-                  className="w-full"
-                >
-                  {generatingQR ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Gerando QR Code...
-                    </>
-                  ) : (
-                    <>
-                      <QrCode className="h-4 w-4 mr-2" />
-                      Gerar QR Code para Conectar
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
+                  <Button
+                    onClick={handleGenerateQRCode}
+                    disabled={generatingQR}
+                    className="w-full"
+                  >
+                    {generatingQR ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Gerando QR Code...
+                      </>
+                    ) : (
+                      <>
+                        <QrCode className="h-4 w-4 mr-2" />
+                        Gerar QR Code para Conectar
+                      </>
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Conexão da equipe</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Apenas quem criou esta conexão pode gerar QR code, reconectar ou remover a instância. O
+                    atendimento no Chat e a sincronização abaixo estão disponíveis para utilizadores do mesmo
+                    tenant.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Conversas */}
             <Card>

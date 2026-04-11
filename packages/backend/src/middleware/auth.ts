@@ -252,6 +252,8 @@ export async function setRequestDb(
   try {
     const tenantIdValue = escapeSetLocalValue(req.tenantId ?? '');
     await client.query(`SET LOCAL app.current_tenant_id = '${tenantIdValue}'`);
+    const actorIdValue = escapeSetLocalValue(req.userId);
+    await client.query(`SET LOCAL app.actor_user_id = '${actorIdValue}'`);
     if (req.user?.is_super_admin) {
       await client.query("SET LOCAL app.bypass_rls = '1'");
     }

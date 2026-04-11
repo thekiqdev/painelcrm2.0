@@ -4,7 +4,11 @@ import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
 
-// Public routes (sem auth)
+// Public routes (sem auth) — rotas mais específicas primeiro
+router.get(
+  '/public/store/:slug/product/:productId',
+  productsController.getPublicProductByStoreSlugAndProductId
+);
 router.get('/public/:userId', productsController.getPublicProducts);
 
 // Protected routes (auth + tenant)
