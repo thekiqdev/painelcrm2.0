@@ -31,6 +31,7 @@ const order = [
   '11_create_tasks.sql',
   '12_create_proposals.sql',
   '13_create_finance.sql',
+  '14_add_assignee_to_client_tasks.sql',
   '15_create_chat_tables.sql',
   '16_create_notifications_table.sql',
   '17_alter_chat_conversations_add_lead_id.sql',
