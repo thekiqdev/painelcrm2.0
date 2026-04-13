@@ -1,12 +1,25 @@
 import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Package, Wrench, Phone, Mail, MessageSquare, Clock, ShoppingCart, ArrowLeft, CheckCircle } from "lucide-react";
+import {
+  Package,
+  Wrench,
+  Phone,
+  Mail,
+  MessageSquare,
+  Clock,
+  ShoppingCart,
+  ArrowLeft,
+  CheckCircle,
+  ImageOff,
+} from "lucide-react";
 import { PublicCatalogProduct, StoreProfile } from "@/types/products";
 import { productsService } from "@/services/products";
+import { resolveStorefrontTheme } from "@/themes/registry";
+import { getPublicProductGalleryUrls } from "@/utils/publicCatalogImages";
 
 export const PublicProduct = () => {
   const { storeSlug, productId } = useParams<{ storeSlug: string; productId: string }>();
@@ -14,17 +27,22 @@ export const PublicProduct = () => {
   const [product, setProduct] = useState<PublicCatalogProduct | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
 
   useEffect(() => {
     loadProductData();
   }, [storeSlug, productId]);
+
+  useEffect(() => {
+    setGalleryIndex(0);
+  }, [product?.id]);
 
   const loadProductData = async () => {
     if (!storeSlug || !productId) return;
 
     try {
       setLoading(true);
-      
+
       const [store, productData] = await Promise.all([
         productsService.getPublicStoreBySlug(storeSlug),
         productsService.getPublicProductByStoreSlugAndProductId(storeSlug, productId),
@@ -35,10 +53,10 @@ export const PublicProduct = () => {
         return;
       }
 
-      setStoreProfile(store);
+      setStoreProfile(store as StoreProfile);
       setProduct(productData);
     } catch (error) {
-      console.error('Erro ao carregar produto:', error);
+      console.error("Erro ao carregar produto:", error);
       setNotFound(true);
     } finally {
       setLoading(false);
@@ -47,12 +65,12 @@ export const PublicProduct = () => {
 
   const handleWhatsAppContact = () => {
     if (!storeProfile?.contact_whatsapp || !product) return;
-    
-    const phone = storeProfile.contact_whatsapp.replace(/\D/g, '');
-    const message = `Olá! Gostaria de solicitar um orçamento para o ${product.type === 'product' ? 'produto' : 'serviço'} "${product.name}". Pode me ajudar?`;
-    
+
+    const phone = storeProfile.contact_whatsapp.replace(/\D/g, "");
+    const message = `Olá! Gostaria de solicitar um orçamento para o ${product.type === "product" ? "produto" : "serviço"} "${product.name}". Pode me ajudar?`;
+
     const whatsappUrl = `https://wa.me/55${phone}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
+    window.open(whatsappUrl, "_blank");
   };
 
   if (loading) {
@@ -87,29 +105,33 @@ export const PublicProduct = () => {
     );
   }
 
+  const theme = resolveStorefrontTheme(storeProfile.theme_key);
+  const ProductShell = theme.ProductShell;
+  const gallery = getPublicProductGalleryUrls(product);
+  const mainImage = gallery[galleryIndex] ?? null;
+
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header da Loja */}
+    <ProductShell storeProfile={storeProfile}>
       <div className="border-b bg-card">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <Link 
+            <Link
               to={`/${storeSlug}/loja`}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
               Voltar para {storeProfile.store_name}
             </Link>
-            
+
             {storeProfile.contact_whatsapp && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const phone = storeProfile.contact_whatsapp!.replace(/\D/g, '');
+                  const phone = storeProfile.contact_whatsapp!.replace(/\D/g, "");
                   const message = `Olá! Gostaria de saber mais sobre a ${storeProfile.store_name}. Pode me ajudar?`;
                   const whatsappUrl = `https://wa.me/55${phone}?text=${encodeURIComponent(message)}`;
-                  window.open(whatsappUrl, '_blank');
+                  window.open(whatsappUrl, "_blank");
                 }}
               >
                 <MessageSquare className="h-4 w-4 mr-2" />
@@ -120,16 +142,43 @@ export const PublicProduct = () => {
         </div>
       </div>
 
-      {/* Conteúdo do Produto */}
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Informações do Produto */}
+            <div className="space-y-4 lg:sticky lg:top-8 self-start">
+              <div className="aspect-square max-h-[420px] w-full rounded-lg border bg-muted flex items-center justify-center overflow-hidden">
+                {mainImage ? (
+                  <img src={mainImage} alt="" className="w-full h-full object-contain" />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground p-8">
+                    <ImageOff className="h-14 w-14" />
+                    <span className="text-sm">Sem imagem</span>
+                  </div>
+                )}
+              </div>
+              {gallery.length > 1 ? (
+                <div className="flex flex-wrap gap-2">
+                  {gallery.map((url, idx) => (
+                    <button
+                      key={`${url}-${idx}`}
+                      type="button"
+                      onClick={() => setGalleryIndex(idx)}
+                      className={`h-16 w-16 rounded border overflow-hidden shrink-0 ${
+                        idx === galleryIndex ? "ring-2 ring-primary" : "opacity-80"
+                      }`}
+                    >
+                      <img src={url} alt="" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
             <div className="space-y-6">
               <div>
                 <div className="flex items-center gap-2 mb-4">
-                  <Badge variant={product.type === 'product' ? 'default' : 'secondary'}>
-                    {product.type === 'product' ? (
+                  <Badge variant={product.type === "product" ? "default" : "secondary"}>
+                    {product.type === "product" ? (
                       <>
                         <Package className="mr-1 h-3 w-3" />
                         Produto
@@ -141,13 +190,11 @@ export const PublicProduct = () => {
                       </>
                     )}
                   </Badge>
-                  {product.category && (
-                    <Badge variant="outline">{product.category}</Badge>
-                  )}
+                  {product.category && <Badge variant="outline">{product.category}</Badge>}
                 </div>
-                
+
                 <h1 className="text-3xl font-bold mb-4">{product.name}</h1>
-                
+
                 {product.description && (
                   <p className="text-lg text-muted-foreground leading-relaxed">
                     {product.description}
@@ -168,23 +215,20 @@ export const PublicProduct = () => {
                   </div>
                 </div>
               )}
-            </div>
 
-            {/* Card de Compra/Orçamento */}
-            <div className="lg:sticky lg:top-8">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-center">
-                    Solicitar {product.type === 'product' ? 'Orçamento' : 'Cotação'}
+                    Solicitar {product.type === "product" ? "Orçamento" : "Cotação"}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {product.price && (
+                  {product.price != null && (
                     <div className="text-center">
                       <p className="text-3xl font-bold text-primary">
-                        R$ {product.price.toFixed(2)}
+                        R$ {Number(product.price).toFixed(2)}
                       </p>
-                      {product.type === 'service' && product.duration_hours && (
+                      {product.type === "service" && product.duration_hours && (
                         <div className="flex items-center justify-center gap-1 text-sm text-muted-foreground mt-2">
                           <Clock className="h-3 w-3" />
                           <span>Duração estimada: {product.duration_hours}h</span>
@@ -196,11 +240,7 @@ export const PublicProduct = () => {
                   <Separator />
 
                   {storeProfile.contact_whatsapp && (
-                    <Button
-                      className="w-full"
-                      size="lg"
-                      onClick={handleWhatsAppContact}
-                    >
+                    <Button className="w-full" size="lg" onClick={handleWhatsAppContact}>
                       <ShoppingCart className="mr-2 h-4 w-4" />
                       Solicitar via WhatsApp
                     </Button>
@@ -228,16 +268,13 @@ export const PublicProduct = () => {
                 </CardContent>
               </Card>
 
-              {/* Informações da Loja */}
-              <Card className="mt-4">
+              <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm">Sobre {storeProfile.store_name}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {storeProfile.store_description && (
-                    <p className="text-sm text-muted-foreground">
-                      {storeProfile.store_description}
-                    </p>
+                    <p className="text-sm text-muted-foreground">{storeProfile.store_description}</p>
                   )}
                 </CardContent>
               </Card>
@@ -245,6 +282,6 @@ export const PublicProduct = () => {
           </div>
         </div>
       </div>
-    </div>
+    </ProductShell>
   );
 };

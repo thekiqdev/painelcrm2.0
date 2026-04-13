@@ -4559,7 +4559,9 @@ export async function getConversations(req: AuthRequest, res: Response) {
       query += ` AND (
         LOWER(COALESCE(c.contact_name, '')) LIKE $${params.length} OR
         LOWER(COALESCE(c.profile_name, '')) LIKE $${params.length} OR
-        LOWER(COALESCE(c.phone_number, '')) LIKE $${params.length}
+        LOWER(COALESCE(c.phone_number, '')) LIKE $${params.length} OR
+        LOWER(COALESCE(c.display_name, '')) LIKE $${params.length} OR
+        LOWER(COALESCE(c.canonical_phone, '')) LIKE $${params.length}
       )`;
     }
 

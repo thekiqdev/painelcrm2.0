@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,10 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon } from "lucide-react";
+import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 import { Product, ProductFormData, ProductVariation, VariationPrice } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
+import { uploadCatalogImageFile } from "@/services/catalogMediaUpload";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 // Variações predefinidas com cores reais
 const COLOR_MAP: Record<string, string> = {
@@ -44,6 +46,8 @@ const PREDEFINED_VARIATIONS = {
     suggestions: ['100g', '250g', '500g', '1kg', '2kg', '5kg', '10kg']
   }
 };
+
+const MAX_PRODUCT_IMAGES = 10;
 
 const ProductForm = () => {
   const navigate = useNavigate();
@@ -81,17 +85,41 @@ const ProductForm = () => {
     is_public: true
   });
 
+  const [categorySuggestions, setCategorySuggestions] = useState<string[]>([]);
   const [newFeature, setNewFeature] = useState('');
   const [variationType, setVariationType] = useState<'cor' | 'tamanho' | 'peso' | 'custom'>('cor');
   const [newVariation, setNewVariation] = useState({ name: '', values: [''] });
   const [customColorName, setCustomColorName] = useState('');
   const [customColorValue, setCustomColorValue] = useState('#000000');
+  const productImagesInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingImages, setUploadingImages] = useState(false);
 
   useEffect(() => {
     if (isEditing && id) {
       loadProduct(id);
     }
   }, [id, isEditing]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await productsService.getProducts();
+        if (cancelled) return;
+        const seen = new Set<string>();
+        for (const p of list) {
+          const c = p.category?.trim();
+          if (c) seen.add(c);
+        }
+        setCategorySuggestions(Array.from(seen).sort((a, b) => a.localeCompare(b, "pt-BR")));
+      } catch {
+        /* sugestões são opcionais */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadProduct = async (productId: string) => {
     try {
@@ -140,6 +168,52 @@ const ProductForm = () => {
     }
   };
 
+  const handleProductImagesFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setUploadingImages(true);
+    try {
+      const next = [...formData.images];
+      for (let i = 0; i < files.length; i++) {
+        if (next.length >= MAX_PRODUCT_IMAGES) {
+          toast({
+            title: "Limite de imagens",
+            description: `Máximo ${MAX_PRODUCT_IMAGES} imagens por produto.`,
+            variant: "destructive",
+          });
+          break;
+        }
+        const url = await uploadCatalogImageFile(files[i], "product");
+        next.push(url);
+      }
+      setFormData((prev) => ({ ...prev, images: next }));
+    } catch (e) {
+      toast({
+        title: "Upload",
+        description: e instanceof Error ? e.message : "Falha ao enviar imagens",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingImages(false);
+      if (productImagesInputRef.current) productImagesInputRef.current.value = "";
+    }
+  };
+
+  const removeImageAt = (idx: number) => {
+    setFormData((prev) => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }));
+  };
+
+  const moveImage = (idx: number, dir: -1 | 1) => {
+    setFormData((prev) => {
+      const arr = [...prev.images];
+      const j = idx + dir;
+      if (j < 0 || j >= arr.length) return prev;
+      const t = arr[idx]!;
+      arr[idx] = arr[j]!;
+      arr[j] = t;
+      return { ...prev, images: arr };
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -154,15 +228,19 @@ const ProductForm = () => {
 
     try {
       setLoading(true);
-      
+      const categoryTrimmed = formData.category?.trim() || undefined;
+      const { secondary_images: _legacySecondary, ...restForm } = formData;
+      void _legacySecondary;
+      const payload = { ...restForm, category: categoryTrimmed, images: formData.images };
+
       if (isEditing && product) {
-        await productsService.updateProduct(product.id, formData);
+        await productsService.updateProduct(product.id, payload);
         toast({
           title: "Sucesso",
           description: "Produto atualizado com sucesso"
         });
       } else {
-        await productsService.createProduct(formData);
+        await productsService.createProduct(payload);
         toast({
           title: "Sucesso",
           description: "Produto criado com sucesso"
@@ -462,10 +540,17 @@ const ProductForm = () => {
                 <Label htmlFor="category">Categoria</Label>
                 <Input
                   id="category"
+                  list="product-category-suggestions"
                   value={formData.category}
                   onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
                   placeholder="Ex: Eletrônicos, Consultoria..."
+                  autoComplete="off"
                 />
+                <datalist id="product-category-suggestions">
+                  {categorySuggestions.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
               </div>
             </div>
 
@@ -688,35 +773,102 @@ const ProductForm = () => {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ImageIcon className="h-5 w-5" />
-              Imagens
+              Imagens da galeria
             </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              A primeira imagem da lista é a principal na vitrine. JPG, PNG, WebP ou GIF até 5 MB cada.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <Label>Imagens Principais</Label>
-              <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
-                <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-2">Arraste e solte suas imagens aqui</p>
-                <Button type="button" variant="outline" size="sm">
-                  Escolher Arquivos
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Recomendado: JPG, PNG até 5MB cada. A primeira imagem será a principal.
-              </p>
+            {isProduct && (formData.secondary_images?.length ?? 0) > 0 ? (
+              <Alert>
+                <AlertDescription>
+                  Este produto possui imagens no formato legado (secundárias). Elas continuam visíveis na
+                  loja após o cadastro. Novas fotos devem ser adicionadas apenas nesta galeria.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={productImagesInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                className="hidden"
+                onChange={(e) => handleProductImagesFiles(e.target.files)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={uploadingImages || formData.images.length >= MAX_PRODUCT_IMAGES}
+                onClick={() => productImagesInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                {uploadingImages ? "Enviando…" : "Adicionar imagens"}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {formData.images.length}/{MAX_PRODUCT_IMAGES}
+              </span>
             </div>
-
-            {isProduct && (
-              <div>
-                <Label>Imagens Secundárias</Label>
-                <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
-                  <Upload className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
-                  <p className="text-sm text-muted-foreground mb-2">Imagens adicionais do produto</p>
-                  <Button type="button" variant="outline" size="sm">
-                    Adicionar Imagens
-                  </Button>
-                </div>
-              </div>
+            {formData.images.length > 0 ? (
+              <ul className="space-y-2">
+                {formData.images.map((url, idx) => (
+                  <li
+                    key={`${url}-${idx}`}
+                    className="flex flex-wrap items-center gap-2 rounded-md border p-2"
+                  >
+                    <img
+                      src={url}
+                      alt=""
+                      className="h-16 w-16 object-cover rounded"
+                    />
+                    <div className="flex-1 min-w-[120px]">
+                      {idx === 0 ? (
+                        <Badge>Principal</Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Imagem {idx + 1}</span>
+                      )}
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        disabled={idx === 0}
+                        onClick={() => moveImage(idx, -1)}
+                        title="Mover para cima"
+                      >
+                        <ChevronUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        disabled={idx === formData.images.length - 1}
+                        onClick={() => moveImage(idx, 1)}
+                        title="Mover para baixo"
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => removeImageAt(idx)}
+                        title="Remover"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">Nenhuma imagem ainda.</p>
             )}
           </CardContent>
         </Card>

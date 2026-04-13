@@ -42,31 +42,50 @@ function toPublicProductDto(row: Record<string, unknown>) {
   };
 }
 
+/** JSON do front pode enviar null (Postgres) ou NaN (parseFloat inválido); Zod .optional() não aceita null. */
+const emptyNullToUndef = (v: unknown) => (v === '' || v === null ? undefined : v);
+
+const optionalNumber = z.preprocess((v) => {
+  if (v === null || v === undefined || v === '') return undefined;
+  if (typeof v === 'number' && Number.isNaN(v)) return undefined;
+  return v;
+}, z.number().optional());
+
+const optionalUuid = z.preprocess(
+  emptyNullToUndef,
+  z.string().uuid().optional()
+);
+
+const optionalRecurrence = z.preprocess(
+  emptyNullToUndef,
+  z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional()
+);
+
 const productSchema = z.object({
   name: z.string().min(1),
-  description: z.string().optional(),
+  description: z.preprocess(emptyNullToUndef, z.string().optional()),
   type: z.enum(['product', 'service']),
-  price: z.number().optional(),
+  price: optionalNumber,
   currency: z.string().default('BRL'),
   images: z.array(z.any()).default([]),
   features: z.array(z.any()).default([]),
-  category: z.string().optional(),
+  category: z.preprocess(emptyNullToUndef, z.string().optional()),
   status: z.enum(['active', 'inactive', 'draft']).default('active'),
   is_public: z.boolean().default(true),
-  duration_hours: z.number().optional(),
-  cost: z.number().optional(),
-  sku: z.string().optional(),
-  stock_quantity: z.number().optional(),
-  min_stock_quantity: z.number().optional(),
-  responsible_id: z.string().uuid().optional(),
-  short_description: z.string().optional(),
-  discount_price: z.number().optional(),
+  duration_hours: optionalNumber,
+  cost: optionalNumber,
+  sku: z.preprocess(emptyNullToUndef, z.string().optional()),
+  stock_quantity: optionalNumber,
+  min_stock_quantity: optionalNumber,
+  responsible_id: optionalUuid,
+  short_description: z.preprocess(emptyNullToUndef, z.string().optional()),
+  discount_price: optionalNumber,
   secondary_images: z.array(z.any()).default([]),
   variations: z.array(z.any()).default([]),
-  contract_template: z.string().optional(),
+  contract_template: z.preprocess(emptyNullToUndef, z.string().optional()),
   has_contract: z.boolean().default(false),
   is_recurring: z.boolean().default(false),
-  recurrence_interval: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
+  recurrence_interval: optionalRecurrence,
 });
 
 export async function getProducts(req: AuthRequest, res: Response): Promise<void> {

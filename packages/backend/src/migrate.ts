@@ -117,6 +117,10 @@ const order = [
   /** RLS chat: `app.actor_user_id` + políticas SELECT/INSERT separadas */
   '97_rls_chat_app_actor_visibility.sql',
   '98_chat_conversations_assigned_team.sql',
+  /** Kanban de conversas (/chat/kanbam): boards, colunas, cards + RLS */
+  '99_chat_kanban_etapa_d2.sql',
+  /** Fase 2 catálogo: store_banner_url, theme_key, theme_options em store_profiles */
+  '100_store_profiles_media_theme.sql',
   'create-admin-user.sql',
 ];
 

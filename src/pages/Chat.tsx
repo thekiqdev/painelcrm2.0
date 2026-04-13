@@ -26,6 +26,7 @@ import {
   XCircle,
   Headphones,
   ArrowRightLeft,
+  ListFilter,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -102,6 +103,7 @@ import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
 import { teamsService, type Team } from '@/services/teams';
+import { formatPhoneBrDigits } from '@/lib/brazilInputMasks';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -205,6 +207,60 @@ const shortOperatorName = (display?: string | null) => {
   return first.length > 18 ? `${first.slice(0, 16)}…` : first;
 };
 
+function readInstanceMetaString(
+  metadata: Record<string, unknown> | null | undefined,
+  keys: string[],
+): string | null {
+  for (const k of keys) {
+    const v = metadata?.[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/** Telefone da linha conectada formatado (BR; inclui +55 quando o metadata traz código do país). */
+function formatConnectedPhoneForDisplay(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const d = String(raw).replace(/\D/g, '');
+  if (d.length === 0) return '';
+  if (d.length > 11 && d.startsWith('55')) {
+    const local = d.slice(2, 13);
+    const formatted = formatPhoneBrDigits(local);
+    return formatted ? `+55 ${formatted}` : `+${d}`;
+  }
+  if (d.length <= 11) {
+    return formatPhoneBrDigits(d);
+  }
+  return `+${d}`;
+}
+
+function resolveInstanceConnectionUi(instance: ChatInstance | null): {
+  avatarUrl: string | null;
+  displayName: string;
+  phoneDisplay: string;
+} {
+  if (!instance) {
+    return { avatarUrl: null, displayName: 'Selecione uma instância', phoneDisplay: '' };
+  }
+  const m = instance.metadata as Record<string, unknown> | null | undefined;
+  const pic = readInstanceMetaString(m, [
+    'connectedProfilePicUrl',
+    'connected_profile_pic_url',
+    'profilePicUrl',
+    'whatsapp_profile_photo',
+  ]);
+  const name =
+    readInstanceMetaString(m, ['connectedProfileName', 'connected_profile_name', 'profileName']) ||
+    instance.external_instance_name ||
+    instance.name;
+  const phoneRaw = readInstanceMetaString(m, ['connectedPhone', 'connected_phone', 'phone']);
+  return {
+    avatarUrl: pic,
+    displayName: name,
+    phoneDisplay: formatConnectedPhoneForDisplay(phoneRaw || ''),
+  };
+}
+
 const Chat = () => {
   const { user, session } = useAuth();
   const navigate = useNavigate();
@@ -215,6 +271,7 @@ const Chat = () => {
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [enabledInstanceIds, setEnabledInstanceIds] = useState<Set<string>>(new Set());
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [filtersPopoverOpen, setFiltersPopoverOpen] = useState(false);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1230,6 +1287,10 @@ const Chat = () => {
     instances.find((instance) => instance.status === 'connected') ||
     null;
   const connectionStatus = activeInstance?.status || 'disconnected';
+  const instanceConnectionUi = useMemo(
+    () => resolveInstanceConnectionUi(activeInstance),
+    [activeInstance],
+  );
 
   const handleSelectConversation = (conversationId: string) => {
     setSelectedConversationId(conversationId);
@@ -2330,39 +2391,81 @@ const Chat = () => {
 
   return (
     <div className="flex flex-col h-screen max-h-screen -m-6">
-      {/* Header Único - 10vh: Conexão e Filtros na mesma linha */}
-      <div className="flex-shrink-0 h-[10vh] min-h-[80px] max-h-[10vh] px-6 pt-6 pb-4 overflow-hidden">
-        <div className="flex items-center gap-4 h-full">
-          {/* Card da Instância - Compacto (mesma altura dos filtros) */}
+      {/* Barra superior: conexão (perfil WhatsApp) + filtro (tipo / inbox) */}
+      <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/50 bg-gradient-to-b from-muted/30 to-background">
+        <div className="flex items-center gap-3 flex-wrap">
           {instances.length > 0 && (
-            <div className="flex-shrink-0">
+            <div className="flex flex-shrink-0 items-center gap-2">
               <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
                 <PopoverTrigger asChild>
-              <Button 
+                  <Button
+                    type="button"
                     variant="outline"
-                    className="h-9 px-3 border-2 hover:border-primary/50 transition-colors justify-between gap-2 min-w-[200px]"
+                    className="h-auto min-h-[52px] py-2 pl-2.5 pr-2 rounded-xl border-2 border-primary/15 bg-card/80 shadow-sm hover:border-primary/35 hover:shadow-md transition-all inline-flex items-center gap-1.5 w-fit max-w-[min(100%,380px)]"
                   >
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
                       {activeInstance ? (
                         <>
-                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                            activeInstance.status === 'connected' ? 'bg-emerald-500'
-                            : activeInstance.status === 'connecting' ? 'bg-amber-500'
-                            : 'bg-gray-400'
-                          }`} />
-                          <span className="text-sm font-medium truncate">{activeInstance.name}</span>
-                          {enabledInstanceIds.size > 1 && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-1">
-                              +{enabledInstanceIds.size - 1}
-                            </Badge>
-                          )}
+                          <div className="relative shrink-0">
+                            <Avatar className="h-10 w-10 rounded-xl ring-2 ring-background shadow-sm">
+                              {instanceConnectionUi.avatarUrl ? (
+                                <AvatarImage
+                                  src={instanceConnectionUi.avatarUrl}
+                                  alt=""
+                                  className="object-cover"
+                                />
+                              ) : (
+                                <AvatarFallback className="rounded-xl bg-emerald-600/12 text-emerald-800 text-sm font-semibold uppercase">
+                                  {(instanceConnectionUi.displayName || '?').slice(0, 2)}
+                                </AvatarFallback>
+                              )}
+                            </Avatar>
+                            <span
+                              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card ${
+                                activeInstance.status === 'connected'
+                                  ? 'bg-emerald-500'
+                                  : activeInstance.status === 'connecting'
+                                    ? 'bg-amber-500'
+                                    : 'bg-muted-foreground/50'
+                              }`}
+                              aria-hidden
+                            />
+                          </div>
+                          <div className="min-w-0 text-left">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-sm font-semibold leading-snug truncate">
+                                {instanceConnectionUi.displayName}
+                              </span>
+                              {enabledInstanceIds.size > 1 && (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-[10px] px-1.5 py-0 h-4 shrink-0"
+                                >
+                                  +{enabledInstanceIds.size - 1}
+                                </Badge>
+                              )}
+                            </div>
+                            {instanceConnectionUi.phoneDisplay ? (
+                              <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5 whitespace-nowrap">
+                                {instanceConnectionUi.phoneDisplay}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-muted-foreground mt-0.5">
+                                {activeInstance.status === 'connected'
+                                  ? 'Conectado'
+                                  : activeInstance.status === 'connecting'
+                                    ? 'A conectar…'
+                                    : 'Desconectado'}
+                              </p>
+                            )}
+                          </div>
                         </>
                       ) : (
                         <span className="text-sm text-muted-foreground">Selecione uma instância</span>
                       )}
                     </div>
-                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-              </Button>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-80" />
+                  </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-80 p-0" align="start">
                   <div className="p-2">
@@ -2372,6 +2475,13 @@ const Chat = () => {
                     <div className="max-h-[300px] overflow-y-auto">
                       {instances.map((instance) => {
                         const isEnabled = enabledInstanceIds.has(instance.id);
+                        const rowUi = resolveInstanceConnectionUi(instance);
+                        const statusLine =
+                          instance.status === 'connected'
+                            ? 'Conectado'
+                            : instance.status === 'connecting'
+                              ? 'A conectar…'
+                              : 'Desconectado';
                         return (
                           <div
                             key={instance.id}
@@ -2386,6 +2496,7 @@ const Chat = () => {
                             <Checkbox
                               checked={isEnabled}
                               disabled={instance.can_manage === false}
+                              className="shrink-0"
                               onCheckedChange={() => {
                                 if (instance.can_manage === false) return;
                                 handleToggleInstance(instance.id);
@@ -2394,21 +2505,39 @@ const Chat = () => {
                                 }
                               }}
                             />
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                instance.status === 'connected' ? 'bg-emerald-500'
-                                : instance.status === 'connecting' ? 'bg-amber-500'
-                                : 'bg-gray-400'
-                              }`} />
-                              <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium truncate">{instance.name}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {instance.status === 'connected' ? 'Conectado' 
-                                    : instance.status === 'connecting' ? 'Conectando'
-                                    : 'Desconectado'}
-              </div>
-              </div>
-            </div>
+                            <div className="relative h-9 w-9 shrink-0">
+                              <Avatar className="h-9 w-9 rounded-lg ring-1 ring-border">
+                                {rowUi.avatarUrl ? (
+                                  <AvatarImage
+                                    src={rowUi.avatarUrl}
+                                    alt=""
+                                    className="object-cover"
+                                  />
+                                ) : (
+                                  <AvatarFallback className="rounded-lg bg-emerald-600/12 text-emerald-800 text-xs font-semibold uppercase">
+                                    {(rowUi.displayName || '?').slice(0, 2)}
+                                  </AvatarFallback>
+                                )}
+                              </Avatar>
+                              <span
+                                className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-popover ${
+                                  instance.status === 'connected'
+                                    ? 'bg-emerald-500'
+                                    : instance.status === 'connecting'
+                                      ? 'bg-amber-500'
+                                      : 'bg-muted-foreground/50'
+                                }`}
+                                aria-hidden
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1 text-left">
+                              <div className="text-sm font-semibold leading-snug truncate">
+                                {rowUi.displayName}
+                              </div>
+                              <div className="text-xs text-muted-foreground tabular-nums truncate">
+                                {rowUi.phoneDisplay || statusLine}
+                              </div>
+                            </div>
                           </div>
                         );
                       })}
@@ -2427,19 +2556,22 @@ const Chat = () => {
                   </div>
                 </PopoverContent>
               </Popover>
-            </div>
-          )}
 
-        </div>
-      </div>
-
-      {enabledInstanceIds.size > 0 ? (
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden" style={{ height: 'calc(100vh - 10vh)' }}>
-          {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
-          <div className="flex-1 flex flex-col min-h-0 px-6 pb-6 overflow-hidden">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
-                <Card className="md:col-span-1 flex flex-col min-h-0 border-border/80 shadow-sm">
-                  <CardHeader className="px-3 py-3 border-b flex-shrink-0 space-y-3 bg-muted/20">
+              <Popover open={filtersPopoverOpen} onOpenChange={setFiltersPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={filtersPopoverOpen ? 'secondary' : 'outline'}
+                    size="icon"
+                    className="h-10 w-10 shrink-0 rounded-xl border-2 border-primary/15 shadow-sm hover:border-primary/35"
+                    aria-label="Filtros: tipo de conversa e inbox"
+                    aria-expanded={filtersPopoverOpen}
+                  >
+                    <ListFilter className="h-4 w-4" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[min(100vw-2rem,20rem)] p-0" align="start">
+                  <div className="p-3 space-y-4">
                     <div className="space-y-1.5">
                       <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                         Tipo de conversa
@@ -2451,7 +2583,7 @@ const Chat = () => {
                         }
                         className="w-full"
                       >
-                        <TabsList className="h-auto w-full flex flex-wrap gap-1 justify-start bg-background/70 p-1">
+                        <TabsList className="h-auto w-full flex flex-wrap gap-1 justify-start bg-muted/50 p-1">
                           <TabsTrigger value="all" className="text-xs px-2.5 py-1.5 h-8">
                             Todas
                           </TabsTrigger>
@@ -2475,15 +2607,6 @@ const Chat = () => {
                         </TabsList>
                       </Tabs>
                     </div>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        placeholder="Buscar por nome ou telefone..."
-                        className="pl-9 h-9 bg-background"
-                      />
-                    </div>
                     {user?.tenant_id ? (
                       <div className="space-y-1.5">
                         <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
@@ -2503,6 +2626,30 @@ const Chat = () => {
                         </Select>
                       </div>
                     ) : null}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {enabledInstanceIds.size > 0 ? (
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
+          <div className="flex-1 flex flex-col min-h-0 px-6 pb-6 overflow-hidden">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
+                <Card className="md:col-span-1 flex flex-col min-h-0 border-border/80 shadow-sm">
+                  <CardHeader className="px-3 py-3 border-b flex-shrink-0 space-y-3 bg-muted/20">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        placeholder="Buscar por nome ou telefone..."
+                        className="pl-9 h-9 bg-background"
+                      />
+                    </div>
                     <div className="space-y-1.5">
                       <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                         Atendimento

@@ -30,6 +30,7 @@ const ProjectWizardPage = lazy(() => import("./pages/ProjectWizardPage"));
 const ProjectAreaPage = lazy(() => import("./pages/ProjectAreaPage"));
 const ProjectTemplates = lazy(() => import("./pages/ProjectTemplates"));
 const Products = lazy(() => import("./pages/Products"));
+const StoreSettings = lazy(() => import("./pages/StoreSettings"));
 const Proposals = lazy(() => import("./pages/Proposals"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const NewContract = lazy(() => import("./pages/NewContract"));
@@ -45,6 +46,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const PaymentsPanelPage = lazy(() => import("./pages/settings/PaymentsPanelPage"));
 const GatewayConfigPage = lazy(() => import("./pages/settings/GatewayConfigPage"));
 const Chat = lazy(() => import("./pages/Chat"));
+const ChatKanbanPage = lazy(() => import("./pages/ChatKanbanPage"));
 const FunnelDetails = lazy(() => import("./pages/FunnelDetails"));
 const ProposalDetails = lazy(() => import("./pages/ProposalDetails"));
 const PublicStore = lazy(() => import("./pages/PublicStore").then(m => ({ default: m.PublicStore })));
@@ -284,6 +286,15 @@ const App = () => (
                   </AppLayout>
               </AuthGuard>
             } />
+            <Route path="/admin/loja" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <StoreSettings />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
             
             {/* Legacy routes - redirect to admin */}
             <Route path="/products" element={
@@ -422,6 +433,15 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Finance />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/chat/kanbam" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ChatKanbanPage />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>

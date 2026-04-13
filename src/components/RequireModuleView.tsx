@@ -12,6 +12,7 @@ function pathToModule(pathname: string): string | null {
   if (pathname.startsWith('/clients')) return 'clients';
   if (pathname.startsWith('/leads')) return 'leads';
   if (pathname.startsWith('/funnel')) return 'funnels';
+  if (pathname.startsWith('/admin/loja')) return 'products';
   if (pathname.startsWith('/admin/products')) return 'products';
   if (pathname.startsWith('/products')) return 'products';
   if (pathname.startsWith('/projects')) return 'projects';

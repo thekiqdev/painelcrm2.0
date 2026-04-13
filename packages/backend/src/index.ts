@@ -4,11 +4,13 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import authRoutes from './routes/authRoutes.js';
 import productsRoutes from './routes/productsRoutes.js';
 import storeProfileRoutes from './routes/storeProfileRoutes.js';
+import catalogMediaRoutes from './routes/catalogMediaRoutes.js';
 import clientsRoutes from './routes/clientsRoutes.js';
 import clientGroupsRoutes from './routes/clientGroupsRoutes.js';
 import profileRoutes from './routes/profileRoutes.js';
@@ -42,6 +44,7 @@ import proposalsRoutes from './routes/proposalsRoutes.js';
 import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
+import chatKanbanRoutes from './routes/chatKanbanRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
@@ -62,6 +65,7 @@ import onboardingRoutes from './routes/onboardingRoutes.js';
 import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
 import { initializeWebSocket } from './services/websocketService.js';
+import { getCatalogMediaStorageRoot } from './services/catalogMediaUploadService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -78,8 +82,12 @@ const trustProxySetting =
   process.env.TRUST_PROXY_SETTING || 'loopback, linklocal, uniquelocal';
 app.set('trust proxy', trustProxySetting);
 
-// Middleware
-app.use(helmet());
+// Middleware — CORP cross-origin permite <img src> da API em outra porta/origem (dev e admin vs /media/catalog)
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 // CORS - aceitar FRONTEND_URL e também URLs do Easypanel
 const extraOrigins = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
 const parsedExtraOrigins = extraOrigins
@@ -108,6 +116,24 @@ app.use(cors({
 const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT || '25mb';
 app.use(express.json({ limit: jsonBodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: jsonBodyLimit }));
+
+/** Mídia do catálogo (upload local). Montar volume persistente em getCatalogMediaStorageRoot(). */
+try {
+  const catalogMediaDir = getCatalogMediaStorageRoot();
+  if (!fs.existsSync(catalogMediaDir)) {
+    fs.mkdirSync(catalogMediaDir, { recursive: true });
+  }
+  app.use(
+    '/media/catalog',
+    express.static(catalogMediaDir, {
+      maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
+      index: false,
+      dotfiles: 'deny',
+    })
+  );
+} catch (e) {
+  console.error('[catalog-media] Falha ao preparar diretório estático:', e);
+}
 
 // Rate limiting mais generoso para endpoints de teste
 const testLimiter = rateLimit({
@@ -205,6 +231,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/store-profile', storeProfileRoutes);
+app.use('/api/catalog-media', catalogMediaRoutes);
 app.use('/api/clients', clientsRoutes);
 app.use('/api/client-groups', clientGroupsRoutes);
 app.use('/api/profile', profileRoutes);
@@ -238,6 +265,7 @@ app.use('/api/proposals', proposalsRoutes);
 app.use('/api/members', membersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/chat/kanban', chatKanbanRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/message-templates', messageTemplatesRoutes);
 app.use('/api/messages', messagesRoutes);

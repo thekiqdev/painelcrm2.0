@@ -18,6 +18,9 @@ dist-ssr
 .env.*.local
 packages/backend/.env
 
+# Uploads locais de mídia do catálogo (volume em produção)
+packages/backend/uploads/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

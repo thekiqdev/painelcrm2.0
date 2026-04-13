@@ -61,17 +61,22 @@ export interface PublicCatalogProduct {
   recurrence_interval?: string | null;
 }
 
+export type StorefrontThemeKey = 'default' | 'minimal';
+
 export interface StoreProfile {
   id: string;
   user_id: string;
   store_name: string;
   store_description?: string;
   store_logo?: string;
+  store_banner_url?: string | null;
   contact_phone?: string;
   contact_email?: string;
   contact_whatsapp?: string;
   store_slug?: string;
   is_active: boolean;
+  theme_key?: StorefrontThemeKey | string | null;
+  theme_options?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
 }

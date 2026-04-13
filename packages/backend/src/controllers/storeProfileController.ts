@@ -3,15 +3,44 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
 
+const THEME_KEYS = ['default', 'minimal'] as const;
+
+const emptyToUndef = (v: unknown) => (v === '' || v === null ? undefined : v);
+
+/** Evita falha de parse quando o front/DB envia null em campos opcionais. */
+const optStr = z.preprocess(emptyToUndef, z.string().optional());
+
+/** URLs de logo/banner: vazio ou null → null; não transformar undefined (PATCH parcial). */
+const optStrNullable = z.preprocess((v) => {
+  if (v === '' || v === null) return null;
+  if (v === undefined) return undefined;
+  return String(v);
+}, z.union([z.string(), z.null()]).optional());
+
+const contactEmailSchema = z.preprocess((v) => {
+  if (v === null || v === undefined) return undefined;
+  const s = String(v).trim();
+  if (s === '') return '';
+  return s;
+}, z.union([z.string().email(), z.literal('')]).optional());
+
+const themeOptionsSchema = z.preprocess(
+  (v) => (v === null || v === undefined ? {} : v),
+  z.record(z.string(), z.unknown()).default({})
+);
+
 const storeProfileSchema = z.object({
   store_name: z.string().min(1),
-  store_description: z.string().optional(),
-  store_logo: z.string().optional(),
-  contact_phone: z.string().optional(),
-  contact_email: z.string().email().optional(),
-  contact_whatsapp: z.string().optional(),
+  store_description: optStr,
+  store_logo: optStrNullable,
+  store_banner_url: optStrNullable,
+  contact_phone: optStr,
+  contact_email: contactEmailSchema,
+  contact_whatsapp: optStr,
   store_slug: z.string().min(1),
   is_active: z.boolean().default(true),
+  theme_key: z.enum(THEME_KEYS).default('default'),
+  theme_options: themeOptionsSchema,
 });
 
 export async function getStoreProfile(req: AuthRequest, res: Response): Promise<void> {
@@ -64,21 +93,24 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
 
     const result = await pool.query(
       `INSERT INTO store_profiles (
-        user_id, store_name, store_description, store_logo,
+        user_id, store_name, store_description, store_logo, store_banner_url,
         contact_phone, contact_email, contact_whatsapp,
-        store_slug, is_active
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        store_slug, is_active, theme_key, theme_options
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
       RETURNING *`,
       [
         userId,
         storeData.store_name,
         storeData.store_description,
-        storeData.store_logo,
+        storeData.store_logo ?? null,
+        storeData.store_banner_url ?? null,
         storeData.contact_phone,
-        storeData.contact_email,
+        storeData.contact_email || null,
         storeData.contact_whatsapp,
         storeData.store_slug,
         storeData.is_active,
+        storeData.theme_key,
+        JSON.stringify(storeData.theme_options ?? {}),
       ]
     );
 
@@ -118,8 +150,13 @@ export async function updateStoreProfile(req: AuthRequest, res: Response): Promi
 
     Object.entries(storeData).forEach(([key, value]) => {
       if (value !== undefined) {
-        updates.push(`${key} = $${paramIndex}`);
-        values.push(value);
+        if (key === 'theme_options') {
+          updates.push(`theme_options = $${paramIndex}::jsonb`);
+          values.push(JSON.stringify(value ?? {}));
+        } else {
+          updates.push(`${key} = $${paramIndex}`);
+          values.push(value);
+        }
         paramIndex++;
       }
     });

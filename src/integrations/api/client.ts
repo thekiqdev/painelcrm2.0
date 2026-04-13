@@ -79,13 +79,18 @@ class ApiClient {
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseURL}${endpoint}`;
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    };
+    const isFormData =
+      typeof FormData !== 'undefined' && options.body instanceof FormData;
+
+    const headers = new Headers(options.headers as HeadersInit);
+    if (isFormData) {
+      headers.delete('Content-Type');
+    } else if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
 
     if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+      headers.set('Authorization', `Bearer ${this.token}`);
     }
 
     // Debug: log da URL em desenvolvimento
@@ -154,9 +159,10 @@ class ApiClient {
   }
 
   async post<T>(endpoint: string, body?: any): Promise<ApiResponse<T>> {
+    const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
     return this.request<T>(endpoint, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: isForm ? body : JSON.stringify(body),
     });
   }
 

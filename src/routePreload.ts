@@ -11,6 +11,7 @@ export const routePreload = {
   projects: () => import("./pages/Projects"),
   projectTemplates: () => import("./pages/ProjectTemplates"),
   products: () => import("./pages/Products"),
+  storeSettings: () => import("./pages/StoreSettings"),
   proposals: () => import("./pages/Proposals"),
   contracts: () => import("./pages/Contracts"),
   /** /billing redireciona para /customer-invoices; preload da página de faturas. */
@@ -21,6 +22,7 @@ export const routePreload = {
   finance: () => import("./pages/Finance"),
   settings: () => import("./pages/Settings"),
   chat: () => import("./pages/Chat"),
+  chatKanban: () => import("./pages/ChatKanbanPage"),
   tickets: () => import("./pages/Tickets"),
   meuPlano: () => import("./pages/MeuPlano"),
 } as const;
