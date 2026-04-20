@@ -52,6 +52,7 @@ const API_DISABLE = '/api/me/tenant/payment-gateway/disable';
 const WEBHOOK_PATH = '/webhooks/asaas';
 const ASAAS_API_KEY_URL = 'https://www.asaas.com/customerApiAccessToken/index';
 const ASAAS_WEBHOOKS_URL = 'https://www.asaas.com/customerConfigIntegrations/webhooks';
+const ASAAS_WEBHOOK_DOCS_URL = 'https://docs.asaas.com/docs/receive-asaas-events-at-your-webhook-endpoint';
 
 function getWebhookUrl(config: PaymentGatewayConfig | null): string {
   if (config?.webhookUrl) return config.webhookUrl;
@@ -107,6 +108,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
   const [form, setForm] = useState({
     gateway_key: '',
     api_key: '',
+    webhook_auth_token: '',
     env: 'sandbox' as 'sandbox' | 'production',
   });
 
@@ -141,6 +143,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
         ...f,
         gateway_key: config.gateway_key,
         api_key: '',
+        webhook_auth_token: '',
         env: (config.options?.env as string) === 'production' ? 'production' : 'sandbox',
       }));
       if (!config.hasCredentials) setConnectionStatus('not_configured');
@@ -184,6 +187,11 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
       credentials.api_key = form.api_key.trim();
     } else if (config?.hasCredentials) {
       credentials.api_key = '••••••••';
+    }
+    if (form.webhook_auth_token.trim()) {
+      credentials.webhook_auth_token = form.webhook_auth_token.trim();
+    } else if (config?.credentialsMasked?.webhook_auth_token) {
+      credentials.webhook_auth_token = '••••••••';
     }
     const res = await apiClient.put<{ id: string; gateway_key: string }>(API_CONFIG, {
       gateway_key: gatewayKey,
@@ -248,6 +256,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
   const enabledGateways = gateways.filter((g) => g.is_enabled);
   const showGatewaySelect = !fixedGatewayKey;
   const apiKeyDisplay = config?.api_key_masked ?? config?.credentialsMasked?.api_key ?? (config?.hasCredentials ? MASK : null);
+  const webhookAuthTokenDisplay = config?.credentialsMasked?.webhook_auth_token ?? null;
   const webhookUrl = getWebhookUrl(config);
 
   return (
@@ -377,6 +386,50 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
             Configurar webhooks no Asaas
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
+          <p className="text-xs text-muted-foreground">
+            O Asaas envia este token no header <code>asaas-access-token</code> em cada evento de webhook.
+          </p>
+          <a
+            href={ASAAS_WEBHOOK_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+          >
+            Ver documentação de autenticação do webhook
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Token de autenticação do webhook</CardTitle>
+          <CardDescription>
+            Defina o token usado no Asaas para autenticar chamadas no webhook deste sistema.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Input
+            id="webhook_auth_token_tenant"
+            type="password"
+            autoComplete="off"
+            placeholder={
+              webhookAuthTokenDisplay
+                ? 'Deixe em branco para manter o token atual'
+                : 'Informe o token configurado no Asaas'
+            }
+            value={form.webhook_auth_token}
+            onChange={(e) => setForm((f) => ({ ...f, webhook_auth_token: e.target.value }))}
+          />
+          {webhookAuthTokenDisplay ? (
+            <p className="text-xs text-muted-foreground">
+              Token atual: <code>{webhookAuthTokenDisplay}</code>
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Nenhum token configurado.
+            </p>
+          )}
         </CardContent>
       </Card>
 

@@ -15,6 +15,20 @@ registerGatewayParser('asaas', asaasWebhookParser);
 const GATEWAY_KEY = 'asaas';
 const MAX_ATTEMPTS = 5;
 
+async function loadConfiguredWebhookAuthTokens(): Promise<string[]> {
+  const rows = await pool.query<{ token: string | null }>(
+    `SELECT NULLIF(BTRIM(credentials->>'webhook_auth_token'), '') AS token
+     FROM payment_gateway_configs
+     WHERE gateway_key = $1
+       AND is_active = true
+       AND credentials ? 'webhook_auth_token'`,
+    [GATEWAY_KEY]
+  );
+  return rows.rows
+    .map((row) => row.token ?? null)
+    .filter((token): token is string => Boolean(token));
+}
+
 function payloadHash(body: object): string {
   return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
@@ -57,6 +71,15 @@ export async function asaasWebhookHandler(
   _next: NextFunction
 ): Promise<void> {
   try {
+    const configuredTokens = await loadConfiguredWebhookAuthTokens();
+    if (configuredTokens.length > 0) {
+      const incomingToken = req.header('asaas-access-token')?.trim() ?? '';
+      if (!incomingToken || !configuredTokens.includes(incomingToken)) {
+        res.status(401).json({ error: 'Webhook não autorizado: token inválido.' });
+        return;
+      }
+    }
+
     const body = req.body as unknown;
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       res.status(400).json({ error: 'Body inválido' });
