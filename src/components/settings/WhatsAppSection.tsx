@@ -4,7 +4,6 @@ import AddConnectionDialog from "@/components/whatsapp/AddConnectionDialog";
 import { InstancesList } from "@/components/whatsapp/InstancesList";
 import AdvancedSettings from "@/components/whatsapp/AdvancedSettings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings } from "lucide-react";
 
 export const WhatsAppSection = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -21,18 +20,22 @@ export const WhatsAppSection = () => {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
+  const onTabChange = (v: string) => {
+    setActiveTab(v);
+  };
+
   const handleInstanceCreated = () => {
-    setRefreshKey(prev => prev + 1);
+    setRefreshKey((prev) => prev + 1);
   };
 
   return (
     <div className="space-y-6">
-      <Tabs defaultValue="instances" value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={onTabChange}>
         <TabsList>
           <TabsTrigger value="instances">Instâncias</TabsTrigger>
-          <TabsTrigger value="settings">Configurações Avançadas</TabsTrigger>
+          <TabsTrigger value="settings">Configurações avançadas</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="instances" className="pt-4">
           <InstancesList
             key={refreshKey}
@@ -40,21 +43,21 @@ export const WhatsAppSection = () => {
             onInstanceCreated={handleInstanceCreated}
           />
         </TabsContent>
-        
+
         <TabsContent value="settings" className="pt-4">
           <AdvancedSettings />
         </TabsContent>
       </Tabs>
-      
+
       <AddConnectionDialog
         isOpen={isDialogOpen}
         onClose={() => {
           setIsDialogOpen(false);
-          handleInstanceCreated(); // Recarregar lista após fechar
+          handleInstanceCreated();
         }}
         onAddConnection={() => {
           setIsDialogOpen(false);
-          handleInstanceCreated(); // Recarregar lista após criar
+          handleInstanceCreated();
         }}
       />
     </div>

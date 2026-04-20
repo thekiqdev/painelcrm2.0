@@ -1,4 +1,4 @@
-import { LayoutGrid, LayoutList, Plus } from 'lucide-react';
+import { LayoutList, Plus, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -18,6 +18,10 @@ type Props = {
   onManageColumnsClick?: () => void;
   manageColumnsDisabled?: boolean;
   disabledSelect?: boolean;
+  /** Definições do quadro (criador ou admin do tenant) */
+  onBoardSettingsClick?: () => void;
+  boardSettingsDisabled?: boolean;
+  showBoardSettings?: boolean;
 };
 
 export function ChatKanbanToolbar({
@@ -28,18 +32,15 @@ export function ChatKanbanToolbar({
   onManageColumnsClick,
   manageColumnsDisabled,
   disabledSelect,
+  onBoardSettingsClick,
+  boardSettingsDisabled,
+  showBoardSettings,
 }: Props) {
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="space-y-1">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <LayoutGrid className="h-5 w-5" aria-hidden />
-          <span className="text-xs font-medium uppercase tracking-wide">Atendimento</span>
-        </div>
         <h1 className="text-2xl font-bold tracking-tight">Kanban de conversas</h1>
-        <p className="text-sm text-muted-foreground max-w-xl">
-          Organize conversas do WhatsApp em colunas. Visão operacional separada do chat clássico.
-        </p>
+        <p className="text-sm text-muted-foreground max-w-xl">Organize conversas do WhatsApp em colunas.</p>
       </div>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="w-full sm:w-[260px]">
@@ -63,6 +64,20 @@ export function ChatKanbanToolbar({
             </SelectContent>
           </Select>
         </div>
+        {onBoardSettingsClick && showBoardSettings ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            title="Configuração do quadro"
+            aria-label="Configuração do quadro"
+            onClick={onBoardSettingsClick}
+            disabled={boardSettingsDisabled}
+            className="shrink-0"
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
+        ) : null}
         {onManageColumnsClick ? (
           <Button
             type="button"

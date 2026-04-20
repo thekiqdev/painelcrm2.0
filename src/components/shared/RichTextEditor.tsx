@@ -9,9 +9,11 @@ interface RichTextEditorProps {
   onChange: (value: string) => void;
   className?: string;
   placeholder?: string;
+  /** Somente leitura: sem toolbar e sem edição (ex.: contrato após envio). */
+  readOnly?: boolean;
 }
 
-export function RichTextEditor({ value, onChange, className, placeholder }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, className, placeholder, readOnly }: RichTextEditorProps) {
   const [editorContent, setEditorContent] = useState(value);
   const editorRef = useRef<HTMLDivElement>(null);
 
@@ -28,6 +30,7 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
 
   // Handle content changes
   const handleContentChange = () => {
+    if (readOnly) return;
     if (editorRef.current) {
       const newContent = editorRef.current.innerHTML;
       setEditorContent(newContent);
@@ -37,6 +40,7 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
 
   // Apply formatting to selected text
   const handleFormat = (command: string, value: string | null = null) => {
+    if (readOnly) return;
     document.execCommand(command, false, value);
     handleContentChange();
   };
@@ -60,8 +64,9 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
   };
 
   return (
-    <div className={cn("border rounded-md overflow-hidden", className)}>
+    <div className={cn("border rounded-md overflow-hidden", readOnly && "bg-muted/20", className)}>
       {/* Toolbar */}
+      {!readOnly && (
       <div className="bg-muted/50 p-1 border-b flex flex-wrap gap-1">
         <button 
           type="button" 
@@ -155,11 +160,12 @@ export function RichTextEditor({ value, onChange, className, placeholder }: Rich
           <AlignJustify className="h-4 w-4" />
         </button>
       </div>
+      )}
 
       {/* Editable content area */}
       <div
         ref={editorRef}
-        contentEditable
+        contentEditable={!readOnly}
         onInput={handleContentChange}
         onBlur={handleContentChange}
         className="w-full p-3 focus:outline-none min-h-[120px] resize-y overflow-auto"

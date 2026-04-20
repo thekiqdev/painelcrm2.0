@@ -24,10 +24,8 @@ import { isAbortLikeError } from '../modules/gateways/asaas/client/asaasClient.j
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
 import { getActiveConfig, getConfigForTest, type PaymentGatewayConfigRow } from './paymentGatewayConfigService.js';
-import {
-  getPaymentCustomerForClient,
-  createPaymentCustomerForClient,
-} from './paymentCustomersService.js';
+import { ensurePaymentCustomerForCrmClient } from './paymentCustomersService.js';
+import { isAsaasInvalidCustomerError } from '../modules/gateways/asaas/asaasErrors.js';
 import {
   createInvoicePaymentAttempt,
   getActiveInvoicePaymentAttempt,
@@ -169,11 +167,13 @@ export async function createManualInvoice(
     throw new Error(hasItems ? 'Total dos itens deve ser maior que zero' : 'amount_cents é obrigatório');
   }
 
+  const effectiveInvoiceDescription = (body.description && body.description.trim()) || `Cobrança ${body.due_date}`;
+
   const baseInvoiceData = {
     tenant_id: tenantId,
     amount_cents: amountCents,
     due_date: body.due_date,
-    description: body.description ?? null,
+    description: effectiveInvoiceDescription,
     payment_method: body.payment_method ?? null,
     gateway_metadata: {
       allowed_payment_methods: normalizeAllowedPaymentMethods(body.allowed_payment_methods),
@@ -190,19 +190,21 @@ export async function createManualInvoice(
     return { invoice };
   }
 
-  const belongs = await clientBelongsToTenant(tenantId, body.client_id);
+  const clientId = body.client_id;
+
+  const belongs = await clientBelongsToTenant(tenantId, clientId);
   if (!belongs) {
     throw new Error('Cliente não pertence ao tenant');
   }
 
-  const preconditions = await validateInvoicePreconditions(tenantId, body.client_id);
+  const preconditions = await validateInvoicePreconditions(tenantId, clientId);
   if (!preconditions.ok) {
     throw new PreconditionFailedError(preconditions.errors);
   }
   if (!preconditions.clientHasCpfCnpj) {
     const invoice = await createManualCustomerInvoice({
       ...baseInvoiceData,
-      client_id: body.client_id,
+      client_id: clientId,
     });
     return { invoice };
   }
@@ -254,38 +256,27 @@ export async function createManualInvoice(
      FROM clients c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
      WHERE c.id = $1`,
-    [body.client_id, tenantId]
+    [clientId, tenantId]
   );
   const client = clientRow.rows[0];
   if (!client) {
     throw new Error('Cliente não encontrado');
   }
 
-  let customerId =
-    (await getPaymentCustomerForClient(tenantId, gatewayKey, body.client_id))?.gateway_customer_id ?? null;
-  if (!customerId && gateway.ensureCustomerForClient) {
-    customerId = await gateway.ensureCustomerForClient(tenantId, body.client_id, {
-      name: client.name,
-      email: client.email ?? '',
-      phone: client.phone ?? undefined,
-      cpfCnpj: client.cpf_cnpj?.trim() || undefined,
-    });
-    await createPaymentCustomerForClient(
-      tenantId,
-      gatewayKey,
-      body.client_id,
-      customerId,
-      body.client_id
-    );
-  }
-  if (!customerId) {
-    throw new Error('Não foi possível obter ou criar o cliente no gateway de pagamento');
-  }
+  const crmClientPayload = {
+    name: client.name,
+    email: client.email ?? '',
+    phone: client.phone ?? undefined,
+    cpfCnpj: client.cpf_cnpj?.trim() || undefined,
+  };
 
-  const shortId = crypto.randomUUID().slice(0, 8).toLowerCase();
-  const idempotencyKey = `customer_manual_${tenantId}_${body.client_id}_${body.due_date}_${shortId}`;
-  // Asaas limita externalReference a 100 caracteres; UUIDs sem hífen (32 chars) para caber
-  const externalReference = `t_${tenantId.replace(/-/g, '')}_c_${body.client_id.replace(/-/g, '')}_${body.due_date}_${shortId}`.slice(0, 100);
+  let customerId = await ensurePaymentCustomerForCrmClient(
+    tenantId,
+    gatewayKey,
+    clientId,
+    gateway,
+    crmClientPayload
+  );
 
   const normalizedAllowedPaymentMethods = normalizeAllowedPaymentMethods(body.allowed_payment_methods);
   const chargePaymentMethod = resolveChargePaymentMethod(
@@ -293,23 +284,62 @@ export async function createManualInvoice(
     normalizedAllowedPaymentMethods
   );
 
-  const chargeResult = await gateway.createCharge({
-    customerId,
-    amountCents,
-    dueDate: body.due_date,
-    paymentMethod: chargePaymentMethod,
-    allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
-    description: body.description ?? `Cobrança ${body.due_date}`,
-    idempotencyKey,
-    externalReference,
-  });
+  const makeManualKeys = () => {
+    const shortId = crypto.randomUUID().slice(0, 8).toLowerCase();
+    return {
+      idempotencyKey: `customer_manual_${tenantId}_${clientId}_${body.due_date}_${shortId}`,
+      externalReference: `t_${tenantId.replace(/-/g, '')}_c_${clientId.replace(/-/g, '')}_${body.due_date}_${shortId}`.slice(
+        0,
+        100
+      ),
+    };
+  };
+
+  let { idempotencyKey, externalReference } = makeManualKeys();
+
+  let chargeResult;
+  try {
+    chargeResult = await gateway.createCharge({
+      customerId,
+      amountCents,
+      dueDate: body.due_date,
+      paymentMethod: chargePaymentMethod,
+      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      description: effectiveInvoiceDescription,
+      idempotencyKey,
+      externalReference,
+    });
+  } catch (e) {
+    if (!isAsaasInvalidCustomerError(e)) {
+      throw e;
+    }
+    customerId = await ensurePaymentCustomerForCrmClient(
+      tenantId,
+      gatewayKey,
+      clientId,
+      gateway,
+      crmClientPayload,
+      { forceRecreate: true }
+    );
+    ({ idempotencyKey, externalReference } = makeManualKeys());
+    chargeResult = await gateway.createCharge({
+      customerId,
+      amountCents,
+      dueDate: body.due_date,
+      paymentMethod: chargePaymentMethod,
+      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      description: effectiveInvoiceDescription,
+      idempotencyKey,
+      externalReference,
+    });
+  }
 
   const data: CreateManualCustomerInvoiceInput = {
     tenant_id: tenantId,
-    client_id: body.client_id,
+    client_id: clientId,
     amount_cents: amountCents,
     due_date: body.due_date,
-    description: body.description ?? null,
+    description: effectiveInvoiceDescription,
     payment_method: body.payment_method ?? null,
     items: body.items,
     charge_id: body.charge_id ?? null,
@@ -546,34 +576,67 @@ export async function completePaymentByToken(
     throw new Error('Gateway de pagamento não configurado');
   }
 
-  let customerId = (await getPaymentCustomerForClient(tenantId, gatewayKey, client.id))?.gateway_customer_id ?? null;
-  if (!customerId && gateway.ensureCustomerForClient) {
-    customerId = await gateway.ensureCustomerForClient(tenantId, client.id, {
-      name: client.name,
-      email: client.email ?? '',
-      phone: client.phone ?? undefined,
-      cpfCnpj: client.cpf_cnpj?.trim() || undefined,
+  const linkClientPayload = {
+    name: client.name,
+    email: client.email ?? '',
+    phone: client.phone ?? undefined,
+    cpfCnpj: client.cpf_cnpj?.trim() || undefined,
+  };
+
+  let customerId = await ensurePaymentCustomerForCrmClient(
+    tenantId,
+    gatewayKey,
+    client.id,
+    gateway,
+    linkClientPayload
+  );
+
+  const makeLinkKeys = () => {
+    const shortId = crypto.randomUUID().slice(0, 8).toLowerCase();
+    return {
+      idempotencyKey: `customer_link_${tenantId}_${client.id}_${dueDate}_${shortId}`,
+      externalReference: `t_${tenantId.replace(/-/g, '')}_c_${client.id.replace(/-/g, '')}_${dueDate}_${shortId}`.slice(0, 100),
+    };
+  };
+
+  let { idempotencyKey, externalReference } = makeLinkKeys();
+
+  let chargeResult;
+  try {
+    chargeResult = await gateway.createCharge({
+      customerId,
+      amountCents,
+      dueDate,
+      paymentMethod: resolvedPaymentMethod,
+      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      description,
+      idempotencyKey,
+      externalReference,
     });
-    await createPaymentCustomerForClient(tenantId, gatewayKey, client.id, customerId, client.id);
+  } catch (e) {
+    if (!isAsaasInvalidCustomerError(e)) {
+      throw e;
+    }
+    customerId = await ensurePaymentCustomerForCrmClient(
+      tenantId,
+      gatewayKey,
+      client.id,
+      gateway,
+      linkClientPayload,
+      { forceRecreate: true }
+    );
+    ({ idempotencyKey, externalReference } = makeLinkKeys());
+    chargeResult = await gateway.createCharge({
+      customerId,
+      amountCents,
+      dueDate,
+      paymentMethod: resolvedPaymentMethod,
+      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      description,
+      idempotencyKey,
+      externalReference,
+    });
   }
-  if (!customerId) {
-    throw new Error('Não foi possível obter ou criar o cliente no gateway de pagamento');
-  }
-
-  const shortId = crypto.randomUUID().slice(0, 8).toLowerCase();
-  const idempotencyKey = `customer_link_${tenantId}_${client.id}_${dueDate}_${shortId}`;
-  const externalReference = `t_${tenantId.replace(/-/g, '')}_c_${client.id.replace(/-/g, '')}_${dueDate}_${shortId}`.slice(0, 100);
-
-  const chargeResult = await gateway.createCharge({
-    customerId,
-    amountCents,
-    dueDate,
-    paymentMethod: resolvedPaymentMethod,
-    allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
-    description,
-    idempotencyKey,
-    externalReference,
-  });
 
   await updateCustomerInvoiceGatewayData(invoiceId, {
     gateway: gatewayKey,

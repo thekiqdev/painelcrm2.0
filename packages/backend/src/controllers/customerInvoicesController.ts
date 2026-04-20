@@ -20,8 +20,10 @@ import {
   validateInvoicePreconditions,
 } from '../services/customerInvoicePreconditions.js';
 import { getCustomerInvoiceItems } from '../services/customerInvoiceService.js';
-import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
-import { pool } from '../utils/db.js';
+import {
+  patchCustomerInvoiceWithGateway,
+  deleteCustomerInvoiceWithGateway,
+} from '../services/customerInvoiceAdminService.js';
 
 const createItemSchema = z.object({
   description: z.string().min(1, 'Descrição é obrigatória'),
@@ -254,12 +256,38 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
   }
 }
 
-const patchBodySchema = z.object({
-  description: z.string().optional().nullable(),
-  status: z.literal('cancelled').optional(),
-});
+const patchBodySchema = z
+  .object({
+    description: z.string().optional().nullable(),
+    status: z.literal('cancelled').optional(),
+    due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    amount_cents: z.number().int().min(1).optional(),
+    items: z.array(createItemSchema).optional(),
+    payment_method: paymentMethodSchema.optional().nullable(),
+    allowed_payment_methods: z.array(paymentMethodSchema).min(1).max(3).optional().nullable(),
+  })
+  .refine(
+    (d) =>
+      d.status === 'cancelled' ||
+      d.description !== undefined ||
+      d.due_date !== undefined ||
+      d.amount_cents !== undefined ||
+      d.items !== undefined ||
+      d.payment_method !== undefined ||
+      d.allowed_payment_methods !== undefined,
+    { message: 'Informe ao menos um campo para atualizar' }
+  )
+  .superRefine((d, ctx) => {
+    if (d.items && d.items.length === 0 && d.amount_cents == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Ao enviar itens vazio, informe amount_cents com o valor total',
+        path: ['amount_cents'],
+      });
+    }
+  });
 
-/** PATCH /api/customer-invoices/:id — atualiza description ou cancela (status pending → cancelled). */
+/** PATCH /api/customer-invoices/:id — edita descrição/vencimento/valor (com sync no Asaas) ou cancela (cancela cobrança no gateway primeiro). */
 export async function updateCustomerInvoice(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
@@ -269,62 +297,63 @@ export async function updateCustomerInvoice(req: AuthRequest, res: Response): Pr
     }
 
     const { id } = req.params;
-    const invoice = await getInvoiceById(tenantId, id);
-    if (!invoice) {
-      res.status(404).json({ error: 'Fatura não encontrada' });
-      return;
-    }
-
     const parsed = patchBodySchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
       return;
     }
 
-    if (parsed.data.status === 'cancelled' && invoice.status !== 'pending') {
-      res.status(400).json({ error: 'Só é possível cancelar fatura com status pending' });
-      return;
-    }
-
-    const updates: string[] = [];
-    const params: (string | null)[] = [];
-    let paramIndex = 1;
-    if (parsed.data.description !== undefined) {
-      updates.push(`description = $${paramIndex}`);
-      params.push(parsed.data.description);
-      paramIndex++;
-    }
-    if (parsed.data.status === 'cancelled') {
-      updates.push(`status = $${paramIndex}`);
-      params.push('cancelled');
-      paramIndex++;
-    }
-    if (updates.length === 0) {
-      res.json(invoice);
-      return;
-    }
-    const idParam = paramIndex;
-    const tenantParam = paramIndex + 1;
-    params.push(id, tenantId);
-    await pool.query(
-      `UPDATE customer_invoices SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${idParam} AND tenant_id = $${tenantParam}`,
-      params
-    );
-    if (parsed.data.status === 'cancelled' && invoice.gateway_reference_id && invoice.gateway) {
-      try {
-        const gateway = await getActiveGateway({ billingType: 'crm', tenantId });
-        if (gateway?.cancelPayment) {
-          await gateway.cancelPayment(invoice.gateway_reference_id);
-        }
-      } catch (err) {
-        console.error('[customerInvoicesController] cancelamento no gateway falhou (fatura já cancelada no sistema):', err);
-      }
-    }
-    const updated = await getInvoiceById(tenantId, id);
-    res.json(updated ?? invoice);
+    const updated = await patchCustomerInvoiceWithGateway(tenantId, id, parsed.data);
+    res.json(updated);
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === 'Fatura não encontrada') {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (
+      msg.startsWith('Não é possível') ||
+      msg.startsWith('Só é possível') ||
+      msg.startsWith('Fatura com itens') ||
+      msg.startsWith('Gateway de pagamento não suporta') ||
+      msg.startsWith('Não combine cancelamento')
+    ) {
+      res.status(400).json({ error: msg });
+      return;
+    }
     console.error('[customerInvoicesController] updateCustomerInvoice error:', err);
-    res.status(500).json({ error: 'Erro ao atualizar fatura' });
+    res.status(500).json({
+      error: 'Erro ao atualizar fatura',
+      ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}),
+    });
+  }
+}
+
+/** DELETE /api/customer-invoices/:id — exclui fatura manual e remove/cancela cobrança no Asaas. Faturas de assinatura (origin=subscription) não podem ser excluídas. */
+export async function deleteCustomerInvoice(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    const { id } = req.params;
+    await deleteCustomerInvoiceWithGateway(tenantId, id);
+    res.status(204).send();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === 'Fatura não encontrada') {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (msg.startsWith('Faturas geradas') || msg.startsWith('Só é possível excluir')) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error('[customerInvoicesController] deleteCustomerInvoice error:', err);
+    res.status(500).json({
+      error: 'Erro ao excluir fatura',
+      ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}),
+    });
   }
 }

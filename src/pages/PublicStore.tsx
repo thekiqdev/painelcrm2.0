@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Package, Wrench, Phone, Mail, MessageSquare, Clock, ShoppingCart, ImageOff } from "lucide-react";
-import { PublicCatalogProduct, StoreProfile } from "@/types/products";
+import { PublicCatalogProduct, StoreProfile, resolvePublicCatalogUnitPrice } from "@/types/products";
 import { productsService } from "@/services/products";
 import { resolveStorefrontTheme } from "@/themes/registry";
 import { getPublicProductThumbnailUrl } from "@/utils/publicCatalogImages";
+import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
 
 export const PublicStore = () => {
   const { storeSlug } = useParams<{ storeSlug: string }>();
@@ -91,10 +92,17 @@ export const PublicStore = () => {
   const ListShell = theme.ListShell;
   const logoUrl = storeProfile.store_logo?.trim() || null;
   const bannerUrl = storeProfile.store_banner_url?.trim() || null;
+  const storeAllowsCheckout = canUseStoreCheckout(storeProfile);
 
   return (
-    <ListShell storeProfile={storeProfile} bannerUrl={bannerUrl} logoUrl={logoUrl}>
-      <div className="container mx-auto px-4 py-6">
+    <ListShell
+      storeProfile={storeProfile}
+      bannerUrl={bannerUrl}
+      logoUrl={logoUrl}
+      storeSlug={storeSlug}
+      products={products}
+    >
+      <div className="container mx-auto px-4 py-6 storefront-contact-strip">
         <div className="flex flex-wrap justify-center gap-4 max-w-2xl mx-auto">
           {storeProfile.contact_phone && (
             <div className="flex items-center gap-2 text-sm">
@@ -122,7 +130,7 @@ export const PublicStore = () => {
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-8">
+      <div id="lista-produtos" className="container mx-auto scroll-mt-24 px-4 py-8 storefront-products-wrap">
         {products.length === 0 ? (
           <div className="text-center py-12">
             <Package className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
@@ -133,25 +141,33 @@ export const PublicStore = () => {
           </div>
         ) : (
           <>
-            <div className="text-center mb-8">
+            <div className="text-center mb-8 storefront-products-heading">
               <h2 className="text-2xl font-bold mb-2">Nossos Produtos e Serviços</h2>
               <p className="text-muted-foreground">
                 Confira nossa seleção de {products.length} {products.length === 1 ? "item" : "itens"}
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 storefront-products-grid">
               {products.map((product) => {
                 const thumb = getPublicProductThumbnailUrl(product);
+                const unitPrice = resolvePublicCatalogUnitPrice(product);
+                const showCardCheckout = storeAllowsCheckout && unitPrice != null;
                 return (
-                  <Card key={product.id} className="group hover:shadow-lg transition-shadow overflow-hidden">
-                    <div className="aspect-video bg-muted flex items-center justify-center relative">
+                  <Card
+                    key={product.id}
+                    className="group hover:shadow-lg transition-shadow overflow-hidden storefront-product-card"
+                  >
+                    <Link
+                      to={`/${storeSlug}/loja/produto/${product.id}`}
+                      className="aspect-video bg-muted flex items-center justify-center relative block"
+                    >
                       {thumb ? (
                         <img src={thumb} alt="" className="w-full h-full object-cover" />
                       ) : (
                         <ImageOff className="h-10 w-10 text-muted-foreground" />
                       )}
-                    </div>
+                    </Link>
                     <CardHeader>
                       <div className="flex items-center justify-between mb-2">
                         <Badge variant={product.type === "product" ? "default" : "secondary"}>
@@ -183,10 +199,10 @@ export const PublicStore = () => {
                     </CardHeader>
 
                     <CardContent className="space-y-4">
-                      {product.price != null && (
+                      {unitPrice != null && (
                         <div>
                           <p className="text-2xl font-bold text-primary">
-                            R$ {Number(product.price).toFixed(2)}
+                            R$ {unitPrice.toFixed(2)}
                           </p>
                           {product.type === "service" && product.duration_hours && (
                             <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -216,13 +232,25 @@ export const PublicStore = () => {
                         </div>
                       )}
 
+                      {showCardCheckout && storeSlug && (
+                        <Button className="w-full" asChild>
+                          <Link
+                            to={`/${storeSlug}/loja/checkout?productId=${encodeURIComponent(product.id)}`}
+                          >
+                            <ShoppingCart className="mr-2 h-4 w-4" />
+                            Comprar
+                          </Link>
+                        </Button>
+                      )}
+
                       {storeProfile.contact_whatsapp && (
                         <Button
                           className="w-full"
+                          variant={showCardCheckout ? "outline" : "default"}
                           onClick={() => handleWhatsAppContact(product)}
                         >
-                          <ShoppingCart className="mr-2 h-4 w-4" />
-                          Solicitar Orçamento
+                          <MessageSquare className="mr-2 h-4 w-4" />
+                          Solicitar via WhatsApp
                         </Button>
                       )}
                     </CardContent>
@@ -234,7 +262,7 @@ export const PublicStore = () => {
         )}
       </div>
 
-      <div className="border-t bg-muted/30 mt-16">
+      <div className="border-t bg-muted/30 mt-16 storefront-legacy-footer">
         <div className="container mx-auto px-4 py-8 text-center">
           <p className="text-sm text-muted-foreground">
             {storeProfile.store_name} - Todos os direitos reservados

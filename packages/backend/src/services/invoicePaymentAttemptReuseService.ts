@@ -5,10 +5,8 @@
 import crypto from 'node:crypto';
 import { pool } from '../utils/db.js';
 import { getActiveConfig, getConfigForTest } from './paymentGatewayConfigService.js';
-import {
-  getPaymentCustomerForClient,
-  createPaymentCustomerForClient,
-} from './paymentCustomersService.js';
+import { ensurePaymentCustomerForCrmClient } from './paymentCustomersService.js';
+import { isAsaasInvalidCustomerError } from '../modules/gateways/asaas/asaasErrors.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
 import { normalizeGatewayStatus } from '../modules/payments/webhook/statusNormalizer.js';
@@ -341,50 +339,85 @@ export async function ensureReusablePaymentAttemptForSwitch(
     }
   }
 
-  let customerId =
-    (await getPaymentCustomerForClient(tenantId, gatewayKey, clientId))?.gateway_customer_id ?? null;
-  if (!customerId && gateway.ensureCustomerForClient) {
-    const clientRow = await pool.query<{
-      name: string;
-      email: string | null;
-      phone: string | null;
-      cpf_cnpj: string | null;
-    }>(
-      `SELECT c.name, c.email, c.phone, c.cpf_cnpj
-       FROM clients c
-       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
-       WHERE c.id = $1`,
-      [clientId, tenantId]
-    );
-    const client = clientRow.rows[0];
-    if (!client) throw new Error('Cliente não encontrado');
-    customerId = await gateway.ensureCustomerForClient(tenantId, clientId, {
-      name: client.name,
-      email: client.email ?? '',
-      phone: client.phone ?? undefined,
-      cpfCnpj: client.cpf_cnpj?.trim() || undefined,
-    });
-    await createPaymentCustomerForClient(tenantId, gatewayKey, clientId, customerId, clientId);
-  }
-  if (!customerId) throw new Error('Não foi possível obter ou criar o cliente no gateway de pagamento');
+  const clientRow = await pool.query<{
+    name: string;
+    email: string | null;
+    phone: string | null;
+    cpf_cnpj: string | null;
+  }>(
+    `SELECT c.name, c.email, c.phone, c.cpf_cnpj
+     FROM clients c
+     INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
+     WHERE c.id = $1`,
+    [clientId, tenantId]
+  );
+  const client = clientRow.rows[0];
+  if (!client) throw new Error('Cliente não encontrado');
 
-  const generatedIdem = idempotencyKey?.trim()
+  const crmPayload = {
+    name: client.name,
+    email: client.email ?? '',
+    phone: client.phone ?? undefined,
+    cpfCnpj: client.cpf_cnpj?.trim() || undefined,
+  };
+
+  let customerId = await ensurePaymentCustomerForCrmClient(
+    tenantId,
+    gatewayKey,
+    clientId,
+    gateway,
+    crmPayload
+  );
+
+  let generatedIdem = idempotencyKey?.trim()
     ? idempotencyKey.trim()
     : `customer_switch_${tenantId}_${invoiceId}_${requestedMethod}_${crypto.randomUUID().slice(0, 8)}`;
-  const externalReference = `inv_${invoiceId.replace(/-/g, '').slice(0, 24)}_${requestedMethod}_${Date.now()
+  let externalReference = `inv_${invoiceId.replace(/-/g, '').slice(0, 24)}_${requestedMethod}_${Date.now()
     .toString(36)
     .slice(0, 8)}`.slice(0, 100);
 
-  const chargeResult = await gateway.createCharge({
-    customerId,
-    amountCents,
-    dueDate,
-    paymentMethod: requestedMethod,
-    allowedPaymentMethods: allowedPaymentMethods,
-    description,
-    idempotencyKey: generatedIdem,
-    externalReference,
-  });
+  let chargeResult;
+  try {
+    chargeResult = await gateway.createCharge({
+      customerId,
+      amountCents,
+      dueDate,
+      paymentMethod: requestedMethod,
+      allowedPaymentMethods: allowedPaymentMethods,
+      description,
+      idempotencyKey: generatedIdem,
+      externalReference,
+    });
+  } catch (e) {
+    if (!isAsaasInvalidCustomerError(e)) {
+      throw e;
+    }
+    customerId = await ensurePaymentCustomerForCrmClient(
+      tenantId,
+      gatewayKey,
+      clientId,
+      gateway,
+      crmPayload,
+      { forceRecreate: true }
+    );
+    const retrySuffix = crypto.randomUUID().slice(0, 8);
+    generatedIdem = idempotencyKey?.trim()
+      ? `${idempotencyKey.trim()}_r_${retrySuffix}`
+      : `customer_switch_${tenantId}_${invoiceId}_${requestedMethod}_${retrySuffix}`;
+    externalReference = `inv_${invoiceId.replace(/-/g, '').slice(0, 24)}_${requestedMethod}_${Date.now()
+      .toString(36)
+      .slice(0, 8)}`.slice(0, 100);
+    chargeResult = await gateway.createCharge({
+      customerId,
+      amountCents,
+      dueDate,
+      paymentMethod: requestedMethod,
+      allowedPaymentMethods: allowedPaymentMethods,
+      description,
+      idempotencyKey: generatedIdem,
+      externalReference,
+    });
+  }
 
   const attemptMetadata = {
     invoiceUrl: chargeResult.invoiceUrl,

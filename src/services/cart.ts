@@ -119,17 +119,26 @@ export class CartService {
     }
   }
 
-  async getOrders(storeUserId?: string): Promise<Order[]> {
+  async getOrders(options?: { status?: string; paymentStatus?: string }): Promise<Order[]> {
     try {
-      const url = storeUserId ? `/api/orders?storeUserId=${storeUserId}` : '/api/orders';
+      const params = new URLSearchParams();
+      if (options?.status) params.set('status', options.status);
+      if (options?.paymentStatus) params.set('paymentStatus', options.paymentStatus);
+      const qs = params.toString();
+      const url = qs ? `/api/orders?${qs}` : '/api/orders';
       const response = await apiClient.get<any[]>(url);
-      
+
       if (response.error) throw new Error(response.error);
       return (response.data || []) as Order[];
     } catch (error: any) {
       console.error('Error getting orders:', error);
       throw error;
     }
+  }
+
+  async deleteOrder(orderId: string): Promise<void> {
+    const response = await apiClient.delete(`/api/orders/${orderId}`);
+    if (response.error) throw new Error(response.error);
   }
 }
 

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, Loader2, RefreshCw, Send } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Image as ImageIcon, Layers, LayoutTemplate, Loader2, RefreshCw, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -9,9 +9,13 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
+import { ChatKanbanTemplatePickerDialog } from '@/components/chat-kanban/ChatKanbanTemplatePickerDialog';
+import { ChatWhatsappModelPickerDialog } from '@/components/chat/ChatWhatsappModelPickerDialog';
 import { chatService, type ChatMessage } from '@/services/chat';
 import type { ChatKanbanBoardCard } from '@/services/chatKanban';
 import { kanbanCardPhoneLine, kanbanCardTitle } from '@/utils/chatKanbanCardDisplay';
+import { useAuth } from '@/contexts/AuthContext';
+import { buildKanbanDrawerTemplateContext } from '@/utils/kanbanDrawerTemplateContext';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -24,20 +28,46 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   card: ChatKanbanBoardCard | null;
+  /** Nome do quadro (opcional, para placeholders `board_name`). */
+  boardName?: string | null;
+  /** Nome da coluna do cartão (opcional, para `column_name`). */
+  columnName?: string | null;
   /** Atualizar board (ex.: preview) após envio */
   onAfterSend?: () => void;
 };
 
-export function ChatKanbanConversationDrawer({ open, onOpenChange, card, onAfterSend }: Props) {
+export function ChatKanbanConversationDrawer({
+  open,
+  onOpenChange,
+  card,
+  boardName,
+  columnName,
+  onAfterSend,
+}: Props) {
+  const { user, profile } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [whatsappModelPickerOpen, setWhatsappModelPickerOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const activeConversationIdRef = useRef<string | null>(null);
 
   const conversationId = card?.conversation_id ?? null;
+
+  const templateContext = useMemo(
+    () =>
+      buildKanbanDrawerTemplateContext({
+        card,
+        user,
+        profile,
+        boardName,
+        columnName,
+      }),
+    [card, user, profile, boardName, columnName],
+  );
 
   const loadThread = useCallback(async (cid: string, opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
@@ -62,7 +92,7 @@ export function ChatKanbanConversationDrawer({ open, onOpenChange, card, onAfter
 
   useEffect(() => {
     activeConversationIdRef.current = conversationId;
- }, [conversationId]);
+  }, [conversationId]);
 
   useEffect(() => {
     if (!open || !conversationId) {
@@ -153,11 +183,28 @@ export function ChatKanbanConversationDrawer({ open, onOpenChange, card, onAfter
   const phone = card ? kanbanCardPhoneLine(card) : null;
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex flex-col w-full sm:max-w-xl md:max-w-2xl p-0 gap-0 h-full"
-      >
+    <>
+      <ChatKanbanTemplatePickerDialog
+        open={templatePickerOpen}
+        onOpenChange={setTemplatePickerOpen}
+        context={templateContext}
+        onApply={(text) => setNewMessage(text)}
+      />
+      <ChatWhatsappModelPickerDialog
+        open={whatsappModelPickerOpen}
+        onOpenChange={setWhatsappModelPickerOpen}
+        conversationId={conversationId}
+        previewContext={templateContext}
+        onAfterSend={() => {
+          if (conversationId) void loadThread(conversationId, { silent: true });
+          onAfterSend?.();
+        }}
+      />
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent
+          side="right"
+          className="flex flex-col w-full sm:max-w-xl md:max-w-2xl p-0 gap-0 h-full"
+        >
         <SheetHeader className="px-4 py-3 border-b space-y-0 text-left shrink-0 bg-muted/20">
           <div className="flex items-start gap-3 pr-8">
             <Avatar className="h-11 w-11 rounded-lg shrink-0">
@@ -265,6 +312,26 @@ export function ChatKanbanConversationDrawer({ open, onOpenChange, card, onAfter
           >
             <ImageIcon className="h-4 w-4" />
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={sending || !conversationId}
+            title="Usar template interno"
+            onClick={() => setTemplatePickerOpen(true)}
+          >
+            <LayoutTemplate className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={sending || !conversationId}
+            title="Usar modelo WhatsApp (sequência)"
+            onClick={() => setWhatsappModelPickerOpen(true)}
+          >
+            <Layers className="h-4 w-4" />
+          </Button>
           <Input
             placeholder="Mensagem…"
             value={newMessage}
@@ -277,5 +344,6 @@ export function ChatKanbanConversationDrawer({ open, onOpenChange, card, onAfter
         </form>
       </SheetContent>
     </Sheet>
+    </>
   );
 }

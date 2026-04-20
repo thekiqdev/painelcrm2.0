@@ -16,10 +16,15 @@ import {
   CheckCircle,
   ImageOff,
 } from "lucide-react";
-import { PublicCatalogProduct, StoreProfile } from "@/types/products";
+import {
+  PublicCatalogProduct,
+  StoreProfile,
+  resolvePublicCatalogUnitPrice,
+} from "@/types/products";
 import { productsService } from "@/services/products";
 import { resolveStorefrontTheme } from "@/themes/registry";
 import { getPublicProductGalleryUrls } from "@/utils/publicCatalogImages";
+import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
 
 export const PublicProduct = () => {
   const { storeSlug, productId } = useParams<{ storeSlug: string; productId: string }>();
@@ -28,6 +33,7 @@ export const PublicProduct = () => {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [relatedProducts, setRelatedProducts] = useState<PublicCatalogProduct[]>([]);
 
   useEffect(() => {
     loadProductData();
@@ -55,6 +61,8 @@ export const PublicProduct = () => {
 
       setStoreProfile(store as StoreProfile);
       setProduct(productData);
+      const allProducts = await productsService.getPublicProducts(store.user_id);
+      setRelatedProducts(allProducts.filter((p) => p.id !== productData.id).slice(0, 4));
     } catch (error) {
       console.error("Erro ao carregar produto:", error);
       setNotFound(true);
@@ -109,9 +117,17 @@ export const PublicProduct = () => {
   const ProductShell = theme.ProductShell;
   const gallery = getPublicProductGalleryUrls(product);
   const mainImage = gallery[galleryIndex] ?? null;
+  const unitPrice = resolvePublicCatalogUnitPrice(product);
+  const showOnlineCheckout = canUseStoreCheckout(storeProfile) && unitPrice != null;
 
   return (
-    <ProductShell storeProfile={storeProfile}>
+    <ProductShell
+      storeProfile={storeProfile}
+      storeSlug={storeSlug}
+      product={product}
+      gallery={gallery}
+      relatedProducts={relatedProducts}
+    >
       <div className="border-b bg-card">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
@@ -219,14 +235,16 @@ export const PublicProduct = () => {
               <Card>
                 <CardHeader>
                   <CardTitle className="text-center">
-                    Solicitar {product.type === "product" ? "Orçamento" : "Cotação"}
+                    {showOnlineCheckout
+                      ? "Comprar"
+                      : `Solicitar ${product.type === "product" ? "Orçamento" : "Cotação"}`}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {product.price != null && (
+                  {unitPrice != null && (
                     <div className="text-center">
                       <p className="text-3xl font-bold text-primary">
-                        R$ {Number(product.price).toFixed(2)}
+                        R$ {unitPrice.toFixed(2)}
                       </p>
                       {product.type === "service" && product.duration_hours && (
                         <div className="flex items-center justify-center gap-1 text-sm text-muted-foreground mt-2">
@@ -239,9 +257,25 @@ export const PublicProduct = () => {
 
                   <Separator />
 
+                  {showOnlineCheckout && storeSlug && (
+                    <Button className="w-full" size="lg" asChild>
+                      <Link
+                        to={`/${storeSlug}/loja/checkout?productId=${encodeURIComponent(product.id)}`}
+                      >
+                        <ShoppingCart className="mr-2 h-4 w-4" />
+                        Comprar
+                      </Link>
+                    </Button>
+                  )}
+
                   {storeProfile.contact_whatsapp && (
-                    <Button className="w-full" size="lg" onClick={handleWhatsAppContact}>
-                      <ShoppingCart className="mr-2 h-4 w-4" />
+                    <Button
+                      className="w-full"
+                      size="lg"
+                      variant={showOnlineCheckout ? "outline" : "default"}
+                      onClick={handleWhatsAppContact}
+                    >
+                      <MessageSquare className="mr-2 h-4 w-4" />
                       Solicitar via WhatsApp
                     </Button>
                   )}

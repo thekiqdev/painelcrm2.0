@@ -12,14 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Calendar } from "@/components/ui/calendar";
@@ -29,9 +21,19 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { RichTextEditor } from "@/components/shared/RichTextEditor";
+import { ContractMergeFieldsPanel } from "@/components/contracts/ContractMergeFieldsPanel";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { contractsService } from "@/services/contracts";
-import { clientsService } from "@/services/clients";
+import { clientsService, type Client } from "@/services/clients";
+import { getMyTenantUsers, type TenantUser } from "@/services/tenantLimits";
 import { useAuth } from "@/contexts/AuthContext";
+import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
+import {
+  persistSignatureInviteBootstrap,
+  summarizeSignatureInviteBootstrap,
+} from "@/utils/contractSignatureBootstrap";
+import { formatBrazilTaxIdDisplay, isBrazilTaxIdDigits, normalizeBrazilTaxIdInput } from "@/utils/brazilTaxId";
+import { getContractDocumentHtml, hasMeaningfulDocumentHtml, isContractDraft } from "@/utils/contractDocument";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -47,11 +49,8 @@ import {
   DollarSign,
   GripVertical,
   Trash2,
-  Eye,
-  Check,
-  ChevronsUpDown,
 } from "lucide-react";
-import type { ContractTemplate, ContractSigner, SignerRole } from "@/types/contracts";
+import type { ContractTemplate, ContractSigner, SignerRole, ContractStatus } from "@/types/contracts";
 
 interface ContractFormData {
   title: string;
@@ -86,8 +85,13 @@ const NewContract = () => {
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
   const [signers, setSigners] = useState<Omit<ContractSigner, 'id' | 'contract_id' | 'created_at' | 'signed_at' | 'signature_data'>[]>([]);
   const [loading, setLoading] = useState(false);
-  const [clients, setClients] = useState<any[]>([]);
-  const [clientSearchOpen, setClientSearchOpen] = useState(false);
+  /** Status carregado do servidor na edição; null em contrato novo. */
+  const [contractStatus, setContractStatus] = useState<ContractStatus | null>(null);
+  const documentLocked = isEditMode && contractStatus !== null && !isContractDraft(contractStatus);
+  /** Hidrata o combobox (modo remoto) com o cliente já vinculado ou recém-selecionado — garante `selectedFromLocal` e envio consistente do UUID. */
+  const [linkedClientForCombo, setLinkedClientForCombo] = useState<Client[]>([]);
+  const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
+
   const [formData, setFormData] = useState<ContractFormData>({
     title: '',
     client_id: '',
@@ -111,16 +115,28 @@ const NewContract = () => {
   });
 
   useEffect(() => {
-    loadTemplates();
-    loadClients();
-    if (id) {
-      loadContractForEdit();
-    }
+    let cancelled = false;
+    void (async () => {
+      await loadTemplates();
+      await loadTenantUsers();
+      if (cancelled) return;
+      if (id) {
+        await loadContractForEdit();
+      } else {
+        setContractStatus(null);
+        setLinkedClientForCombo([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
+  /** Todos os modelos do tenant (inclui inativos) para edição de contrato já vinculado a modelo desativado. */
   const loadTemplates = async () => {
     try {
-      const data = await contractsService.getContractTemplates(true);
+      const data = await contractsService.getContractTemplates();
+      if (!data) return;
       setTemplates(data);
     } catch (error) {
       console.error('Error loading templates:', error);
@@ -128,14 +144,32 @@ const NewContract = () => {
     }
   };
 
-  const loadClients = async () => {
+  const loadTenantUsers = async () => {
     try {
-      const data = await clientsService.getClients();
-      setClients(data || []);
+      const rows = await getMyTenantUsers();
+      setTenantUsers(rows);
     } catch (error) {
-      console.error('Error loading clients:', error);
-      setClients([]); // Garantir que sempre seja um array
+      console.error('Error loading tenant users:', error);
+      setTenantUsers([]);
     }
+  };
+
+  const hydrateLinkedClient = async (clientId: string | null | undefined) => {
+    if (!clientId?.trim()) {
+      setLinkedClientForCombo([]);
+      return;
+    }
+    try {
+      const c = await clientsService.getClientById(clientId.trim());
+      setLinkedClientForCombo(c ? [c] : []);
+    } catch {
+      setLinkedClientForCombo([]);
+    }
+  };
+
+  const handleContractClientChange = (clientId: string | null) => {
+    setFormData((prev) => ({ ...prev, client_id: clientId ?? "" }));
+    void hydrateLinkedClient(clientId);
   };
 
   const loadContractForEdit = async () => {
@@ -144,12 +178,15 @@ const NewContract = () => {
     try {
       setLoading(true);
       const contract = await contractsService.getContractById(id);
-      
+      setContractStatus(contract.status);
+      await hydrateLinkedClient(contract.client_id);
+
       // Carregar assinantes
       const contractSigners = await contractsService.getContractSigners(id);
       setSigners(contractSigners.map(s => ({
         name: s.name,
         email: s.email,
+        tax_id: s.tax_id ? formatBrazilTaxIdDisplay(s.tax_id) : '',
         role: s.role,
         signing_order: s.signing_order || undefined,
       })));
@@ -160,7 +197,7 @@ const NewContract = () => {
         client_id: contract.client_id || '',
         responsible_id: contract.responsible_id || '',
         template_id: contract.template_id || '',
-        content_html: contract.content_html || '',
+        content_html: getContractDocumentHtml(contract),
         start_date: contract.start_date ? new Date(contract.start_date) : null,
         end_date: contract.end_date ? new Date(contract.end_date) : null,
         auto_renew: contract.auto_renew,
@@ -177,10 +214,10 @@ const NewContract = () => {
         },
       });
 
-      // Se tiver template, carregar conteúdo
+      // Não reaplicar HTML do modelo aqui: o contrato já carregou content_html (snapshot).
+      // Reaplicar sobrescreveria personalizações feitas após escolher o modelo.
       if (contract.template_id) {
         setSelectedOption('template');
-        await handleTemplateSelect(contract.template_id);
       } else {
         setSelectedOption('blank');
       }
@@ -195,16 +232,35 @@ const NewContract = () => {
     }
   };
 
-  const handleTemplateSelect = async (templateId: string) => {
-    const template = templates.find(t => t.id === templateId);
-    if (template) {
-      setFormData({
-        ...formData,
+  /** Ao escolher modelo no assistente: aplica HTML do modelo de forma imutável (evita stale closure). */
+  const handleTemplateSelect = (templateId: string) => {
+    setFormData((prev) => {
+      const template = templates.find((t) => t.id === templateId);
+      if (!template) {
+        return { ...prev, template_id: templateId };
+      }
+      const defaultTitle =
+        (template.default_title && template.default_title.trim()) || template.name.trim() || prev.title;
+      const tv =
+        template.default_total_value != null && Number.isFinite(Number(template.default_total_value))
+          ? String(template.default_total_value)
+          : prev.total_value;
+      const nextCurrency =
+        template.default_currency && template.default_currency.trim()
+          ? template.default_currency.trim()
+          : prev.currency;
+      return {
+        ...prev,
         template_id: templateId,
+        title: defaultTitle,
         content_html: template.content_html,
         variables: {},
-      });
-    }
+        total_value: tv,
+        currency: nextCurrency,
+        start_date: null,
+        end_date: null,
+      };
+    });
   };
 
   const handleAddSigner = () => {
@@ -213,6 +269,7 @@ const NewContract = () => {
       {
         name: '',
         email: '',
+        tax_id: '',
         role: 'CLIENT',
         signing_order: signers.length + 1,
       },
@@ -225,22 +282,49 @@ const NewContract = () => {
 
   const handleSignerChange = (index: number, field: keyof typeof signers[0], value: any) => {
     const updated = [...signers];
-    updated[index] = { ...updated[index], [field]: value };
+    if (field === "tax_id") {
+      updated[index] = { ...updated[index], [field]: formatBrazilTaxIdDisplay(String(value ?? "")) };
+    } else {
+      updated[index] = { ...updated[index], [field]: value };
+    }
     setSigners(updated);
   };
 
   const insertVariable = (variable: string) => {
+    if (documentLocked) return;
     setFormData({
       ...formData,
       content_html: formData.content_html + `{{${variable}}}`,
     });
   };
 
+  const validateSignersTaxAndIdentity = (): boolean => {
+    for (const signer of signers) {
+      if (!signer.name?.trim() || !signer.email?.trim()) {
+        toast.error('Cada assinante precisa de nome e e-mail');
+        return false;
+      }
+      const tid = normalizeBrazilTaxIdInput(signer.tax_id || '');
+      if (!isBrazilTaxIdDigits(tid)) {
+        toast.error('Cada assinante precisa de CPF (11 dígitos) ou CNPJ (14 dígitos).');
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleSaveDraft = async () => {
+    if (documentLocked) {
+      toast.error('Este contrato está congelado e não pode ser editado.');
+      return;
+    }
     if (!formData.title) {
       toast.error('O título é obrigatório');
       return;
     }
+    if (signers.length > 0 && !validateSignersTaxAndIdentity()) return;
+
+    const clientIdForApi = formData.client_id.trim() || undefined;
 
     try {
       setLoading(true);
@@ -249,7 +333,7 @@ const NewContract = () => {
         // Atualizar contrato existente
         await contractsService.updateContract(id, {
           title: formData.title,
-          client_id: formData.client_id || undefined,
+          client_id: clientIdForApi,
           responsible_id: formData.responsible_id || undefined,
           template_id: formData.template_id || undefined,
           content_html: formData.content_html,
@@ -274,6 +358,7 @@ const NewContract = () => {
           await contractsService.createContractSigner(id, {
             name: signer.name,
             email: signer.email,
+            tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
             role: signer.role,
             signing_order: signer.signing_order || undefined,
           });
@@ -294,7 +379,7 @@ const NewContract = () => {
       // Create contract
         const contract = await contractsService.createContract({
           title: formData.title,
-          client_id: formData.client_id || undefined,
+          client_id: clientIdForApi,
           responsible_id: formData.responsible_id || undefined,
           template_id: formData.template_id || undefined,
           content_html: formData.content_html,
@@ -308,7 +393,6 @@ const NewContract = () => {
           linked_invoice_id: formData.linked_invoice_id || undefined,
           variables: formData.variables,
           signature_settings: formData.signature_settings,
-          status: 'DRAFT',
         });
 
       // Create signers
@@ -317,6 +401,7 @@ const NewContract = () => {
             await contractsService.createContractSigner(contract.id, {
               name: signer.name,
               email: signer.email,
+              tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
               role: signer.role,
               signing_order: signer.signing_order || undefined,
             });
@@ -330,7 +415,9 @@ const NewContract = () => {
       });
 
       toast.success('Rascunho salvo com sucesso');
-      navigate(`/contracts/${contract.id}`);
+      navigate(`/contracts/${contract.id}`, {
+        state: contract.public_view?.token ? { publicView: { token: contract.public_view.token } } : undefined,
+      });
       }
     } catch (error) {
       console.error('Error saving draft:', error);
@@ -341,27 +428,39 @@ const NewContract = () => {
   };
 
   const handleSendForSignature = async () => {
-    if (!formData.title || signers.length === 0) {
-      toast.error('Preencha o título e adicione pelo menos um assinante');
+    if (documentLocked) {
+      toast.error('Este contrato já foi enviado ou não está mais em rascunho.');
+      return;
+    }
+    if (!formData.title?.trim()) {
+      toast.error('O título é obrigatório');
+      return;
+    }
+    if (!hasMeaningfulDocumentHtml(formData.content_html)) {
+      toast.error('Preencha o conteúdo do contrato antes de enviar');
+      return;
+    }
+    if (signers.length === 0) {
+      toast.error('Adicione pelo menos um assinante');
       return;
     }
 
-    // Validate signers
     for (const signer of signers) {
       if (!signer.name || !signer.email) {
         toast.error('Todos os assinantes devem ter nome e e-mail');
         return;
       }
     }
+    if (!validateSignersTaxAndIdentity()) return;
 
     try {
       setLoading(true);
 
       if (isEditMode && id) {
-        // Atualizar contrato existente
+        const sendClientId = formData.client_id.trim() || undefined;
         await contractsService.updateContract(id, {
           title: formData.title,
-          client_id: formData.client_id || undefined,
+          client_id: sendClientId,
           responsible_id: formData.responsible_id || undefined,
           template_id: formData.template_id || undefined,
           content_html: formData.content_html,
@@ -375,10 +474,8 @@ const NewContract = () => {
           linked_invoice_id: formData.linked_invoice_id || undefined,
           variables: formData.variables,
           signature_settings: formData.signature_settings,
-          status: 'PENDING_SIGNATURE',
         });
 
-        // Atualizar assinantes
         const existingSigners = await contractsService.getContractSigners(id);
         for (const signer of existingSigners) {
           await contractsService.deleteContractSigner(signer.id);
@@ -387,21 +484,30 @@ const NewContract = () => {
           await contractsService.createContractSigner(id, {
             name: signer.name,
             email: signer.email,
+            tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
             role: signer.role,
             signing_order: signer.signing_order || undefined,
           });
         }
 
-        // Create event
+        const sent = await contractsService.updateContract(id, { status: 'PENDING_SIGNATURE' });
+        persistSignatureInviteBootstrap(id, sent.signature_invite_bootstrap);
+        const bootSum = summarizeSignatureInviteBootstrap(sent.signature_invite_bootstrap);
+        if (bootSum && bootSum.alreadyActive > 0) {
+          toast.message('Parte dos convites já estava ativa', {
+            description:
+              'O link não pode ser mostrado outra vez por segurança. Na aba Links, use «Regenerar e copiar» no menu (⋮) do signatário, ou o mesmo browser que já gerou o convite.',
+          });
+        }
+
         await contractsService.createContractEvent(id, {
           event_type: 'SENT_FOR_SIGNATURE',
           description: 'Contrato enviado para assinatura',
           metadata: { signers: signers.map(s => ({ name: s.name, email: s.email })) },
         });
 
-        toast.success('Contrato atualizado e enviado para assinatura');
-        
-        // Voltar para o lugar correto
+        toast.success('Contrato atualizado e enviado para assinatura. Links de assinatura preparados.');
+
         if (location.state?.fromClientProfile) {
           const contract = await contractsService.getContractById(id);
           if (contract.client_id) {
@@ -409,12 +515,16 @@ const NewContract = () => {
             return;
           }
         }
-        navigate(`/contracts/${id}`);
+        navigate(`/contracts/${id}`, {
+          state: {
+            signatureInviteBootstrap: sent.signature_invite_bootstrap,
+          },
+        });
       } else {
-      // Create contract
+        const sendClientIdNew = formData.client_id.trim() || undefined;
         const contract = await contractsService.createContract({
           title: formData.title,
-          client_id: formData.client_id || undefined,
+          client_id: sendClientIdNew,
           responsible_id: formData.responsible_id || undefined,
           template_id: formData.template_id || undefined,
           content_html: formData.content_html,
@@ -428,32 +538,46 @@ const NewContract = () => {
           linked_invoice_id: formData.linked_invoice_id || undefined,
           variables: formData.variables,
           signature_settings: formData.signature_settings,
-          status: 'PENDING_SIGNATURE',
         });
 
-      // Create signers
         for (const signer of signers) {
           await contractsService.createContractSigner(contract.id, {
             name: signer.name,
             email: signer.email,
+            tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
             role: signer.role,
             signing_order: signer.signing_order || undefined,
           });
         }
 
-      // Create event
-        await contractsService.createContractEvent(contract.id, {
-        event_type: 'SENT_FOR_SIGNATURE',
-        description: 'Contrato enviado para assinatura',
-        metadata: { signers: signers.map(s => ({ name: s.name, email: s.email })) },
-      });
+        const sent = await contractsService.updateContract(contract.id, { status: 'PENDING_SIGNATURE' });
+        persistSignatureInviteBootstrap(contract.id, sent.signature_invite_bootstrap);
+        const bootSum = summarizeSignatureInviteBootstrap(sent.signature_invite_bootstrap);
+        if (bootSum && bootSum.alreadyActive > 0) {
+          toast.message('Parte dos convites já estava ativa', {
+            description:
+              'O link não pode ser mostrado outra vez por segurança. Na aba Links, use «Regenerar e copiar» no menu (⋮).',
+          });
+        }
 
-      toast.success('Contrato enviado para assinatura');
-      navigate(`/contracts/${contract.id}`);
+        await contractsService.createContractEvent(contract.id, {
+          event_type: 'SENT_FOR_SIGNATURE',
+          description: 'Contrato enviado para assinatura',
+          metadata: { signers: signers.map(s => ({ name: s.name, email: s.email })) },
+        });
+
+        toast.success('Contrato enviado para assinatura. Links de assinatura preparados.');
+        navigate(`/contracts/${contract.id}`, {
+          state: {
+            signatureInviteBootstrap: sent.signature_invite_bootstrap,
+            ...(contract.public_view?.token ? { publicView: { token: contract.public_view.token } } : {}),
+          },
+        });
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error sending for signature:', error);
-      toast.error('Erro ao enviar contrato');
+      const msg = error instanceof Error ? error.message : 'Erro ao enviar contrato';
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -528,7 +652,9 @@ const NewContract = () => {
                   <SelectValue placeholder="Escolha um modelo" />
                 </SelectTrigger>
                 <SelectContent>
-                  {templates.map(template => (
+                  {templates
+                    .filter((template) => template.is_active)
+                    .map((template) => (
                     <SelectItem key={template.id} value={template.id}>
                       {template.name}
                     </SelectItem>
@@ -590,16 +716,26 @@ const NewContract = () => {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleSaveDraft} disabled={loading}>
+          <Button variant="outline" onClick={handleSaveDraft} disabled={loading || documentLocked}>
             <Save className="mr-2 h-4 w-4" />
             Salvar Rascunho
           </Button>
-          <Button onClick={handleSendForSignature} disabled={loading}>
+          <Button onClick={handleSendForSignature} disabled={loading || documentLocked}>
             <Send className="mr-2 h-4 w-4" />
             Enviar para Assinatura
           </Button>
         </div>
       </div>
+
+      {documentLocked && (
+        <Alert>
+          <AlertTitle>Documento congelado</AlertTitle>
+          <AlertDescription>
+            Este contrato não está mais em rascunho. O texto e os signatários não podem ser alterados aqui.
+            Use a tela de detalhes para ações permitidas (ex.: status ou tags, conforme o caso).
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs defaultValue="editor" className="space-y-4">
         <TabsList>
@@ -630,92 +766,72 @@ const NewContract = () => {
                   value={formData.title}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   placeholder="Ex: Contrato de Prestação de Serviços"
+                  disabled={documentLocked}
                 />
               </div>
 
+              <ClientSearchCombobox
+                id="contract-client-search"
+                label="Cliente"
+                value={formData.client_id || null}
+                clients={linkedClientForCombo}
+                remoteSearch
+                disabled={documentLocked}
+                className="w-full"
+                onChange={handleContractClientChange}
+              />
+
               <div>
-                <Label>Cliente</Label>
-                <Popover open={clientSearchOpen} onOpenChange={setClientSearchOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={clientSearchOpen}
-                      className="w-full justify-between"
-                    >
-                      {formData.client_id
-                        ? clients.find((client) => client.id === formData.client_id)?.name
-                        : "Selecionar cliente..."}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-full p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Buscar cliente..." />
-                      <CommandList>
-                      <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
-                      <CommandGroup>
-                          {(clients || []).map((client) => (
-                          <CommandItem
-                            key={client.id}
-                            value={`${client.name} ${client.email || ''} ${client.company || ''}`}
-                            onSelect={() => {
-                              setFormData({ ...formData, client_id: client.id });
-                              setClientSearchOpen(false);
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                formData.client_id === client.id ? "opacity-100" : "opacity-0"
-                              )}
-                            />
-                            <div className="flex flex-col">
-                              <span>{client.name}</span>
-                              {(client.email || client.company) && (
-                                <span className="text-xs text-muted-foreground">
-                                  {[client.company, client.email].filter(Boolean).join(' • ')}
-                                </span>
-                              )}
-                            </div>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                <Label>Responsável pelo contrato</Label>
+                <Select
+                  value={formData.responsible_id || "__none__"}
+                  onValueChange={(value) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      responsible_id: value === "__none__" ? "" : value,
+                    }))
+                  }
+                  disabled={documentLocked}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecionar responsável (opcional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Sem responsável definido</SelectItem>
+                    {tenantUsers.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {(u.full_name && u.full_name.trim()) || u.email}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Conteúdo do Contrato</CardTitle>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => insertVariable('client.name')}
-                  >
-                    Inserir Variável
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    <Eye className="mr-2 h-4 w-4" />
-                    Pré-visualizar
-                  </Button>
-                </div>
-              </div>
-              <CardDescription>
-                Use variáveis como {`{{client.name}}`}, {`{{contract.startDate}}`}, {`{{company.name}}`}
+              <CardTitle>Conteúdo do Contrato</CardTitle>
+              <CardDescription className="mt-1 max-w-prose">
+                Placeholders {`{{system.*}}`}, {`{{contract.*}}`}, {`{{client.*}}`}, {`{{operator.*}}`},{` `}
+                {`{{signer.*}}`} (primeiro signatário) e variáveis personalizadas. Formato legado: {`{{contract.startDate}}`},{` `}
+                {`{{company.name}}`}, {`{{nome_cliente}}`}.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <div>
+                <p className="text-sm font-medium mb-2">Inserir campo de mesclagem</p>
+                <ContractMergeFieldsPanel
+                  className="max-h-[320px] overflow-y-auto pr-1"
+                  disabled={documentLocked}
+                  onInsert={(key) => insertVariable(key)}
+                />
+              </div>
               <RichTextEditor
                 value={formData.content_html}
                 onChange={(value) => setFormData({ ...formData, content_html: value })}
                 placeholder="Digite o conteúdo do contrato..."
+                readOnly={documentLocked}
               />
             </CardContent>
           </Card>
@@ -731,7 +847,7 @@ const NewContract = () => {
                     Adicione as partes que devem assinar o contrato
                   </CardDescription>
                 </div>
-                <Button onClick={handleAddSigner} size="sm">
+                <Button onClick={handleAddSigner} size="sm" disabled={documentLocked}>
                   <Plus className="mr-2 h-4 w-4" />
                   Adicionar Assinante
                 </Button>
@@ -741,13 +857,14 @@ const NewContract = () => {
               {signers.map((signer, index) => (
                 <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
                   <GripVertical className="h-5 w-5 text-muted-foreground mt-2 cursor-move" />
-                  <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                     <div>
                       <Label>Nome *</Label>
                       <Input
                         value={signer.name}
                         onChange={(e) => handleSignerChange(index, 'name', e.target.value)}
                         placeholder="Nome completo"
+                        disabled={documentLocked}
                       />
                     </div>
                     <div>
@@ -757,6 +874,17 @@ const NewContract = () => {
                         value={signer.email}
                         onChange={(e) => handleSignerChange(index, 'email', e.target.value)}
                         placeholder="email@exemplo.com"
+                        disabled={documentLocked}
+                      />
+                    </div>
+                    <div>
+                      <Label>CPF ou CNPJ *</Label>
+                      <Input
+                        value={signer.tax_id ?? ''}
+                        onChange={(e) => handleSignerChange(index, 'tax_id', e.target.value)}
+                        placeholder="11 ou 14 dígitos"
+                        disabled={documentLocked}
+                        inputMode="numeric"
                       />
                     </div>
                     <div>
@@ -764,6 +892,7 @@ const NewContract = () => {
                       <Select
                         value={signer.role}
                         onValueChange={(value) => handleSignerChange(index, 'role', value as SignerRole)}
+                        disabled={documentLocked}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -779,6 +908,7 @@ const NewContract = () => {
                     variant="ghost"
                     size="icon"
                     onClick={() => handleRemoveSigner(index)}
+                    disabled={documentLocked}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -812,6 +942,7 @@ const NewContract = () => {
                     })
                   }
                   rows={3}
+                  disabled={documentLocked}
                 />
               </div>
 
@@ -819,6 +950,7 @@ const NewContract = () => {
                 <Checkbox
                   id="require_otp"
                   checked={formData.signature_settings.require_otp}
+                  disabled={documentLocked}
                   onCheckedChange={(checked) =>
                     setFormData({
                       ...formData,
@@ -838,6 +970,7 @@ const NewContract = () => {
                 <Checkbox
                   id="require_terms"
                   checked={formData.signature_settings.require_terms}
+                  disabled={documentLocked}
                   onCheckedChange={(checked) =>
                     setFormData({
                       ...formData,
@@ -873,6 +1006,7 @@ const NewContract = () => {
                           "w-full justify-start text-left font-normal",
                           !formData.start_date && "text-muted-foreground"
                         )}
+                        disabled={documentLocked}
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
                         {formData.start_date ? format(formData.start_date, 'P', { locale: ptBR }) : 'Selecione'}
@@ -884,6 +1018,7 @@ const NewContract = () => {
                         selected={formData.start_date || undefined}
                         onSelect={(date) => setFormData({ ...formData, start_date: date || null })}
                         className="pointer-events-auto"
+                        disabled={documentLocked}
                       />
                     </PopoverContent>
                   </Popover>
@@ -899,6 +1034,7 @@ const NewContract = () => {
                           "w-full justify-start text-left font-normal",
                           !formData.end_date && "text-muted-foreground"
                         )}
+                        disabled={documentLocked}
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
                         {formData.end_date ? format(formData.end_date, 'P', { locale: ptBR }) : 'Selecione'}
@@ -910,6 +1046,7 @@ const NewContract = () => {
                         selected={formData.end_date || undefined}
                         onSelect={(date) => setFormData({ ...formData, end_date: date || null })}
                         className="pointer-events-auto"
+                        disabled={documentLocked}
                       />
                     </PopoverContent>
                   </Popover>
@@ -920,6 +1057,7 @@ const NewContract = () => {
                 <Checkbox
                   id="auto_renew"
                   checked={formData.auto_renew}
+                  disabled={documentLocked}
                   onCheckedChange={(checked) =>
                     setFormData({ ...formData, auto_renew: checked as boolean })
                   }
@@ -937,6 +1075,7 @@ const NewContract = () => {
                     value={formData.renewal_period}
                     onChange={(e) => setFormData({ ...formData, renewal_period: e.target.value })}
                     placeholder="12"
+                    disabled={documentLocked}
                   />
                 </div>
               )}
@@ -957,6 +1096,7 @@ const NewContract = () => {
                     value={formData.total_value}
                     onChange={(e) => setFormData({ ...formData, total_value: e.target.value })}
                     placeholder="0.00"
+                    disabled={documentLocked}
                   />
                 </div>
 
@@ -965,6 +1105,7 @@ const NewContract = () => {
                   <Select
                     value={formData.currency}
                     onValueChange={(value) => setFormData({ ...formData, currency: value })}
+                    disabled={documentLocked}
                   >
                     <SelectTrigger>
                       <SelectValue />

@@ -9,6 +9,7 @@ import { PreferencesSection } from "@/components/settings/PreferencesSection";
 import { LeadsSection } from "@/components/settings/LeadsSection";
 import { ClientGroupsSection } from "@/components/settings/ClientGroupsSection";
 import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
+import { ChatTemplatesSettingsSection } from "@/components/settings/ChatTemplatesSettingsSection";
 import { DomainSection } from "@/components/settings/DomainSection";
 import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
 import { UserManagementSection } from "@/components/settings/UserManagementSection";
@@ -51,6 +52,8 @@ const Settings = () => {
       return <CollaboratorsSection />;
     case "whatsapp":
       return <WhatsAppSection />;
+    case "chatTemplates":
+      return <ChatTemplatesSettingsSection />;
     case "domain":
       return <DomainSection handleSave={handleSave} />;
     case "messageTemplates":

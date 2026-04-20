@@ -22,6 +22,7 @@ import {
   DollarSign,
   CalendarIcon,
   Image as ImageIcon,
+  LayoutTemplate,
   UserCheck,
   XCircle,
   Headphones,
@@ -80,12 +81,15 @@ import {
   parseMediaField,
 } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
+import { ChatWhatsappModelPickerDialog } from '@/components/chat/ChatWhatsappModelPickerDialog';
+import { buildChatInboxTemplateContext } from '@/utils/chatInboxTemplateContext';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
 import { proposalsService } from '@/services/proposals';
 import { tasksService } from '@/services/tasks';
 import { ticketsService } from '@/services/tickets';
 import { contractsService } from '@/services/contracts';
+import { isBrazilTaxIdDigits, normalizeBrazilTaxIdInput } from '@/utils/brazilTaxId';
 import { clientsService } from '@/services/clients';
 import { recordClientTimelineEvent } from '@/services/clientTimeline';
 import { messagesService } from '@/services/messages';
@@ -262,7 +266,7 @@ function resolveInstanceConnectionUi(instance: ChatInstance | null): {
 }
 
 const Chat = () => {
-  const { user, session } = useAuth();
+  const { user, session, profile } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -277,6 +281,7 @@ const Chat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
+  const [whatsappModelPickerOpen, setWhatsappModelPickerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'leads' | 'clients'>('all');
   /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
   const [chatInboxScope, setChatInboxScope] = useState<'owner' | 'tenant'>('tenant');
@@ -312,6 +317,7 @@ const Chat = () => {
   const [loadingClient, setLoadingClient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const documentFileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   // Refs para evitar closure stale nos handlers do Socket.IO
   const selectedConversationIdRef = useRef<string | null>(null);
@@ -356,7 +362,9 @@ const Chat = () => {
   const [contractCurrency, setContractCurrency] = useState('BRL');
   const [contractAutoRenew, setContractAutoRenew] = useState(false);
   const [contractRenewalPeriod, setContractRenewalPeriod] = useState('12');
-  const [contractSigners, setContractSigners] = useState<Array<{ name: string; email: string; role: 'CLIENT' | 'INTERNAL' }>>([]);
+  const [contractSigners, setContractSigners] = useState<
+    Array<{ name: string; email: string; tax_id: string; role: 'CLIENT' | 'INTERNAL' }>
+  >([]);
   const [contractInvitationMessage, setContractInvitationMessage] = useState('Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.');
   const [contractRequireOtp, setContractRequireOtp] = useState(false);
   const [contractRequireTerms, setContractRequireTerms] = useState(false);
@@ -901,9 +909,11 @@ const Chat = () => {
           const messagePreview =
             previewText ||
             (c?.kind === 'audio' ? '[Áudio]' : null) ||
-            (c?.kind === 'image' || (normalizedMessage.media && normalizedMessage.media.length > 0)
-              ? '[Imagem]'
-              : '[Mídia]');
+            (c?.kind === 'document'
+              ? '[Documento]'
+              : c?.kind === 'image' || (normalizedMessage.media && normalizedMessage.media.length > 0)
+                ? '[Imagem]'
+                : '[Mídia]');
           const updatedConv = {
             ...conv,
             lastMessagePreview: messagePreview,
@@ -1282,6 +1292,16 @@ const Chat = () => {
       selectedConversation.leadId && !selectedConversation.client_id ? currentLead : null,
     );
   }, [selectedConversation, currentClient, currentLead]);
+
+  const inboxTemplateContext = useMemo(
+    () =>
+      buildChatInboxTemplateContext({
+        conversation: selectedConversation ?? null,
+        user,
+        profile,
+      }),
+    [selectedConversation, user, profile],
+  );
   const activeInstance =
     instances.find((instance) => instance.id === selectedInstanceId) ||
     instances.find((instance) => instance.status === 'connected') ||
@@ -1447,6 +1467,48 @@ const Chat = () => {
       setNewMessage(caption);
       console.error('Erro ao enviar imagem:', error);
       toast.error('Não foi possível enviar a imagem', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
+  const handleDocumentFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedConversationId) return;
+    const mime = (file.type || '').toLowerCase();
+    if (mime !== 'application/pdf') {
+      toast.error('Selecione um documento PDF');
+      return;
+    }
+    const caption = newMessage.trim();
+    setNewMessage('');
+    try {
+      setSendingMessage(true);
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as string);
+        r.onerror = () => reject(new Error('Falha ao ler arquivo'));
+        r.readAsDataURL(file);
+      });
+      const comma = dataUrl.indexOf(',');
+      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      await chatService.sendDocumentMessage(selectedConversationId, {
+        fileBase64: base64,
+        mimeType: 'application/pdf',
+        fileName: file.name,
+        caption: caption || undefined,
+      });
+      await loadMessages(selectedConversationId, { silent: true });
+      if (enabledInstanceIds.size > 0) {
+        loadConversations(Array.from(enabledInstanceIds));
+      }
+    } catch (error) {
+      setNewMessage(caption);
+      console.error('Erro ao enviar documento:', error);
+      toast.error('Não foi possível enviar o documento', {
         description: error instanceof Error ? error.message : undefined,
       });
     } finally {
@@ -1981,6 +2043,7 @@ const Chat = () => {
     const defaultSigner = {
       name: currentClient?.name || currentLead?.name || '',
       email: currentClient?.email || currentLead?.email || '',
+      tax_id: normalizeBrazilTaxIdInput(currentClient?.cpf_cnpj || ''),
       role: 'CLIENT' as const,
     };
     setContractSigners([defaultSigner]);
@@ -2005,11 +2068,20 @@ const Chat = () => {
           toast.error('Todos os assinantes devem ter nome e e-mail');
           return;
         }
+        const tid = normalizeBrazilTaxIdInput(signer.tax_id || '');
+        if (!isBrazilTaxIdDigits(tid)) {
+          toast.error('Cada assinante precisa de CPF (11) ou CNPJ (14) dígitos');
+          return;
+        }
       }
 
+      /**
+       * contracts.client_id referencia apenas `clients.id`. Leads estão em `leads` — não enviar lead.id
+       * (evita FK inválida e vínculo errado). Contrato sem cliente CRM permanece válido como rascunho.
+       */
       const contract = await contractsService.createContract({
         title: contractTitle,
-        client_id: currentClient?.id || currentLead?.id || '',
+        ...(currentClient?.id ? { client_id: currentClient.id } : {}),
         content_html: contractContent,
         start_date: contractStartDate || null,
         end_date: contractEndDate || null,
@@ -2030,6 +2102,7 @@ const Chat = () => {
         await contractsService.createContractSigner(contract.id, {
           name: signer.name,
           email: signer.email,
+          tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
           role: signer.role,
         });
       }
@@ -2065,6 +2138,11 @@ const Chat = () => {
           contract_title: contractTitle,
           contract_number: contract.id.substring(0, 8).toUpperCase(),
           contract_link: `${window.location.origin}/contracts/${contract.id}`,
+          contract_public_view_url:
+            contract.public_view?.public_view_url ??
+            (contract.public_view?.token
+              ? `${window.location.origin}/contract-view/${contract.public_view.token}`
+              : undefined),
         }, contract.id);
       }
     } catch (error) {
@@ -2078,7 +2156,7 @@ const Chat = () => {
   const handleAddContractSigner = () => {
     setContractSigners([
       ...contractSigners,
-      { name: '', email: '', role: 'CLIENT' },
+      { name: '', email: '', tax_id: '', role: 'CLIENT' },
     ]);
   };
 
@@ -2086,7 +2164,11 @@ const Chat = () => {
     setContractSigners(contractSigners.filter((_, i) => i !== index));
   };
 
-  const handleContractSignerChange = (index: number, field: 'name' | 'email' | 'role', value: string) => {
+  const handleContractSignerChange = (
+    index: number,
+    field: 'name' | 'email' | 'tax_id' | 'role',
+    value: string
+  ) => {
     const updated = [...contractSigners];
     updated[index] = { ...updated[index], [field]: value };
     setContractSigners(updated);
@@ -3088,16 +3170,59 @@ const Chat = () => {
                               className="hidden"
                               onChange={handleImageFileChange}
                             />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon"
-                              disabled={sendingMessage}
-                              title="Enviar imagem"
-                              onClick={() => imageFileInputRef.current?.click()}
-                            >
-                              <ImageIcon className="h-4 w-4" />
-                            </Button>
+                            <input
+                              ref={documentFileInputRef}
+                              type="file"
+                              accept="application/pdf"
+                              className="hidden"
+                              onChange={handleDocumentFileChange}
+                            />
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  disabled={sendingMessage}
+                                  title="Ações rápidas"
+                                  aria-label="Ações rápidas"
+                                >
+                                  <Plus className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent side="top" align="start" className="w-56">
+                                <DropdownMenuItem
+                                  disabled={sendingMessage}
+                                  onSelect={(ev) => {
+                                    ev.preventDefault();
+                                    imageFileInputRef.current?.click();
+                                  }}
+                                >
+                                  <ImageIcon className="mr-2 h-4 w-4" />
+                                  Enviar imagem
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={sendingMessage}
+                                  onSelect={(ev) => {
+                                    ev.preventDefault();
+                                    documentFileInputRef.current?.click();
+                                  }}
+                                >
+                                  <FileText className="mr-2 h-4 w-4" />
+                                  Enviar documento
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={sendingMessage || !selectedConversationId}
+                                  onSelect={(ev) => {
+                                    ev.preventDefault();
+                                    setWhatsappModelPickerOpen(true);
+                                  }}
+                                >
+                                  <LayoutTemplate className="mr-2 h-4 w-4" />
+                                  Usar template
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                             <Input 
                             placeholder="Mensagem ou legenda da imagem..."
                               value={newMessage}
@@ -3143,6 +3268,21 @@ const Chat = () => {
           </CardContent>
         </Card>
       )}
+
+      <ChatWhatsappModelPickerDialog
+        open={whatsappModelPickerOpen}
+        onOpenChange={setWhatsappModelPickerOpen}
+        conversationId={selectedConversationId}
+        previewContext={inboxTemplateContext}
+        onAfterSend={() => {
+          if (selectedConversationId) {
+            void loadMessages(selectedConversationId, { silent: true });
+          }
+          if (enabledInstanceIds.size > 0) {
+            loadConversations(Array.from(enabledInstanceIds));
+          }
+        }}
+      />
 
       <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -3397,7 +3537,7 @@ const Chat = () => {
                 
                 {contractSigners.map((signer, index) => (
                   <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
-                    <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                       <div>
                         <Label>Nome *</Label>
                         <Input
@@ -3413,6 +3553,15 @@ const Chat = () => {
                           value={signer.email}
                           onChange={(e) => handleContractSignerChange(index, 'email', e.target.value)}
                           placeholder="email@exemplo.com"
+                        />
+                      </div>
+                      <div>
+                        <Label>CPF ou CNPJ *</Label>
+                        <Input
+                          value={signer.tax_id}
+                          onChange={(e) => handleContractSignerChange(index, 'tax_id', e.target.value)}
+                          placeholder="11 ou 14 dígitos"
+                          inputMode="numeric"
                         />
                       </div>
                       <div>

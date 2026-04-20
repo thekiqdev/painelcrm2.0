@@ -48,6 +48,22 @@ export interface CreateChargeResult {
   pixCopyPaste?: string;
 }
 
+/** Atualização de cobrança já criada (ex.: PUT no Asaas). Campos omitidos não são alterados no gateway. */
+export interface UpdateChargeInput {
+  amountCents?: number;
+  dueDate?: string;
+  description?: string;
+}
+
+export interface UpdateChargeResult {
+  status: string;
+  invoiceUrl?: string;
+  bankSlipUrl?: string;
+  bankSlipDigitableLine?: string;
+  pixQrCode?: string;
+  pixCopyPaste?: string;
+}
+
 export interface PaymentResult {
   paymentId: string;
   status: string;
@@ -132,6 +148,14 @@ export interface PaymentGateway {
   /** CRM: criar ou reutilizar cliente do gateway para um client_id; retorna gateway_customer_id. Dados do cliente em clientData. */
   ensureCustomerForClient?(tenantId: string, clientId: string, clientData: CreateCustomerInput): Promise<string>;
   createCharge(input: CreateChargeInput): Promise<CreateChargeResult>;
+  /**
+   * Atualiza cobrança existente (valor, vencimento, descrição). Opcional — gateways sem suporte devem omitir.
+   */
+  updateCharge?(
+    paymentId: string,
+    input: UpdateChargeInput,
+    options?: { paymentMethod?: PaymentMethod }
+  ): Promise<UpdateChargeResult>;
   getPayment(paymentId: string): Promise<PaymentResult | null>;
   /** Alias de getPayment para padronizar nome na interface. */
   getCharge?(paymentId: string): Promise<PaymentResult | null>;

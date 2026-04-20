@@ -46,7 +46,7 @@ export function ChatKanbanBoardColumn({
   return (
     <Card
       className={cn(
-        'flex-shrink-0 w-[280px] flex flex-col max-h-[calc(100vh-12rem)] border-border/80 shadow-sm transition-[box-shadow,ring]',
+        'flex h-full max-h-full min-h-0 w-[280px] shrink-0 flex-col border-border/80 shadow-sm transition-[box-shadow,ring]',
         isOver && 'ring-2 ring-primary/20 shadow-md',
       )}
     >
@@ -101,7 +101,7 @@ export function ChatKanbanBoardColumn({
         </button>
       </CardHeader>
       <CardContent className="flex-1 min-h-0 p-0 bg-muted/10 flex flex-col">
-        <ScrollArea className="flex-1 min-h-0 h-[min(480px,calc(100vh-18rem))] [&_[data-radix-scroll-area-viewport]]:!block">
+        <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]]:!block [&_[data-radix-scroll-area-viewport]]:max-h-full">
           <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
             <div
               ref={setNodeRef}

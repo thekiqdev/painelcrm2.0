@@ -19,6 +19,7 @@ export type SettingSection =
   | "clientGroups"
   | "collaborators"
   | "whatsapp"
+  | "chatTemplates"
   | "domain"
   | "messageTemplates"
   | "paymentGateway";
@@ -43,6 +44,7 @@ const SECTION_QUERY_VALUES: SettingSection[] = [
   "clientGroups",
   "collaborators",
   "whatsapp",
+  "chatTemplates",
   "domain",
   "messageTemplates",
   "paymentGateway",

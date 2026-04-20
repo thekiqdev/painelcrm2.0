@@ -2,7 +2,7 @@
  * Página pública de pagamento por link único (Fase 6 + Fase 10).
  * PIX inline; boleto com linha/PDF; cartão com formulário seguro na coluna direita (Desenho A: payWithCreditCard).
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -166,6 +166,21 @@ function resolveHasPaymentPayload(d: PayInvoiceResponse): boolean {
   );
 }
 
+/** Mesma prioridade da UI (PIX → boleto → cartão) para criar a primeira cobrança no gateway. */
+function pickPreferredBootstrapPaymentMethod(
+  data: PayInvoiceResponse
+): "PIX" | "BOLETO" | "CREDIT_CARD" | null {
+  const normalized = (
+    Array.isArray(data.allowed_payment_methods) && data.allowed_payment_methods.length > 0
+      ? data.allowed_payment_methods
+      : ["PIX", "BOLETO", "CREDIT_CARD"]
+  ) as Array<"PIX" | "BOLETO" | "CREDIT_CARD">;
+  if (normalized.includes("PIX")) return "PIX";
+  if (normalized.includes("BOLETO")) return "BOLETO";
+  if (normalized.includes("CREDIT_CARD")) return "CREDIT_CARD";
+  return null;
+}
+
 function toPixImageSrc(raw: string | undefined): string | null {
   if (!raw) return null;
   const value = raw.trim();
@@ -219,6 +234,9 @@ const CustomerInvoicePay = () => {
     ch_mobile: "",
   });
   const [payingCard, setPayingCard] = useState(false);
+  /** Evita disparar o bootstrap automático mais de uma vez por fatura (token) enquanto não há payload. */
+  const autoBootstrapAttemptedForTokenRef = useRef<string | null>(null);
+  const payPageTokenPrevRef = useRef<string | null>(null);
 
   const mergePayData = useCallback((next: PayInvoiceResponse) => {
     setData((prev) => {
@@ -444,6 +462,68 @@ const CustomerInvoicePay = () => {
       setCompleting(false);
     }
   };
+
+  /**
+   * Faturas já vinculadas a cliente com CPF (ex.: checkout da loja) chegam sem cobrança no gateway até
+   * `switch-method`. Antes só o clique manual no método disparava isso; aqui geramos a primeira cobrança
+   * automaticamente, reutilizando a mesma rota e idempotência do fluxo existente.
+   */
+  useEffect(() => {
+    if (payPageTokenPrevRef.current !== token) {
+      autoBootstrapAttemptedForTokenRef.current = null;
+      payPageTokenPrevRef.current = token ?? null;
+    }
+
+    if (!token || !data || loading || error) return;
+    if (data.needs_customer) return;
+    if (!POLLABLE_STATUSES.has(data.status)) return;
+    if (resolveHasPaymentPayload(data)) {
+      autoBootstrapAttemptedForTokenRef.current = null;
+      return;
+    }
+    if (switchingMethod) return;
+
+    const method = pickPreferredBootstrapPaymentMethod(data);
+    if (!method) return;
+
+    if (autoBootstrapAttemptedForTokenRef.current === token) return;
+    autoBootstrapAttemptedForTokenRef.current = token;
+
+    setSelectedMethod(method);
+    setSwitchingMethod(method);
+    void switchPayMethod(token, method, `auto_bootstrap_${token}_${method}`)
+      .then((res) => {
+        if (res.error) {
+          autoBootstrapAttemptedForTokenRef.current = null;
+          toast.error(res.error);
+          return;
+        }
+        if (res.data) {
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  payment_urls: res.data!.payment_urls ?? prev.payment_urls,
+                  payment_method:
+                    (res.data as { payment_method?: string | null }).payment_method ?? prev.payment_method,
+                  active_attempt: res.data!.active_attempt ?? prev.active_attempt,
+                  allowed_payment_methods: res.data!.allowed_payment_methods ?? prev.allowed_payment_methods,
+                  has_payment_payload:
+                    typeof (res.data as { has_payment_payload?: boolean }).has_payment_payload === "boolean"
+                      ? (res.data as { has_payment_payload?: boolean }).has_payment_payload
+                      : prev.has_payment_payload,
+                  payment_options_summary:
+                    (res.data as { payment_options_summary?: PayInvoiceResponse["payment_options_summary"] })
+                      .payment_options_summary ?? prev.payment_options_summary,
+                }
+              : prev
+          );
+        }
+      })
+      .finally(() => {
+        setSwitchingMethod(null);
+      });
+  }, [token, data, loading, error, switchingMethod, data?.needs_customer, data?.status]);
 
   /** Fonte de verdade: tentativa ativa; senão coluna payment_method da fatura; fallback PIX quando permitido. */
   useEffect(() => {

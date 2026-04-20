@@ -168,6 +168,16 @@ export async function reassignTenantUserDataAndDeleteUser(params: {
       primaryUserId,
       targetUserId,
     ]);
+    await run(
+      client,
+      'UPDATE tenant_chat_templates SET created_by_user_id = $1 WHERE created_by_user_id = $2',
+      [primaryUserId, targetUserId],
+    );
+    await run(
+      client,
+      'UPDATE whatsapp_message_templates SET created_by_user_id = $1 WHERE created_by_user_id = $2',
+      [primaryUserId, targetUserId],
+    );
     await run(client, 'UPDATE contract_events SET created_by = $1 WHERE created_by = $2', [
       primaryUserId,
       targetUserId,

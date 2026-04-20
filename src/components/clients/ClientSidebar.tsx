@@ -11,7 +11,6 @@ import {
 import { 
   ArrowLeft, 
   User, 
-  FileText, 
   CheckSquare, 
   StickyNote,
   Briefcase,
@@ -57,13 +56,6 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
       icon: User, 
       path: `/clients/${clientId}`,
       description: "Informações principais do cliente"
-    },
-    { 
-      id: "details", 
-      label: "Detalhes", 
-      icon: FileText, 
-      path: `/clients/${clientId}/details`,
-      description: "Dados completos do cliente"
     },
     { 
       id: "tasks", 

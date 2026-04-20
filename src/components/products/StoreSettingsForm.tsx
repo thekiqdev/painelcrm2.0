@@ -4,19 +4,18 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { StoreProfile, StorefrontThemeKey } from "@/types/products";
+import { StoreProfile } from "@/types/products";
+import type { StorefrontThemeId } from "@/themes/types";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 import { uploadCatalogImageFile } from "@/services/catalogMediaUpload";
-import { STOREFRONT_THEME_OPTIONS } from "@/themes/registry";
 import { ImageIcon, Trash2, Upload } from "lucide-react";
+
+function normalizeThemeKeyForPayload(profile: StoreProfile | null): StorefrontThemeId {
+  const k = profile?.theme_key;
+  if (k === "minimal" || k === "moderno" || k === "luzmodas") return k;
+  return "default";
+}
 
 export function generateStoreSlug(name: string) {
   return name
@@ -41,10 +40,10 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
     contact_email: "",
     contact_whatsapp: "",
     is_active: true,
+    store_checkout_enabled: false,
   });
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
-  const [themeKey, setThemeKey] = useState<StorefrontThemeKey>("default");
   const [loading, setLoading] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingBanner, setUploadingBanner] = useState(false);
@@ -62,11 +61,10 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
         contact_email: storeProfile.contact_email || "",
         contact_whatsapp: storeProfile.contact_whatsapp || "",
         is_active: storeProfile.is_active,
+        store_checkout_enabled: storeProfile.store_checkout_enabled === true,
       });
       setLogoUrl(storeProfile.store_logo?.trim() || null);
       setBannerUrl(storeProfile.store_banner_url?.trim() || null);
-      const tk = storeProfile.theme_key;
-      setThemeKey(tk === "minimal" ? "minimal" : "default");
     } else {
       setFormData({
         store_name: "",
@@ -76,10 +74,10 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
         contact_email: "",
         contact_whatsapp: "",
         is_active: true,
+        store_checkout_enabled: false,
       });
       setLogoUrl(null);
       setBannerUrl(null);
-      setThemeKey("default");
     }
   }, [storeProfile]);
 
@@ -115,8 +113,11 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
     ...formData,
     store_logo: logoUrl || null,
     store_banner_url: bannerUrl || null,
-    theme_key: themeKey,
-    theme_options: {},
+    theme_key: normalizeThemeKeyForPayload(storeProfile),
+    theme_options:
+      storeProfile?.theme_options && typeof storeProfile.theme_options === "object"
+        ? (storeProfile.theme_options as Record<string, unknown>)
+        : {},
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -263,25 +264,6 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
         </div>
       </div>
 
-      <div className="space-y-2">
-        <Label>Tema da vitrine</Label>
-        <Select value={themeKey} onValueChange={(v) => setThemeKey(v as StorefrontThemeKey)}>
-          <SelectTrigger className="max-w-md">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STOREFRONT_THEME_OPTIONS.map((t) => (
-              <SelectItem key={t.id} value={t.id}>
-                {t.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          Novos layouts podem ser adicionados ao sistema via atualização (código versionado).
-        </p>
-      </div>
-
       <div className="space-y-4 border-t pt-6">
         <h3 className="text-sm font-medium flex items-center gap-2">
           <ImageIcon className="h-4 w-4" />
@@ -370,6 +352,23 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
             id="is_active"
             checked={formData.is_active}
             onCheckedChange={(checked) => setFormData((prev) => ({ ...prev, is_active: checked }))}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="pr-4 space-y-1">
+            <Label htmlFor="store_checkout_enabled">Ativar compra online com checkout</Label>
+            <p className="text-sm text-muted-foreground">
+              Quando ativado, produtos com preço exibem <strong className="font-medium">Comprar</strong> e o
+              fluxo de pagamento online. Quando desativado, a vitrine segue com WhatsApp e orçamento.
+            </p>
+          </div>
+          <Switch
+            id="store_checkout_enabled"
+            checked={formData.store_checkout_enabled}
+            onCheckedChange={(checked) =>
+              setFormData((prev) => ({ ...prev, store_checkout_enabled: checked }))
+            }
           />
         </div>
       </div>

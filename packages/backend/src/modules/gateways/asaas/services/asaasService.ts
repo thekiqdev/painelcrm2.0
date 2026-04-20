@@ -12,6 +12,9 @@ import type {
   PaymentResult,
   PayWithCreditCardInput,
   PayWithCreditCardResult,
+  UpdateChargeInput,
+  UpdateChargeResult,
+  PaymentMethod,
 } from '../../../payments/paymentGatewayTypes.js';
 import { logGatewayOperation } from '../../../payments/gatewayLogger.js';
 import { getPaymentCustomer, createPaymentCustomer } from '../../../../services/paymentCustomersService.js';
@@ -170,6 +173,65 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
 
         return {
           paymentId: res.id,
+          status: res.status ?? 'PENDING',
+          invoiceUrl: res.invoiceUrl,
+          bankSlipUrl: res.bankSlipUrl,
+          bankSlipDigitableLine,
+          pixQrCode: pixQrCode ?? (res as { pixQrCode?: string }).pixQrCode,
+          pixCopyPaste: pixCopyPaste ?? (res as { pixCopyPaste?: string }).pixCopyPaste,
+        };
+      });
+    },
+    async updateCharge(
+      paymentId: string,
+      input: UpdateChargeInput,
+      options?: { paymentMethod?: PaymentMethod }
+    ): Promise<UpdateChargeResult> {
+      return withLog('updateCharge', undefined, async () => {
+        const patch = asaasMapper.toAsaasPaymentUpdate(input);
+        if (Object.keys(patch).length === 0) {
+          throw new Error('Nenhum campo para atualizar na cobrança');
+        }
+        const res = await asaasClient.updatePayment(paymentId, patch, config);
+
+        const billingFromRes = (res as { billingType?: string }).billingType;
+        const billingType =
+          billingFromRes === 'PIX' || billingFromRes === 'BOLETO'
+            ? billingFromRes
+            : options?.paymentMethod
+              ? asaasMapper.asaasBillingType(options.paymentMethod)
+              : undefined;
+
+        let pixQrCode: string | undefined;
+        let pixCopyPaste: string | undefined;
+        if (billingType === 'PIX') {
+          const pixData = await fetchPixQrWithRetry(res.id, config, 14);
+          if (pixData) {
+            pixCopyPaste = pixData.payload ?? undefined;
+            if (pixData.encodedImage) {
+              pixQrCode = pixData.encodedImage.startsWith('data:')
+                ? pixData.encodedImage
+                : `data:image/png;base64,${pixData.encodedImage}`;
+            }
+          }
+        }
+
+        let bankSlipDigitableLine: string | undefined;
+        if (billingType === 'BOLETO') {
+          const fromPost = (res as { identificationField?: string }).identificationField?.trim();
+          if (fromPost) {
+            bankSlipDigitableLine = fromPost;
+          } else {
+            try {
+              const idf = await asaasClient.getIdentificationField(res.id, config);
+              bankSlipDigitableLine = idf?.identificationField?.trim() || undefined;
+            } catch (e) {
+              console.warn('[asaasService] updateCharge getIdentificationField failed', res.id, e);
+            }
+          }
+        }
+
+        return {
           status: res.status ?? 'PENDING',
           invoiceUrl: res.invoiceUrl,
           bankSlipUrl: res.bankSlipUrl,

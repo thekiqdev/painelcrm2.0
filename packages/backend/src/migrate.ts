@@ -122,6 +122,39 @@ const order = [
   '99_chat_kanban_etapa_d2.sql',
   /** Fase 2 catálogo: store_banner_url, theme_key, theme_options em store_profiles */
   '100_store_profiles_media_theme.sql',
+  /** MVP checkout loja: orders.customer_invoice_id + idempotência */
+  '101_orders_store_checkout.sql',
+  /** Checkout loja: habilitar por loja (default false) */
+  '102_store_profiles_checkout_enabled.sql',
+  '103_tenant_chat_templates.sql',
+  /** Checkout loja: pedido vinculado ao cliente CRM */
+  '104_orders_client_id.sql',
+  /** Templates WhatsApp: categorias + templates com itens (sequência, delay, imagem) */
+  '105_whatsapp_message_templates_module.sql',
+  /** Templates WhatsApp: tipo automatic|model, document, media_url (bases que correram 105 antigo) */
+  '106_whatsapp_templates_type_model_document.sql',
+  /** Templates WhatsApp: upload de mídia com storage_path + metadados de ficheiro */
+  '107_whatsapp_template_items_storage_upload.sql',
+  /** Kanban: movimento automático por tempo (agendamentos) */
+  '108_chat_kanban_scheduled_moves.sql',
+  /** Kanban: visibilidade do board (tenant_all / restricted) + utilizadores e equipes */
+  '109_chat_kanban_board_visibility.sql',
+  /** Contratos: snapshot + document_frozen_at (Etapa 2 — travas de documento) */
+  '110_contracts_document_freeze.sql',
+  /** Contratos: token hash para link público de visualização (Etapa 3) */
+  '111_contract_public_view_tokens.sql',
+  /** Contratos: convites de assinatura pública por signatário (Etapa 4) */
+  '112_contract_signer_signature_invites.sql',
+  /** Contratos: hardening link público — cancelado não acessível por token (Etapa 6) */
+  '113_contract_public_view_block_cancelled.sql',
+  /** Contratos: link público provisionado na criação + ciphertext + visualização em rascunho */
+  '114_contract_public_view_auto_provision.sql',
+  /** Contratos: tax_id signatário + convite assinatura com fallback de documento */
+  '115_contract_signers_tax_id_signature_invite_doc.sql',
+  /** Contratos: modelo com valor padrão, título padrão e regras de vigência copiadas no contrato */
+  '116_contract_templates_value_tenancy.sql',
+  /** Contratos: contract_id na função pública de view (assinaturas + PDF por token) */
+  '117_contract_public_view_contract_id.sql',
   'create-admin-user.sql',
 ];
 

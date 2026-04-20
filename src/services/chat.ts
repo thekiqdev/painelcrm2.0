@@ -267,7 +267,15 @@ export function coerceChatPlainText(v: unknown): string {
 
 function coerceMediaUrl(u: unknown): string | null {
   if (u == null) return null;
-  if (typeof u === 'string' && u.trim()) return u.trim();
+  if (typeof u === 'string' && u.trim()) {
+    const raw = u.trim();
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+    if (raw.startsWith('/media/')) {
+      const base = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+      return `${base}${raw}`;
+    }
+    return raw;
+  }
   if (typeof u === 'object' && u !== null) {
     const o = u as Record<string, unknown>;
     for (const k of ['url', 'href', 'mediaUrl', 'directPath', 'downloadUrl', 'fileUrl', 'link', 'src']) {
@@ -596,6 +604,25 @@ export const chatService = {
       type: 'image',
       fileBase64: opts.fileBase64,
       mimeType: opts.mimeType,
+      ...(opts.caption?.trim() ? { caption: opts.caption.trim() } : {}),
+    });
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data;
+  },
+
+  /** Documento/PDF via `/send/media` (base64 ou URL). Texto opcional como legenda. */
+  async sendDocumentMessage(
+    conversationId: string,
+    opts: { fileBase64: string; mimeType: string; caption?: string; fileName?: string },
+  ) {
+    const response = await apiClient.post(`/api/chat/messages`, {
+      conversationId,
+      type: 'document',
+      fileBase64: opts.fileBase64,
+      mimeType: opts.mimeType,
+      ...(opts.fileName?.trim() ? { fileName: opts.fileName.trim() } : {}),
       ...(opts.caption?.trim() ? { caption: opts.caption.trim() } : {}),
     });
     if (response.error) {

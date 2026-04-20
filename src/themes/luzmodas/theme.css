@@ -1,0 +1,53 @@
+.storefront-theme-luzmodas {
+  --lz-primary: oklch(0.65 0.24 350);
+  --lz-primary-fg: oklch(1 0 0);
+  --lz-muted: oklch(0.96 0.008 350);
+  --lz-border: oklch(0.92 0.008 350);
+  --lz-foreground: oklch(0.145 0.005 0);
+  --lz-pink-soft: oklch(0.9 0.06 350);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: var(--lz-foreground);
+}
+
+.storefront-theme-luzmodas .lz-heading {
+  font-family: ui-serif, Georgia, serif;
+}
+
+.storefront-theme-luzmodas .lz-btn-primary {
+  background: var(--lz-primary);
+  color: var(--lz-primary-fg);
+  border-radius: 999px;
+  padding: 0.875rem 2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.storefront-theme-luzmodas .lz-btn-outline {
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.875rem 2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.storefront-theme-luzmodas .lz-card-image {
+  border-radius: 1rem;
+  overflow: hidden;
+  aspect-ratio: 3 / 4;
+  background: var(--lz-muted);
+}
+
+.storefront-theme-luzmodas .lz-topbar {
+  background: var(--lz-primary);
+  color: var(--lz-primary-fg);
+}
+
+.storefront-theme-luzmodas .lz-footer {
+  background: #1a1216;
+  color: #fff;
+}

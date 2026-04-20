@@ -45,6 +45,13 @@ export interface AsaasPaymentRequest {
   notificationEnabled?: boolean;
 }
 
+/** PATCH/PUT parcial em cobrança existente (Asaas v3). */
+export interface AsaasPaymentUpdateRequest {
+  value?: number;
+  dueDate?: string;
+  description?: string;
+}
+
 export interface AsaasPaymentResponse {
   id: string;
   status: string;

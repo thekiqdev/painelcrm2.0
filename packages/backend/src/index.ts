@@ -49,6 +49,9 @@ import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
+import tenantChatTemplatesRoutes from './routes/tenantChatTemplatesRoutes.js';
+import whatsappTemplateCategoriesRoutes from './routes/whatsappTemplateCategoriesRoutes.js';
+import whatsappMessageTemplatesRoutes from './routes/whatsappMessageTemplatesRoutes.js';
 import messagesRoutes from './routes/messagesRoutes.js';
 import superadminRoutes from './routes/superadminRoutes.js';
 import plansRoutes from './routes/plansRoutes.js';
@@ -61,11 +64,18 @@ import billingRoutes from './routes/billingRoutes.js';
 import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
 import customerChargesRoutes from './routes/customerChargesRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import storeCheckoutRoutes from './routes/storeCheckoutRoutes.js';
 import onboardingRoutes from './routes/onboardingRoutes.js';
 import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
+import { processDueKanbanScheduledMovesBatch } from './services/kanbanScheduledMoveService.js';
 import { initializeWebSocket } from './services/websocketService.js';
 import { getCatalogMediaStorageRoot } from './services/catalogMediaUploadService.js';
+import {
+  getWhatsappTemplateMediaRoot,
+  getWhatsappTemplateMediaRootCandidates,
+  resolveExistingWhatsappTemplateMediaAbsolutePath,
+} from './services/whatsappTemplateMediaStorageService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -135,6 +145,59 @@ try {
   console.error('[catalog-media] Falha ao preparar diretório estático:', e);
 }
 
+/** Mídia de Templates WhatsApp (upload local). */
+try {
+  const waTplMediaDirs = Array.from(new Set([getWhatsappTemplateMediaRoot(), ...getWhatsappTemplateMediaRootCandidates()]));
+  for (const waTplMediaDir of waTplMediaDirs) {
+    if (!fs.existsSync(waTplMediaDir)) {
+      fs.mkdirSync(waTplMediaDir, { recursive: true });
+    }
+    app.use(
+      '/media/whatsapp-templates',
+      express.static(waTplMediaDir, {
+        maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
+        index: false,
+        dotfiles: 'deny',
+      }),
+    );
+  }
+} catch (e) {
+  console.error('[whatsapp-template-media] Falha ao preparar diretório estático:', e);
+}
+
+app.get('/media/whatsapp-templates/*', (req, res) => {
+  const wildcardParam = (req.params as Record<string, string | undefined>)['0'];
+  const relativePath = String(wildcardParam || '').trim();
+  const abs = resolveExistingWhatsappTemplateMediaAbsolutePath(relativePath);
+  if (!abs) {
+    res.status(404).type('text/plain').send('Arquivo não encontrado.');
+    return;
+  }
+
+  const lower = abs.toLowerCase();
+  if (lower.endsWith('.pdf')) {
+    res.type('application/pdf');
+  } else if (lower.endsWith('.png')) {
+    res.type('image/png');
+  } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+    res.type('image/jpeg');
+  } else if (lower.endsWith('.webp')) {
+    res.type('image/webp');
+  } else if (lower.endsWith('.gif')) {
+    res.type('image/gif');
+  }
+
+  res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800' : 'no-cache');
+  res.sendFile(abs, (err: NodeJS.ErrnoException | undefined) => {
+    if (err && !res.headersSent) {
+      const statusCode = typeof (err as { statusCode?: unknown }).statusCode === 'number'
+        ? (err as unknown as { statusCode: number }).statusCode
+        : 500;
+      res.status(statusCode).type('text/plain').send('Falha ao abrir arquivo.');
+    }
+  });
+});
+
 // Rate limiting mais generoso para endpoints de teste
 const testLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
@@ -167,6 +230,7 @@ const limiter = rateLimit({
     const p = req.path || req.originalUrl || '';
     // Não contar rotas de auth no limite geral (têm seu próprio authLimiter)
     return p.startsWith('/api/auth/') || p.startsWith('auth/') ||
+           p.startsWith('/api/store-checkout') ||
            p.includes('/test') || p.startsWith('/webhooks/') || p.startsWith('webhooks/');
   },
   standardHeaders: true,
@@ -188,6 +252,16 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 // 3. Testes (específico)
 app.use('/api/message-templates/:id/test', testLimiter);
+// Checkout público da loja (MVP 1 item): limite dedicado, não contar no limiter geral
+const storeCheckoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_STORE_CHECKOUT_MAX || '40', 10),
+  message: { ok: false, error: 'Muitas tentativas de checkout. Aguarde e tente novamente.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
+app.use('/api/store-checkout', storeCheckoutLimiter);
 // 4. API geral por último (mais genérico)
 app.use('/api/', limiter);
 
@@ -219,9 +293,9 @@ app.get('/', (req, res) => {
   });
 });
 
-// Log all requests for debugging
+// Log all requests for debugging (originalUrl inclui /api/...; req.path pode variar com mounts)
 app.use('/api', (req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl || req.url}`);
   next();
 });
 
@@ -229,6 +303,7 @@ app.use('/api', (req, res, next) => {
 // Mas como o rate limiter já foi aplicado acima, vamos garantir que testes tenham tratamento especial
 app.use('/api/auth', authRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/store-checkout', storeCheckoutRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/store-profile', storeProfileRoutes);
 app.use('/api/catalog-media', catalogMediaRoutes);
@@ -268,6 +343,9 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/chat/kanban', chatKanbanRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/message-templates', messageTemplatesRoutes);
+app.use('/api/tenant-chat-templates', tenantChatTemplatesRoutes);
+app.use('/api/whatsapp-template-categories', whatsappTemplateCategoriesRoutes);
+app.use('/api/whatsapp-message-templates', whatsappMessageTemplatesRoutes);
 app.use('/api/messages', messagesRoutes);
 app.get('/api/plans', plansController.listPublicPlans);
 app.use('/api/plan-purchase', planPurchaseRoutes);
@@ -335,6 +413,12 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Listening on 0.0.0.0:${PORT}`);
   console.log(`📡 WebSocket server initialized`);
+  const kanbanPollMs = Math.max(5000, parseInt(process.env.KANBAN_SCHEDULED_MOVE_POLL_MS || '30000', 10));
+  setInterval(() => {
+    void processDueKanbanScheduledMovesBatch(25).catch((err) =>
+      console.error('[kanbanScheduledMove] batch error', err),
+    );
+  }, kanbanPollMs);
 });
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {

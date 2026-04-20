@@ -22,10 +22,11 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ArrowLeft, FileText, XCircle, Link2, Copy, Repeat2, ChevronDown } from "lucide-react";
+import { ArrowLeft, FileText, XCircle, Link2, Copy, Repeat2, ChevronDown, Pencil, Trash2 } from "lucide-react";
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { INVOICE_ACTIONABLE } from "@/lib/customerInvoiceActions";
 
 function formatAmount(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -50,6 +51,7 @@ const CustomerInvoiceDetail = () => {
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
   const [recurrenceHistory, setRecurrenceHistory] = useState<RecurrenceHistoryInvoice[]>([]);
+  const [deleteSaving, setDeleteSaving] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -92,17 +94,33 @@ const CustomerInvoiceDetail = () => {
   }, [id, navigate]);
 
   const handleCancel = async () => {
-    if (!id || !invoice || invoice.status !== "pending") return;
+    if (!id || !invoice || !INVOICE_ACTIONABLE.has(invoice.status)) return;
     try {
       setCancelling(true);
       await customerInvoicesService.cancel(id);
-      toast.success("Fatura cancelada");
-      setInvoice((prev) => (prev ? { ...prev, status: "cancelled" } : null));
+      toast.success("Fatura cancelada no sistema e no provedor de pagamento");
+      const refreshed = await customerInvoicesService.getById(id);
+      setInvoice(refreshed ?? { ...invoice, status: "cancelled" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao cancelar fatura";
       toast.error(msg);
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!id || !invoice) return;
+    setDeleteSaving(true);
+    try {
+      await customerInvoicesService.remove(id);
+      toast.success("Fatura excluída");
+      navigate("/customer-invoices");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro ao excluir fatura";
+      toast.error(msg);
+    } finally {
+      setDeleteSaving(false);
     }
   };
 
@@ -128,37 +146,82 @@ const CustomerInvoiceDetail = () => {
     ? (client?.name || client?.company || client?.email || invoice.client_id)
     : "Sem cliente";
 
+  const actionable = INVOICE_ACTIONABLE.has(invoice.status);
+  const canDelete = actionable && invoice.origin !== "subscription";
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => navigate("/customer-invoices")}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Voltar
         </Button>
-        {invoice.status === "pending" && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" size="sm" disabled={cancelling}>
-                <XCircle className="mr-2 h-4 w-4" />
-                Cancelar fatura
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Cancelar fatura?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Esta ação não pode ser desfeita. A fatura será marcada como cancelada.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Não</AlertDialogCancel>
-                <AlertDialogAction onClick={handleCancel} className="bg-destructive text-destructive-foreground">
-                  Sim, cancelar
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        )}
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          {actionable && (
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={() => id && navigate(`/customer-invoices/${id}/edit`)}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Editar
+            </Button>
+          )}
+          {actionable && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" size="sm" disabled={cancelling}>
+                  <XCircle className="mr-2 h-4 w-4" />
+                  Cancelar fatura
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Cancelar fatura?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    A cobrança será cancelada no Asaas (ou equivalente) e a fatura ficará como cancelada neste
+                    sistema. Esta ação não pode ser desfeita.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Não</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleCancel} className="bg-destructive text-destructive-foreground">
+                    Sim, cancelar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          {canDelete && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="text-destructive border-destructive/50" disabled={deleteSaving}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Excluir
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Excluir fatura?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    A cobrança será removida/cancelada no Asaas e o registro da fatura será apagado aqui. Pedidos ou
+                    vínculos que apontem para esta fatura podem ser atualizados automaticamente.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Não</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleDelete}
+                    className="bg-destructive text-destructive-foreground"
+                  >
+                    Sim, excluir
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
       </div>
 
       <Card>

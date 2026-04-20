@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard, LayoutGrid, Store } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard, LayoutGrid, Store, Package, ShoppingCart } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -147,26 +147,6 @@ const Nav = () => {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
-              {show(hasProducts, 'products') && (
-                <>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
-                      <NavLink to="/admin/products" className={getNavClass} onMouseEnter={() => routePreload.products()}>
-                        <Briefcase className="mr-2 h-5 w-5" />
-                        {!collapsed && <span>Produtos</span>}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
-                      <NavLink to="/admin/loja" className={getNavClass} onMouseEnter={() => routePreload.storeSettings()}>
-                        <Store className="mr-2 h-5 w-5" />
-                        {!collapsed && <span>Loja</span>}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </>
-              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -204,6 +184,42 @@ const Nav = () => {
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Loja online</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {show(hasProducts, 'products') && (
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/admin/products" className={getNavClass} onMouseEnter={() => routePreload.products()}>
+                        <Package className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Catálogo</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/orders" className={getNavClass} onMouseEnter={() => routePreload.orders()}>
+                        <ShoppingCart className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Pedidos</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/admin/loja" className={getNavClass} onMouseEnter={() => routePreload.storeSettings()}>
+                        <Store className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Configuração</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -571,9 +587,9 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     <SidebarProvider>
       <div className="flex min-h-screen w-full">
         <Nav />
-        <div className="flex-1 flex flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <Header />
-          <main className="flex-1 min-h-0 p-6">
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-6">
             <RequireModuleView>{children}</RequireModuleView>
           </main>
         </div>

@@ -8,6 +8,7 @@ import { pool, withTenantRlsContext } from '../utils/db.js';
 import { billingLog } from './billingLogger.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
+import { syncOrdersFromCustomerInvoiceStatus } from './orderInvoiceSyncService.js';
 
 export interface CustomerInvoiceRow {
   id: string;
@@ -373,6 +374,112 @@ export async function getCustomerInvoiceItems(
   return r.rows;
 }
 
+export async function countCustomerInvoiceItems(invoiceId: string, tenantId: string): Promise<number> {
+  const belongs = await pool.query(
+    `SELECT 1 FROM customer_invoices WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+    [invoiceId, tenantId]
+  );
+  if ((belongs.rowCount ?? 0) === 0) {
+    return 0;
+  }
+  const r = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c FROM customer_invoice_items WHERE invoice_id = $1`,
+    [invoiceId]
+  );
+  return parseInt(r.rows[0]?.c ?? '0', 10);
+}
+
+/**
+ * Substitui todas as linhas de uma fatura manual e recalcula amount_cents.
+ * Se `items` for vazio, `amountCentsWhenNoLines` é obrigatório (valor único sem linhas).
+ */
+export async function replaceManualInvoiceLineItems(
+  tenantId: string,
+  invoiceId: string,
+  items: CreateManualCustomerInvoiceItemInput[],
+  amountCentsWhenNoLines?: number
+): Promise<number> {
+  const check = await pool.query<{ id: string }>(
+    `SELECT id FROM customer_invoices WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+    [invoiceId, tenantId]
+  );
+  if ((check.rowCount ?? 0) === 0) {
+    throw new Error('Fatura não encontrada');
+  }
+
+  let amountCents: number;
+  if (items.length === 0) {
+    if (amountCentsWhenNoLines == null || amountCentsWhenNoLines <= 0) {
+      throw new Error('Ao remover todos os itens, informe amount_cents com o novo valor total');
+    }
+    amountCents = amountCentsWhenNoLines;
+    await pool.query(`DELETE FROM customer_invoice_items WHERE invoice_id = $1`, [invoiceId]);
+    await pool.query(
+      `UPDATE customer_invoices SET amount_cents = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
+      [amountCents, invoiceId, tenantId]
+    );
+    return amountCents;
+  }
+
+  amountCents = items.reduce((sum, it) => sum + computeItemTotalCents(it), 0);
+  if (amountCents <= 0) {
+    throw new Error('Total dos itens deve ser maior que zero');
+  }
+
+  await pool.query(`DELETE FROM customer_invoice_items WHERE invoice_id = $1`, [invoiceId]);
+
+  const schema = await getCustomerInvoiceSchema();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const totalCents = computeItemTotalCents(it);
+    if (schema.hasInvoiceItemAdvancedColumns) {
+      await pool.query(
+        `INSERT INTO customer_invoice_items (
+        invoice_id, product_id, description, quantity, unit_price_cents, discount_cents, total_cents, sort_order,
+        is_recurring, recurring_interval, scheduled_due_date
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          invoiceId,
+          it.product_id ?? null,
+          it.description,
+          it.quantity,
+          it.unit_price_cents,
+          it.discount_cents ?? 0,
+          totalCents,
+          i,
+          it.is_recurring ?? true,
+          it.recurring_interval ?? null,
+          it.scheduled_due_date ?? null,
+        ]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO customer_invoice_items (
+        invoice_id, product_id, description, quantity, unit_price_cents, discount_cents, total_cents, sort_order
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          invoiceId,
+          it.product_id ?? null,
+          it.description,
+          it.quantity,
+          it.unit_price_cents,
+          it.discount_cents ?? 0,
+          totalCents,
+          i,
+        ]
+      );
+    }
+  }
+
+  await pool.query(
+    `UPDATE customer_invoices SET amount_cents = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
+    [amountCents, invoiceId, tenantId]
+  );
+  return amountCents;
+}
+
 export async function findCustomerInvoiceBySubscriptionAndPeriod(
   subscriptionId: string,
   periodStart: string
@@ -579,5 +686,11 @@ export async function updateCustomerInvoiceStatus(
        WHERE id = $3`,
       [status, gatewayStatus ?? null, invoiceId]
     );
+  }
+
+  try {
+    await syncOrdersFromCustomerInvoiceStatus(invoiceId, status);
+  } catch (err) {
+    console.error('[updateCustomerInvoiceStatus] syncOrdersFromCustomerInvoiceStatus:', err);
   }
 }

@@ -7,6 +7,7 @@ import {
   getCustomerInvoicesGatewayStatus,
   createCustomerInvoice,
   updateCustomerInvoice,
+  deleteCustomerInvoice,
 } from '../controllers/customerInvoicesController.js';
 import { tenantAuthCrm } from '../middleware/auth.js';
 
@@ -20,5 +21,6 @@ router.get('/:id/recurrence-history', getCustomerInvoiceRecurrenceHistory);
 router.get('/:id', getCustomerInvoiceById);
 router.post('/', createCustomerInvoice);
 router.patch('/:id', updateCustomerInvoice);
+router.delete('/:id', deleteCustomerInvoice);
 
 export default router;

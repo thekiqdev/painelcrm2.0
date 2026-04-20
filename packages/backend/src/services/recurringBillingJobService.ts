@@ -3,6 +3,7 @@
  * Scheduler: SELECT subscriptions WHERE status='active' AND next_billing_date <= CURRENT_DATE LIMIT 500.
  * Worker: SELECT jobs FOR UPDATE SKIP LOCKED LIMIT 100; validar subscription; criar fatura; gateway; atualizar subscription e job.
  */
+import crypto from 'node:crypto';
 import { pool, dbRequestStorage, withBillingWorkerRlsBypass } from '../utils/db.js';
 
 import { billingLog, notifyBillingJobFailed } from './billingLogger.js';
@@ -27,7 +28,12 @@ import {
   type CustomerInvoiceItemRow,
   updateCustomerInvoiceGatewayData,
 } from './customerInvoiceService.js';
-import { getPaymentCustomerForClient, createPaymentCustomerForClient } from './paymentCustomersService.js';
+import {
+  getPaymentCustomerForClient,
+  createPaymentCustomerForClient,
+  deletePaymentCustomerForClient,
+} from './paymentCustomersService.js';
+import { isAsaasInvalidCustomerError } from '../modules/gateways/asaas/asaasErrors.js';
 import { calculateInvoiceAmount, type BillingInterval } from './billingService.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
@@ -542,38 +548,57 @@ async function processOneCustomerRenewalJob(job: JobRow, subscription: Subscript
   if (gateway) {
     try {
       let customerId = (await getPaymentCustomerForClient(subscription.tenant_id, gatewayKey, clientId))?.gateway_customer_id ?? null;
-      if (!customerId && gateway.ensureCustomerForClient) {
-        const clientRow = await pool.query<{ name: string; email: string | null; phone: string | null; company: string | null }>(
-          'SELECT name, email, phone, company FROM clients WHERE id = $1',
-          [clientId]
-        );
-        const c = clientRow.rows[0];
-        if (c) {
+      let clientRow = await pool.query<{
+        name: string;
+        email: string | null;
+        phone: string | null;
+        company: string | null;
+        cpf_cnpj: string | null;
+      }>('SELECT name, email, phone, company, cpf_cnpj FROM clients WHERE id = $1', [clientId]);
+      let c = clientRow.rows[0];
+      if (!customerId && gateway.ensureCustomerForClient && c) {
+        customerId = await gateway.ensureCustomerForClient(subscription.tenant_id, clientId, {
+          name: c.name,
+          email: c.email ?? '',
+          phone: c.phone ?? undefined,
+          cpfCnpj: c.cpf_cnpj?.trim() || undefined,
+        });
+        await createPaymentCustomerForClient(subscription.tenant_id, gatewayKey, clientId, customerId, clientId);
+      }
+      if (customerId) {
+        let idempotencyKey = `customer_renew_${subscription.id}_${periodStart}`;
+        const runCharge = () =>
+          gateway.createCharge({
+            customerId: customerId!,
+            amountCents,
+            dueDate: periodStart,
+            paymentMethod: (subscription.default_payment_method as 'PIX' | 'BOLETO' | 'CREDIT_CARD') ?? 'BOLETO',
+            description: inv.invoice_number ?? `Cobrança ${periodStart}`,
+            idempotencyKey,
+            externalReference: clientId,
+          });
+        let chargeResult;
+        try {
+          chargeResult = await runCharge();
+        } catch (renewErr) {
+          if (
+            !isAsaasInvalidCustomerError(renewErr) ||
+            !gateway.ensureCustomerForClient ||
+            !c
+          ) {
+            throw renewErr;
+          }
+          await deletePaymentCustomerForClient(subscription.tenant_id, gatewayKey, clientId);
           customerId = await gateway.ensureCustomerForClient(subscription.tenant_id, clientId, {
             name: c.name,
             email: c.email ?? '',
             phone: c.phone ?? undefined,
+            cpfCnpj: c.cpf_cnpj?.trim() || undefined,
           });
-          await createPaymentCustomerForClient(
-            subscription.tenant_id,
-            gatewayKey,
-            clientId,
-            customerId,
-            clientId
-          );
+          await createPaymentCustomerForClient(subscription.tenant_id, gatewayKey, clientId, customerId, clientId);
+          idempotencyKey = `customer_renew_${subscription.id}_${periodStart}_r_${crypto.randomUUID().slice(0, 8)}`;
+          chargeResult = await runCharge();
         }
-      }
-      if (customerId) {
-        const idempotencyKey = `customer_renew_${subscription.id}_${periodStart}`;
-        const chargeResult = await gateway.createCharge({
-          customerId,
-          amountCents,
-          dueDate: periodStart,
-          paymentMethod: (subscription.default_payment_method as 'PIX' | 'BOLETO' | 'CREDIT_CARD') ?? 'BOLETO',
-          description: inv.invoice_number ?? `Cobrança ${periodStart}`,
-          idempotencyKey,
-          externalReference: clientId,
-        });
         await updateCustomerInvoiceGatewayData(inv.id, {
           gateway: gatewayKey,
           payment_method: (subscription.default_payment_method as string) ?? null,
@@ -778,32 +803,56 @@ export async function processChildItemDueInvoices(): Promise<ProcessChildInvoice
       try {
         let customerId =
           (await getPaymentCustomerForClient(row.tenant_id, gatewayKey, clientId))?.gateway_customer_id ?? null;
-        if (!customerId && gateway.ensureCustomerForClient) {
-          const clientRow = await pool.query<{ name: string; email: string | null; phone: string | null }>(
-            'SELECT name, email, phone FROM clients WHERE id = $1',
-            [clientId]
-          );
-          const c = clientRow.rows[0];
-          if (c) {
-            customerId = await gateway.ensureCustomerForClient(row.tenant_id, clientId, {
-              name: c.name,
-              email: c.email ?? '',
-              phone: c.phone ?? undefined,
-            });
-            await createPaymentCustomerForClient(row.tenant_id, gatewayKey, clientId, customerId, clientId);
-          }
+        const childClientRow = await pool.query<{
+          name: string;
+          email: string | null;
+          phone: string | null;
+          cpf_cnpj: string | null;
+        }>('SELECT name, email, phone, cpf_cnpj FROM clients WHERE id = $1', [clientId]);
+        const childClient = childClientRow.rows[0];
+        if (!customerId && gateway.ensureCustomerForClient && childClient) {
+          customerId = await gateway.ensureCustomerForClient(row.tenant_id, clientId, {
+            name: childClient.name,
+            email: childClient.email ?? '',
+            phone: childClient.phone ?? undefined,
+            cpfCnpj: childClient.cpf_cnpj?.trim() || undefined,
+          });
+          await createPaymentCustomerForClient(row.tenant_id, gatewayKey, clientId, customerId, clientId);
         }
         if (customerId) {
-          const idempotencyKey = `customer_child_${row.item_id}_${due}`;
-          const chargeResult = await gateway.createCharge({
-            customerId,
-            amountCents: Math.max(0, row.total_cents),
-            dueDate: due,
-            paymentMethod: (subscription.default_payment_method as 'PIX' | 'BOLETO' | 'CREDIT_CARD') ?? 'BOLETO',
-            description: childInv.invoice_number ?? `Cobrança item ${due}`,
-            idempotencyKey,
-            externalReference: clientId,
-          });
+          let idempotencyKey = `customer_child_${row.item_id}_${due}`;
+          const runChildCharge = () =>
+            gateway.createCharge({
+              customerId: customerId!,
+              amountCents: Math.max(0, row.total_cents),
+              dueDate: due,
+              paymentMethod: (subscription.default_payment_method as 'PIX' | 'BOLETO' | 'CREDIT_CARD') ?? 'BOLETO',
+              description: childInv.invoice_number ?? `Cobrança item ${due}`,
+              idempotencyKey,
+              externalReference: clientId,
+            });
+          let chargeResult;
+          try {
+            chargeResult = await runChildCharge();
+          } catch (childErr) {
+            if (
+              !isAsaasInvalidCustomerError(childErr) ||
+              !gateway.ensureCustomerForClient ||
+              !childClient
+            ) {
+              throw childErr;
+            }
+            await deletePaymentCustomerForClient(row.tenant_id, gatewayKey, clientId);
+            customerId = await gateway.ensureCustomerForClient(row.tenant_id, clientId, {
+              name: childClient.name,
+              email: childClient.email ?? '',
+              phone: childClient.phone ?? undefined,
+              cpfCnpj: childClient.cpf_cnpj?.trim() || undefined,
+            });
+            await createPaymentCustomerForClient(row.tenant_id, gatewayKey, clientId, customerId, clientId);
+            idempotencyKey = `customer_child_${row.item_id}_${due}_r_${crypto.randomUUID().slice(0, 8)}`;
+            chargeResult = await runChildCharge();
+          }
           await updateCustomerInvoiceGatewayData(childInv.id, {
             gateway: gatewayKey,
             payment_method: (subscription.default_payment_method as string) ?? null,

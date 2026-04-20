@@ -103,6 +103,17 @@ export interface CustomerInvoiceRecurrenceHistoryResponse {
   history: RecurrenceHistoryInvoice[];
 }
 
+export interface UpdateCustomerInvoiceBody {
+  description?: string | null;
+  status?: 'cancelled';
+  due_date?: string;
+  amount_cents?: number;
+  /** Substitui linhas da fatura; use `[]` + `amount_cents` para valor único sem linhas. */
+  items?: CreateCustomerInvoiceItemBody[];
+  payment_method?: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | null;
+  allowed_payment_methods?: Array<'PIX' | 'BOLETO' | 'CREDIT_CARD'> | null;
+}
+
 export interface CreateCustomerInvoiceResult {
   invoice: CustomerInvoice;
   paymentUrls?: {
@@ -203,9 +214,15 @@ export const customerInvoicesService = {
     if (response.error) throw new Error(response.error);
   },
 
-  async update(id: string, data: { description?: string | null; status?: 'cancelled' }): Promise<CustomerInvoice | null> {
+  async update(id: string, data: UpdateCustomerInvoiceBody): Promise<CustomerInvoice | null> {
     const response = await apiClient.patch<CustomerInvoice>(`${BASE}/${id}`, data);
     if (response.error) throw new Error(response.error);
     return response.data ?? null;
+  },
+
+  /** Exclui a fatura no sistema e cancela/remove a cobrança no Asaas (faturas de assinatura não permitidas). */
+  async remove(id: string): Promise<void> {
+    const response = await apiClient.delete(`${BASE}/${id}`);
+    if (response.error) throw new Error(response.error);
   },
 };

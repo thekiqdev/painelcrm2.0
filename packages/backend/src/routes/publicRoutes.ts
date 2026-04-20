@@ -9,8 +9,30 @@ import {
   postSwitchPaymentMethodByToken,
   postPayWithCardByToken,
 } from '../controllers/publicCustomerInvoicesController.js';
+import {
+  getPublicContractView,
+  getPublicContractPdf,
+} from '../controllers/publicContractViewController.js';
+import {
+  getPublicSignatureInvite,
+  postPublicSignature,
+} from '../controllers/publicContractSignatureController.js';
 
 const router = Router();
+
+const contractPublicViewLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_CONTRACT_VIEW_MAX || '120', 10),
+  message: { ok: false, error: 'Muitas visualizações. Aguarde e tente novamente.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const token = req.params.token || '';
+    return `${ip}:${token}`;
+  },
+});
 
 /** Limite específico: captura de cartão (dados sensíveis em trânsito). */
 const payWithCardLimiter = rateLimit({
@@ -25,6 +47,32 @@ const payWithCardLimiter = rateLimit({
     return `${ip}:${token}`;
   },
 });
+
+router.get('/contracts/view/:token/pdf', contractPublicViewLimiter, getPublicContractPdf);
+router.get('/contracts/view/:token', contractPublicViewLimiter, getPublicContractView);
+
+const contractPublicSignatureReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_CONTRACT_SIGNATURE_GET_MAX || '120', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => `${req.ip || ''}:${req.params.token || ''}`,
+});
+
+const contractPublicSignaturePostLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_CONTRACT_SIGNATURE_POST_MAX || '30', 10),
+  message: { ok: false, error: 'Muitas tentativas de assinatura. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => `${req.ip || ''}:${req.params.token || ''}`,
+});
+
+router.get('/contracts/sign/:token', contractPublicSignatureReadLimiter, getPublicSignatureInvite);
+router.post('/contracts/sign/:token', contractPublicSignaturePostLimiter, postPublicSignature);
 
 router.get('/customer-invoices/pay/:token', getPayByToken);
 router.post('/customer-invoices/pay/:token/complete', postCompletePayByToken);

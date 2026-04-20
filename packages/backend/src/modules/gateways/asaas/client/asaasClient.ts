@@ -10,6 +10,7 @@ import type {
   AsaasIdentificationFieldResponse,
   AsaasPaymentRequest,
   AsaasPaymentResponse,
+  AsaasPaymentUpdateRequest,
   AsaasPixQrCodeResponse,
 } from '../asaasTypes.js';
 
@@ -159,6 +160,19 @@ export async function createPayment(
   config?: AsaasConfig | null
 ): Promise<AsaasPaymentResponse> {
   return request<AsaasPaymentResponse>('POST', '/payments', data, config);
+}
+
+export async function updatePayment(
+  paymentId: string,
+  data: AsaasPaymentUpdateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasPaymentResponse> {
+  return request<AsaasPaymentResponse>(
+    'PUT',
+    `/payments/${encodeURIComponent(paymentId)}`,
+    data,
+    config
+  );
 }
 
 export async function getPayment(

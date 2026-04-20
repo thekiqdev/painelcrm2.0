@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -24,9 +25,9 @@ import { Product, StoreProfile } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 
-type TypeFilter = "all" | "product" | "service";
 type StatusFilter = "all" | "active" | "inactive" | "draft";
 type CategoryFilter = "all" | "__none__" | string;
+type CatalogTab = "all" | "product" | "service";
 
 function formatTablePrice(product: Product): string {
   const rawPrice = product.price != null ? Number(product.price) : null;
@@ -53,16 +54,12 @@ const Products = () => {
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchName, setSearchName] = useState("");
-  const [filterType, setFilterType] = useState<TypeFilter>("all");
+  const [activeTab, setActiveTab] = useState<CatalogTab>("all");
   const [filterStatus, setFilterStatus] = useState<StatusFilter>("all");
   const [filterCategory, setFilterCategory] = useState<CategoryFilter>("all");
   const { toast } = useToast();
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const [productsData, storeData] = await Promise.all([
@@ -81,7 +78,11 @@ const Products = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const categoryOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -96,7 +97,7 @@ const Products = () => {
     const q = searchName.trim().toLowerCase();
     return products.filter((p) => {
       if (q && !p.name.toLowerCase().includes(q)) return false;
-      if (filterType !== "all" && p.type !== filterType) return false;
+      if (activeTab !== "all" && p.type !== activeTab) return false;
       if (filterStatus !== "all" && p.status !== filterStatus) return false;
       if (filterCategory !== "all") {
         const trimmed = p.category?.trim() || "";
@@ -108,7 +109,7 @@ const Products = () => {
       }
       return true;
     });
-  }, [products, searchName, filterType, filterStatus, filterCategory]);
+  }, [products, searchName, activeTab, filterStatus, filterCategory]);
 
   const handleDeleteProduct = async (id: string) => {
     if (!confirm("Tem certeza que deseja excluir este produto?")) return;
@@ -156,8 +157,8 @@ const Products = () => {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
         <div>
-          <h1 className="text-2xl font-bold">Produtos / Serviços</h1>
-          <p className="text-muted-foreground">Gerencie seus produtos e serviços</p>
+          <h1 className="text-2xl font-bold">Catálogo</h1>
+          <p className="text-muted-foreground">Gerencie os itens do seu catálogo</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => navigate("/admin/loja")}>
@@ -166,7 +167,7 @@ const Products = () => {
           </Button>
           <Button onClick={() => navigate("/admin/products/new")}>
             <Plus className="mr-2 h-4 w-4" />
-            Adicionar Produto
+            Novo item
           </Button>
         </div>
       </div>
@@ -215,13 +216,21 @@ const Products = () => {
               </p>
               <Button onClick={() => navigate("/admin/products/new")}>
                 <Plus className="mr-2 h-4 w-4" />
-                Adicionar Primeiro Produto
+                Adicionar primeiro item
               </Button>
             </div>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as CatalogTab)}>
+            <TabsList className="grid w-full max-w-md grid-cols-3">
+              <TabsTrigger value="all">Todos</TabsTrigger>
+              <TabsTrigger value="product">Produtos</TabsTrigger>
+              <TabsTrigger value="service">Serviços</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
             <div className="flex-1 min-w-[200px]">
               <label className="text-sm text-muted-foreground mb-1 block">Buscar por nome</label>
@@ -230,19 +239,6 @@ const Products = () => {
                 value={searchName}
                 onChange={(e) => setSearchName(e.target.value)}
               />
-            </div>
-            <div className="w-full sm:w-40">
-              <label className="text-sm text-muted-foreground mb-1 block">Tipo</label>
-              <Select value={filterType} onValueChange={(v) => setFilterType(v as TypeFilter)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="product">Produto</SelectItem>
-                  <SelectItem value="service">Serviço</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
             <div className="w-full sm:w-40">
               <label className="text-sm text-muted-foreground mb-1 block">Status</label>
@@ -297,7 +293,7 @@ const Products = () => {
                 {filteredProducts.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
-                      Nenhum produto corresponde aos filtros.
+                      Nenhum item corresponde aos filtros da aba selecionada.
                     </TableCell>
                   </TableRow>
                 ) : (

@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/popover";
 import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -41,9 +42,10 @@ import {
   Search,
   MoreVertical,
   FileText,
-  Send,
   Download,
+  Send,
   Copy,
+  Trash2,
   Play,
   Square,
   XCircle,
@@ -51,10 +53,13 @@ import {
   Filter,
 } from "lucide-react";
 import type { Contract, ContractStatus, ContractFilters } from "@/types/contracts";
+import { getContractDocumentHtml } from "@/utils/contractDocument";
+import { canDeleteContractStatus } from "@/utils/contractStatusUi";
 
 const Contracts = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { canDeleteRecord } = useModulePermissions();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -118,7 +123,7 @@ const Contracts = () => {
               responsible_id: original.responsible_id || undefined,
               status: 'DRAFT',
               content: original.content || undefined,
-              content_html: original.content_html || undefined,
+              content_html: getContractDocumentHtml(original) || undefined,
               tags: original.tags,
             });
           }
@@ -171,6 +176,23 @@ const Contracts = () => {
     }
   };
 
+  const canDeleteContractInUi = (contract: Contract): boolean =>
+    canDeleteContractStatus(contract.status) &&
+    canDeleteRecord("contracts", contract.responsible_id || contract.user_id, user?.id);
+
+  const handleDeleteContract = async (contract: Contract) => {
+    if (!canDeleteContractInUi(contract)) return;
+    if (!confirm(`Excluir definitivamente o contrato "${contract.title}"?`)) return;
+    try {
+      await contractsService.deleteContract(contract.id);
+      toast.success("Contrato excluído com sucesso");
+      await loadContracts();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Erro ao excluir contrato";
+      toast.error(msg);
+    }
+  };
+
   useEffect(() => {
     if (user) loadContracts();
   }, [sortField, sortDirection]);
@@ -189,7 +211,7 @@ const Contracts = () => {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Contratos</h1>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button variant="outline" onClick={() => navigate("/contracts/templates")}>
             <FileText className="mr-2 h-4 w-4" />
             Modelos
           </Button>
@@ -385,10 +407,15 @@ const Contracts = () => {
               </TableRow>
             ) : (
               contracts.map((contract) => (
-                <TableRow key={contract.id}>
+                <TableRow
+                  key={contract.id}
+                  className="cursor-pointer"
+                  onClick={() => navigate(`/contracts/${contract.id}`)}
+                >
                   <TableCell>
                     <Checkbox
                       checked={selectedIds.includes(contract.id)}
+                      onClick={(e) => e.stopPropagation()}
                       onCheckedChange={(checked) => {
                         if (checked) {
                           setSelectedIds([...selectedIds, contract.id]);
@@ -400,8 +427,12 @@ const Contracts = () => {
                   </TableCell>
                   <TableCell className="font-mono">{contract.contract_number}</TableCell>
                   <TableCell className="font-medium">{contract.title}</TableCell>
-                  <TableCell>-</TableCell>
-                  <TableCell>-</TableCell>
+                  <TableCell className="max-w-[220px] truncate" title={contract.client_name || "—"}>
+                    {contract.client_name || "—"}
+                  </TableCell>
+                  <TableCell className="max-w-[220px] truncate" title={contract.responsible_display_name || contract.creator_display_name || "—"}>
+                    {contract.responsible_display_name || contract.creator_display_name || "—"}
+                  </TableCell>
                   <TableCell>{getStatusBadge(contract.status)}</TableCell>
                   <TableCell>
                     {contract.start_date ? format(new Date(contract.start_date), 'dd/MM/yyyy') : '-'}
@@ -415,7 +446,7 @@ const Contracts = () => {
                   <TableCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
+                        <Button variant="ghost" size="icon" onClick={(e) => e.stopPropagation()}>
                           <MoreVertical className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
@@ -425,19 +456,60 @@ const Contracts = () => {
                           Ver/Editar
                         </DropdownMenuItem>
                         {contract.status === 'DRAFT' && (
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => navigate(`/contracts/${contract.id}/edit`)}
+                          >
                             <Send className="mr-2 h-4 w-4" />
-                            Enviar p/ Assinatura
+                            Editar e enviar para assinatura
                           </DropdownMenuItem>
                         )}
-                        <DropdownMenuItem>
-                          <Download className="mr-2 h-4 w-4" />
-                          Exportar PDF
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        {String(contract.content_snapshot_html || "").trim() && (
+                          <DropdownMenuItem
+                            onClick={() => void contractsService.downloadContractPdf(contract.id)}
+                          >
+                            <Download className="mr-2 h-4 w-4" />
+                            Baixar PDF
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          onClick={async () => {
+                            try {
+                              const nc = await contractsService.createContract({
+                                title: `${contract.title} (Cópia)`,
+                                client_id: contract.client_id || undefined,
+                                responsible_id: contract.responsible_id || undefined,
+                                template_id: contract.template_id || undefined,
+                                status: 'DRAFT',
+                                content: contract.content || undefined,
+                                content_html: getContractDocumentHtml(contract) || undefined,
+                                tags: contract.tags,
+                                variables: contract.variables,
+                              });
+                              toast.success('Contrato duplicado');
+                              navigate(`/contracts/${nc.id}`, {
+                                state: nc.public_view?.token
+                                  ? { publicView: { token: nc.public_view.token } }
+                                  : undefined,
+                              });
+                              loadContracts();
+                            } catch (e) {
+                              console.error(e);
+                              toast.error('Erro ao duplicar contrato');
+                            }
+                          }}
+                        >
                           <Copy className="mr-2 h-4 w-4" />
                           Duplicar
                         </DropdownMenuItem>
+                        {canDeleteContractInUi(contract) && (
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => void handleDeleteContract(contract)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Excluir contrato
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>

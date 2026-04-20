@@ -3,6 +3,7 @@ import { tenantAuthCrm, requireFeature } from '../middleware/auth.js';
 import {
   listBoards,
   getBoard,
+  getBoardSettings,
   createBoard,
   patchBoard,
   listColumns,
@@ -24,6 +25,7 @@ router.use(requireFeature('chat'));
 router.get('/boards', listBoards);
 router.post('/boards', createBoard);
 router.get('/boards/:boardId', getBoard);
+router.get('/boards/:boardId/settings', getBoardSettings);
 router.patch('/boards/:boardId', patchBoard);
 
 router.get('/boards/:boardId/columns', listColumns);

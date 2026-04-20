@@ -2,6 +2,7 @@
  * Serviço da tabela payment_customers (Fase 4 — PLANO-EVOLUCAO-PAYMENT-GATEWAYS-PANEL).
  * Vínculo tenant ↔ cliente no gateway; evita consultar a API do gateway em todo ensureCustomer.
  */
+import type { CreateCustomerInput, PaymentGateway } from '../modules/payments/paymentGatewayTypes.js';
 import { pool } from '../utils/db.js';
 
 export interface PaymentCustomerRow {
@@ -92,4 +93,46 @@ export async function createPaymentCustomerForClient(
     [tenantId, gatewayKey, gatewayCustomerId, externalReference, clientId]
   );
   return r.rows[0];
+}
+
+/**
+ * Remove o vínculo CRM ↔ customer do gateway (ex.: ID do sandbox inválido após troca para produção).
+ */
+export async function deletePaymentCustomerForClient(
+  tenantId: string,
+  gatewayKey: string,
+  clientId: string
+): Promise<void> {
+  await pool.query(
+    `DELETE FROM payment_customers
+     WHERE tenant_id = $1 AND gateway_key = $2 AND client_id = $3`,
+    [tenantId, gatewayKey, clientId]
+  );
+}
+
+/**
+ * Resolve gateway_customer_id para um cliente do CRM, com opção de recriar no gateway (invalida cache local).
+ */
+export async function ensurePaymentCustomerForCrmClient(
+  tenantId: string,
+  gatewayKey: string,
+  clientId: string,
+  gateway: PaymentGateway,
+  clientData: CreateCustomerInput,
+  options?: { forceRecreate?: boolean }
+): Promise<string> {
+  if (options?.forceRecreate) {
+    await deletePaymentCustomerForClient(tenantId, gatewayKey, clientId);
+  } else {
+    const existing = await getPaymentCustomerForClient(tenantId, gatewayKey, clientId);
+    if (existing?.gateway_customer_id) {
+      return existing.gateway_customer_id;
+    }
+  }
+  if (!gateway.ensureCustomerForClient) {
+    throw new Error('Não foi possível obter ou criar o cliente no gateway de pagamento');
+  }
+  const customerId = await gateway.ensureCustomerForClient(tenantId, clientId, clientData);
+  await createPaymentCustomerForClient(tenantId, gatewayKey, clientId, customerId, clientId);
+  return customerId;
 }

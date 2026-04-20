@@ -4,8 +4,9 @@ import { io, type Socket } from 'socket.io-client';
 type AttendancePayload = { conversation?: { id?: string } };
 
 /**
- * Quando o atendimento (ou um ping mínimo pós-regras de organização) é emitido para o tenant,
- * recarrega os cartões do quadro se a conversa estiver presente — evita F5 para ver operador / encerrada / metadata.
+ * Mantém o quadro Kanban alinhado com o servidor sem F5:
+ * - atendimento / metadata (`conversation_attendance_updated`)
+ * - nova mensagem ou última mensagem da conversa (`new_message`, `conversation_updated`), ex.: automação por template
  */
 export function useKanbanAttendanceSocketRefresh(
   token: string | undefined,
@@ -43,17 +44,36 @@ export function useKanbanAttendanceSocketRefresh(
       }, 200);
     };
 
+    const isBoardConversation = (id: string | undefined): id is string => {
+      if (!id) return false;
+      return idsFnRef.current().includes(id);
+    };
+
     const onAttendance = (raw: AttendancePayload) => {
       const id = raw?.conversation?.id;
-      if (!id) return;
-      if (!idsFnRef.current().includes(id)) return;
+      if (!isBoardConversation(id)) return;
+      scheduleRefresh();
+    };
+
+    const onNewMessage = (data: { conversationId?: string }) => {
+      if (!isBoardConversation(data?.conversationId)) return;
+      scheduleRefresh();
+    };
+
+    const onConversationUpdated = (raw: { id?: string }) => {
+      if (!isBoardConversation(raw?.id)) return;
       scheduleRefresh();
     };
 
     socket.on('conversation_attendance_updated', onAttendance);
+    socket.on('new_message', onNewMessage);
+    socket.on('conversation_updated', onConversationUpdated);
 
     return () => {
       if (debounce) clearTimeout(debounce);
+      socket.off('conversation_attendance_updated', onAttendance);
+      socket.off('new_message', onNewMessage);
+      socket.off('conversation_updated', onConversationUpdated);
       socket.disconnect();
     };
   }, [token, boardActive]);

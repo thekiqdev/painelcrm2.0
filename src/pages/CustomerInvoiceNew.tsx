@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate, Link, useSearchParams } from "react-router-dom";
+import React, { useState, useEffect, useRef } from "react";
+import { useNavigate, Link, useSearchParams, useMatch } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +19,7 @@ import { customerChargesService } from "@/services/customerCharges";
 import { clientsService } from "@/services/clients";
 import { productsService } from "@/services/products";
 import { apiClient } from "@/integrations/api/client";
-import type { CreateCustomerInvoiceBody } from "@/services/customerInvoices";
+import type { CreateCustomerInvoiceBody, CustomerInvoiceItem, UpdateCustomerInvoiceBody } from "@/services/customerInvoices";
 import type { CustomerChargeWithSummary } from "@/services/customerCharges";
 import type { Product } from "@/types/products";
 import type { Client } from "@/services/clients";
@@ -35,6 +35,13 @@ function todayLocalYmd(): string {
     String(d.getMonth() + 1).padStart(2, "0"),
     String(d.getDate()).padStart(2, "0"),
   ].join("-");
+}
+
+/** Mesmo texto enviado ao gateway quando não há observação (alinhado ao backend). */
+function effectiveInvoiceObservationText(dueDateYmd: string, stored: string | null | undefined): string {
+  const t = stored?.trim();
+  if (t) return t;
+  return `Cobrança ${dueDateYmd}`;
 }
 
 /** Valor completo emitido pelo input type="date" (yyyy-mm-dd). */
@@ -86,6 +93,22 @@ const defaultLine = (): InvoiceLineRow => ({
   scheduled_due_date: "",
 });
 
+function invoiceItemToLine(it: CustomerInvoiceItem): InvoiceLineRow {
+  return {
+    id: it.id,
+    description: it.description,
+    quantity: String(it.quantity),
+    unit_price: formatBrlDisplay(it.unit_price_cents / 100),
+    discount: formatBrlDisplay(it.discount_cents / 100),
+    discount_kind: "fixed",
+    product_id: it.product_id,
+    show_advanced: Boolean(it.scheduled_due_date || it.recurring_interval),
+    is_recurring: it.is_recurring ?? true,
+    recurring_interval: (it.recurring_interval as InvoiceLineRow["recurring_interval"]) ?? "monthly",
+    scheduled_due_date: it.scheduled_due_date?.slice(0, 10) ?? "",
+  };
+}
+
 /** Subtotal da linha em centavos (q × unitário). */
 function lineSubtotalCents(line: InvoiceLineRow): number {
   const q = parseBrl(line.quantity);
@@ -122,11 +145,14 @@ const CustomerInvoiceNew = ({
   onCreated,
 }: CustomerInvoiceNewProps = {}) => {
   const navigate = useNavigate();
+  const editMatch = useMatch({ path: "/customer-invoices/:id/edit", end: true });
+  const editInvoiceId = embedded ? undefined : editMatch?.params?.id;
+  const isEditMode = Boolean(editInvoiceId);
   const [searchParams] = useSearchParams();
   const queryClientId = searchParams.get("client_id");
   const prefillClientId = (initialClientId ?? queryClientId ?? "").trim();
   const forcedEmbeddedClientId = embedded ? prefillClientId : "";
-  const [step, setStep] = useState<"client" | "form">("client");
+  const [step, setStep] = useState<"client" | "form">(() => (isEditMode ? "form" : "client"));
   const [form, setForm] = useState<CreateCustomerInvoiceBody & { amount?: string }>({
     client_id: "",
     due_date: "",
@@ -157,6 +183,67 @@ const CustomerInvoiceNew = ({
     "BOLETO",
     "CREDIT_CARD",
   ]);
+  const [editReady, setEditReady] = useState(() => !isEditMode);
+  const editInitialObservationsRef = useRef("");
+
+  useEffect(() => {
+    if (!isEditMode || !editInvoiceId || embedded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const inv = await customerInvoicesService.getById(editInvoiceId);
+        if (cancelled || !inv) {
+          if (!cancelled) {
+            toast.error("Fatura não encontrada");
+            navigate("/customer-invoices");
+          }
+          return;
+        }
+        if (inv.origin === "subscription") {
+          toast.error("Faturas geradas pela assinatura não podem ser editadas nesta tela.");
+          navigate(`/customer-invoices/${editInvoiceId}`);
+          return;
+        }
+        setInvoiceByLink(!inv.client_id);
+        const dueYmd = inv.due_date.slice(0, 10);
+        const observationText = effectiveInvoiceObservationText(dueYmd, inv.description);
+        editInitialObservationsRef.current = observationText;
+        setForm({
+          client_id: inv.client_id ?? "",
+          due_date: dueYmd,
+          description: observationText,
+          payment_method: (inv.payment_method as InvoicePaymentMethod | null) ?? null,
+          gateway_key: inv.gateway ?? null,
+          amount: "",
+          charge_id: inv.charge_id ?? null,
+        });
+        setRecurring(false);
+        const meta = inv.gateway_metadata as { allowed_payment_methods?: InvoicePaymentMethod[] } | null;
+        if (Array.isArray(meta?.allowed_payment_methods) && meta.allowed_payment_methods.length > 0) {
+          setAllowedPaymentMethods(meta.allowed_payment_methods);
+        }
+        if (inv.items && inv.items.length > 0) {
+          setLines(inv.items.map(invoiceItemToLine));
+        } else {
+          setLines([defaultLine()]);
+          setForm((f) => ({
+            ...f,
+            amount: formatBrlDisplay(inv.amount_cents / 100),
+          }));
+        }
+        setStep("form");
+        setEditReady(true);
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Erro ao carregar fatura");
+          navigate("/customer-invoices");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditMode, editInvoiceId, embedded, navigate]);
 
   useEffect(() => {
     customerInvoicesService
@@ -272,26 +359,26 @@ const CustomerInvoiceNew = ({
   }, [embedded, prefillClientId, onBack]);
 
   useEffect(() => {
-    if (!prefillClientId) return;
+    if (isEditMode || !prefillClientId) return;
     setInvoiceByLink(false);
     setForm((f) => {
       if (f.client_id === prefillClientId) return f;
       return { ...f, client_id: prefillClientId };
     });
     setStep("form");
-  }, [prefillClientId]);
+  }, [prefillClientId, isEditMode]);
 
   useEffect(() => {
     setChargeQuery("");
   }, [form.client_id]);
 
   useEffect(() => {
-    if (step !== "form") return;
+    if (step !== "form" || isEditMode) return;
     setForm((f) => {
       if (f.due_date?.trim()) return f;
       return { ...f, due_date: todayLocalYmd() };
     });
-  }, [step]);
+  }, [step, isEditMode]);
 
   const totalCentsFromLines = lines.reduce((sum, l) => sum + lineTotalCents(l), 0);
   const validLines = lines.filter((l) => parseBrl(l.quantity) > 0 && parseBrl(l.unit_price) >= 0);
@@ -350,6 +437,68 @@ const CustomerInvoiceNew = ({
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isEditMode && editInvoiceId && !embedded) {
+      const resolvedClientId = (form.client_id || "").trim();
+      if (!form.due_date) {
+        toast.error("Preencha a data de vencimento");
+        return;
+      }
+      if (!invoiceByLink && !resolvedClientId) {
+        toast.error("Preencha o cliente");
+        return;
+      }
+      const useItems = !useSingleAmount && validLines.length > 0;
+      const amountCents = useItems ? totalCentsFromLines : Math.round(parseBrl(form.amount) * 100);
+      if (amountCents <= 0) {
+        toast.error(useSingleAmount ? "Informe o valor único" : "Preencha a tabela de itens ou o valor único");
+        return;
+      }
+      try {
+        setCreateLoading(true);
+        const payload: UpdateCustomerInvoiceBody = {
+          due_date: form.due_date,
+          payment_method:
+            form.payment_method ??
+            (allowedPaymentMethods.includes("PIX")
+              ? "PIX"
+              : allowedPaymentMethods.includes("BOLETO")
+                ? "BOLETO"
+                : allowedPaymentMethods.includes("CREDIT_CARD")
+                  ? "CREDIT_CARD"
+                  : null),
+          allowed_payment_methods: allowedPaymentMethods.length > 0 ? allowedPaymentMethods : null,
+        };
+        const obsTrim = (form.description ?? "").trim();
+        const initialObsTrim = (editInitialObservationsRef.current ?? "").trim();
+        if (obsTrim !== initialObsTrim) {
+          payload.description = obsTrim || null;
+        }
+        if (useItems) {
+          payload.items = validLines.map((l) => ({
+            description: l.description.trim() || "Item",
+            quantity: parseBrl(l.quantity),
+            unit_price_cents: Math.round(parseBrl(l.unit_price) * 100),
+            discount_cents: lineDiscountCents(l),
+            ...(l.product_id ? { product_id: l.product_id } : {}),
+            is_recurring: l.is_recurring,
+            recurring_interval: l.is_recurring ? l.recurring_interval : null,
+            scheduled_due_date: l.scheduled_due_date.trim() || null,
+          }));
+        } else {
+          payload.items = [];
+          payload.amount_cents = amountCents;
+        }
+        await customerInvoicesService.update(editInvoiceId, payload);
+        toast.success("Fatura atualizada no sistema e no provedor de pagamento");
+        navigate(`/customer-invoices/${editInvoiceId}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao atualizar fatura");
+      } finally {
+        setCreateLoading(false);
+      }
+      return;
+    }
+
     const isInvoiceByLink = embedded ? false : invoiceByLink;
     const resolvedClientId = (forcedEmbeddedClientId || form.client_id || "").trim();
     if (!form.due_date) {
@@ -443,6 +592,20 @@ const CustomerInvoiceNew = ({
   );
   const showGatewaySelect = activeGatewaysForSelect.length > 1;
 
+  if (!embedded && isEditMode && !editReady) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-2xl font-bold">Editar fatura</h1>
+        </div>
+        <p className="text-muted-foreground">Carregando…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {!embedded && (
@@ -450,7 +613,7 @@ const CustomerInvoiceNew = ({
           <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-2xl font-bold">Nova fatura</h1>
+          <h1 className="text-2xl font-bold">{isEditMode ? "Editar fatura" : "Nova fatura"}</h1>
         </div>
       )}
 
@@ -639,6 +802,7 @@ const CustomerInvoiceNew = ({
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-6">
+              {!isEditMode && (
               <div>
                 <Label htmlFor="charge_search">Vincular à cobrança (opcional)</Label>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -683,6 +847,7 @@ const CustomerInvoiceNew = ({
                   </SelectContent>
                 </Select>
               </div>
+              )}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label>Itens da fatura</Label>
@@ -982,7 +1147,7 @@ const CustomerInvoiceNew = ({
                   <Input
                     id="due_date"
                     type="date"
-                    min={todayLocalYmd()}
+                    min={isEditMode ? undefined : todayLocalYmd()}
                     value={form.due_date}
                     onChange={(e) => {
                       setForm((f) => ({ ...f, due_date: e.target.value }));
@@ -991,10 +1156,12 @@ const CustomerInvoiceNew = ({
                       const v = e.currentTarget.value.trim();
                       const t = todayLocalYmd();
                       if (!v) {
-                        setForm((f) => ({ ...f, due_date: t }));
+                        if (!isEditMode) {
+                          setForm((f) => ({ ...f, due_date: t }));
+                        }
                         return;
                       }
-                      if (isCompleteYmdString(v) && v < t) {
+                      if (!isEditMode && isCompleteYmdString(v) && v < t) {
                         toast.error("A data de vencimento não pode ser anterior a hoje");
                         setForm((f) => ({ ...f, due_date: t }));
                         return;
@@ -1038,7 +1205,7 @@ const CustomerInvoiceNew = ({
                       Se nada vier definido no backend, a tela pública usa fallback para todos os métodos.
                     </p>
                   </div>
-                  {showGatewaySelect && (
+                  {showGatewaySelect && !isEditMode && (
                     <div className="mt-4">
                       <Label htmlFor="gateway_key">Gateway (opcional)</Label>
                       <Select
@@ -1068,7 +1235,7 @@ const CustomerInvoiceNew = ({
                 </div>
               </div>
                 <div className="flex flex-col gap-2">
-                {!invoiceByLink && (
+                {!invoiceByLink && !isEditMode && (
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id="recurring"
@@ -1080,7 +1247,7 @@ const CustomerInvoiceNew = ({
                   </Label>
                 </div>
                 )}
-                {recurring && !invoiceByLink && (
+                {recurring && !invoiceByLink && !isEditMode && (
                   <div className="pl-6">
                     <Label htmlFor="billing_interval" className="text-muted-foreground text-sm">Periodicidade</Label>
                     <Select
@@ -1112,11 +1279,19 @@ const CustomerInvoiceNew = ({
                 />
               </div>
               <div className="flex gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setStep("client")}>
-                  Voltar
-                </Button>
+                {!isEditMode && (
+                  <Button type="button" variant="outline" onClick={() => setStep("client")}>
+                    Voltar
+                  </Button>
+                )}
                 <Button type="submit" disabled={createLoading}>
-                  {createLoading ? "Criando..." : "Criar fatura"}
+                  {createLoading
+                    ? isEditMode
+                      ? "Salvando…"
+                      : "Criando..."
+                    : isEditMode
+                      ? "Salvar alterações"
+                      : "Criar fatura"}
                 </Button>
               </div>
             </form>

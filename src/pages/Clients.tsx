@@ -1438,22 +1438,9 @@ const Clients = () => {
                           <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Ações</DropdownMenuLabel>
                             <DropdownMenuSeparator />
-                            {canEdit(MODULE_CLIENTS) && (
                             <DropdownMenuItem onClick={(e) => {
                               e.stopPropagation();
-                              setSelectedClient(client);
-                              handleEditClient();
-                              setIsViewDialogOpen(true);
-                            }}>
-                              <FileText className="h-4 w-4 mr-2" />
-                              Editar Cliente
-                            </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedClient(client);
-                              setTabSelected("tasks");
-                              setIsViewDialogOpen(true);
+                              navigate(`/clients/${client.id}/tasks`);
                             }}>
                               <Plus className="h-4 w-4 mr-2" />
                               Adicionar Tarefa

@@ -2,6 +2,8 @@ import { apiClient } from '@/integrations/api/client';
 
 const BASE = '/api/chat/kanban';
 
+export type ChatKanbanBoardVisibilityMode = 'tenant_all' | 'restricted';
+
 export interface ChatKanbanBoard {
   id: string;
   tenant_id: string;
@@ -14,6 +16,16 @@ export interface ChatKanbanBoard {
   linked_sales_funnel_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Quando presente (API recente): se o utilizador atual pode abrir a engrenagem de definições. */
+  current_user_can_manage?: boolean;
+  visibility_mode?: ChatKanbanBoardVisibilityMode | string | null;
+  is_active?: boolean;
+}
+
+export interface ChatKanbanBoardSettingsPayload {
+  board: ChatKanbanBoard;
+  allowed_user_ids: string[];
+  allowed_team_ids: string[];
 }
 
 export interface ChatKanbanColumn {
@@ -83,10 +95,42 @@ export const chatKanbanService = {
     return res.data as ChatKanbanBoard;
   },
 
-  async createBoard(payload: { name: string; description?: string | null; sort_order?: number }): Promise<ChatKanbanBoard> {
+  async getBoardSettings(boardId: string): Promise<ChatKanbanBoardSettingsPayload> {
+    const res = await apiClient.get<ChatKanbanBoardSettingsPayload>(`${BASE}/boards/${boardId}/settings`);
+    if (res.error) throw new Error(res.error);
+    if (!res.data) throw new Error('Definições do quadro indisponíveis');
+    return res.data;
+  },
+
+  async createBoard(payload: {
+    name: string;
+    description?: string | null;
+    sort_order?: number;
+    linked_sales_funnel_id?: string | null;
+  }): Promise<ChatKanbanBoard> {
     const res = await apiClient.post<ChatKanbanBoard>(`${BASE}/boards`, payload);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao criar board');
+    return res.data as ChatKanbanBoard;
+  },
+
+  async patchBoard(
+    boardId: string,
+    payload: {
+      name?: string;
+      description?: string | null;
+      sort_order?: number;
+      archived_at?: string | null;
+      linked_sales_funnel_id?: string | null;
+      visibility_mode?: ChatKanbanBoardVisibilityMode;
+      is_active?: boolean;
+      allowed_user_ids?: string[];
+      allowed_team_ids?: string[];
+    },
+  ): Promise<ChatKanbanBoard> {
+    const res = await apiClient.patch<ChatKanbanBoard>(`${BASE}/boards/${boardId}`, payload);
+    if (res.error) throw new Error(res.error);
+    if (!res.data) throw new Error('Falha ao atualizar board');
     return res.data as ChatKanbanBoard;
   },
 
@@ -107,7 +151,13 @@ export const chatKanbanService = {
 
   async createColumn(
     boardId: string,
-    payload: { name: string; color?: string | null; position?: number; metadata?: Record<string, unknown> },
+    payload: {
+      name: string;
+      color?: string | null;
+      position?: number;
+      funnel_stage_id?: string | null;
+      metadata?: Record<string, unknown>;
+    },
   ): Promise<ChatKanbanColumn> {
     const res = await apiClient.post<ChatKanbanColumn>(`${BASE}/boards/${boardId}/columns`, payload);
     if (res.error) throw new Error(res.error);

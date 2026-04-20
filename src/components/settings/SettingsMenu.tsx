@@ -17,7 +17,8 @@ import {
   MessageSquare, 
   Globe,
   FileText,
-  Shield
+  Shield,
+  LayoutTemplate,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,8 +34,9 @@ type SettingSection =
   | "leadsConfig" 
   | "clientGroups" 
   | "collaborators" 
-  | "whatsapp" 
-  | "domain" 
+  | "whatsapp"
+  | "chatTemplates"
+  | "domain"
   | "messageTemplates"
   | "paymentGateway";
 
@@ -48,7 +50,16 @@ interface MenuItem {
   label: string;
   icon: React.ReactNode;
   category?: string;
+  /** Subtítulo dentro da categoria (ex.: Integrações → Mensagens, Web, …). */
+  subcategory?: string;
 }
+
+const INTEGRATIONS_SUBCATEGORY_ORDER = [
+  "Mensagens",
+  "Marca e domínio",
+  "Modelos (CRM)",
+  "Recebimentos",
+] as const;
 
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSelect }) => {
   const location = useLocation();
@@ -74,11 +85,42 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
     { id: "clientGroups", label: "Grupos de Clientes", icon: <Tags className="h-4 w-4" />, category: "CRM" },
     { id: "collaborators", label: "Colaboradores", icon: <Users2 className="h-4 w-4" />, category: "CRM" },
     
-    // Categoria Integrações
-    { id: "whatsapp", label: "WhatsApp", icon: <MessageSquare className="h-4 w-4" />, category: "Integrações" },
-    { id: "domain", label: "Domínio", icon: <Globe className="h-4 w-4" />, category: "Integrações" },
-    { id: "messageTemplates", label: "Modelos de Mensagens", icon: <FileText className="h-4 w-4" />, category: "Integrações" },
-    { id: "paymentGateway", label: "Pagamentos", icon: <CreditCard className="h-4 w-4" />, category: "Integrações" }
+    // Categoria Integrações (subcategorias no menu lateral)
+    {
+      id: "whatsapp",
+      label: "WhatsApp",
+      icon: <MessageSquare className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Mensagens",
+    },
+    {
+      id: "chatTemplates",
+      label: "Templates WhatsApp",
+      icon: <LayoutTemplate className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Mensagens",
+    },
+    {
+      id: "domain",
+      label: "Domínio",
+      icon: <Globe className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Marca e domínio",
+    },
+    {
+      id: "messageTemplates",
+      label: "Modelos de mensagem (CRM)",
+      icon: <FileText className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Modelos (CRM)",
+    },
+    {
+      id: "paymentGateway",
+      label: "Pagamentos",
+      icon: <CreditCard className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Recebimentos",
+    },
   ];
 
   // Agrupar itens por categoria
@@ -94,54 +136,81 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
   // Ordem das categorias
   const categoryOrder = ["Usuários e Acesso", "Geral", "Preferências", "CRM", "Integrações", "Outros"];
 
+  const integrationSubOrder = INTEGRATIONS_SUBCATEGORY_ORDER as readonly string[];
+
+  const renderMenuButton = (item: MenuItem) => {
+    const isPaymentLink = item.id === "paymentGateway";
+    const isActive = isPaymentLink ? isPaymentsRoute : activeSection === item.id;
+    if (isPaymentLink) {
+      return (
+        <Button
+          key={item.id}
+          variant={isActive ? "secondary" : "ghost"}
+          className={cn("w-full justify-start", isActive && "bg-secondary")}
+          asChild
+        >
+          <Link to="/settings/payments">
+            {item.icon}
+            <span className="ml-2">{item.label}</span>
+          </Link>
+        </Button>
+      );
+    }
+    return (
+      <Button
+        key={item.id}
+        variant={activeSection === item.id ? "secondary" : "ghost"}
+        className={cn("w-full justify-start", activeSection === item.id && "bg-secondary")}
+        onClick={() => onSelect(item.id)}
+      >
+        {item.icon}
+        <span className="ml-2">{item.label}</span>
+      </Button>
+    );
+  };
+
   return (
     <div className="w-full h-full border rounded-md">
       <div className="p-4">
         {categoryOrder.map(category => {
           const items = categorizedItems[category];
           if (!items) return null;
-          
+
           return (
             <div key={category} className="mb-6 last:mb-0">
               <h4 className="text-sm font-medium text-muted-foreground mb-2">{category}</h4>
-              <div className="space-y-1">
-                {items.map(item => {
-                  const isPaymentLink = item.id === "paymentGateway";
-                  const isActive = isPaymentLink ? isPaymentsRoute : activeSection === item.id;
-                  if (isPaymentLink) {
+              {category === "Integrações" ? (
+                <div className="space-y-3">
+                  {INTEGRATIONS_SUBCATEGORY_ORDER.map((sub) => {
+                    const subItems = items.filter((i) => i.subcategory === sub);
+                    if (subItems.length === 0) return null;
                     return (
-                      <Button
-                        key={item.id}
-                        variant={isActive ? "secondary" : "ghost"}
-                        className={cn(
-                          "w-full justify-start",
-                          isActive && "bg-secondary"
-                        )}
-                        asChild
-                      >
-                        <Link to="/settings/payments">
-                          {item.icon}
-                          <span className="ml-2">{item.label}</span>
-                        </Link>
-                      </Button>
+                      <div key={sub}>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 mb-1.5 pl-0.5">
+                          {sub}
+                        </p>
+                        <div className="space-y-1">{subItems.map(renderMenuButton)}</div>
+                      </div>
                     );
-                  }
-                  return (
-                    <Button
-                      key={item.id}
-                      variant={activeSection === item.id ? "secondary" : "ghost"}
-                      className={cn(
-                        "w-full justify-start",
-                        activeSection === item.id && "bg-secondary"
-                      )}
-                      onClick={() => onSelect(item.id)}
-                    >
-                      {item.icon}
-                      <span className="ml-2">{item.label}</span>
-                    </Button>
-                  );
-                })}
-              </div>
+                  })}
+                  {(() => {
+                    const rest = items.filter(
+                      (i) => !i.subcategory || !integrationSubOrder.includes(i.subcategory),
+                    );
+                    if (rest.length === 0) return null;
+                    return (
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 mb-1.5 pl-0.5">
+                          Outros
+                        </p>
+                        <div className="space-y-1">{rest.map(renderMenuButton)}</div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="space-y-1">{items.map(renderMenuButton)}</div>
+              )}
               {category !== categoryOrder[categoryOrder.length - 1] && (
                 <Separator className="my-4" />
               )}

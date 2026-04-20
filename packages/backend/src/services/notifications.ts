@@ -13,7 +13,8 @@ export type NotificationType =
   | 'connection_restored'
   | 'lead_updated'
   | 'instance_connected'
-  | 'instance_disconnected';
+  | 'instance_disconnected'
+  | 'kanban_automation';
 
 /**
  * Interface para criar notificação

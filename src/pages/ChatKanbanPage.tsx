@@ -1,10 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
-import { LayoutGrid, Loader2, PanelTop, RefreshCw } from 'lucide-react';
+import { GripHorizontal, LayoutGrid, Loader2, PanelTop, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +41,7 @@ import { ChatKanbanEmptyState } from '@/components/chat-kanban/ChatKanbanEmptySt
 import { ChatKanbanMoveReasonDialog } from '@/components/chat-kanban/ChatKanbanMoveReasonDialog';
 import { ChatKanbanMoveConfirmDialog } from '@/components/chat-kanban/ChatKanbanMoveConfirmDialog';
 import { ChatKanbanColumnSettingsSheet } from '@/components/chat-kanban/ChatKanbanColumnSettingsSheet';
+import { ChatKanbanBoardSettingsSheet } from '@/components/chat-kanban/ChatKanbanBoardSettingsSheet';
 import {
   chatKanbanService,
   type ChatKanbanBoard,
@@ -35,6 +51,9 @@ import {
 import { parseKanbanColumnUi } from '@/utils/kanbanColumnRulesUi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKanbanAttendanceSocketRefresh } from '@/hooks/useKanbanAttendanceSocketRefresh';
+import { fetchFunnels } from '@/services/funnels';
+
+type FunnelOption = { id: string; name: string };
 
 const ChatKanbanPage = () => {
   const { session } = useAuth();
@@ -49,6 +68,9 @@ const ChatKanbanPage = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createLinkedFunnelId, setCreateLinkedFunnelId] = useState<string>('none');
+  const [funnels, setFunnels] = useState<FunnelOption[]>([]);
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
   const [columnManagerOpen, setColumnManagerOpen] = useState(false);
   const [addCardColumnId, setAddCardColumnId] = useState<string | null>(null);
   const [settingsColumn, setSettingsColumn] = useState<ChatKanbanColumn | null>(null);
@@ -132,6 +154,26 @@ const ChatKanbanPage = () => {
   useEffect(() => {
     void loadBoards();
   }, [loadBoards]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await fetchFunnels();
+      if (cancelled) return;
+      if (res.success) {
+        const mapped = ((res.data as Array<{ id: string; name: string }>) || []).map((f) => ({
+          id: f.id,
+          name: f.name,
+        }));
+        setFunnels(mapped);
+      } else {
+        setFunnels([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedBoardId) {
@@ -224,10 +266,14 @@ const ChatKanbanPage = () => {
     }
     setCreating(true);
     try {
-      const created = await chatKanbanService.createBoard({ name });
+      const created = await chatKanbanService.createBoard({
+        name,
+        linked_sales_funnel_id: createLinkedFunnelId === 'none' ? null : createLinkedFunnelId,
+      });
       toast.success('Quadro criado');
       setCreateOpen(false);
       setCreateName('');
+      setCreateLinkedFunnelId('none');
       await loadBoards();
       setSelectedBoardId(created.id);
     } catch (e: unknown) {
@@ -237,33 +283,119 @@ const ChatKanbanPage = () => {
     }
   };
 
-  return (
-    <div className="flex flex-col gap-6 -m-6 p-6 min-h-0">
-      <ChatKanbanToolbar
-        boards={boards}
-        selectedBoardId={selectedBoardId}
-        onBoardChange={(id) => setSelectedBoardId(id)}
-        onCreateBoardClick={() => setCreateOpen(true)}
-        onManageColumnsClick={() => setColumnManagerOpen(true)}
-        manageColumnsDisabled={!selectedBoardId || loadingBoardData}
-        disabledSelect={loadingBoards}
-      />
+  const selectedBoard = useMemo(
+    () => boards.find((b) => b.id === selectedBoardId) ?? null,
+    [boards, selectedBoardId],
+  );
 
-      {error ? (
-        <Alert variant="destructive">
-          <AlertTitle>Erro ao carregar</AlertTitle>
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm">{error}</span>
-            <Button type="button" variant="outline" size="sm" className="shrink-0 gap-2" onClick={() => void loadBoards()}>
-              <RefreshCw className="h-4 w-4" />
-              Tentar novamente
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
+  const drawerColumnName = useMemo(() => {
+    if (!drawerCard) return null;
+    return columns.find((c) => c.id === drawerCard.column_id)?.name ?? null;
+  }, [drawerCard, columns]);
+
+  const kanbanBoardScrollRef = useRef<HTMLDivElement>(null);
+  const kanbanBoardInnerRef = useRef<HTMLDivElement>(null);
+  const panStripState = useRef({ active: false, pointerId: 0, startX: 0, startScroll: 0 });
+  const [boardHScroll, setBoardHScroll] = useState({ scrollWidth: 0, clientWidth: 0 });
+
+  useLayoutEffect(() => {
+    const main = kanbanBoardScrollRef.current;
+    const inner = kanbanBoardInnerRef.current;
+    if (!main || !inner) return;
+    const update = () => {
+      setBoardHScroll({
+        scrollWidth: main.scrollWidth,
+        clientWidth: main.clientWidth,
+      });
+    };
+    const ro = new ResizeObserver(update);
+    ro.observe(main);
+    ro.observe(inner);
+    update();
+    return () => ro.disconnect();
+  }, [selectedBoardId, loadingBoardData, visibleSortedColumns.length]);
+
+  useEffect(() => {
+    const el = kanbanBoardScrollRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        el.scrollLeft += e.deltaX;
+        e.preventDefault();
+      } else if (e.shiftKey) {
+        el.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, [selectedBoardId, loadingBoardData, visibleSortedColumns.length]);
+
+  const boardHasHorizontalOverflow = boardHScroll.scrollWidth > boardHScroll.clientWidth + 2;
+
+  const onPanStripPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const main = kanbanBoardScrollRef.current;
+    if (!main || main.scrollWidth <= main.clientWidth) return;
+    panStripState.current = {
+      active: true,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startScroll: main.scrollLeft,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPanStripPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panStripState.current.active) return;
+    const main = kanbanBoardScrollRef.current;
+    if (!main) return;
+    main.scrollLeft = panStripState.current.startScroll - (e.clientX - panStripState.current.startX);
+  };
+
+  const onPanStripPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panStripState.current.active) return;
+    panStripState.current.active = false;
+    try {
+      e.currentTarget.releasePointerCapture(panStripState.current.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 -m-6 p-6">
+      <div className="flex shrink-0 flex-col gap-4">
+        <ChatKanbanToolbar
+          boards={boards}
+          selectedBoardId={selectedBoardId}
+          onBoardChange={(id) => setSelectedBoardId(id)}
+          onCreateBoardClick={() => setCreateOpen(true)}
+          onManageColumnsClick={() => setColumnManagerOpen(true)}
+          manageColumnsDisabled={!selectedBoardId || loadingBoardData}
+          disabledSelect={loadingBoards}
+          onBoardSettingsClick={() => setBoardSettingsOpen(true)}
+          showBoardSettings={Boolean(selectedBoard?.current_user_can_manage)}
+          boardSettingsDisabled={!selectedBoardId || loadingBoardData}
+        />
+
+        {error ? (
+          <Alert variant="destructive">
+            <AlertTitle>Erro ao carregar</AlertTitle>
+            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm">{error}</span>
+              <Button type="button" variant="outline" size="sm" className="shrink-0 gap-2" onClick={() => void loadBoards()}>
+                <RefreshCw className="h-4 w-4" />
+                Tentar novamente
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+      </div>
 
       {loadingBoards ? (
-        <div className="space-y-4">
+        <div className="shrink-0 space-y-4">
           <Skeleton className="h-10 w-full max-w-3xl" />
           <div className="flex gap-3 overflow-hidden">
             <Skeleton className="h-[320px] w-[280px] flex-shrink-0 rounded-lg" />
@@ -286,9 +418,9 @@ const ChatKanbanPage = () => {
           description="Escolha um quadro na lista acima para ver as colunas."
         />
       ) : (
-        <div className="flex flex-col gap-3 min-h-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {loadingBoardData ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
+            <div className="flex shrink-0 items-center gap-2 py-8 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               A carregar colunas…
             </div>
@@ -309,7 +441,7 @@ const ChatKanbanPage = () => {
               onAction={() => setColumnManagerOpen(true)}
             />
           ) : (
-                       <DndContext
+            <DndContext
               sensors={boardDnd.sensors}
               collisionDetection={boardDnd.collisionDetection}
               onDragStart={boardDnd.onDragStart}
@@ -317,18 +449,42 @@ const ChatKanbanPage = () => {
               onDragEnd={boardDnd.onDragEnd}
               onDragCancel={boardDnd.onDragCancel}
             >
-              <div className="flex gap-4 overflow-x-auto pb-4 pt-1 scrollbar-thin">
-                {visibleSortedColumns.map((col) => (
-                  <ChatKanbanBoardColumn
-                    key={col.id}
-                    column={col}
-                    cardIds={boardDnd.dndItems[col.id] ?? []}
-                    cardMap={cardMap}
-                    onCardClick={(c) => setDrawerCard(c)}
-                    onAddCard={() => setAddCardColumnId(col.id)}
-                    onConfigureColumn={(c) => setSettingsColumn(c)}
-                  />
-                ))}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {boardHasHorizontalOverflow ? (
+                  <div
+                    className="mb-1.5 flex h-6 shrink-0 cursor-grab select-none items-center justify-center gap-1 rounded-md border border-border/40 bg-muted/20 px-2 text-[11px] leading-tight text-muted-foreground hover:bg-muted/35 active:cursor-grabbing"
+                    onPointerDown={onPanStripPointerDown}
+                    onPointerMove={onPanStripPointerMove}
+                    onPointerUp={onPanStripPointerUp}
+                    onPointerCancel={onPanStripPointerUp}
+                    title="Clique e arraste para deslocar o quadro"
+                  >
+                    <GripHorizontal className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+                    Arraste para mover o quadro horizontalmente
+                  </div>
+                ) : null}
+                <div
+                  id="kanban-board-strip"
+                  ref={kanbanBoardScrollRef}
+                  className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain rounded-lg border border-border/50 bg-muted/20 px-1 pt-1 pb-2 shadow-inner scrollbar-thin"
+                >
+                  <div
+                    ref={kanbanBoardInnerRef}
+                    className="flex h-full min-h-[min(70dvh,560px)] w-max items-stretch gap-4 px-2 py-2"
+                  >
+                    {visibleSortedColumns.map((col) => (
+                      <ChatKanbanBoardColumn
+                        key={col.id}
+                        column={col}
+                        cardIds={boardDnd.dndItems[col.id] ?? []}
+                        cardMap={cardMap}
+                        onCardClick={(c) => setDrawerCard(c)}
+                        onAddCard={() => setAddCardColumnId(col.id)}
+                        onConfigureColumn={(c) => setSettingsColumn(c)}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
               <DragOverlay dropAnimation={{ duration: 180, easing: 'ease' }}>
                 {boardDnd.activeId && cardMap.get(boardDnd.activeId) ? (
@@ -348,6 +504,8 @@ const ChatKanbanPage = () => {
           if (!o) setDrawerCard(null);
         }}
         card={drawerCard}
+        boardName={selectedBoard?.name ?? null}
+        columnName={drawerColumnName}
         onAfterSend={() => {
           if (selectedBoardId) void loadBoardDetail(selectedBoardId);
         }}
@@ -363,6 +521,16 @@ const ChatKanbanPage = () => {
           if (selectedBoardId) void loadBoardDetail(selectedBoardId);
         }}
         onConfigureColumn={(col) => setSettingsColumn(col)}
+      />
+
+      <ChatKanbanBoardSettingsSheet
+        open={boardSettingsOpen}
+        onOpenChange={setBoardSettingsOpen}
+        boardId={boardSettingsOpen ? selectedBoardId : null}
+        onSaved={() => {
+          void loadBoards();
+          if (selectedBoardId) void loadBoardDetail(selectedBoardId);
+        }}
       />
 
       <ChatKanbanColumnSettingsSheet
@@ -422,6 +590,22 @@ const ChatKanbanPage = () => {
                 if (e.key === 'Enter') void handleCreateBoard();
               }}
             />
+            <div className="space-y-1.5">
+              <Label>Funil vinculado (opcional)</Label>
+              <Select value={createLinkedFunnelId} onValueChange={setCreateLinkedFunnelId}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Sem funil vinculado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem funil vinculado</SelectItem>
+                  {funnels.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>

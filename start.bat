@@ -6,17 +6,41 @@ echo.
 echo === Painel CRM - Iniciando Backend e Frontend ===
 echo.
 
-REM Docker: subir PostgreSQL se nao estiver rodando
-docker ps 2>nul | findstr /C:"painelcrm_postgres" >nul 2>&1
+REM Docker: nao usar "docker ps" direto no batch — sem daemon ele pode travar varios minutos.
+echo [1/3] Verificando Docker e PostgreSQL...
+set "DOCKPF="
+for /f "delims=" %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\docker-preflight.ps1"') do set "DOCKPF=%%i"
+if "%DOCKPF%"=="" (
+    echo     Nao foi possivel verificar Docker ^(PowerShell^). Pulando docker-compose.
+    echo.
+    goto :after_postgres
+)
+if "%DOCKPF%"=="NODOCKER" (
+    echo     Docker nao esta no PATH. Pulando container. Configure DATABASE_URL no .env para seu Postgres.
+    echo.
+    goto :after_postgres
+)
+if "%DOCKPF%"=="TIMEOUT" (
+    echo     Docker nao respondeu ^(timeout 12s^). Inicie o Docker Desktop e rode start.bat de novo,
+    echo     ou aponte DATABASE_URL no .env para um PostgreSQL local na porta 5432.
+    echo.
+    goto :after_postgres
+)
+if "%DOCKPF%"=="RUNNING" (
+    echo     Container painelcrm_postgres ja esta rodando.
+    echo.
+    goto :after_postgres
+)
+echo     Subindo PostgreSQL ^(docker-compose up -d postgres^)...
+docker-compose up -d postgres
 if %errorlevel% neq 0 (
-    echo [1/3] Iniciando PostgreSQL...
-    docker-compose up -d postgres
-    timeout /t 3 /nobreak >nul
+    echo     ERRO ao subir o container. Verifique Docker Desktop e docker-compose.yml
     echo.
 ) else (
-    echo [1/3] PostgreSQL ja esta rodando.
+    timeout /t 3 /nobreak >nul
     echo.
 )
+:after_postgres
 
 REM Instalar dependencias se faltar
 if not exist "packages\backend\node_modules" (

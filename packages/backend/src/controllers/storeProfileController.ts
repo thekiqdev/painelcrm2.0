@@ -3,7 +3,7 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
 
-const THEME_KEYS = ['default', 'minimal'] as const;
+const THEME_KEYS = ['default', 'minimal', 'moderno', 'luzmodas'] as const;
 
 const emptyToUndef = (v: unknown) => (v === '' || v === null ? undefined : v);
 
@@ -39,6 +39,8 @@ const storeProfileSchema = z.object({
   contact_whatsapp: optStr,
   store_slug: z.string().min(1),
   is_active: z.boolean().default(true),
+  /** Opt-in: checkout online na vitrine (requer flags globais no deploy). */
+  store_checkout_enabled: z.boolean().default(false),
   theme_key: z.enum(THEME_KEYS).default('default'),
   theme_options: themeOptionsSchema,
 });
@@ -95,8 +97,8 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
       `INSERT INTO store_profiles (
         user_id, store_name, store_description, store_logo, store_banner_url,
         contact_phone, contact_email, contact_whatsapp,
-        store_slug, is_active, theme_key, theme_options
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+        store_slug, is_active, store_checkout_enabled, theme_key, theme_options
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
       RETURNING *`,
       [
         userId,
@@ -109,6 +111,7 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
         storeData.contact_whatsapp,
         storeData.store_slug,
         storeData.is_active,
+        storeData.store_checkout_enabled,
         storeData.theme_key,
         JSON.stringify(storeData.theme_options ?? {}),
       ]

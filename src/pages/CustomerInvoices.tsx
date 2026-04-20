@@ -2,6 +2,24 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -24,8 +42,9 @@ import type { Client } from "@/services/clients";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Plus, FileText, Filter, ExternalLink, AlertTriangle, Repeat2 } from "lucide-react";
+import { Plus, Filter, ExternalLink, AlertTriangle, Repeat2, MoreHorizontal, Pencil, XCircle, Trash2, Eye } from "lucide-react";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
+import { canDeleteCustomerInvoice, isInvoiceActionable } from "@/lib/customerInvoiceActions";
 
 const PAGE_SIZE = 50;
 const STATUS_OPTIONS = [
@@ -55,6 +74,10 @@ const CustomerInvoices = () => {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [offset, setOffset] = useState(0);
   const [crmGatewayActive, setCrmGatewayActive] = useState<boolean | null>(null);
+  const [invoiceToCancel, setInvoiceToCancel] = useState<CustomerInvoice | null>(null);
+  const [invoiceToDelete, setInvoiceToDelete] = useState<CustomerInvoice | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     customerInvoicesService
@@ -97,6 +120,38 @@ const CustomerInvoices = () => {
     clients.forEach((c) => { m[c.id] = c.name || c.company || c.id; });
     return m;
   }, [clients]);
+
+  const handleConfirmCancel = async () => {
+    if (!invoiceToCancel) return;
+    try {
+      setCancellingId(invoiceToCancel.id);
+      await customerInvoicesService.cancel(invoiceToCancel.id);
+      toast.success("Fatura cancelada no sistema e no provedor de pagamento");
+      setInvoiceToCancel(null);
+      await loadInvoices();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro ao cancelar fatura";
+      toast.error(msg);
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!invoiceToDelete) return;
+    try {
+      setDeletingId(invoiceToDelete.id);
+      await customerInvoicesService.remove(invoiceToDelete.id);
+      toast.success("Fatura excluída");
+      setInvoiceToDelete(null);
+      await loadInvoices();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro ao excluir fatura";
+      toast.error(msg);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -165,7 +220,7 @@ const CustomerInvoices = () => {
               <TableHead>Status</TableHead>
               <TableHead className="w-[110px]">Recorrência</TableHead>
               <TableHead>Vencimento</TableHead>
-              <TableHead className="w-24">Ações</TableHead>
+              <TableHead className="w-[200px] text-right">Ações rápidas</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -207,14 +262,68 @@ const CustomerInvoices = () => {
                     )}
                   </TableCell>
                   <TableCell>{format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => navigate(`/customer-invoices/${inv.id}`)}
-                    >
-                      <FileText className="h-4 w-4" />
-                    </Button>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1 px-2"
+                          aria-label="Ações rápidas"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="hidden sm:inline text-xs">Ações</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52">
+                        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                          Ações rápidas
+                        </DropdownMenuLabel>
+                        <DropdownMenuItem
+                          onSelect={() => navigate(`/customer-invoices/${inv.id}`)}
+                        >
+                          <Eye className="mr-2 h-4 w-4" />
+                          Ver detalhes
+                        </DropdownMenuItem>
+                        {isInvoiceActionable(inv.status) && (
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              navigate(`/customer-invoices/${inv.id}/edit`)
+                            }
+                          >
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Editar
+                          </DropdownMenuItem>
+                        )}
+                        {isInvoiceActionable(inv.status) && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                setInvoiceToCancel(inv);
+                              }}
+                            >
+                              <XCircle className="mr-2 h-4 w-4" />
+                              Cancelar fatura
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                        {canDeleteCustomerInvoice(inv) && (
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              setInvoiceToDelete(inv);
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Excluir
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))
@@ -222,6 +331,56 @@ const CustomerInvoices = () => {
           </TableBody>
         </Table>
       </div>
+
+      <AlertDialog open={invoiceToCancel !== null} onOpenChange={(open) => !open && setInvoiceToCancel(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancelar fatura?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A cobrança será cancelada no provedor (ex.: Asaas) e a fatura ficará como cancelada. Número:{" "}
+              <span className="font-mono">{invoiceToCancel?.invoice_number ?? invoiceToCancel?.id.slice(0, 8)}</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancellingId !== null}>Não</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground"
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmCancel();
+              }}
+              disabled={cancellingId !== null}
+            >
+              {cancellingId ? "Cancelando…" : "Sim, cancelar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={invoiceToDelete !== null} onOpenChange={(open) => !open && setInvoiceToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir fatura?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A cobrança será removida no provedor e o registro será apagado. Número:{" "}
+              <span className="font-mono">{invoiceToDelete?.invoice_number ?? invoiceToDelete?.id.slice(0, 8)}</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingId !== null}>Não</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground"
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmDelete();
+              }}
+              disabled={deletingId !== null}
+            >
+              {deletingId ? "Excluindo…" : "Sim, excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

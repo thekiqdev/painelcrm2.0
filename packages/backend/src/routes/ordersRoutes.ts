@@ -8,6 +8,7 @@ router.use(...tenantAuthCrm);
 router.get('/', ordersController.getOrders);
 router.get('/:id', ordersController.getOrderById);
 router.post('/', ordersController.createOrder);
+router.delete('/:id', ordersController.deleteOrder);
 
 export default router;
 

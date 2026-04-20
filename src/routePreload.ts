@@ -11,9 +11,12 @@ export const routePreload = {
   projects: () => import("./pages/Projects"),
   projectTemplates: () => import("./pages/ProjectTemplates"),
   products: () => import("./pages/Products"),
+  orders: () => import("./pages/Orders"),
   storeSettings: () => import("./pages/StoreSettings"),
   proposals: () => import("./pages/Proposals"),
   contracts: () => import("./pages/Contracts"),
+  contractTemplates: () => import("./pages/ContractTemplates"),
+  contractTemplateForm: () => import("./pages/ContractTemplateFormPage"),
   /** /billing redireciona para /customer-invoices; preload da página de faturas. */
   billing: () => import("./pages/CustomerInvoices"),
   customerInvoices: () => import("./pages/CustomerInvoices"),

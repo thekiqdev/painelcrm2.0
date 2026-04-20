@@ -1,6 +1,4 @@
 import { Suspense, lazy } from "react";
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -33,12 +31,16 @@ const Products = lazy(() => import("./pages/Products"));
 const StoreSettings = lazy(() => import("./pages/StoreSettings"));
 const Proposals = lazy(() => import("./pages/Proposals"));
 const Contracts = lazy(() => import("./pages/Contracts"));
+const ContractTemplates = lazy(() => import("./pages/ContractTemplates"));
+const ContractTemplateFormPage = lazy(() => import("./pages/ContractTemplateFormPage"));
 const NewContract = lazy(() => import("./pages/NewContract"));
 const ContractDetails = lazy(() => import("./pages/ContractDetails"));
 const CustomerInvoices = lazy(() => import("./pages/CustomerInvoices"));
 const CustomerInvoiceNew = lazy(() => import("./pages/CustomerInvoiceNew"));
 const CustomerInvoiceDetail = lazy(() => import("./pages/CustomerInvoiceDetail"));
 const CustomerInvoicePay = lazy(() => import("./pages/CustomerInvoicePay"));
+const PublicContractView = lazy(() => import("./pages/PublicContractView"));
+const PublicContractSign = lazy(() => import("./pages/PublicContractSign"));
 const CustomerCharges = lazy(() => import("./pages/CustomerCharges"));
 const CustomerChargeDetail = lazy(() => import("./pages/CustomerChargeDetail"));
 const Finance = lazy(() => import("./pages/Finance"));
@@ -51,6 +53,7 @@ const FunnelDetails = lazy(() => import("./pages/FunnelDetails"));
 const ProposalDetails = lazy(() => import("./pages/ProposalDetails"));
 const PublicStore = lazy(() => import("./pages/PublicStore").then(m => ({ default: m.PublicStore })));
 const PublicProduct = lazy(() => import("./pages/PublicProduct").then(m => ({ default: m.PublicProduct })));
+const StorePublicCheckout = lazy(() => import("./pages/StorePublicCheckout"));
 const ProductForm = lazy(() => import("./pages/ProductForm"));
 const Orders = lazy(() => import("./pages/Orders"));
 const Tickets = lazy(() => import("./pages/Tickets"));
@@ -116,8 +119,6 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <ModulePermissionsProvider>
-          <Toaster />
-          <Sonner />
           <Suspense fallback={<LoadingFallback />}>
           <Routes>
             <Route path="/" element={<HomeOrRedirect />} />
@@ -138,6 +139,8 @@ const App = () => (
             <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
             <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
             <Route path="/pay/:token" element={<Suspense fallback={<LoadingFallback />}><CustomerInvoicePay /></Suspense>} />
+            <Route path="/contract-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractView /></Suspense>} />
+            <Route path="/contract-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractSign /></Suspense>} />
 
               {/* Protected routes - lazy loaded */}
             <Route path="/dashboard" element={
@@ -360,6 +363,33 @@ const App = () => (
                   </AppLayout>
                 </AuthGuard>
               } />
+            <Route path="/contracts/templates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ContractTemplates />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts/templates/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ContractTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts/templates/:templateId/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ContractTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
               <Route path="/contracts/:id/edit" element={
                 <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
@@ -393,6 +423,15 @@ const App = () => (
               </AuthGuard>
             } />
             <Route path="/customer-invoices/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <CustomerInvoiceNew />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/:id/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
@@ -553,6 +592,11 @@ const App = () => (
               <Route path="/:storeSlug/loja/produto/:productId" element={
                 <Suspense fallback={<LoadingFallback />}>
                   <PublicProduct />
+                </Suspense>
+              } />
+              <Route path="/:storeSlug/loja/checkout" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <StorePublicCheckout />
                 </Suspense>
               } />
             

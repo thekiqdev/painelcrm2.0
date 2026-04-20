@@ -5,8 +5,9 @@ import type {
   CreateCustomerInput,
   CreateChargeInput,
   PaymentMethod,
+  UpdateChargeInput,
 } from '../../../payments/paymentGatewayTypes.js';
-import type { AsaasCustomerRequest, AsaasPaymentRequest } from '../asaasTypes.js';
+import type { AsaasCustomerRequest, AsaasPaymentRequest, AsaasPaymentUpdateRequest } from '../asaasTypes.js';
 
 /** Dados do tenant (e usuário) para criar customer no Asaas */
 export interface TenantForCustomer {
@@ -85,6 +86,20 @@ export function toAsaasPayment(
   if (input.description) req.description = input.description;
   if (input.externalReference) req.externalReference = input.externalReference;
   return req;
+}
+
+export function toAsaasPaymentUpdate(input: UpdateChargeInput): AsaasPaymentUpdateRequest {
+  const out: AsaasPaymentUpdateRequest = {};
+  if (input.amountCents !== undefined) {
+    out.value = input.amountCents / 100;
+  }
+  if (input.dueDate !== undefined) {
+    out.dueDate = input.dueDate;
+  }
+  if (input.description !== undefined) {
+    out.description = input.description ?? '';
+  }
+  return out;
 }
 
 export function asaasBillingType(

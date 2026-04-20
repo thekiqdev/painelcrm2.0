@@ -5,7 +5,9 @@ import { clientsService, type ClientTimelineEvent } from "@/services/clients";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
+import { getContractDocumentHtml } from "@/utils/contractDocument";
 import { chatService, ChatMessage, normalizeChatMessage } from "@/services/chat";
+import { customerInvoicesService } from "@/services/customerInvoices";
 import { ChatBubbleContent } from "@/components/chat/ChatBubbleContent";
 import { MessageStatusIndicator } from "@/components/chat/MessageStatusIndicator";
 import { toast } from "sonner";
@@ -16,9 +18,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, Send } from "lucide-react";
+import { Plus, Edit2, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, Send, MessageSquare } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { io, Socket } from "socket.io-client";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -63,7 +66,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
+import { canDeleteContractStatus } from "@/utils/contractStatusUi";
 const taskSchema = z.object({
   title: z.string().min(3, "Título deve ter pelo menos 3 caracteres"),
   description: z.string().optional(),
@@ -73,6 +76,16 @@ const taskSchema = z.object({
   status: z.enum(["pending", "completed"]).default("pending"),
   assignee: z.string().optional(),
   deal: z.string().optional(),
+});
+
+const clientEditSchema = z.object({
+  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
+  company: z.string().optional(),
+  email: z.string().email("E-mail inválido").optional().or(z.literal("")),
+  phone: z.string().optional(),
+  cpf_cnpj: z.string().optional(),
+  status: z.string().optional(),
+  source: z.string().optional(),
 });
 
 const priorityLabels: Record<"low" | "medium" | "high", string> = {
@@ -119,6 +132,9 @@ const ClientProfile = () => {
   const [newClientGroup, setNewClientGroup] = useState("");
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
+  const [invoiceCount, setInvoiceCount] = useState(0);
+  const [isLoadingInvoiceCount, setIsLoadingInvoiceCount] = useState(false);
+  const [isEditingClientDetails, setIsEditingClientDetails] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
   const [isEditingTask, setIsEditingTask] = useState(false);
@@ -134,6 +150,7 @@ const ClientProfile = () => {
   const socketRef = useRef<Socket | null>(null);
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   const { session } = useAuth();
+  const { canDeleteRecord } = useModulePermissions();
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -161,10 +178,21 @@ const ClientProfile = () => {
       time: "",
     },
   });
+  const clientForm = useForm<z.infer<typeof clientEditSchema>>({
+    resolver: zodResolver(clientEditSchema),
+    defaultValues: {
+      name: "",
+      company: "",
+      email: "",
+      phone: "",
+      cpf_cnpj: "",
+      status: "",
+      source: "",
+    },
+  });
 
   // Determinar qual aba mostrar baseado na rota
   const getActiveTab = () => {
-    if (location.pathname.includes("/details")) return "details";
     if (location.pathname.includes("/tasks")) return "tasks";
     if (location.pathname.includes("/notes")) return "notes";
     if (location.pathname.includes("/opportunities")) return "opportunities";
@@ -178,6 +206,16 @@ const ClientProfile = () => {
   };
 
   const activeTab = getActiveTab();
+
+  /** Rota legada `/clients/:id/details` — unificada na visão geral. */
+  useEffect(() => {
+    if (!id) return;
+    if (!location.pathname.includes("/details")) return;
+    navigate(
+      { pathname: `/clients/${id}`, search: location.search, hash: location.hash, state: location.state },
+      { replace: true }
+    );
+  }, [id, location.pathname, location.search, location.hash, location.state, navigate]);
 
   useEffect(() => {
     if (id) {
@@ -215,6 +253,13 @@ const ClientProfile = () => {
   }, [activeTab, id]);
 
   useEffect(() => {
+    if (id) {
+      void loadContracts();
+      void loadInvoiceCount(id);
+    }
+  }, [id]);
+
+  useEffect(() => {
     if (activeTab === "messages" && id) {
       loadClientMessages();
     }
@@ -249,6 +294,19 @@ const ClientProfile = () => {
       cancelled = true;
     };
   }, [client?.id]);
+
+  useEffect(() => {
+    if (!client) return;
+    clientForm.reset({
+      name: client.name || "",
+      company: client.company || "",
+      email: client.email || "",
+      phone: client.phone || "",
+      cpf_cnpj: client.cpf_cnpj || "",
+      status: client.status || "Ativo",
+      source: client.source || "",
+    });
+  }, [client, clientForm]);
 
   const loadClientData = async () => {
     if (!id) return;
@@ -540,6 +598,41 @@ const ClientProfile = () => {
     }
   };
 
+  const loadInvoiceCount = async (clientId: string) => {
+    try {
+      setIsLoadingInvoiceCount(true);
+      const invoices = await customerInvoicesService.list({ client_id: clientId, limit: 200 });
+      setInvoiceCount(invoices.length);
+    } catch (error) {
+      console.error("Erro ao carregar faturas do cliente:", error);
+      setInvoiceCount(0);
+    } finally {
+      setIsLoadingInvoiceCount(false);
+    }
+  };
+
+  const handleSaveClientDetails = async (values: z.infer<typeof clientEditSchema>) => {
+    if (!client?.id) return;
+    try {
+      const payload = {
+        name: values.name.trim(),
+        company: values.company?.trim() || undefined,
+        email: values.email?.trim() || undefined,
+        phone: values.phone?.trim() || undefined,
+        cpf_cnpj: values.cpf_cnpj?.replace(/\D/g, "").trim() || null,
+        status: values.status?.trim() || undefined,
+        source: values.source?.trim() || undefined,
+      };
+      const updated = await clientsService.updateClient(client.id, payload);
+      setClient((prev: any) => ({ ...prev, ...updated }));
+      setIsEditingClientDetails(false);
+      toast.success("Cadastro do cliente atualizado com sucesso!");
+    } catch (error: any) {
+      console.error("Erro ao atualizar cadastro do cliente:", error);
+      toast.error(`Erro ao salvar cliente: ${error.message}`);
+    }
+  };
+
   const formatHour = (value?: string | null) => {
     if (!value) return '--:--';
     const date = new Date(value);
@@ -791,6 +884,7 @@ const ClientProfile = () => {
         title: `${contract.title} (Renovação)`,
         client_id: contract.client_id || undefined,
         status: 'DRAFT',
+        content_html: getContractDocumentHtml(contract) || undefined,
         start_date: contract.end_date ? new Date(new Date(contract.end_date).getTime() + 86400000).toISOString().split('T')[0] : undefined,
         end_date: contract.renewal_period && contract.end_date 
           ? new Date(new Date(contract.end_date).getTime() + contract.renewal_period * 86400000).toISOString().split('T')[0]
@@ -820,6 +914,14 @@ const ClientProfile = () => {
       console.error("Erro ao excluir contrato:", error);
       toast.error(`Erro ao excluir contrato: ${error.message}`);
     }
+  };
+
+  const canDeleteContractInUi = (contract: Contract): boolean => {
+    const currentUserId = (session as { user?: { id?: string } } | null)?.user?.id;
+    return (
+      canDeleteContractStatus(contract.status) &&
+      canDeleteRecord("contracts", contract.responsible_id || contract.user_id, currentUserId ?? null)
+    );
   };
 
   const formatCurrency = (value: number | null, currency: string = 'BRL') => {
@@ -897,124 +999,202 @@ const ClientProfile = () => {
         >
           {/* Conteúdo baseado na aba ativa */}
           {activeTab === "overview" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
-              <Card className="h-full">
-                <CardHeader>
-                  <CardTitle className="text-base font-semibold">Informações de Contato</CardTitle>
+            <div className="space-y-6 mb-6">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold">Resumo do Cliente</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {client.email && (
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">{client.email}</span>
-                    </div>
-                  )}
-                  {client.phone && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">{client.phone}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">CPF/CNPJ</span>
-                    <span className="text-sm">{formatCpfCnpjDisplay(client.cpf_cnpj) === "—" ? "Não informado" : formatCpfCnpjDisplay(client.cpf_cnpj)}</span>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() =>
+                        navigate({
+                          pathname: `/clients/${client.id}/messages`,
+                          search: location.search,
+                          state: location.state,
+                        })
+                      }
+                    >
+                      <MessageSquare className="mr-2 h-4 w-4" />
+                      Ir para conversa
+                    </Button>
                   </div>
-                  {client.status && (
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Status</Label>
-                      <Badge variant="outline" className="mt-1">{client.status}</Badge>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <Card>
+                      <CardContent className="pt-6">
+                        <Label className="text-xs text-muted-foreground">Contratos</Label>
+                        <p className="mt-1 text-2xl font-bold">{contracts.length}</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-6">
+                        <Label className="text-xs text-muted-foreground">Faturas</Label>
+                        <p className="mt-1 text-2xl font-bold">
+                          {isLoadingInvoiceCount ? "..." : invoiceCount}
+                        </p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-6">
+                        <Label className="text-xs text-muted-foreground">Tarefas</Label>
+                        <p className="mt-1 text-2xl font-bold">{clientTasks.length}</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-6">
+                        <Label className="text-xs text-muted-foreground">Notas</Label>
+                        <p className="mt-1 text-2xl font-bold">{notes.length}</p>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-2 rounded-md border p-4">
+                      <h3 className="text-sm font-semibold">Informações de contato</h3>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-4 w-4 text-muted-foreground" />
+                          <span>{client.email || "Não informado"}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Phone className="h-4 w-4 text-muted-foreground" />
+                          <span>{client.phone || "Não informado"}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Building className="h-4 w-4 text-muted-foreground" />
+                          <span>{client.company || "Não informado"}</span>
+                        </div>
+                      </div>
                     </div>
-                  )}
+                    <div className="space-y-3 rounded-md border p-4">
+                      <h3 className="text-sm font-semibold">Grupo e status</h3>
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Status</Label>
+                          <Badge variant="outline" className="mt-1 ml-2">
+                            {client.status || "Ativo"}
+                          </Badge>
+                        </div>
+                        <Select
+                          value={newClientGroup || "none"}
+                          onValueChange={(value) => setNewClientGroup(value === "none" ? "" : value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione um grupo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Sem grupo</SelectItem>
+                            {clientGroups.map(group => (
+                              <SelectItem key={group.id} value={group.id}>
+                                {group.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button size="sm" className="w-full" onClick={handleUpdateGroup}>
+                          Atualizar Grupo
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 
-              <Card className="h-full">
+              <Card>
                 <CardHeader>
-                  <CardTitle className="text-base font-semibold">Estatísticas</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Tarefas</Label>
-                    <p className="text-2xl font-bold mt-1">{clientTasks.length}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle>Cadastro Completo do Cliente</CardTitle>
+                    {isEditingClientDetails ? (
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" onClick={() => setIsEditingClientDetails(false)}>
+                          Cancelar
+                        </Button>
+                        <Button type="button" onClick={clientForm.handleSubmit(handleSaveClientDetails)}>
+                          Salvar alterações
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button variant="outline" onClick={() => setIsEditingClientDetails(true)}>
+                        <Edit2 className="mr-2 h-4 w-4" />
+                        Editar na tela
+                      </Button>
+                    )}
                   </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Notas</Label>
-                    <p className="text-2xl font-bold mt-1">{notes.length}</p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="h-full">
-                <CardHeader>
-                  <CardTitle className="text-base font-semibold">Grupo</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <Select 
-                    value={newClientGroup || "none"} 
-                    onValueChange={(value) => setNewClientGroup(value === "none" ? "" : value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione um grupo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Sem grupo</SelectItem>
-                      {clientGroups.map(group => (
-                        <SelectItem key={group.id} value={group.id}>
-                          {group.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    size="sm" 
-                    className="w-full"
-                    onClick={handleUpdateGroup}
-                  >
-                    Atualizar Grupo
-                  </Button>
+                <CardContent>
+                  {isEditingClientDetails ? (
+                    <Form {...clientForm}>
+                      <form className="space-y-4">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          <FormField control={clientForm.control} name="name" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Nome</FormLabel>
+                              <FormControl><Input {...field} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="company" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Empresa</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="email" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>E-mail</FormLabel>
+                              <FormControl><Input type="email" {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="phone" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Telefone</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="cpf_cnpj" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>CPF ou CNPJ</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="status" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Status</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="source" render={({ field }) => (
+                            <FormItem className="md:col-span-2">
+                              <FormLabel>Origem</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                        </div>
+                      </form>
+                    </Form>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div><Label>Nome</Label><p className="text-sm mt-1">{client.name}</p></div>
+                        <div><Label>Empresa</Label><p className="text-sm mt-1">{client.company || "Não informado"}</p></div>
+                        <div><Label>E-mail</Label><p className="text-sm mt-1">{client.email || "Não informado"}</p></div>
+                        <div><Label>Telefone</Label><p className="text-sm mt-1">{client.phone || "Não informado"}</p></div>
+                        <div><Label>CPF ou CNPJ</Label><p className="text-sm mt-1">{formatCpfCnpjDisplay(client.cpf_cnpj) === "—" ? "Não informado" : formatCpfCnpjDisplay(client.cpf_cnpj)}</p></div>
+                        <div><Label>Status</Label><p className="text-sm mt-1">{client.status || "Ativo"}</p></div>
+                        <div className="md:col-span-2"><Label>Origem</Label><p className="text-sm mt-1">{client.source || "Não informado"}</p></div>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
-          )}
-
-          {activeTab === "details" && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Detalhes do Cliente</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Nome</Label>
-                    <p className="text-sm mt-1">{client.name}</p>
-                  </div>
-                  <div>
-                    <Label>Empresa</Label>
-                    <p className="text-sm mt-1">{client.company || "Não informado"}</p>
-                  </div>
-                  <div>
-                    <Label>E-mail</Label>
-                    <p className="text-sm mt-1">{client.email || "Não informado"}</p>
-                  </div>
-                  <div>
-                    <Label>Telefone</Label>
-                    <p className="text-sm mt-1">{client.phone || "Não informado"}</p>
-                  </div>
-                  <div>
-                    <Label>CPF ou CNPJ</Label>
-                    <p className="text-sm mt-1">{formatCpfCnpjDisplay(client.cpf_cnpj) === "—" ? "Não informado" : formatCpfCnpjDisplay(client.cpf_cnpj)}</p>
-                  </div>
-                  <div>
-                    <Label>Status</Label>
-                    <p className="text-sm mt-1">{client.status || "Ativo"}</p>
-                  </div>
-                  <div>
-                    <Label>Origem</Label>
-                    <p className="text-sm mt-1">{client.source || "Não informado"}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
           )}
 
           {activeTab === "tasks" && (
@@ -1553,14 +1733,18 @@ const ClientProfile = () => {
                                     Renovar
                                   </DropdownMenuItem>
                                 )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                  onClick={() => handleDeleteContract(contract.id)}
-                                  className="text-destructive focus:text-destructive"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Excluir
-                                </DropdownMenuItem>
+                                {canDeleteContractInUi(contract) ? (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem 
+                                      onClick={() => handleDeleteContract(contract.id)}
+                                      className="text-destructive focus:text-destructive"
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Excluir
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : null}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>

@@ -1,0 +1,230 @@
+/* Tema Moderno - baseado no layout real do repositório thekiqdev/novobrilho */
+.storefront-theme-moderno {
+  --mod-foreground: oklch(0.25 0.02 50);
+  --mod-primary: oklch(0.45 0.06 45);
+  --mod-primary-fg: oklch(0.98 0.005 80);
+  --mod-caramel: oklch(0.65 0.09 60);
+  --mod-muted: oklch(0.96 0.01 80);
+  --mod-border: oklch(0.91 0.015 75);
+  --mod-warm: oklch(0.93 0.03 65);
+  --mod-rose: oklch(0.72 0.07 20);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: var(--mod-foreground);
+}
+
+.storefront-theme-moderno .mod-heading-display {
+  font-family: ui-serif, Georgia, 'Times New Roman', serif;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+}
+
+.storefront-theme-moderno .mod-heading-section {
+  font-family: ui-serif, Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+}
+
+.storefront-theme-moderno .heading-section {
+  font-family: ui-serif, Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+}
+
+.storefront-theme-moderno .mod-btn-premium {
+  background-color: var(--mod-primary);
+  color: var(--mod-primary-fg);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  padding: 0.875rem 2.5rem;
+  transition: all 0.3s ease;
+}
+
+.storefront-theme-moderno .btn-premium {
+  background-color: var(--mod-primary);
+  color: var(--mod-primary-fg);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  padding: 0.875rem 2.5rem;
+  transition: all 0.3s ease;
+}
+
+.storefront-theme-moderno .mod-btn-premium:hover {
+  background-color: var(--mod-caramel);
+  transform: translateY(-1px);
+}
+
+.storefront-theme-moderno .mod-btn-outline {
+  border: 1px solid var(--mod-primary);
+  color: var(--mod-primary);
+  background: transparent;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  padding: 0.875rem 2.5rem;
+  transition: all 0.3s ease;
+}
+
+.storefront-theme-moderno .btn-outline-premium {
+  border: 1px solid var(--mod-primary);
+  color: var(--mod-primary);
+  background: transparent;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  padding: 0.875rem 2.5rem;
+  transition: all 0.3s ease;
+}
+
+.storefront-theme-moderno .mod-btn-outline:hover {
+  background-color: var(--mod-primary);
+  color: var(--mod-primary-fg);
+}
+
+.storefront-theme-moderno .mod-divider-elegant {
+  width: 3rem;
+  height: 1px;
+  margin-inline: auto;
+  background: var(--mod-caramel);
+}
+
+.storefront-theme-moderno .divider-elegant {
+  width: 3rem;
+  height: 1px;
+  margin-inline: auto;
+  background: var(--mod-caramel);
+}
+
+.storefront-theme-moderno .bg-warm {
+  background: var(--mod-warm);
+}
+
+.storefront-theme-moderno .bg-rose {
+  background: var(--mod-rose);
+}
+
+.storefront-theme-moderno .text-rose-foreground {
+  color: var(--mod-primary-fg);
+}
+
+.storefront-theme-moderno .border-border {
+  border-color: var(--mod-border);
+}
+
+.storefront-theme-moderno .bg-card {
+  background-color: #fff;
+}
+
+.storefront-theme-moderno .bg-muted {
+  background-color: var(--mod-muted);
+}
+
+.storefront-theme-moderno .text-caramel {
+  color: var(--mod-caramel);
+}
+
+.storefront-theme-moderno .focus\:ring-caramel:focus {
+  --tw-ring-color: var(--mod-caramel);
+}
+
+.storefront-theme-moderno .storefront-contact-strip {
+  display: none;
+}
+
+.storefront-theme-moderno .storefront-products-wrap {
+  padding: 0;
+}
+
+.storefront-theme-moderno .storefront-products-heading {
+  display: none;
+}
+
+.storefront-theme-moderno .storefront-products-grid {
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .storefront-theme-moderno .storefront-products-grid {
+    gap: 2rem;
+  }
+}
+
+.storefront-theme-moderno .storefront-product-card {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.storefront-theme-moderno .storefront-product-card .aspect-video {
+  aspect-ratio: 3 / 4;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #f2ece5;
+}
+
+.storefront-theme-moderno .storefront-product-card [class*='CardHeader'],
+.storefront-theme-moderno .storefront-product-card [class*='card-header'] {
+  padding-inline: 0;
+  padding-bottom: 0.25rem;
+}
+
+.storefront-theme-moderno .storefront-product-card [class*='CardTitle'],
+.storefront-theme-moderno .storefront-product-card [class*='card-title'] {
+  font-family: ui-serif, Georgia, 'Times New Roman', serif;
+  font-size: 1.05rem;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.storefront-theme-moderno .storefront-product-card [class*='CardContent'],
+.storefront-theme-moderno .storefront-product-card [class*='card-content'] {
+  padding-inline: 0;
+  padding-top: 0.35rem;
+}
+
+.storefront-theme-moderno .storefront-product-card button.w-full {
+  border-radius: 2px;
+  background: transparent;
+  color: var(--mod-primary);
+  border: 1px solid var(--mod-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+}
+
+.storefront-theme-moderno .storefront-product-card button.w-full:hover {
+  background: var(--mod-primary);
+  color: var(--mod-primary-fg);
+}
+
+.storefront-theme-moderno .storefront-legacy-footer {
+  display: none;
+}
+
+.storefront-theme-moderno .mod-category-card .mod-category-bg {
+  position: absolute;
+  inset: 0;
+  transition: transform 700ms ease;
+}
+
+.storefront-theme-moderno .mod-category-card:hover .mod-category-bg {
+  transform: scale(1.05);
+}
+
+.storefront-theme-moderno .mod-category-bg-1 {
+  background: linear-gradient(180deg, #d8c0ad 0%, #b9927a 100%);
+}
+.storefront-theme-moderno .mod-category-bg-2 {
+  background: linear-gradient(180deg, #d5c1a5 0%, #9f7f61 100%);
+}
+.storefront-theme-moderno .mod-category-bg-3 {
+  background: linear-gradient(180deg, #e3d3c6 0%, #b89d88 100%);
+}

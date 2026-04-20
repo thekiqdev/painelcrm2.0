@@ -4,6 +4,8 @@ import { pool } from '../utils/db.js';
 import { hasAssignedTeamColumn, hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
+import { resolveOutgoingMediaPayload } from '../services/outgoingMediaPayloadResolver.js';
+import { buildWhatsappTemplateMediaPublicUrlFromStoragePath } from '../services/whatsappTemplateMediaStorageService.js';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import * as notificationService from '../services/notifications.js';
 import { emitConversationUpdate, emitMessageUpdated, emitNewMessage } from '../services/websocketService.js';
@@ -131,14 +133,15 @@ const MAX_MEDIA_BASE64_CHARS = 14 * 1024 * 1024; // ~10MB binário em base64
 const sendMessageSchema = z
   .object({
     conversationId: z.string().uuid(),
-    /** Padrão: texto. Use `image` para mídia via `/send/media`. */
-    type: z.enum(['text', 'image']).optional(),
+    /** Padrão: texto. Use `image` ou `document` para mídia via `/send/media`. */
+    type: z.enum(['text', 'image', 'document']).optional(),
     text: z.string().optional(),
     caption: z.string().optional(),
     /** Base64 cru (sem prefixo data:) ou URL pública para UazAPI */
     fileBase64: z.string().optional(),
     fileUrl: z.string().url().optional(),
     mimeType: z.string().optional(),
+    fileName: z.string().max(255).optional(),
     readChat: z.boolean().optional(),
     readMessages: z.boolean().optional(),
     delay: z.number().optional(),
@@ -151,11 +154,11 @@ const sendMessageSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'text é obrigatório para type=text' });
       }
     }
-    if (t === 'image') {
+    if (t === 'image' || t === 'document') {
       if (!data.fileBase64?.trim() && !data.fileUrl?.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Para type=image informe fileBase64 ou fileUrl',
+          message: 'Para type=image/document informe fileBase64 ou fileUrl',
         });
       }
       if (data.fileBase64 && data.fileBase64.length > MAX_MEDIA_BASE64_CHARS) {
@@ -5736,6 +5739,75 @@ function toUazRecipientNumber(phone: string | null | undefined, externalChatId: 
   return raw;
 }
 
+function absolutizeOutgoingMediaUrl(candidate: unknown): string | null {
+  if (typeof candidate !== 'string') return null;
+  const raw = candidate.trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+  if (raw.startsWith('/media/whatsapp-templates/')) {
+    const rel = raw.slice('/media/whatsapp-templates/'.length).split('/').filter(Boolean).join('/');
+    if (!rel) return null;
+    return buildWhatsappTemplateMediaPublicUrlFromStoragePath(rel);
+  }
+  if (raw.startsWith('media/whatsapp-templates/')) {
+    const rel = raw.slice('media/whatsapp-templates/'.length).split('/').filter(Boolean).join('/');
+    if (!rel) return null;
+    return buildWhatsappTemplateMediaPublicUrlFromStoragePath(rel);
+  }
+  if (raw.startsWith('/')) {
+    const base =
+      process.env.API_PUBLIC_BASE_URL?.trim().replace(/\/$/, '') ||
+      process.env.API_PUBLIC_ORIGIN?.trim().replace(/\/$/, '') ||
+      'http://localhost:3001';
+    return `${base}${raw}`;
+  }
+  return raw;
+}
+
+function isPublicHttpUrl(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  const s = raw.trim();
+  if (!s) return false;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = (u.hostname || '').toLowerCase();
+    if (!host) return false;
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]') return false;
+    const p = host.split('.').map((n) => Number(n));
+    if (p.length === 4 && p.every((n) => Number.isFinite(n) && n >= 0 && n <= 255)) {
+      if (p[0] === 10) return false;
+      if (p[0] === 127) return false;
+      if (p[0] === 192 && p[1] === 168) return false;
+      if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractOutgoingFileName(input: { fileName?: string | null; storagePath?: string | null; fileUrl?: string | null }): string | null {
+  const direct = (input.fileName ?? '').trim();
+  if (direct) return direct;
+  const fromStorage = (input.storagePath ?? '').trim();
+  if (fromStorage) {
+    const seg = fromStorage.split('/').filter(Boolean).pop() ?? '';
+    if (seg) return decodeURIComponent(seg).replace(/^[0-9a-f-]{8,}_/i, '') || seg;
+  }
+  const fromUrl = (input.fileUrl ?? '').trim();
+  if (fromUrl) {
+    try {
+      const u = new URL(fromUrl, 'http://localhost');
+      const seg = u.pathname.split('/').filter(Boolean).pop() ?? '';
+      if (seg) return decodeURIComponent(seg).replace(/^[0-9a-f-]{8,}_/i, '') || seg;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 export async function sendMessage(req: AuthRequest, res: Response) {
   let queuedMessageRowId: string | null = null;
   try {
@@ -5769,17 +5841,29 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     const localTrackId = `track_${randomUUID()}`;
     const provisionalExternalId = `local:${randomUUID()}`;
 
-    if (msgType === 'image') {
+    if (msgType === 'image' || msgType === 'document') {
       const caption = (data.caption ?? '').trim();
-      const file: string | null =
+      const sourceFile: string | null =
         data.fileUrl ||
         (data.fileBase64
-          ? `data:${data.mimeType || 'image/jpeg'};base64,${data.fileBase64}`
+          ? `data:${data.mimeType || (msgType === 'document' ? 'application/pdf' : 'image/jpeg')};base64,${data.fileBase64}`
           : null);
-      if (!file) {
-        res.status(400).json({ error: 'Informe fileBase64 ou fileUrl para envio de imagem' });
+      if (!sourceFile) {
+        res.status(400).json({ error: 'Informe fileBase64 ou fileUrl para envio de mídia' });
         return;
       }
+      const resolvedMedia = await resolveOutgoingMediaPayload({
+        type: msgType,
+        fileUrl: sourceFile,
+        mimeType: data.mimeType || (msgType === 'document' ? 'application/pdf' : 'image/jpeg'),
+      });
+      const providerFile =
+        msgType === 'document' &&
+        typeof resolvedMedia.fileForProvider === 'string' &&
+        resolvedMedia.fileForProvider.startsWith('data:') &&
+        isPublicHttpUrl(absolutizeOutgoingMediaUrl(resolvedMedia.persistedUrl))
+          ? (absolutizeOutgoingMediaUrl(resolvedMedia.persistedUrl) as string)
+          : resolvedMedia.fileForProvider;
 
       // 1) Persistência local imediata (estado inicial)
       savedRowId = await saveMessage(conversation.id, 'outgoing', {
@@ -5787,12 +5871,12 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         body: caption || null,
         media: [
           {
-            type: 'image',
-            url: file,
-            mimetype: data.mimeType || 'image/jpeg',
+            type: msgType,
+            url: resolvedMedia.persistedUrl,
+            mimetype: resolvedMedia.mimeType,
           },
         ],
-        messageKind: 'image',
+        messageKind: msgType,
         status: 'queued',
         sentAt: new Date(),
         metadata: { source: 'send/media', track_id: localTrackId, provisional: true },
@@ -5801,8 +5885,19 @@ export async function sendMessage(req: AuthRequest, res: Response) {
 
       messageResponse = (await uazapiService.sendMediaMessage(conversation.instance_token, {
         number: numberTo,
-        type: 'image',
-        file,
+        type: msgType,
+        file: providerFile,
+        ...(data.fileName?.trim()
+          ? {
+              fileName: data.fileName.trim(),
+              filename: data.fileName.trim(),
+              documentName: data.fileName.trim(),
+              docName: data.fileName.trim(),
+              file_name: data.fileName.trim(),
+              name: data.fileName.trim(),
+            }
+          : {}),
+        ...(resolvedMedia.mimeType ? { mimeType: resolvedMedia.mimeType, mimetype: resolvedMedia.mimeType } : {}),
         ...(caption ? { text: caption } : {}),
         readchat: data.readChat,
         readmessages: data.readMessages,
@@ -5814,22 +5909,29 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       const extId = extractUazOutgoingMessageId(messageResponse);
 
       const remoteUrl =
-        (messageResponse as any)?.response?.fileUrl ||
-        (messageResponse as any)?.fileUrl ||
-        (messageResponse as any)?.url ||
-        data.fileUrl ||
+        absolutizeOutgoingMediaUrl(resolvedMedia.persistedUrl) ||
+        absolutizeOutgoingMediaUrl((messageResponse as any)?.response?.fileUrl) ||
+        absolutizeOutgoingMediaUrl((messageResponse as any)?.fileUrl) ||
+        absolutizeOutgoingMediaUrl((messageResponse as any)?.url) ||
         null;
+      const uiMediaUrl =
+        msgType !== 'document' &&
+        typeof resolvedMedia.fileForProvider === 'string' &&
+        resolvedMedia.fileForProvider.startsWith('data:')
+          ? resolvedMedia.fileForProvider
+          : remoteUrl || resolvedMedia.persistedUrl;
 
       const mediaItems: ChatMediaItem[] = [
         {
-          type: 'image',
-          url: remoteUrl || file,
-          mimetype: data.mimeType || 'image/jpeg',
+          type: msgType,
+          url: uiMediaUrl,
+          mimetype: resolvedMedia.mimeType,
+          fileName: data.fileName?.trim() || null,
         },
       ];
 
       logUazChat('info', {
-        event_type: 'send_message_image',
+        event_type: msgType === 'document' ? 'send_message_document' : 'send_message_image',
         phase: 'uazapi_ok',
         user_id: userId,
         instance_id: conversation.instance_id,
@@ -5839,8 +5941,8 @@ export async function sendMessage(req: AuthRequest, res: Response) {
           messageResponse && typeof messageResponse === 'object'
             ? Object.keys(messageResponse as object).slice(0, 25)
             : [],
-        file_is_data_url: file.startsWith('data:'),
-        mime_type: data.mimeType || 'image/jpeg',
+        file_is_data_url: resolvedMedia.fileForProvider.startsWith('data:'),
+        mime_type: resolvedMedia.mimeType,
         caption_len: caption.length,
       });
 
@@ -6067,6 +6169,558 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       }
     }
     res.status(500).json({ error: error.message || 'Failed to send message' });
+  }
+}
+
+export type KanbanAutomationOutboundTextInput = {
+  actorUserId: string;
+  conversationId: string;
+  text: string;
+  /** Referência Kanban; ausente no envio manual de modelo WhatsApp */
+  automationRef?: { boardId: string; columnId: string; cardId: string };
+  /** Default `kanban_auto_text` */
+  metadataSource?: string;
+  whatsappModelTrace?: { template_id: string; item_index: number; message_type: string };
+};
+
+export type KanbanAutomationOutboundMediaInput = {
+  actorUserId: string;
+  conversationId: string;
+  type: 'image' | 'document';
+  fileUrl?: string | null;
+  storagePath?: string | null;
+  caption?: string | null;
+  mimeType?: string | null;
+  fileName?: string | null;
+  automationRef?: { boardId: string; columnId: string; cardId: string };
+  metadataSource?: string;
+  whatsappModelTrace?: { template_id: string; item_index: number; message_type: string };
+};
+
+/**
+ * Envio outbound de texto reutilizando o mesmo pipeline do painel (`saveMessage` + UazAPI + WS),
+ * para automações Kanban (não bloqueante; erros retornam em `error` sem lançar).
+ */
+export async function sendKanbanAutomationOutboundText(
+  input: KanbanAutomationOutboundTextInput,
+): Promise<{ ok: boolean; error?: string }> {
+  const text = (input.text ?? '').trim();
+  if (!text) {
+    return { ok: false, error: 'empty_text' };
+  }
+
+  let queuedMessageRowId: string | null = null;
+  try {
+    const conversationResult = await pool.query(
+      `
+        SELECT c.*, i.instance_token, i.external_instance_name, i.status AS instance_status
+        FROM chat_conversations c
+        INNER JOIN chat_instances i ON i.id = c.instance_id
+        WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}
+      `,
+      [input.conversationId, input.actorUserId],
+    );
+
+    if (conversationResult.rowCount === 0) {
+      return { ok: false, error: 'conversation_not_found_or_no_access' };
+    }
+
+    const conversation = conversationResult.rows[0];
+    const instStatus = String(conversation.instance_status || '').toLowerCase();
+    if (instStatus !== 'connected' && instStatus !== 'open') {
+      return { ok: false, error: 'whatsapp_not_connected' };
+    }
+
+    const numberTo = toUazRecipientNumber(
+      (conversation as { canonical_phone?: string }).canonical_phone || conversation.phone_number,
+      conversation.external_chat_id,
+    );
+    if (!numberTo) {
+      return { ok: false, error: 'no_recipient_number' };
+    }
+
+    const localTrackId = `kanban_auto_${randomUUID()}`;
+    const provisionalExternalId = `local:${randomUUID()}`;
+    const metaBase: Record<string, unknown> = {
+      source: input.metadataSource ?? 'kanban_auto_text',
+      track_id: localTrackId,
+      provisional: true,
+    };
+    if (input.automationRef) {
+      metaBase.board_id = input.automationRef.boardId;
+      metaBase.column_id = input.automationRef.columnId;
+      metaBase.card_id = input.automationRef.cardId;
+    }
+    if (input.whatsappModelTrace) {
+      metaBase.whatsapp_model_template_id = input.whatsappModelTrace.template_id;
+      metaBase.whatsapp_model_item_index = input.whatsappModelTrace.item_index;
+      metaBase.whatsapp_model_item_type = input.whatsappModelTrace.message_type;
+    }
+    const savedRowId = await saveMessage(conversation.id, 'outgoing', {
+      externalMessageId: provisionalExternalId,
+      body: text,
+      media: [],
+      messageKind: 'text',
+      status: 'queued',
+      sentAt: new Date(),
+      metadata: metaBase,
+    });
+    queuedMessageRowId = savedRowId;
+
+    const trackSource =
+      input.metadataSource === 'manual_whatsapp_model' || input.metadataSource === 'kanban_whatsapp_model'
+        ? 'painelcrm_whatsapp_model'
+        : 'painelcrm_kanban_auto';
+
+    const messageResponse = (await uazapiService.sendTextMessage(conversation.instance_token, {
+      number: numberTo,
+      text,
+      readchat: false,
+      readmessages: false,
+      delay: 0,
+      track_source: trackSource,
+      track_id: localTrackId,
+    })) as AnyObject;
+
+    const extId = extractUazOutgoingMessageId(messageResponse);
+
+    if (savedRowId) {
+      const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
+      await pool.query(
+        `
+          UPDATE chat_messages
+          SET
+            external_message_id = COALESCE($1, external_message_id),
+            status = $2,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+            sent_at = COALESCE(sent_at, $4::timestamptz)
+          WHERE id = $5
+        `,
+        [
+          extId,
+          nextStatus,
+          JSON.stringify({ ...messageResponse, track_id: localTrackId }),
+          new Date(),
+          savedRowId,
+        ],
+      );
+    }
+
+    try {
+      const instRow = await fetchInstanceForOperate(input.actorUserId, conversation.instance_id);
+      if (instRow) {
+        void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
+          (idErr: any) => console.warn('[KanbanAutoText] identity refresh failed:', idErr?.message),
+        );
+      }
+    } catch {
+      /* não bloquear envio */
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const leadColumnAvailableWs = await hasLeadIdColumn();
+    const [updatedConversationResult, savedMessageResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT
+            c.id,
+            c.user_id,
+            c.instance_id,
+            c.external_chat_id,
+            c.external_fast_id,
+            c.contact_name,
+            c.profile_name,
+            c.phone_number,
+            c.status,
+            c.last_message_preview,
+            c.last_message_at,
+            c.unread_count,
+            c.metadata,
+            c.created_at,
+            c.updated_at,
+            c.client_id,
+            ${leadColumnAvailableWs ? 'c.lead_id,' : 'NULL::uuid as lead_id,'}
+            c.phone_key,
+            i.name as instance_name,
+            CASE
+              WHEN c.client_id IS NOT NULL THEN 'client_linked'
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN 'lead_linked'
+              WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
+              ELSE 'unlinked'
+            END as link_state,
+            COALESCE(c.metadata->>'link_source', 'system') as link_source,
+            COALESCE(c.metadata->>'link_confidence', 'review') as link_confidence,
+            CASE
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN (
+                SELECT l2.status FROM leads l2 WHERE l2.id = c.lead_id AND l2.user_id = c.user_id LIMIT 1
+              )
+              ELSE NULL
+            END as lead_status
+          FROM chat_conversations c
+          INNER JOIN chat_instances i ON i.id = c.instance_id
+          WHERE c.id = $1
+        `,
+        [input.conversationId],
+      ),
+      savedRowId ? pool.query(`SELECT * FROM chat_messages WHERE id = $1`, [savedRowId]) : Promise.resolve({ rows: [] as any[] }),
+    ]);
+
+    if (updatedConversationResult.rows.length > 0) {
+      const updatedConversation = updatedConversationResult.rows[0];
+      try {
+        emitConversationUpdate(input.actorUserId, updatedConversation);
+      } catch (wsError: any) {
+        console.warn('[KanbanAutoText] Failed to emit conversation update:', wsError.message);
+      }
+
+      if (savedMessageResult.rows.length > 0) {
+        const row: any = savedMessageResult.rows[0];
+        try {
+          const contract = contractFromDbRow(row);
+          emitNewMessage(
+            input.actorUserId,
+            {
+              id: row.id,
+              conversation_id: conversation.id,
+              direction: row.direction,
+              body: row.body,
+              sent_at: row.sent_at || new Date(),
+              status: row.status,
+              external_message_id: row.external_message_id,
+              media: row.media,
+              message_contract: contract,
+            },
+            conversation.id,
+          );
+        } catch (wsError: any) {
+          console.warn('[KanbanAutoText] Failed to emit new message:', wsError.message);
+        }
+      }
+    }
+
+    return { ok: true };
+  } catch (error: any) {
+    console.error('[KanbanAutoText] send failed', {
+      conversationId: input.conversationId,
+      error: error?.message || error,
+    });
+    if (queuedMessageRowId) {
+      try {
+        await pool.query(
+          `
+          UPDATE chat_messages
+          SET
+            status = 'failed',
+            metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+          WHERE id = $2
+          `,
+          [JSON.stringify({ send_error: error?.message || String(error) }), queuedMessageRowId],
+        );
+      } catch (markErr: any) {
+        console.warn('[KanbanAutoText] Failed to mark queued message as failed:', markErr?.message);
+      }
+    }
+    return { ok: false, error: error?.message || 'send_failed' };
+  }
+}
+
+/**
+ * Imagem ou documento para automações Kanban / sequência de modelo WhatsApp.
+ * Resolve mídia em data-uri (quando storage interno / URL local) ou URL pública antes de chamar o provider.
+ * Reutiliza `saveMessage` + UazAPI `/send/media` + WS (mesmo padrão do texto automático).
+ */
+export async function sendKanbanAutomationOutboundMedia(
+  input: KanbanAutomationOutboundMediaInput,
+): Promise<{ ok: boolean; error?: string }> {
+  const mimeDefault = input.type === 'document' ? 'application/pdf' : 'image/jpeg';
+  const mime = (input.mimeType ?? mimeDefault).trim() || mimeDefault;
+  let resolvedMedia: Awaited<ReturnType<typeof resolveOutgoingMediaPayload>>;
+  try {
+    resolvedMedia = await resolveOutgoingMediaPayload({
+      type: input.type,
+      fileUrl: input.fileUrl ?? null,
+      storagePath: input.storagePath ?? null,
+      mimeType: mime,
+    });
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'invalid_or_missing_media_source' };
+  }
+  let queuedMessageRowId: string | null = null;
+  try {
+    const conversationResult = await pool.query(
+      `
+        SELECT c.*, i.instance_token, i.external_instance_name, i.status AS instance_status
+        FROM chat_conversations c
+        INNER JOIN chat_instances i ON i.id = c.instance_id
+        WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}
+      `,
+      [input.conversationId, input.actorUserId],
+    );
+
+    if (conversationResult.rowCount === 0) {
+      return { ok: false, error: 'conversation_not_found_or_no_access' };
+    }
+
+    const conversation = conversationResult.rows[0];
+    const instStatus = String(conversation.instance_status || '').toLowerCase();
+    if (instStatus !== 'connected' && instStatus !== 'open') {
+      return { ok: false, error: 'whatsapp_not_connected' };
+    }
+
+    const numberTo = toUazRecipientNumber(
+      (conversation as { canonical_phone?: string }).canonical_phone || conversation.phone_number,
+      conversation.external_chat_id,
+    );
+    if (!numberTo) {
+      return { ok: false, error: 'no_recipient_number' };
+    }
+
+    const caption = (input.caption ?? '').trim() || '';
+    const localTrackId = `kanban_auto_media_${randomUUID()}`;
+    const provisionalExternalId = `local:${randomUUID()}`;
+    const metaBase: Record<string, unknown> = {
+      source: input.metadataSource ?? 'kanban_auto_media',
+      track_id: localTrackId,
+      provisional: true,
+    };
+    if (input.automationRef) {
+      metaBase.board_id = input.automationRef.boardId;
+      metaBase.column_id = input.automationRef.columnId;
+      metaBase.card_id = input.automationRef.cardId;
+    }
+    if (input.whatsappModelTrace) {
+      metaBase.whatsapp_model_template_id = input.whatsappModelTrace.template_id;
+      metaBase.whatsapp_model_item_index = input.whatsappModelTrace.item_index;
+      metaBase.whatsapp_model_item_type = input.whatsappModelTrace.message_type;
+    }
+
+    const messageKind = input.type === 'document' ? 'document' : 'image';
+    const savedRowId = await saveMessage(conversation.id, 'outgoing', {
+      externalMessageId: provisionalExternalId,
+      body: caption || null,
+      media: [{ type: input.type, url: resolvedMedia.persistedUrl, mimetype: resolvedMedia.mimeType }],
+      messageKind,
+      status: 'queued',
+      sentAt: new Date(),
+      metadata: metaBase,
+    });
+    queuedMessageRowId = savedRowId;
+
+    const trackSource =
+      input.metadataSource === 'manual_whatsapp_model' || input.metadataSource === 'kanban_whatsapp_model'
+        ? 'painelcrm_whatsapp_model'
+        : 'painelcrm_kanban_auto';
+
+    const inferredFileName = extractOutgoingFileName({
+      fileName: input.fileName ?? null,
+      storagePath: input.storagePath ?? null,
+      fileUrl: input.fileUrl ?? null,
+    });
+    const messageResponse = (await uazapiService.sendMediaMessage(conversation.instance_token, {
+      number: numberTo,
+      type: input.type,
+      file:
+        input.type === 'document' &&
+        typeof resolvedMedia.fileForProvider === 'string' &&
+        resolvedMedia.fileForProvider.startsWith('data:') &&
+        isPublicHttpUrl(absolutizeOutgoingMediaUrl(resolvedMedia.persistedUrl))
+          ? (absolutizeOutgoingMediaUrl(resolvedMedia.persistedUrl) as string)
+          : resolvedMedia.fileForProvider,
+      ...(inferredFileName
+        ? {
+            fileName: inferredFileName,
+            filename: inferredFileName,
+            documentName: inferredFileName,
+            docName: inferredFileName,
+            file_name: inferredFileName,
+            name: inferredFileName,
+          }
+        : {}),
+      ...(resolvedMedia.mimeType ? { mimeType: resolvedMedia.mimeType, mimetype: resolvedMedia.mimeType } : {}),
+      ...(caption ? { text: caption } : {}),
+      readchat: false,
+      readmessages: false,
+      delay: 0,
+      track_source: trackSource,
+      track_id: localTrackId,
+    })) as AnyObject;
+
+    const extId = extractUazOutgoingMessageId(messageResponse);
+    const remoteUrl =
+      absolutizeOutgoingMediaUrl(resolvedMedia.persistedUrl) ||
+      absolutizeOutgoingMediaUrl((messageResponse as any)?.response?.fileUrl) ||
+      absolutizeOutgoingMediaUrl((messageResponse as any)?.fileUrl) ||
+      absolutizeOutgoingMediaUrl((messageResponse as any)?.url) ||
+      null;
+    const shouldPreferDataUrlForModelDocument =
+      input.type === 'document' &&
+      (input.metadataSource === 'manual_whatsapp_model' || input.metadataSource === 'kanban_whatsapp_model') &&
+      typeof resolvedMedia.fileForProvider === 'string' &&
+      resolvedMedia.fileForProvider.startsWith('data:');
+    const uiMediaUrl =
+      shouldPreferDataUrlForModelDocument ||
+      (input.type !== 'document' &&
+        typeof resolvedMedia.fileForProvider === 'string' &&
+        resolvedMedia.fileForProvider.startsWith('data:'))
+        ? resolvedMedia.fileForProvider
+        : remoteUrl || resolvedMedia.persistedUrl;
+
+    const mediaItems: ChatMediaItem[] = [
+      {
+        type: input.type,
+        url: uiMediaUrl,
+        mimetype: resolvedMedia.mimeType,
+        fileName: inferredFileName || null,
+      },
+    ];
+
+    if (savedRowId) {
+      const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
+      await pool.query(
+        `
+          UPDATE chat_messages
+          SET
+            external_message_id = COALESCE($1, external_message_id),
+            status = $2,
+            media = CASE
+              WHEN $4::jsonb IS NOT NULL
+                AND jsonb_typeof($4::jsonb) = 'array'
+                AND jsonb_array_length($4::jsonb) > 0
+              THEN $4::jsonb
+              ELSE media
+            END,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+            sent_at = COALESCE(sent_at, $5::timestamptz)
+          WHERE id = $6
+        `,
+        [
+          extId,
+          nextStatus,
+          JSON.stringify({ ...messageResponse, track_id: localTrackId }),
+          JSON.stringify(mediaItems),
+          new Date(),
+          savedRowId,
+        ],
+      );
+    }
+
+    try {
+      const instRow = await fetchInstanceForOperate(input.actorUserId, conversation.instance_id);
+      if (instRow) {
+        void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
+          (idErr: any) => console.warn('[KanbanAutoMedia] identity refresh failed:', idErr?.message),
+        );
+      }
+    } catch {
+      /* não bloquear */
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const leadColumnAvailableWs = await hasLeadIdColumn();
+    const [updatedConversationResult, savedMessageResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT
+            c.id,
+            c.user_id,
+            c.instance_id,
+            c.external_chat_id,
+            c.external_fast_id,
+            c.contact_name,
+            c.profile_name,
+            c.phone_number,
+            c.status,
+            c.last_message_preview,
+            c.last_message_at,
+            c.unread_count,
+            c.metadata,
+            c.created_at,
+            c.updated_at,
+            c.client_id,
+            ${leadColumnAvailableWs ? 'c.lead_id,' : 'NULL::uuid as lead_id,'}
+            c.phone_key,
+            i.name as instance_name,
+            CASE
+              WHEN c.client_id IS NOT NULL THEN 'client_linked'
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN 'lead_linked'
+              WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
+              ELSE 'unlinked'
+            END as link_state,
+            COALESCE(c.metadata->>'link_source', 'system') as link_source,
+            COALESCE(c.metadata->>'link_confidence', 'review') as link_confidence,
+            CASE
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN (
+                SELECT l2.status FROM leads l2 WHERE l2.id = c.lead_id AND l2.user_id = c.user_id LIMIT 1
+              )
+              ELSE NULL
+            END as lead_status
+          FROM chat_conversations c
+          INNER JOIN chat_instances i ON i.id = c.instance_id
+          WHERE c.id = $1
+        `,
+        [input.conversationId],
+      ),
+      savedRowId ? pool.query(`SELECT * FROM chat_messages WHERE id = $1`, [savedRowId]) : Promise.resolve({ rows: [] as any[] }),
+    ]);
+
+    if (updatedConversationResult.rows.length > 0) {
+      try {
+        emitConversationUpdate(input.actorUserId, updatedConversationResult.rows[0]);
+      } catch (wsError: any) {
+        console.warn('[KanbanAutoMedia] Failed to emit conversation update:', wsError.message);
+      }
+
+      if (savedMessageResult.rows.length > 0) {
+        const row: any = savedMessageResult.rows[0];
+        try {
+          const contract = contractFromDbRow(row);
+          emitNewMessage(
+            input.actorUserId,
+            {
+              id: row.id,
+              conversation_id: conversation.id,
+              direction: row.direction,
+              body: row.body,
+              sent_at: row.sent_at || new Date(),
+              status: row.status,
+              external_message_id: row.external_message_id,
+              media: row.media,
+              message_contract: contract,
+            },
+            conversation.id,
+          );
+        } catch (wsError: any) {
+          console.warn('[KanbanAutoMedia] Failed to emit new message:', wsError.message);
+        }
+      }
+    }
+
+    return { ok: true };
+  } catch (error: any) {
+    console.error('[KanbanAutoMedia] send failed', {
+      conversationId: input.conversationId,
+      type: input.type,
+      error: error?.message || error,
+    });
+    if (queuedMessageRowId) {
+      try {
+        await pool.query(
+          `
+          UPDATE chat_messages
+          SET
+            status = 'failed',
+            metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+          WHERE id = $2
+          `,
+          [JSON.stringify({ send_error: error?.message || String(error) }), queuedMessageRowId],
+        );
+      } catch (markErr: any) {
+        console.warn('[KanbanAutoMedia] Failed to mark queued message as failed:', markErr?.message);
+      }
+    }
+    return { ok: false, error: error?.message || 'send_failed' };
   }
 }
 

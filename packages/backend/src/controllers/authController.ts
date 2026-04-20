@@ -8,6 +8,7 @@ import { getEnabledFeaturesForUser } from '../services/featureFlagService.js';
 import { isPhase2TrialCrmGateEnabled } from '../config/checkoutTrialFeatureFlags.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
 import { checkTenantUsersLimitForAddOne } from '../services/tenantLimitService.js';
+import { ensureWhatsAppTemplateDefaults } from '../services/whatsappTemplateDefaultsService.js';
 import { z } from 'zod';
 import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/userIdentity.js';
 
@@ -168,6 +169,7 @@ export async function register(req: Request, res: Response): Promise<void> {
         `SELECT id FROM plans WHERE is_active = true ORDER BY sort_order ASC, name ASC LIMIT 1`
       );
     }
+    let registeredTenantId: string | null = null;
     if (planRow.rows.length > 0) {
       const planId = planRow.rows[0].id;
       const planDetail = await client.query(
@@ -208,6 +210,7 @@ export async function register(req: Request, res: Response): Promise<void> {
             [inferredCompanyName, slug, planId]
           );
       const tenantId = tenantResult.rows[0].id;
+      registeredTenantId = tenantId;
       const usersLimit = await checkTenantUsersLimitForAddOne(tenantId);
       if (!usersLimit.allowed) {
         await client.query('ROLLBACK');
@@ -227,6 +230,12 @@ export async function register(req: Request, res: Response): Promise<void> {
     }
 
     await client.query('COMMIT');
+
+    if (registeredTenantId) {
+      ensureWhatsAppTemplateDefaults(registeredTenantId).catch((err) =>
+        console.error('[auth] ensureWhatsAppTemplateDefaults', err),
+      );
+    }
 
     const token = generateToken({
       userId: user.id,
