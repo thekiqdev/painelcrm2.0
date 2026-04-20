@@ -42,6 +42,10 @@ CREATE POLICY contract_public_view_tokens_tenant_policy ON public.contract_publi
   );
 
 -- Rota pública: resolve hash → payload mínimo (bypass RLS; não expõe IDs internos desnecessários).
+-- PostgreSQL não permite alterar o conjunto de colunas de retorno via CREATE OR REPLACE
+-- quando a função já existe com assinatura diferente.
+DROP FUNCTION IF EXISTS public.get_contract_public_view_by_token_hash(TEXT);
+
 CREATE OR REPLACE FUNCTION public.get_contract_public_view_by_token_hash(p_token_hash TEXT)
 RETURNS TABLE (
   title TEXT,
