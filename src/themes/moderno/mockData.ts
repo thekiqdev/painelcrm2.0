@@ -1,16 +1,17 @@
-import heroBanner from '../../../tmp-novobrilho/src/assets/hero-banner.jpg';
-import categoryBlusas from '../../../tmp-novobrilho/src/assets/category-blusas.jpg';
-import categoryConjuntos from '../../../tmp-novobrilho/src/assets/category-conjuntos.jpg';
-import categoryMangaLonga from '../../../tmp-novobrilho/src/assets/category-manga-longa.jpg';
-import product1 from '../../../tmp-novobrilho/src/assets/product-1.jpg';
-import product2 from '../../../tmp-novobrilho/src/assets/product-2.jpg';
-import product3 from '../../../tmp-novobrilho/src/assets/product-3.jpg';
-import product4 from '../../../tmp-novobrilho/src/assets/product-4.jpg';
-import product5 from '../../../tmp-novobrilho/src/assets/product-5.jpg';
-import product6 from '../../../tmp-novobrilho/src/assets/product-6.jpg';
-import productDetail2 from '../../../tmp-novobrilho/src/assets/product-detail-2.jpg';
-import productDetail3 from '../../../tmp-novobrilho/src/assets/product-detail-3.jpg';
-import productDetail4 from '../../../tmp-novobrilho/src/assets/product-detail-4.jpg';
+const fallbackImage = '/landingpage/hero-dashboard.jpg';
+const heroBanner = fallbackImage;
+const categoryBlusas = fallbackImage;
+const categoryConjuntos = fallbackImage;
+const categoryMangaLonga = fallbackImage;
+const product1 = fallbackImage;
+const product2 = fallbackImage;
+const product3 = fallbackImage;
+const product4 = fallbackImage;
+const product5 = fallbackImage;
+const product6 = fallbackImage;
+const productDetail2 = fallbackImage;
+const productDetail3 = fallbackImage;
+const productDetail4 = fallbackImage;
 
 export const modernoMockHeroBanner = heroBanner;
 
