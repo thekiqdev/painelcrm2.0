@@ -1,4 +1,27 @@
-import { apiClient } from '@/integrations/api/client';
+import { apiClient, getApiUrl } from '@/integrations/api/client';
+import { normalizeBrandUrl } from '@/utils/tenantBranding';
+
+/**
+ * Ajusta a URL devolvida pelo upload para o browser:
+ * - força https quando a página é https (URLs antigas gravadas como http);
+ * - em produção com API no mesmo host (base relativa), usa path `/media/catalog/...`
+ *   para o pedido seguir o mesmo proxy que `/api` (evita 404 se a origem absoluta estiver errada).
+ */
+export function normalizeCatalogMediaUrlForBrowser(publicUrl: string): string {
+  const fixed = normalizeBrandUrl(publicUrl.trim());
+  if (!fixed || typeof window === 'undefined') return fixed;
+  try {
+    const apiBase = getApiUrl();
+    if (apiBase !== '') return fixed;
+    const u = new URL(fixed, window.location.origin);
+    if (u.origin === window.location.origin) {
+      return `${u.pathname}${u.search}`;
+    }
+  } catch {
+    /* ignore */
+  }
+  return fixed;
+}
 
 export type CatalogMediaScope =
   | 'product'
@@ -29,7 +52,7 @@ export async function uploadCatalogImageFile(
     throw new Error(res.error || 'Falha no upload');
   }
 
-  return res.data.publicUrl;
+  return normalizeCatalogMediaUrlForBrowser(res.data.publicUrl);
 }
 
 export function isCatalogMediaUploadLikelyConfigured(): boolean {

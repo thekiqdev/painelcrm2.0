@@ -9,6 +9,7 @@ import { uploadCatalogImageFile } from '@/services/catalogMediaUpload';
 import { toast } from '@/components/ui/sonner';
 import { Loader2 } from 'lucide-react';
 import { useTenantBrand } from '@/contexts/TenantBrandContext';
+import { normalizeCatalogMediaUrlForBrowser } from '@/services/catalogMediaUpload';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 
 const empty = '';
@@ -54,8 +55,10 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
       setCity(d.company_city ?? empty);
       setState(d.company_state ?? empty);
       setZipCode(d.company_postal_code ?? empty);
-      setLogoLightUrl(d.logo_light_url?.trim() || null);
-      setLogoDarkUrl(d.logo_dark_url?.trim() || null);
+      const lightRaw = d.logo_light_url?.trim() || '';
+      const darkRaw = d.logo_dark_url?.trim() || '';
+      setLogoLightUrl(lightRaw ? normalizeCatalogMediaUrlForBrowser(lightRaw) : null);
+      setLogoDarkUrl(darkRaw ? normalizeCatalogMediaUrlForBrowser(darkRaw) : null);
     } finally {
       setLoading(false);
     }

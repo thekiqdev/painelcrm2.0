@@ -9,7 +9,8 @@ export type TenantBrandUrls = {
   logo_url?: string | null;
 };
 
-function normalizeBrandUrl(raw: string): string {
+/** Normaliza URL de marca/mídia no browser (HTTPS + mesma origem quando aplicável). */
+export function normalizeBrandUrl(raw: string): string {
   const value = raw.trim();
   if (!value) return '';
   if (typeof window === 'undefined') return value;

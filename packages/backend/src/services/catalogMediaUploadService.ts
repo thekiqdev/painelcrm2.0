@@ -89,11 +89,18 @@ export function buildCatalogMediaPublicUrl(req: Request, relativeKey: string): s
     .split(',')
     .map((p) => p.trim().toLowerCase())
     .find(Boolean);
+  const forwardedSslOn = String(req.headers['x-forwarded-ssl'] || '').toLowerCase() === 'on';
   const forwardedHost = String(req.headers['x-forwarded-host'] || '')
     .split(',')
     .map((h) => h.trim())
     .find(Boolean);
-  const protocol = forwardedProto === 'https' ? 'https' : req.protocol;
+  /** Com trust proxy, req.secure reflete HTTPS; alguns proxies só enviam x-forwarded-ssl. */
+  const protocol =
+    forwardedProto === 'https' || req.secure || forwardedSslOn
+      ? 'https'
+      : forwardedProto === 'http'
+        ? 'http'
+        : req.protocol;
   const host = forwardedHost || req.get('host') || 'localhost';
   const origin =
     envBase ||
