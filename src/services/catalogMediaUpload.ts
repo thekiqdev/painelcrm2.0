@@ -1,5 +1,4 @@
 import { apiClient, getApiUrl } from '@/integrations/api/client';
-import { rewriteLegacyCatalogMediaPath } from '@/utils/catalogMediaPublicPath';
 import { normalizeBrandUrl } from '@/utils/tenantBranding';
 
 /**
@@ -9,7 +8,7 @@ import { normalizeBrandUrl } from '@/utils/tenantBranding';
  *   para o pedido seguir o mesmo proxy que `/api` (nginx do SPA costuma não servir /media/catalog).
  */
 export function normalizeCatalogMediaUrlForBrowser(publicUrl: string): string {
-  const fixed = rewriteLegacyCatalogMediaPath(normalizeBrandUrl(publicUrl.trim()));
+  const fixed = normalizeBrandUrl(publicUrl.trim());
   if (!fixed || typeof window === 'undefined') return fixed;
   try {
     const apiBase = getApiUrl();

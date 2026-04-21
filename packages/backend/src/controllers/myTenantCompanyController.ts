@@ -7,6 +7,7 @@ import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { requireTenantId } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { rewriteStoredCatalogMediaUrlForClient } from '../utils/catalogMediaPublicSignedUrl.js';
 
 const putBodySchema = z.object({
   name: z.string().min(1).max(500).optional(),
@@ -44,6 +45,15 @@ function emptyToNull(s: string | null | undefined): string | null {
   return t === '' ? null : t;
 }
 
+function mapTenantCompanyLogosForClient(req: AuthRequest, row: TenantCompanyRow): TenantCompanyRow {
+  return {
+    ...row,
+    logo_url: rewriteStoredCatalogMediaUrlForClient(req, row.logo_url),
+    logo_light_url: rewriteStoredCatalogMediaUrlForClient(req, row.logo_light_url),
+    logo_dark_url: rewriteStoredCatalogMediaUrlForClient(req, row.logo_dark_url),
+  };
+}
+
 /** GET /api/me/tenant/company — leitura para qualquer utilizador do tenant (sidebar/logo). */
 export async function getMyTenantCompany(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -63,7 +73,7 @@ export async function getMyTenantCompany(req: AuthRequest, res: Response): Promi
       res.status(404).json({ error: 'Tenant não encontrado' });
       return;
     }
-    res.json(r.rows[0]);
+    res.json(mapTenantCompanyLogosForClient(req, r.rows[0]));
   } catch (error) {
     console.error('getMyTenantCompany error:', error);
     res.status(500).json({ error: 'Erro ao carregar dados da empresa' });
@@ -120,7 +130,8 @@ export async function putMyTenantCompany(req: AuthRequest, res: Response): Promi
          FROM tenants WHERE id = $1`,
         [tenantId]
       );
-      res.json(cur.rows[0] ?? {});
+      const curRow = cur.rows[0];
+      res.json(curRow ? mapTenantCompanyLogosForClient(req, curRow) : {});
       return;
     }
 
@@ -134,7 +145,7 @@ export async function putMyTenantCompany(req: AuthRequest, res: Response): Promi
         logo_url, logo_light_url, logo_dark_url`,
       values
     );
-    res.json(result.rows[0]);
+    res.json(mapTenantCompanyLogosForClient(req, result.rows[0]!));
   } catch (error) {
     if (error instanceof ModulePermissionError) {
       res.status(error.statusCode).json({ error: error.message });

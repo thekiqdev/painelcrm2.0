@@ -2,6 +2,10 @@ import { randomUUID } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import type { Request } from 'express';
+import {
+  buildCatalogMediaRawSignedPublicUrl,
+  resolveCatalogMediaPublicOrigin,
+} from '../utils/catalogMediaPublicSignedUrl.js';
 
 export const CATALOG_MEDIA_ALLOWED_TYPES = new Set([
   'image/jpeg',
@@ -43,7 +47,7 @@ function sanitizeFilename(name: string): string {
 }
 
 /**
- * Caminho relativo ao diretório catalog-media (sem path absoluto). URL pública: /api/catalog-media/public/... (e legado /media/catalog/...).
+ * Caminho relativo ao diretório catalog-media (sem path absoluto). URL pública: GET /api/public/catalog-media/raw?k=&s= (assinada).
  */
 export function buildCatalogMediaRelativeKey(params: {
   tenantId: string | null;
@@ -80,38 +84,12 @@ export function assertAllowedImageUpload(contentType: string, byteSize: number):
 
 /**
  * URL absoluta salva no banco e usada na vitrine.
+ * Usa GET /api/public/catalog-media/raw?k=&s= (path sem .png) para contornar nginx que mapeia *.png para ficheiros estáticos.
  * CATALOG_MEDIA_PUBLIC_BASE_URL (sem barra final) força origem; senão usa o Host da requisição (trust proxy).
  */
 export function buildCatalogMediaPublicUrl(req: Request, relativeKey: string): string {
-  const envBase = process.env.CATALOG_MEDIA_PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
-  const apiBase = process.env.API_PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
-  const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
-    .split(',')
-    .map((p) => p.trim().toLowerCase())
-    .find(Boolean);
-  const forwardedSslOn = String(req.headers['x-forwarded-ssl'] || '').toLowerCase() === 'on';
-  const forwardedHost = String(req.headers['x-forwarded-host'] || '')
-    .split(',')
-    .map((h) => h.trim())
-    .find(Boolean);
-  /** Com trust proxy, req.secure reflete HTTPS; alguns proxies só enviam x-forwarded-ssl. */
-  const protocol =
-    forwardedProto === 'https' || req.secure || forwardedSslOn
-      ? 'https'
-      : forwardedProto === 'http'
-        ? 'http'
-        : req.protocol;
-  const host = forwardedHost || req.get('host') || 'localhost';
-  const origin =
-    envBase ||
-    apiBase ||
-    `${protocol}://${host}`;
-  const safeKey = relativeKey
-    .split('/')
-    .map((seg) => encodeURIComponent(seg))
-    .join('/');
-  /** Mesmo prefixo que o mount em index.ts: atrás de nginx só /api costuma ir para o Node. */
-  return `${origin}/api/catalog-media/public/${safeKey}`;
+  const origin = resolveCatalogMediaPublicOrigin(req);
+  return buildCatalogMediaRawSignedPublicUrl(origin, relativeKey);
 }
 
 export async function saveCatalogMediaBuffer(relativeKey: string, buffer: Buffer): Promise<string> {

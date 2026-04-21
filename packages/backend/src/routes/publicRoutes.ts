@@ -22,8 +22,21 @@ import {
   postPublicProposalAccept,
   postPublicProposalReject,
 } from '../controllers/publicProposalViewController.js';
+import { getPublicCatalogMediaRaw } from '../controllers/publicCatalogMediaController.js';
 
 const router = Router();
+
+const catalogMediaPublicRawLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_CATALOG_MEDIA_RAW_MAX || '3000', 10),
+  message: { ok: false, error: 'Muitas consultas a imagens. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => String(req.ip || req.socket.remoteAddress || ''),
+});
+
+router.get('/catalog-media/raw', catalogMediaPublicRawLimiter, getPublicCatalogMediaRaw);
 
 const contractPublicViewLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

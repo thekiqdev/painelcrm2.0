@@ -17,6 +17,7 @@ import {
   onProposalPublicRejected,
 } from '../services/proposalPublicAcceptHooks.js';
 import { runProposalKanbanAcceptAutomation } from '../services/proposalKanbanAcceptAutomationService.js';
+import { rewriteStoredCatalogMediaUrlForClient } from '../utils/catalogMediaPublicSignedUrl.js';
 
 const VIEW_DISCLAIMER =
   'Esta página é somente para visualização da proposta comercial. O pagamento e a emissão de fatura são tratados pela equipe após o aceite.';
@@ -78,8 +79,18 @@ export async function getPublicProposalView(req: Request, res: Response): Promis
       }
     }
 
+    const tenantBranding = payload.tenant_branding
+      ? {
+          ...payload.tenant_branding,
+          logo_url: rewriteStoredCatalogMediaUrlForClient(req, payload.tenant_branding.logo_url),
+          logo_light_url: rewriteStoredCatalogMediaUrlForClient(req, payload.tenant_branding.logo_light_url),
+          logo_dark_url: rewriteStoredCatalogMediaUrlForClient(req, payload.tenant_branding.logo_dark_url),
+        }
+      : payload.tenant_branding;
+
     res.json({
       ...payload,
+      tenant_branding: tenantBranding,
       status_label: statusLabelPt(payload.display_status),
       disclaimer: VIEW_DISCLAIMER,
     });

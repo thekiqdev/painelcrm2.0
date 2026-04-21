@@ -8,6 +8,7 @@ import {
   resolveContractIdForPublicViewToken,
 } from '../services/contractPublicViewService.js';
 import { buildContractPdfBufferForPublicView } from '../services/contractPdfService.js';
+import { rewriteStoredCatalogMediaUrlForClient } from '../utils/catalogMediaPublicSignedUrl.js';
 
 function statusLabelPt(status: string): string {
   const m: Record<string, string> = {
@@ -46,9 +47,9 @@ export async function getPublicContractView(req: Request, res: Response): Promis
       client_name: payload.client_name,
       tenant: {
         name: payload.tenant_name,
-        logo_url: payload.tenant_logo_url,
-        logo_light_url: payload.tenant_logo_light_url,
-        logo_dark_url: payload.tenant_logo_dark_url,
+        logo_url: rewriteStoredCatalogMediaUrlForClient(req, payload.tenant_logo_url),
+        logo_light_url: rewriteStoredCatalogMediaUrlForClient(req, payload.tenant_logo_light_url),
+        logo_dark_url: rewriteStoredCatalogMediaUrlForClient(req, payload.tenant_logo_dark_url),
       },
       responsible_display_name: payload.responsible_display_name,
       signers: payload.signers.map((s) => ({

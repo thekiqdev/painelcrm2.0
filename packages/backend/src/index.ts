@@ -241,6 +241,7 @@ const limiter = rateLimit({
     // Não contar rotas de auth no limite geral (têm seu próprio authLimiter)
     return p.startsWith('/api/auth/') || p.startsWith('auth/') ||
            p.startsWith('/api/store-checkout') ||
+           p.includes('/public/catalog-media/raw') ||
            p.includes('/catalog-media/public/') ||
            p.includes('/test') || p.startsWith('/webhooks/') || p.startsWith('webhooks/');
   },
