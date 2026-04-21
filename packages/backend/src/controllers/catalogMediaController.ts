@@ -58,7 +58,36 @@ export async function postCatalogMediaUpload(req: AuthRequest, res: Response): P
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
     }
-    const msg = error instanceof Error ? error.message : 'Erro ao salvar arquivo';
-    res.status(400).json({ error: msg });
+    const errMsg = error instanceof Error ? error.message : 'Erro ao salvar arquivo';
+    const errCode =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code: unknown }).code || '')
+        : '';
+
+    if (errCode === 'EROFS' || errCode === 'EACCES' || errCode === 'EPERM' || errCode === 'ENOSPC') {
+      console.error('[catalogMediaUpload] storage write failed', {
+        code: errCode,
+        message: errMsg,
+        tenantId: req.tenantId ?? null,
+        userId: req.userId ?? null,
+        scope: req.body?.scope ?? null,
+        storageRoot: process.env.CATALOG_MEDIA_STORAGE_PATH || '(default ./uploads)',
+      });
+      res.status(500).json({
+        error:
+          'Falha ao gravar arquivo no storage do servidor. Verifique volume/permissões (CATALOG_MEDIA_STORAGE_PATH) no EasyPanel.',
+        code: 'CATALOG_MEDIA_STORAGE_WRITE_FAILED',
+      });
+      return;
+    }
+
+    console.error('[catalogMediaUpload] upload failed', {
+      code: errCode || null,
+      message: errMsg,
+      tenantId: req.tenantId ?? null,
+      userId: req.userId ?? null,
+      scope: req.body?.scope ?? null,
+    });
+    res.status(400).json({ error: errMsg });
   }
 }
