@@ -87,6 +87,111 @@ export interface CatalogUploadResponse {
   key: string;
 }
 
+/** Abaixo disto o corpo multipart costuma passar no nginx default (~1m) no EasyPanel. */
+const CATALOG_UPLOAD_SAFE_BYTES = 700 * 1024;
+
+function baseNameWithoutExt(name: string): string {
+  const base = name.split(/[/\\]/).pop() || 'image';
+  const i = base.lastIndexOf('.');
+  return i > 0 ? base.slice(0, i) : base;
+}
+
+async function encodeCanvasUnderTarget(
+  canvas: HTMLCanvasElement,
+  targetMax: number,
+): Promise<Blob | null> {
+  const qualities = [0.86, 0.78, 0.68, 0.58, 0.5, 0.42, 0.36];
+  let best: Blob | null = null;
+  for (const q of qualities) {
+    const webp = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/webp', q),
+    );
+    if (webp && (!best || webp.size < best.size)) best = webp;
+    if (best && best.size <= targetMax) return best;
+  }
+  const jpeg = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.82),
+  );
+  if (jpeg && (!best || jpeg.size < best.size)) best = jpeg;
+  return best;
+}
+
+/**
+ * Reduz peso da imagem antes do POST (contorna 413 do proxy quando não há `client_max_body_size`).
+ * Preserva GIF (animação). HEIC/erros de decode: devolve o ficheiro original.
+ */
+async function shrinkImageFileForCatalogUpload(file: File, scope: CatalogMediaScope): Promise<File> {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') {
+    return file;
+  }
+  if (file.size <= CATALOG_UPLOAD_SAFE_BYTES) {
+    return file;
+  }
+
+  const initialMaxEdge =
+    scope === 'product' ? 1800 : scope === 'store_banner' ? 1600 : 1200;
+  const targetMax = CATALOG_UPLOAD_SAFE_BYTES;
+
+  let maxEdge = initialMaxEdge;
+  for (let pass = 0; pass < 7; pass++) {
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      return file;
+    }
+
+    try {
+      let w = bitmap.width;
+      let h = bitmap.height;
+      const scale = Math.min(1, maxEdge / Math.max(w, h, 1));
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        bitmap.close?.();
+        return file;
+      }
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      bitmap.close?.();
+
+      const best = await encodeCanvasUnderTarget(canvas, targetMax);
+      if (!best) {
+        maxEdge = Math.max(480, Math.floor(maxEdge * 0.72));
+        continue;
+      }
+
+      const improved = best.size < file.size;
+      const underProxy = best.size <= targetMax * 1.05;
+      if (underProxy || pass >= 6) {
+        if (!improved && !underProxy) return file;
+        const ext =
+          best.type === 'image/png' ? 'png' : best.type === 'image/webp' ? 'webp' : 'jpg';
+        const outName = `${baseNameWithoutExt(file.name)}.${ext}`;
+        return new File([best], outName, {
+          type: best.type || 'image/jpeg',
+          lastModified: Date.now(),
+        });
+      }
+
+      maxEdge = Math.max(480, Math.floor(maxEdge * 0.72));
+    } catch {
+      try {
+        bitmap.close?.();
+      } catch {
+        /* ignore */
+      }
+      return file;
+    }
+  }
+
+  return file;
+}
+
 export async function deleteCatalogMediaFileByKey(key: string): Promise<void> {
   const res = await apiClient.post<{ ok: boolean }>('/api/catalog-media/delete', { key });
   if (res.error) throw new Error(res.error);
@@ -101,9 +206,10 @@ export async function uploadCatalogImageFile(
   scope: CatalogMediaScope,
   options?: { previousUrl?: string | null },
 ): Promise<string> {
+  const toSend = await shrinkImageFileForCatalogUpload(file, scope);
   const form = new FormData();
   form.append('scope', scope);
-  form.append('file', file);
+  form.append('file', toSend);
   const prevKey = options?.previousUrl ? extractCatalogMediaRelativeKeyFromUrl(options.previousUrl) : null;
   if (prevKey) form.append('previous_key', prevKey);
 
