@@ -84,9 +84,21 @@ export function assertAllowedImageUpload(contentType: string, byteSize: number):
  */
 export function buildCatalogMediaPublicUrl(req: Request, relativeKey: string): string {
   const envBase = process.env.CATALOG_MEDIA_PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
+  const apiBase = process.env.API_PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+    .split(',')
+    .map((p) => p.trim().toLowerCase())
+    .find(Boolean);
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '')
+    .split(',')
+    .map((h) => h.trim())
+    .find(Boolean);
+  const protocol = forwardedProto === 'https' ? 'https' : req.protocol;
+  const host = forwardedHost || req.get('host') || 'localhost';
   const origin =
     envBase ||
-    `${req.protocol}://${req.get('host') || 'localhost'}`;
+    apiBase ||
+    `${protocol}://${host}`;
   const safeKey = relativeKey
     .split('/')
     .map((seg) => encodeURIComponent(seg))

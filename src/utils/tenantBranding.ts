@@ -9,10 +9,25 @@ export type TenantBrandUrls = {
   logo_url?: string | null;
 };
 
+function normalizeBrandUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) return '';
+  if (typeof window === 'undefined') return value;
+  if (window.location.protocol !== 'https:') return value;
+  try {
+    const u = new URL(value, window.location.origin);
+    // Evita mixed content quando backend gravou http por proxy/protocolo incorreto.
+    if (u.protocol === 'http:') u.protocol = 'https:';
+    return u.toString();
+  } catch {
+    return value;
+  }
+}
+
 export function resolveTenantLogoUrl(theme: string | undefined, row: TenantBrandUrls | null | undefined): string | null {
   if (!row) return null;
-  const light = (row.logo_light_url?.trim() || row.logo_url?.trim() || '') || '';
-  const dark = (row.logo_dark_url?.trim() || '') || '';
+  const light = normalizeBrandUrl(row.logo_light_url?.trim() || row.logo_url?.trim() || '');
+  const dark = normalizeBrandUrl(row.logo_dark_url?.trim() || '');
   const isDark = theme === 'dark';
   if (isDark) {
     if (dark) return dark;
