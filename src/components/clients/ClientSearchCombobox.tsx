@@ -108,7 +108,7 @@ export function ClientSearchCombobox({
     return () => {
       cancelled = true;
     };
-  }, [value, clientsProp]);
+  }, [value, selectedFromLocal]);
 
   const hasSearch = query.trim().length > 0;
 
