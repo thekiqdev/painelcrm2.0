@@ -1,6 +1,44 @@
 import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+
+/**
+ * URL pública do SPA (impersonação, links em e-mail, etc.).
+ * 1) FRONTEND_URL ou PUBLIC_APP_URL ou primeira entrada de FRONTEND_URLS
+ * 2) Origin / Referer do pedido (útil na VPS quando o .env ainda aponta para localhost)
+ * 3) fallback dev localhost:8080
+ */
+function resolveImpersonationFrontendBaseUrl(req: AuthRequest): string {
+  const fromList = String(process.env.FRONTEND_URLS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)[0];
+  const fromEnv =
+    String(process.env.FRONTEND_URL || '').trim() ||
+    String(process.env.PUBLIC_APP_URL || '').trim() ||
+    fromList ||
+    '';
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+
+  const origin = req.get('origin')?.trim();
+  if (origin && /^https?:\/\//i.test(origin)) {
+    return origin.replace(/\/$/, '');
+  }
+
+  const referer = req.get('referer')?.trim();
+  if (referer) {
+    try {
+      const u = new URL(referer);
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        return `${u.protocol}//${u.host}`.replace(/\/$/, '');
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return 'http://localhost:8080';
+}
 import { hashPassword } from '../utils/bcrypt.js';
 import { generateImpersonationToken } from '../utils/jwt.js';
 import { logSuperAdminAction } from '../services/auditLogService.js';
@@ -136,7 +174,7 @@ export async function impersonateUser(req: AuthRequest, res: Response): Promise<
       return;
     }
     const token = generateImpersonationToken({ userId: target.id, email: target.email });
-    const url = (process.env.FRONTEND_URL || 'http://localhost:8080').replace(/\/$/, '');
+    const url = resolveImpersonationFrontendBaseUrl(req);
     if (req.user?.id) {
       await logSuperAdminAction(req.user.id, 'impersonate', 'user', target.id, { target_email: target.email });
     }
