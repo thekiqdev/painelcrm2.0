@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
 import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
@@ -97,13 +97,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const path = location.pathname || '';
     const commercialPayPath = path.startsWith('/checkout') || path.startsWith('/saas-billing');
+    const publicCrmDocPath =
+      path.startsWith('/contract-view/') ||
+      path.startsWith('/contract-sign/') ||
+      path.startsWith('/proposal-view/') ||
+      path.startsWith('/pay/');
+    const skipPlanHub = commercialPayPath || publicCrmDocPath;
     // Hub comercial primeiro: trial expirado / retomada → /meu-plano (CTA leva ao /checkout ou /saas-billing/...).
-    if (user?.requires_checkout_resume === true && !commercialPayPath && path !== '/meu-plano') {
+    if (user?.requires_checkout_resume === true && !skipPlanHub && path !== '/meu-plano') {
       navigate('/meu-plano', { replace: true });
       return;
     }
     /** Plano grátis com trial vencido: hub em /meu-plano, mas rotas de pagamento comercial devem poder abrir. */
-    if (user?.plan_expired && path !== '/meu-plano' && !commercialPayPath) {
+    if (user?.plan_expired && path !== '/meu-plano' && !skipPlanHub) {
       navigate('/meu-plano', { replace: true });
     }
   }, [user?.requires_checkout_resume, user?.plan_expired, navigate, location.pathname]);

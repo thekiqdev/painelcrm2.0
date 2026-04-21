@@ -5,7 +5,7 @@ import { pool } from '../utils/db.js';
 import type { AppRole } from './rolePermissionsService.js';
 import { getRoleModulePermissions } from './modulePermissionsService.js';
 import { MODULE_IDS } from './modulePermissionsService.js';
-import type { ModulePermissionsMap } from './modulePermissionsService.js';
+import type { ModulePermissionsMap, ModulePermissionRow } from './modulePermissionsService.js';
 import { incrementPermissionVersion } from './permissionVersionService.js';
 
 export interface TenantCustomRole {
@@ -76,9 +76,10 @@ export async function createCustomRole(
     : {};
   for (const moduleId of MODULE_IDS) {
     const p = template[moduleId];
+    const extras = (p as ModulePermissionRow | undefined)?.module_extras ?? {};
     await pool.query(
-      `INSERT INTO custom_role_module_permissions (custom_role_id, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO custom_role_module_permissions (custom_role_id, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only, module_extras)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
       [
         row.id,
         moduleId,
@@ -88,6 +89,7 @@ export async function createCustomRole(
         p?.can_delete ?? false,
         p?.edit_own_only ?? false,
         p?.delete_own_only ?? false,
+        JSON.stringify(extras),
       ]
     );
   }
@@ -99,26 +101,69 @@ export async function getCustomRoleModulePermissions(
   customRoleId: string,
   profileId: string
 ): Promise<ModulePermissionsMap> {
-  const r = await pool.query(
-    `SELECT module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only
-     FROM custom_role_module_permissions crp
-     JOIN tenant_custom_roles tcr ON tcr.id = crp.custom_role_id AND tcr.profile_id = $2
-     WHERE crp.custom_role_id = $1`,
-    [customRoleId, profileId]
-  );
-  const map: ModulePermissionsMap = {};
-  for (const row of r.rows) {
-    map[row.module] = {
-      module: row.module,
-      can_view: row.can_view === true,
-      can_create: row.can_create === true,
-      can_edit: row.can_edit === true,
-      can_delete: row.can_delete === true,
-      edit_own_only: row.edit_own_only === true,
-      delete_own_only: row.delete_own_only === true,
-    };
+  const buildMap = (
+    rows: Array<{
+      module: string;
+      can_view: boolean;
+      can_create: boolean;
+      can_edit: boolean;
+      can_delete: boolean;
+      edit_own_only: boolean;
+      delete_own_only: boolean;
+      module_extras?: unknown;
+    }>
+  ): ModulePermissionsMap => {
+    const map: ModulePermissionsMap = {};
+    for (const row of rows) {
+      const ex = row.module_extras;
+      map[row.module] = {
+        module: row.module,
+        can_view: row.can_view === true,
+        can_create: row.can_create === true,
+        can_edit: row.can_edit === true,
+        can_delete: row.can_delete === true,
+        edit_own_only: row.edit_own_only === true,
+        delete_own_only: row.delete_own_only === true,
+        module_extras:
+          typeof ex === 'object' && ex !== null && !Array.isArray(ex) ? (ex as Record<string, unknown>) : {},
+      };
+    }
+    return map;
+  };
+
+  try {
+    const r = await pool.query(
+      `SELECT module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only,
+              COALESCE(module_extras, '{}'::jsonb) AS module_extras
+       FROM custom_role_module_permissions crp
+       JOIN tenant_custom_roles tcr ON tcr.id = crp.custom_role_id AND tcr.profile_id = $2
+       WHERE crp.custom_role_id = $1`,
+      [customRoleId, profileId]
+    );
+    return buildMap(r.rows);
+  } catch (e: unknown) {
+    const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: string }).code) : '';
+    if (code !== '42703') throw e;
+    const r = await pool.query(
+      `SELECT module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only
+       FROM custom_role_module_permissions crp
+       JOIN tenant_custom_roles tcr ON tcr.id = crp.custom_role_id AND tcr.profile_id = $2
+       WHERE crp.custom_role_id = $1`,
+      [customRoleId, profileId]
+    );
+    const rows = r.rows.map((row) => ({
+      ...row,
+      module_extras:
+        row.module === 'proposals'
+          ? {
+              proposals_send: row.can_edit === true,
+              proposals_convert_invoice: row.can_edit === true,
+              proposals_manage_integrations: false,
+            }
+          : {},
+    }));
+    return buildMap(rows);
   }
-  return map;
 }
 
 /** Atualiza permissões por módulo do perfil customizado. */
@@ -137,8 +182,8 @@ export async function setCustomRoleModulePermissions(
     for (const moduleId of MODULE_IDS) {
       const p = permissions[moduleId];
       await client.query(
-        `INSERT INTO custom_role_module_permissions (custom_role_id, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO custom_role_module_permissions (custom_role_id, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only, module_extras)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb)
          ON CONFLICT (custom_role_id, module) DO UPDATE SET
            can_view = EXCLUDED.can_view,
            can_create = EXCLUDED.can_create,
@@ -146,6 +191,7 @@ export async function setCustomRoleModulePermissions(
            can_delete = EXCLUDED.can_delete,
            edit_own_only = EXCLUDED.edit_own_only,
            delete_own_only = EXCLUDED.delete_own_only,
+           module_extras = custom_role_module_permissions.module_extras,
            updated_at = now()`,
         [
           customRoleId,

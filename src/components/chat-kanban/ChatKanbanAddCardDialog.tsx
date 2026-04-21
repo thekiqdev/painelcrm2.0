@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { chatService, type ChatConversation } from '@/services/chat';
 import { chatKanbanService } from '@/services/chatKanban';
+import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
 import type { ChatKanbanColumn } from '@/services/chatKanban';
 import { ChatKanbanConversationPicker } from '@/components/chat-kanban/ChatKanbanConversationPicker';
 
@@ -84,11 +85,21 @@ export function ChatKanbanAddCardDialog({
     if (!boardId || !column || !selectedId) return;
     setCreating(true);
     try {
-      await chatKanbanService.createCard(boardId, {
+      const created = await chatKanbanService.createCard(boardId, {
         conversation_id: selectedId,
         column_id: column.id,
       });
-      toast.success('Conversa adicionada ao quadro');
+      const auto = created.kanban_auto_created_proposal;
+      if (auto) {
+        if (auto.public_link_path?.trim()) {
+          setStoredProposalPublicUrl(auto.id, `${window.location.origin}${auto.public_link_path.trim()}`);
+        }
+        toast.success('Conversa adicionada ao quadro', {
+          description: `Proposta criada: ${auto.title}`,
+        });
+      } else {
+        toast.success('Conversa adicionada ao quadro');
+      }
       onCreated();
       onOpenChange(false);
     } catch (e) {

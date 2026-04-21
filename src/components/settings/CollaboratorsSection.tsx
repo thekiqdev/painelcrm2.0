@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { FileEdit, Plus, Trash2, UserPlus } from "lucide-react";
 import { Member } from "@/components/shared/types";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 export const CollaboratorsSection: React.FC = () => {
   const [collaborators, setCollaborators] = useState<Member[]>([

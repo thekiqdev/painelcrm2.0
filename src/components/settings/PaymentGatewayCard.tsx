@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Settings, Loader2, Wifi } from "lucide-react";
 import { GatewayStatusBadge, toGatewayStatusType } from "./GatewayStatusBadge";
 import { apiClient } from "@/integrations/api/client";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 const API_TEST = "/api/me/tenant/payment-gateway/test";
 const API_STATUS = "/api/me/tenant/payment-gateways/status";

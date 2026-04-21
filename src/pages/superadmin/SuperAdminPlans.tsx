@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Plus, Pencil, Trash2, Flag, ChevronDown, ChevronRight, Check, Users, MessageCircle, Mail, Headphones, Star, Zap, Shield, FileText, BarChart3, Settings, Smartphone, Globe, Lock, Gift, CreditCard, Building2, Calendar } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
 import { Checkbox } from '@/components/ui/checkbox';
 import {

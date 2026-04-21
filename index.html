@@ -1,8 +1,21 @@
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
+    <!-- Anti-flash tema: deve usar o mesmo storageKey que ThemeProvider (painelcrm-theme) e classes light/dark do next-themes -->
+    <script>
+      (function () {
+        try {
+          var k = "painelcrm-theme";
+          var t = localStorage.getItem(k);
+          var c = document.documentElement.classList;
+          c.remove("light", "dark");
+          if (t === "dark") c.add("dark");
+          else c.add("light");
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#2563eb" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

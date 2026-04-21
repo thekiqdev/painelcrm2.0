@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Briefcase,
   CalendarClock,
+  FileText,
   GitBranch,
   Headphones,
   Loader2,
@@ -12,7 +13,7 @@ import {
   Tags,
   Timer,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import {
   Sheet,
   SheetContent,
@@ -50,19 +51,24 @@ import {
   EMPTY_KANBAN_PHASE2,
   EMPTY_KANBAN_COLUMN_UI,
   EMPTY_KANBAN_RULES,
+  EMPTY_KANBAN_PROPOSALS_DISPLAY,
   mergeColumnMetadataFull,
+  mergeKanbanProposalsIntoMetadata,
   parseKanbanPhase2,
   parseKanbanColumnRules,
   parseKanbanColumnUi,
+  parseKanbanProposalsDisplay,
   type KanbanPhase2Config,
   type KanbanColumnRules,
   type KanbanColumnUi,
+  type KanbanProposalsDisplay,
 } from '@/utils/kanbanColumnRulesUi';
 import { ChatKanbanColumnRulesForm, type TeamOption, type TenantUserOption } from '@/components/chat-kanban/ChatKanbanColumnRulesForm';
 import {
   listWhatsappMessageTemplates,
   type WhatsappMessageTemplateListRow,
 } from '@/services/whatsappMessageTemplates';
+import { proposalTemplatesService, type ProposalTemplate } from '@/services/proposalTemplates';
 
 function ColorPresetPicker({
   value,
@@ -162,6 +168,11 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
   const [whatsappModels, setWhatsappModels] = useState<WhatsappMessageTemplateListRow[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [boardColumnsForMove, setBoardColumnsForMove] = useState<ChatKanbanColumn[]>([]);
+  const [proposalsDisplay, setProposalsDisplay] = useState<KanbanProposalsDisplay>({
+    ...EMPTY_KANBAN_PROPOSALS_DISPLAY,
+  });
+  const [proposalModelRows, setProposalModelRows] = useState<ProposalTemplate[]>([]);
+  const [proposalModelsLoading, setProposalModelsLoading] = useState(false);
 
   useEffect(() => {
     if (!open || !column) return;
@@ -170,6 +181,15 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     setUi(parseKanbanColumnUi(column.metadata));
     setRules(parseKanbanColumnRules(column.metadata));
     setPhase2(parseKanbanPhase2(column.metadata));
+    const parsed = parseKanbanProposalsDisplay(column.metadata);
+    const hasModel = Boolean(
+      parsed.default_proposal_model_id?.trim() || parsed.default_proposal_template_id?.trim(),
+    );
+    setProposalsDisplay(
+      hasModel && !parsed.auto_create_proposal_on_enter
+        ? { ...parsed, auto_create_proposal_on_enter: true }
+        : parsed,
+    );
     setSelectedFunnelStageId(column.funnel_stage_id ?? null);
     setBoardLinkedFunnelId(null);
     setBoardFunnelName(null);
@@ -255,6 +275,26 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
         if (!cancelled) setWhatsappModels([]);
       } finally {
         if (!cancelled) setTemplatesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, column?.id]);
+
+  useEffect(() => {
+    if (!open || !column) return;
+    let cancelled = false;
+    void (async () => {
+      setProposalModelsLoading(true);
+      try {
+        const rows = await proposalTemplatesService.list();
+        if (cancelled) return;
+        setProposalModelRows(rows.filter((t) => t?.id).slice(0, 300));
+      } catch {
+        if (!cancelled) setProposalModelRows([]);
+      } finally {
+        if (!cancelled) setProposalModelsLoading(false);
       }
     })();
     return () => {
@@ -355,11 +395,45 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
         return;
       }
     }
+    if (proposalsDisplay.move_on_proposal_accept) {
+      const dst = proposalsDisplay.target_column_id;
+      if (!dst) {
+        toast.error('Mover ao aceitar proposta: escolha a coluna de destino ou desligue a opção.');
+        return;
+      }
+      if (dst === column.id) {
+        toast.error('A coluna de destino não pode ser a mesma coluna.');
+        return;
+      }
+      const destOk = boardColumnsForMove.some((c) => c.id === dst);
+      if (!destOk) {
+        toast.error('Coluna de destino inválida neste quadro.');
+        return;
+      }
+      const otherCols = boardColumnsForMove.filter((c) => c.id !== column.id);
+      if (otherCols.length === 0) {
+        toast.error('Adicione outra coluna ao quadro para poder definir o destino.');
+        return;
+      }
+    }
+    if (proposalsDisplay.auto_create_proposal_on_enter) {
+      const hasModel = Boolean(
+        proposalsDisplay.default_proposal_model_id?.trim() ||
+          proposalsDisplay.default_proposal_template_id?.trim(),
+      );
+      if (!hasModel) {
+        toast.error('«Criar proposta ao entrar na coluna»: escolha um modelo ou desligue a opção.');
+        return;
+      }
+    }
     setSaving(true);
     try {
       const baseMeta =
         column.metadata && typeof column.metadata === 'object' ? (column.metadata as Record<string, unknown>) : {};
-      const meta = mergeColumnMetadataFull(baseMeta, ui, rules, phase2);
+      const meta = mergeKanbanProposalsIntoMetadata(
+        mergeColumnMetadataFull(baseMeta, ui, rules, phase2),
+        proposalsDisplay,
+      );
       const chosenStageId = selectedFunnelStageId ?? null;
       await chatKanbanService.patchColumn(column.id, {
         name: n,
@@ -387,6 +461,11 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     !!phase2.notifications.auto_message_whatsapp_template_id &&
     !templatesLoading &&
     !selectedWhatsappModel;
+
+  const staleProposalModelId =
+    !!proposalsDisplay.default_proposal_model_id &&
+    !proposalModelsLoading &&
+    !proposalModelRows.some((p) => p.id === proposalsDisplay.default_proposal_model_id);
 
   const itemClass =
     'border border-border/50 rounded-lg bg-card/40 overflow-hidden mb-2 last:mb-0 shadow-sm shadow-black/[0.02]';
@@ -759,6 +838,213 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                             </p>
                           </div>
                         ) : null}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="proposals" className={cn(itemClass, 'border-b-0')}>
+                    <AccordionTrigger
+                      className={cn(
+                        'px-3 py-3 text-sm hover:no-underline',
+                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                      )}
+                    >
+                      <AccordionSectionHeader
+                        icon={FileText}
+                        title="Propostas"
+                        subtitle="Valores comerciais no cartão (módulo de propostas)"
+                      />
+                    </AccordionTrigger>
+                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
+                      <div className="pt-3 space-y-3">
+                        <p className="text-[11px] text-muted-foreground leading-snug">
+                          Pendente = soma das propostas com status <strong>Enviada</strong> (
+                          <code className="text-[10px]">sent</code>). Aceita = soma com status{' '}
+                          <strong>Aceita</strong> (<code className="text-[10px]">accepted</code>). Propostas faturadas (
+                          <code className="text-[10px]">invoiced</code>) não entram nestas linhas.
+                        </p>
+                        <div className="flex items-center justify-between gap-3">
+                          <Label
+                            htmlFor="kanban-prop-pending"
+                            className="text-xs font-normal cursor-pointer leading-snug"
+                          >
+                            Mostrar total pendente (enviadas)
+                          </Label>
+                          <Switch
+                            id="kanban-prop-pending"
+                            checked={proposalsDisplay.show_pending}
+                            onCheckedChange={(v) =>
+                              setProposalsDisplay((prev) => ({ ...prev, show_pending: v }))
+                            }
+                            disabled={saving}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <Label
+                            htmlFor="kanban-prop-accepted"
+                            className="text-xs font-normal cursor-pointer leading-snug"
+                          >
+                            Mostrar total aceito
+                          </Label>
+                          <Switch
+                            id="kanban-prop-accepted"
+                            checked={proposalsDisplay.show_accepted}
+                            onCheckedChange={(v) =>
+                              setProposalsDisplay((prev) => ({ ...prev, show_accepted: v }))
+                            }
+                            disabled={saving}
+                          />
+                        </div>
+                        <div className="rounded-md border border-border/50 bg-muted/10 px-2.5 py-2 space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <Label
+                              htmlFor="kanban-prop-move-accept"
+                              className="text-xs font-normal cursor-pointer leading-snug"
+                            >
+                              Mover cartão ao aceitar proposta
+                            </Label>
+                            <Switch
+                              id="kanban-prop-move-accept"
+                              checked={proposalsDisplay.move_on_proposal_accept}
+                              onCheckedChange={(v) =>
+                                setProposalsDisplay((prev) => ({
+                                  ...prev,
+                                  move_on_proposal_accept: v,
+                                  target_column_id: v ? prev.target_column_id : null,
+                                }))
+                              }
+                              disabled={saving}
+                            />
+                          </div>
+                          {proposalsDisplay.move_on_proposal_accept ? (
+                            <div className="space-y-1.5">
+                              <Label className="text-[11px] text-muted-foreground">Coluna destino</Label>
+                              <Select
+                                value={proposalsDisplay.target_column_id || '__none__'}
+                                onValueChange={(val) =>
+                                  setProposalsDisplay((prev) => ({
+                                    ...prev,
+                                    target_column_id: val === '__none__' ? null : val,
+                                  }))
+                                }
+                                disabled={saving}
+                              >
+                                <SelectTrigger className="h-9 text-xs">
+                                  <SelectValue placeholder="Escolher coluna" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">Selecionar…</SelectItem>
+                                  {boardColumnsForMove
+                                    .filter((c) => c.id !== column.id)
+                                    .map((c) => (
+                                      <SelectItem key={c.id} value={c.id}>
+                                        {c.name}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                              <p className="text-[10px] text-muted-foreground leading-snug">
+                                Quando uma proposta for aceita (link público ou painel), o cartão desta conversa
+                                passa para a coluna escolhida, se o cartão estiver nesta coluna.
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="space-y-2 pt-2 border-t border-border/40">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="space-y-0.5 min-w-0">
+                              <Label
+                                htmlFor="kanban-prop-auto-create"
+                                className="text-xs font-normal cursor-pointer leading-snug"
+                              >
+                                Criar proposta ao entrar na coluna
+                              </Label>
+                              <p className="text-[10px] text-muted-foreground leading-snug">
+                                Ao mover ou adicionar o cartão aqui, o servidor cria a proposta com o modelo escolhido
+                                abaixo (é necessário cliente ou lead na conversa).
+                              </p>
+                            </div>
+                            <Switch
+                              id="kanban-prop-auto-create"
+                              checked={proposalsDisplay.auto_create_proposal_on_enter}
+                              onCheckedChange={(v) =>
+                                setProposalsDisplay((prev) => ({
+                                  ...prev,
+                                  auto_create_proposal_on_enter: v,
+                                  ...(!v
+                                    ? { default_proposal_model_id: null, default_proposal_template_id: null }
+                                    : {}),
+                                }))
+                              }
+                              disabled={saving}
+                            />
+                          </div>
+                          {proposalsDisplay.auto_create_proposal_on_enter ? (
+                            <>
+                              <Label className="text-[11px] text-muted-foreground leading-snug">
+                                Modelo de proposta
+                              </Label>
+                              <p className="text-[10px] text-muted-foreground leading-snug">
+                                Modelos em <strong>Propostas → Modelos</strong>. Use um modelo ativo.
+                              </p>
+                              {proposalsDisplay.default_proposal_template_id &&
+                              !proposalsDisplay.default_proposal_model_id ? (
+                                <div
+                                  className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-950/90 dark:text-amber-100/90"
+                                  role="status"
+                                >
+                                  Referência <strong>legada</strong> a rascunho. Escolha um modelo oficial ou «Nenhum».
+                                </div>
+                              ) : null}
+                              {proposalModelsLoading ? (
+                                <p className="text-[10px] text-muted-foreground">A carregar modelos…</p>
+                              ) : (
+                                <Select
+                                  value={proposalsDisplay.default_proposal_model_id || '__none__'}
+                                  onValueChange={(val) =>
+                                    setProposalsDisplay((prev) => {
+                                      if (val === '__none__') {
+                                        return {
+                                          ...prev,
+                                          default_proposal_model_id: null,
+                                          default_proposal_template_id: null,
+                                        };
+                                      }
+                                      return {
+                                        ...prev,
+                                        default_proposal_model_id: val,
+                                        default_proposal_template_id: null,
+                                      };
+                                    })
+                                  }
+                                  disabled={saving}
+                                >
+                                  <SelectTrigger className="h-9 text-xs">
+                                    <SelectValue placeholder="Nenhum modelo" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Nenhum</SelectItem>
+                                    {proposalModelRows.map((p) => (
+                                      <SelectItem key={p.id} value={p.id}>
+                                        {p.name}
+                                        {!p.is_active ? ' (inativo)' : ''}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                              {staleProposalModelId ? (
+                                <div
+                                  className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-950/90 dark:text-amber-100/90"
+                                  role="status"
+                                >
+                                  O modelo referenciado já não está disponível ou está inativo. Escolha outro ou
+                                  «Nenhum».
+                                </div>
+                              ) : null}
+                            </>
+                          ) : null}
+                        </div>
                       </div>
                     </AccordionContent>
                   </AccordionItem>

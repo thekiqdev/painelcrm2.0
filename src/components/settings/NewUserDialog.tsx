@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { KeyRound } from "lucide-react";
 import { createTenantUser, type CreateTenantUserPayload } from "@/services/tenantLimits";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 function generatePassword(length = 12): string {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*";

@@ -25,22 +25,26 @@ const CONFIG: Record<
   not_configured: {
     label: "Não configurado",
     icon: AlertCircle,
-    className: "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800",
+    className:
+      "border-amber-200 bg-amber-500/10 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-100",
   },
   pending: {
     label: "Pendente",
     icon: Clock,
-    className: "text-slate-600 bg-slate-50 border-slate-200 dark:bg-slate-800/50 dark:border-slate-700",
+    className:
+      "border-border bg-muted text-muted-foreground dark:bg-muted/70 dark:text-foreground/90",
   },
   connected: {
     label: "Conectado",
     icon: CheckCircle,
-    className: "text-green-600 bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800",
+    className:
+      "border-emerald-200 bg-emerald-500/10 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/35 dark:text-emerald-200",
   },
   error: {
     label: "Erro",
     icon: XCircle,
-    className: "text-red-600 bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-800",
+    className:
+      "border-red-200 bg-red-500/10 text-red-800 dark:border-red-800/60 dark:bg-red-950/35 dark:text-red-200",
   },
   disabled: {
     label: "Desativado",

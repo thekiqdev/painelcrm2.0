@@ -56,6 +56,13 @@ export interface ChatKanbanCard {
   updated_at: string;
 }
 
+/** Presente só nas respostas de criar/mover cartão quando a coluna criou proposta automaticamente. */
+export type KanbanAutoCreatedProposalPayload = {
+  id: string;
+  title: string;
+  public_link_path: string | null;
+};
+
 /** Cartão com JOIN a `chat_conversations` (listagem do board). */
 export interface ChatKanbanBoardCard extends ChatKanbanCard {
   conv_display_name?: string | null;
@@ -77,6 +84,12 @@ export interface ChatKanbanBoardCard extends ChatKanbanCard {
   conv_link_state?: string | null;
   /** Snapshot de `chat_conversations.metadata` (ex.: kanban_labels, kanban_priority). */
   conv_metadata?: Record<string, unknown> | null;
+  /** Soma de propostas `sent` para o cliente/lead da conversa (ver API). */
+  proposal_pending_total?: number | null;
+  /** Soma de propostas `accepted` para o cliente/lead da conversa. */
+  proposal_accepted_total?: number | null;
+  /** Só em respostas de PATCH/POST do cartão; não vem na listagem do quadro. */
+  kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload;
 }
 
 export const chatKanbanService = {
@@ -183,11 +196,14 @@ export const chatKanbanService = {
   async createCard(
     boardId: string,
     payload: { conversation_id: string; column_id: string; position?: number },
-  ): Promise<ChatKanbanCard> {
-    const res = await apiClient.post<ChatKanbanCard>(`${BASE}/boards/${boardId}/cards`, payload);
+  ): Promise<ChatKanbanCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }> {
+    const res = await apiClient.post<ChatKanbanCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }>(
+      `${BASE}/boards/${boardId}/cards`,
+      payload,
+    );
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao criar card');
-    return res.data as ChatKanbanCard;
+    return res.data;
   },
 
   async patchCard(

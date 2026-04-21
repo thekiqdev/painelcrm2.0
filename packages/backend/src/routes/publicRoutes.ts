@@ -17,6 +17,11 @@ import {
   getPublicSignatureInvite,
   postPublicSignature,
 } from '../controllers/publicContractSignatureController.js';
+import {
+  getPublicProposalView,
+  postPublicProposalAccept,
+  postPublicProposalReject,
+} from '../controllers/publicProposalViewController.js';
 
 const router = Router();
 
@@ -50,6 +55,38 @@ const payWithCardLimiter = rateLimit({
 
 router.get('/contracts/view/:token/pdf', contractPublicViewLimiter, getPublicContractPdf);
 router.get('/contracts/view/:token', contractPublicViewLimiter, getPublicContractView);
+
+const proposalPublicViewLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_PROPOSAL_VIEW_MAX || '120', 10),
+  message: { ok: false, error: 'Muitas visualizações. Aguarde e tente novamente.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const token = req.params.token || '';
+    return `${ip}:${token}`;
+  },
+});
+
+const proposalPublicActionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_PROPOSAL_ACTION_MAX || '40', 10),
+  message: { ok: false, error: 'Muitas tentativas. Aguarde e tente novamente.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const token = req.params.token || '';
+    return `${ip}:${token}`;
+  },
+});
+
+router.get('/proposals/view/:token', proposalPublicViewLimiter, getPublicProposalView);
+router.post('/proposals/view/:token/accept', proposalPublicActionLimiter, postPublicProposalAccept);
+router.post('/proposals/view/:token/reject', proposalPublicActionLimiter, postPublicProposalReject);
 
 const contractPublicSignatureReadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

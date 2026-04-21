@@ -628,6 +628,83 @@ export async function initializePredefinedTemplates(req: AuthRequest, res: Respo
         body: 'Olá {{client_name}},\n\nUma nova proposta foi criada para você.\n\nTítulo: {{proposal_title}}\nValor: R$ {{proposal_amount}}\n\nAcesse: {{proposal_link}}',
         variables: ['client_name', 'proposal_title', 'proposal_amount', 'proposal_link'],
       },
+      {
+        name: 'Proposta — envio ao cliente',
+        resource_type: 'proposals' as const,
+        action: 'sent' as const,
+        subject: 'Proposta comercial — {{proposal_title}}',
+        body:
+          'Olá {{client_name}},\n\nSegue o link para visualizar nossa proposta:\n{{proposal_link}}\n\n' +
+          'Título: {{proposal_title}}\nValor: R$ {{proposal_amount}}\nValidade: {{valid_until}}\n\n' +
+          '{{responsible_name}}\n{{tenant_name}}',
+        variables: [
+          'client_name',
+          'proposal_title',
+          'proposal_amount',
+          'proposal_link',
+          'valid_until',
+          'responsible_name',
+          'tenant_name',
+        ],
+      },
+      {
+        name: 'Proposta — lembrete',
+        resource_type: 'proposals' as const,
+        action: 'reminder_sent' as const,
+        subject: 'Lembrete: proposta {{proposal_title}}',
+        body:
+          'Olá {{client_name}},\n\nPassando para lembrar da proposta. Você pode revisar pelo link:\n{{proposal_link}}\n\n' +
+          'Validade: {{valid_until}} · Valor: R$ {{proposal_amount}}\n\n{{responsible_name}} — {{tenant_name}}',
+        variables: [
+          'client_name',
+          'proposal_title',
+          'proposal_amount',
+          'proposal_link',
+          'valid_until',
+          'responsible_name',
+          'tenant_name',
+        ],
+      },
+      {
+        name: 'Proposta — aceita (cliente)',
+        resource_type: 'proposals' as const,
+        action: 'accepted' as const,
+        subject: 'Recebemos seu aceite — {{proposal_title}}',
+        body:
+          'Olá {{client_name}},\n\nConfirmamos o recebimento do aceite da proposta "{{proposal_title}}". ' +
+          'Nossa equipe dará continuidade aos próximos passos.\n\n{{tenant_name}}',
+        variables: ['client_name', 'proposal_title', 'tenant_name'],
+      },
+      {
+        name: 'Proposta — recusada (cliente)',
+        resource_type: 'proposals' as const,
+        action: 'rejected' as const,
+        subject: 'Sobre a proposta {{proposal_title}}',
+        body:
+          'Olá {{client_name}},\n\nAgradecemos o retorno sobre a proposta "{{proposal_title}}". ' +
+          'Estamos à disposição para ajustes.\n\n{{tenant_name}}',
+        variables: ['client_name', 'proposal_title', 'tenant_name'],
+      },
+      {
+        name: 'Proposta — expirada (cliente)',
+        resource_type: 'proposals' as const,
+        action: 'expired' as const,
+        subject: 'Proposta {{proposal_title}} — validade',
+        body:
+          'Olá {{client_name}},\n\nA proposta "{{proposal_title}}" está fora do prazo ({{valid_until}}). ' +
+          'Se desejar nova versão, fale conosco.\n\n{{tenant_name}}',
+        variables: ['client_name', 'proposal_title', 'valid_until', 'tenant_name'],
+      },
+      {
+        name: 'Proposta — fatura gerada (interno)',
+        resource_type: 'proposals' as const,
+        action: 'converted_to_invoice' as const,
+        subject: 'Fatura gerada: {{proposal_title}}',
+        body:
+          'Fatura criada a partir da proposta "{{proposal_title}}" (cliente {{client_name}}, total R$ {{proposal_amount}}). ' +
+          'Revise em Faturamento. Referência: {{proposal_link}}',
+        variables: ['client_name', 'proposal_title', 'proposal_amount', 'proposal_link'],
+      },
     ];
 
     console.log(`[InitializePredefined] Total de templates para processar: ${predefinedTemplates.length}`);

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -13,7 +14,7 @@ import {
 } from '@/components/ui/select';
 import { useNavigate } from 'react-router-dom';
 import { CreditCard, CheckCircle, XCircle, AlertCircle, Copy, Loader2, Ban, ExternalLink } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
 import { SettingsSectionProps } from './types';
 
@@ -21,6 +22,8 @@ export interface PaymentGatewaySectionProps extends SettingsSectionProps {
   /** Quando definido (ex.: na página /settings/payments/:gatewayKey), fixa o gateway e oculta o seletor. */
   gatewayKey?: string;
 }
+
+type GatewayPaySlug = 'pix' | 'boleto' | 'credit_card';
 
 interface PaymentGatewayConfig {
   id: string;
@@ -32,6 +35,8 @@ interface PaymentGatewayConfig {
   credentialsMasked?: Record<string, string>;
   api_key_masked?: string | null;
   webhookUrl?: string;
+  enabled_payment_methods?: GatewayPaySlug[];
+  default_payment_method?: GatewayPaySlug | null;
 }
 
 interface GatewayListItem {
@@ -81,10 +86,10 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
   const isAuthError = status === 'auth_error';
   const Icon = isConnected ? CheckCircle : isAuthError ? XCircle : AlertCircle;
   const colorClass = isConnected
-    ? 'text-green-600 bg-green-50 border-green-200'
+    ? 'border-emerald-200 bg-emerald-500/10 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/35 dark:text-emerald-200'
     : isAuthError
-      ? 'text-red-600 bg-red-50 border-red-200'
-      : 'text-amber-600 bg-amber-50 border-amber-200';
+      ? 'border-red-200 bg-red-500/10 text-red-800 dark:border-red-800/60 dark:bg-red-950/35 dark:text-red-200'
+      : 'border-amber-200 bg-amber-500/10 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-100';
 
   return (
     <span
@@ -111,6 +116,10 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
     webhook_auth_token: '',
     env: 'sandbox' as 'sandbox' | 'production',
   });
+  const [payPix, setPayPix] = useState(true);
+  const [payBoleto, setPayBoleto] = useState(true);
+  const [payCard, setPayCard] = useState(true);
+  const [defaultPaySlug, setDefaultPaySlug] = useState<GatewayPaySlug | null>(null);
 
   const load = async (opts?: { preserveConnectionStatus?: boolean }) => {
     setLoading(true);
@@ -153,6 +162,22 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
     }
   }, [config, gateways, fixedGatewayKey]);
 
+  useEffect(() => {
+    if (!config) return;
+    const list = config.enabled_payment_methods;
+    if (!list || list.length === 0) {
+      setPayPix(true);
+      setPayBoleto(true);
+      setPayCard(true);
+    } else {
+      const s = new Set(list);
+      setPayPix(s.has('pix'));
+      setPayBoleto(s.has('boleto'));
+      setPayCard(s.has('credit_card'));
+    }
+    setDefaultPaySlug(config.default_payment_method ?? null);
+  }, [config?.id, config?.enabled_payment_methods, config?.default_payment_method]);
+
   const handleTestConnection = async () => {
     if (!config?.hasCredentials) {
       toast.error('Configure a API Key antes de testar.');
@@ -179,6 +204,18 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
       toast.error('Selecione o gateway.');
       return;
     }
+    const enabled: GatewayPaySlug[] = [];
+    if (payPix) enabled.push('pix');
+    if (payBoleto) enabled.push('boleto');
+    if (payCard) enabled.push('credit_card');
+    if (enabled.length === 0) {
+      toast.error('Ative pelo menos um método de pagamento.');
+      return;
+    }
+    if (defaultPaySlug != null && !enabled.includes(defaultPaySlug)) {
+      toast.error('O método padrão deve estar entre os métodos ativos.');
+      return;
+    }
     setSaving(true);
     const credentials: Record<string, string> = {
       env: form.env,
@@ -197,6 +234,8 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
       gateway_key: gatewayKey,
       credentials,
       options: { env: form.env },
+      enabled_payment_methods: enabled,
+      default_payment_method: defaultPaySlug,
     });
     if (res.error) {
       toast.error(res.error);
@@ -470,6 +509,69 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
                   )}
                 </div>
               )}
+
+              <div className="grid gap-3 rounded-lg border p-4">
+                <div>
+                  <Label className="text-base">Métodos no link de pagamento</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Ative cada método abaixo para exibi-lo no link de pagamento. A criação de faturas usa o padrão abaixo quando o método não for informado.
+                  </p>
+                </div>
+                <div className="flex flex-col divide-y divide-border rounded-md border border-border bg-muted/30">
+                  <div className="flex items-center justify-between gap-4 px-3 py-3">
+                    <span className="text-sm font-medium">PIX</span>
+                    <Switch
+                      checked={payPix}
+                      onCheckedChange={(on) => {
+                        setPayPix(on);
+                        if (!on && defaultPaySlug === 'pix') setDefaultPaySlug(null);
+                      }}
+                      aria-label="Ativar PIX no link de pagamento"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 px-3 py-3">
+                    <span className="text-sm font-medium">Boleto</span>
+                    <Switch
+                      checked={payBoleto}
+                      onCheckedChange={(on) => {
+                        setPayBoleto(on);
+                        if (!on && defaultPaySlug === 'boleto') setDefaultPaySlug(null);
+                      }}
+                      aria-label="Ativar boleto no link de pagamento"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 px-3 py-3">
+                    <span className="text-sm font-medium">Cartão de crédito</span>
+                    <Switch
+                      checked={payCard}
+                      onCheckedChange={(on) => {
+                        setPayCard(on);
+                        if (!on && defaultPaySlug === 'credit_card') setDefaultPaySlug(null);
+                      }}
+                      aria-label="Ativar cartão de crédito no link de pagamento"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Método padrão (faturas automáticas)</Label>
+                  <Select
+                    value={defaultPaySlug ?? '__auto__'}
+                    onValueChange={(v) =>
+                      setDefaultPaySlug(v === '__auto__' ? null : (v as GatewayPaySlug))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Automático" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Automático (pix → boleto → cartão entre os ativos)</SelectItem>
+                      {payPix ? <SelectItem value="pix">PIX</SelectItem> : null}
+                      {payBoleto ? <SelectItem value="boleto">Boleto</SelectItem> : null}
+                      {payCard ? <SelectItem value="credit_card">Cartão de crédito</SelectItem> : null}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
 
               <div className="grid gap-2">
                 <Label>Ambiente</Label>

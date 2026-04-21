@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { GripHorizontal, LayoutGrid, Loader2, PanelTop, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,7 +48,7 @@ import {
   type ChatKanbanBoardCard,
   type ChatKanbanColumn,
 } from '@/services/chatKanban';
-import { parseKanbanColumnUi } from '@/utils/kanbanColumnRulesUi';
+import { parseKanbanColumnUi, parseKanbanProposalsDisplay } from '@/utils/kanbanColumnRulesUi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKanbanAttendanceSocketRefresh } from '@/hooks/useKanbanAttendanceSocketRefresh';
 import { fetchFunnels } from '@/services/funnels';
@@ -231,6 +231,14 @@ const ChatKanbanPage = () => {
     onCardSynced: handleCardSynced,
   });
 
+  const dragOverlayColumnMetadata = useMemo(() => {
+    if (!boardDnd.activeId) return null;
+    const c = cardMap.get(boardDnd.activeId);
+    if (!c) return null;
+    const col = columns.find((x) => x.id === c.column_id);
+    return col?.metadata ?? null;
+  }, [boardDnd.activeId, cardMap, columns]);
+
   const settingsColumnLive = useMemo(() => {
     if (!settingsColumn) return null;
     return columns.find((c) => c.id === settingsColumn.id) ?? settingsColumn;
@@ -291,6 +299,16 @@ const ChatKanbanPage = () => {
   const drawerColumnName = useMemo(() => {
     if (!drawerCard) return null;
     return columns.find((c) => c.id === drawerCard.column_id)?.name ?? null;
+  }, [drawerCard, columns]);
+
+  /** Coluna com criação automática de proposta ao entrar. */
+  const drawerColumnAutoCreatesProposal = useMemo(() => {
+    if (!drawerCard) return false;
+    const col = columns.find((c) => c.id === drawerCard.column_id);
+    if (!col) return false;
+    const d = parseKanbanProposalsDisplay(col.metadata);
+    if (!d.auto_create_proposal_on_enter) return false;
+    return Boolean(d.default_proposal_model_id?.trim() || d.default_proposal_template_id?.trim());
   }, [drawerCard, columns]);
 
   const kanbanBoardScrollRef = useRef<HTMLDivElement>(null);
@@ -489,7 +507,11 @@ const ChatKanbanPage = () => {
               <DragOverlay dropAnimation={{ duration: 180, easing: 'ease' }}>
                 {boardDnd.activeId && cardMap.get(boardDnd.activeId) ? (
                   <div className="pointer-events-none w-[264px] max-w-[86vw] rotate-1 scale-[1.02] shadow-2xl opacity-95">
-                    <ChatKanbanCard card={cardMap.get(boardDnd.activeId)!} onClick={() => {}} />
+                    <ChatKanbanCard
+                      card={cardMap.get(boardDnd.activeId)!}
+                      columnMetadata={dragOverlayColumnMetadata}
+                      onClick={() => {}}
+                    />
                   </div>
                 ) : null}
               </DragOverlay>
@@ -506,6 +528,7 @@ const ChatKanbanPage = () => {
         card={drawerCard}
         boardName={selectedBoard?.name ?? null}
         columnName={drawerColumnName}
+        columnAutoCreatesProposal={drawerColumnAutoCreatesProposal}
         onAfterSend={() => {
           if (selectedBoardId) void loadBoardDetail(selectedBoardId);
         }}

@@ -16,7 +16,9 @@ import {
 } from '@/components/ui/sidebar';
 
 const getNavClass = ({ isActive }: { isActive: boolean }) =>
-  isActive ? 'bg-crm-primary/10 text-crm-primary font-medium' : 'hover:bg-muted/50';
+  isActive
+    ? 'bg-crm-primary/10 text-crm-primary font-medium shadow-[inset_0_0_0_1px_hsl(221_83%_53%/0.22)] dark:bg-crm-primary/18 dark:text-crm-primary dark:shadow-[inset_0_0_0_1px_hsl(221_83%_53%/0.35)]'
+    : 'hover:bg-muted/50 dark:hover:bg-sidebar-accent/95';
 
 export default function SuperAdminLayout() {
   const { user, signOut } = useAuth();
@@ -25,7 +27,7 @@ export default function SuperAdminLayout() {
   return (
     <SidebarProvider>
       <div className="flex h-screen w-full overflow-hidden bg-muted/30">
-        <Sidebar className="border-r w-64">
+        <Sidebar className="w-64 border-r border-sidebar-border">
         <div className="p-4 border-b">
           <h1 className="text-lg font-bold text-crm-primary">Super Admin</h1>
           <p className="text-xs text-muted-foreground mt-1">{user?.email}</p>

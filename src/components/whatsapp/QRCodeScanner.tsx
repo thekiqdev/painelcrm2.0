@@ -36,13 +36,15 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
           
           return (
             <React.Fragment key={step.key}>
-              <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
-                isActive 
-                  ? 'bg-primary text-primary-foreground' 
-                  : isCompleted 
-                    ? 'bg-green-100 text-green-800' 
-                    : 'bg-gray-100 text-gray-600'
-              }`}>
+              <div
+                className={`flex items-center gap-2 rounded-full px-3 py-1 text-sm ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : isCompleted
+                      ? 'bg-emerald-500/15 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                      : 'bg-muted text-muted-foreground'
+                }`}
+              >
                 {isActive && connectionStatus === "connecting" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
@@ -51,9 +53,11 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
                 <span>{step.label}</span>
               </div>
               {index < steps.length - 1 && (
-                <div className={`w-8 h-0.5 mx-2 ${
-                  isCompleted ? 'bg-green-500' : 'bg-gray-300'
-                }`} />
+                <div
+                  className={`mx-2 h-0.5 w-8 ${
+                    isCompleted ? 'bg-emerald-500/70 dark:bg-emerald-600/80' : 'bg-muted-foreground/25'
+                  }`}
+                />
               )}
             </React.Fragment>
           );
@@ -85,11 +89,11 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
       
       {qrCode && connectionStatus === "connecting" && currentStep === "qrcode" && (
         <div className="flex flex-col items-center gap-6">
-          <div className="border-8 border-white rounded-lg shadow-lg">
-            <img 
-              src={`data:image/png;base64,${qrCode}`} 
-              alt="QR Code para conexão WhatsApp" 
-              className="w-[250px] h-[250px]" 
+          <div className="rounded-lg border-2 border-border bg-card p-1 shadow-lg ring-1 ring-border/50">
+            <img
+              src={`data:image/png;base64,${qrCode}`}
+              alt="QR Code para conexão WhatsApp"
+              className="h-[250px] w-[250px]"
             />
           </div>
           <div className="text-center max-w-sm">
@@ -99,7 +103,7 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
               Aponte a câmera do seu celular para esta tela para capturar o código.
             </p>
             <div className="space-y-2">
-              <p className="text-xs text-blue-600 font-medium">
+              <p className="text-xs font-medium text-primary">
                 ⏳ Aguardando escaneamento...
               </p>
               <Button 
@@ -124,7 +128,7 @@ const QRCodeScanner: React.FC<QRCodeScannerProps> = ({
       
       {connectionStatus === "connected" && (
         <div className="flex flex-col items-center gap-4">
-          <div className="bg-green-100 text-green-800 rounded-full p-4">
+          <div className="rounded-full bg-emerald-500/15 p-4 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
               <polyline points="22 4 12 14.01 9 11.01"></polyline>

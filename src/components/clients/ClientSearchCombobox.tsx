@@ -53,16 +53,62 @@ export function ClientSearchCombobox({
   searchInTrigger = false,
 }: ClientSearchComboboxProps) {
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const anchorRef = React.useRef<HTMLDivElement | null>(null);
+  /** Evita reabrir o painel quando o fecho dispara `focus()` no input (Radix onCloseAutoFocus). */
+  const suppressOpenOnFocusRef = React.useRef(false);
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [remoteResults, setRemoteResults] = useState<Client[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
+  /** Cliente com `value` quando não está em `clientsProp` (ex.: busca remota — evita só "Cliente selecionado"). */
+  const [resolvedSelectedClient, setResolvedSelectedClient] = useState<Client | null>(null);
+  const [resolvedDetailLoading, setResolvedDetailLoading] = useState(false);
+  /** Evita `getClientById` redundante logo após escolher na lista remota. */
+  const skipNextResolveFetchRef = React.useRef<string | null>(null);
 
   const selectedFromLocal = useMemo(
     () => clientsProp.find((c) => c.id === value),
     [clientsProp, value]
   );
+
+  const displayClient = selectedFromLocal ?? resolvedSelectedClient;
+
+  useEffect(() => {
+    if (!value) {
+      setResolvedSelectedClient(null);
+      setResolvedDetailLoading(false);
+      return;
+    }
+    const fromProp = clientsProp.find((c) => c.id === value);
+    if (fromProp) {
+      setResolvedSelectedClient(fromProp);
+      setResolvedDetailLoading(false);
+      return;
+    }
+    if (skipNextResolveFetchRef.current === value) {
+      skipNextResolveFetchRef.current = null;
+      setResolvedDetailLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setResolvedDetailLoading(true);
+    void clientsService
+      .getClientById(value)
+      .then((client) => {
+        if (cancelled) return;
+        setResolvedSelectedClient(client);
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedSelectedClient(null);
+      })
+      .finally(() => {
+        if (!cancelled) setResolvedDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [value, clientsProp]);
 
   const hasSearch = query.trim().length > 0;
 
@@ -124,8 +170,11 @@ export function ClientSearchCombobox({
   const showCreateOption = query.trim().length >= 2 && onClientCreated != null;
 
   const handleCreated = (client: Client) => {
+    skipNextResolveFetchRef.current = client.id;
+    setResolvedSelectedClient(client);
     onChange(client.id);
     onClientCreated?.(client);
+    suppressOpenOnFocusRef.current = true;
     setOpen(false);
     setQuery("");
     setRemoteResults([]);
@@ -134,8 +183,8 @@ export function ClientSearchCombobox({
 
   const triggerText =
     selectedLabel ||
-    (selectedFromLocal
-      ? `${selectedFromLocal.name}${selectedFromLocal.company ? ` — ${selectedFromLocal.company}` : ""}`
+    (displayClient
+      ? `${displayClient.name}${displayClient.company ? ` — ${displayClient.company}` : ""}`
       : value
         ? "Cliente selecionado"
         : null);
@@ -146,11 +195,11 @@ export function ClientSearchCombobox({
     if (query.length > 0) return query;
     if (!value) return "";
     if (selectedLabel) return selectedLabel;
-    if (selectedFromLocal) {
-      return `${selectedFromLocal.name}${selectedFromLocal.company ? ` — ${selectedFromLocal.company}` : ""}`;
+    if (displayClient) {
+      return `${displayClient.name}${displayClient.company ? ` — ${displayClient.company}` : ""}`;
     }
     return "";
-  }, [searchInTrigger, query, value, selectedLabel, selectedFromLocal]);
+  }, [searchInTrigger, query, value, selectedLabel, displayClient]);
 
   return (
     <div className={cn("space-y-2", className)}>
@@ -163,16 +212,16 @@ export function ClientSearchCombobox({
            * `PopoverAnchor` posiciona o painel sem alternar estado no clique.
            */
           <PopoverAnchor asChild>
-            <div className="relative">
-              {selectedFromLocal && value && query.length === 0 ? (
+            <div ref={anchorRef} className="relative">
+              {displayClient && value && query.length === 0 ? (
                 (() => {
                   const av = resolveProfileAvatarUrl(
-                    selectedFromLocal,
-                    selectedFromLocal.whatsapp_avatar_url ?? null
+                    displayClient,
+                    displayClient.whatsapp_avatar_url ?? null
                   );
                   return (
                     <Avatar className="pointer-events-none absolute left-2 top-1/2 h-7 w-7 -translate-y-1/2">
-                      {av.src ? <AvatarImage src={av.src} alt={selectedFromLocal.name} /> : null}
+                      {av.src ? <AvatarImage src={av.src} alt={displayClient.name ?? ""} /> : null}
                       <AvatarFallback className="text-[10px]">{av.initials}</AvatarFallback>
                     </Avatar>
                   );
@@ -186,19 +235,28 @@ export function ClientSearchCombobox({
                 aria-expanded={open}
                 onChange={(e) => {
                   const v = e.target.value;
-                  if (value && selectedFromLocal) {
+                  if (value && displayClient) {
                     const prevFull =
                       selectedLabel ||
-                      `${selectedFromLocal.name}${selectedFromLocal.company ? ` — ${selectedFromLocal.company}` : ""}`;
+                      `${displayClient.name}${displayClient.company ? ` — ${displayClient.company}` : ""}`;
                     if (v !== prevFull) onChange(null);
                   }
                   setQuery(v);
                   if (!open) setOpen(true);
                 }}
-                onFocus={() => setOpen(true)}
+                onClick={() => {
+                  if (!disabled) setOpen(true);
+                }}
+                onFocus={() => {
+                  if (suppressOpenOnFocusRef.current) {
+                    suppressOpenOnFocusRef.current = false;
+                    return;
+                  }
+                  setOpen(true);
+                }}
                 placeholder={!value ? placeholderTrigger : undefined}
                 disabled={disabled}
-                className={cn("pr-8", selectedFromLocal && value && query.length === 0 && "pl-10")}
+                className={cn("pr-8", displayClient && value && query.length === 0 && "pl-10")}
                 autoComplete="off"
               />
               <ChevronsUpDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50" />
@@ -215,13 +273,20 @@ export function ClientSearchCombobox({
               disabled={disabled}
               className="h-auto min-h-10 w-full justify-start gap-2 py-2 font-normal"
             >
-              {selectedFromLocal && value ? (
-                <CrmIdentityListRow
-                  entity={selectedFromLocal}
-                  whatsappAvatarUrl={selectedFromLocal.whatsapp_avatar_url}
-                  avatarClassName="h-7 w-7"
-                  className="min-w-0 flex-1"
-                />
+              {resolvedDetailLoading && value && !displayClient ? (
+                <span className="flex items-center gap-2 truncate text-left text-muted-foreground">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  Carregando cliente…
+                </span>
+              ) : displayClient && value ? (
+                <div className="flex min-w-0 flex-1 items-center gap-3 rounded-md border border-border/80 bg-muted/25 px-2.5 py-2 text-left">
+                  <CrmIdentityListRow
+                    entity={displayClient}
+                    whatsappAvatarUrl={displayClient.whatsapp_avatar_url}
+                    avatarClassName="h-10 w-10"
+                    className="min-w-0 flex-1"
+                  />
+                </div>
               ) : triggerText ? (
                 <span className="truncate text-left">{triggerText}</span>
               ) : (
@@ -243,6 +308,16 @@ export function ClientSearchCombobox({
                 }
               : undefined
           }
+          onPointerDownOutside={(e) => {
+            if (anchorRef.current?.contains(e.target as Node)) {
+              e.preventDefault();
+            }
+          }}
+          onFocusOutside={(e) => {
+            if (anchorRef.current?.contains(e.target as Node)) {
+              e.preventDefault();
+            }
+          }}
         >
           {!searchInTrigger && (
             <div className="flex items-center border-b px-3">
@@ -285,6 +360,7 @@ export function ClientSearchCombobox({
                   type="button"
                   onClick={() => {
                     onChange(null);
+                    suppressOpenOnFocusRef.current = true;
                     setOpen(false);
                     setQuery("");
                     setRemoteResults([]);
@@ -304,9 +380,12 @@ export function ClientSearchCombobox({
                     key={c.id}
                     type="button"
                     onClick={() => {
+                      skipNextResolveFetchRef.current = c.id;
+                      setResolvedSelectedClient(c);
                       onChange(c.id);
+                      suppressOpenOnFocusRef.current = true;
                       setOpen(false);
-                      setQuery(searchInTrigger ? `${c.name}${c.company ? ` — ${c.company}` : ""}` : "");
+                      setQuery("");
                       setRemoteResults([]);
                     }}
                     className="relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"

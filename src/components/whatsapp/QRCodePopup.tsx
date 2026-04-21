@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, RefreshCw, CheckCircle2, InfoIcon, AlertTriangle } from "lucide-react";
 import { chatService } from "@/services/chat";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 interface QRCodePopupProps {
   isOpen: boolean;
@@ -320,7 +320,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           
           {qrCode && !isConnected && (
             <div className="flex flex-col items-center gap-4">
-              <div className="border-4 border-white rounded-lg shadow-lg bg-white p-2">
+              <div className="rounded-lg border-2 border-border bg-card p-2 shadow-lg ring-1 ring-border/50">
                 <img 
                   src={qrCode} 
                   alt="QR Code para conexão WhatsApp" 
@@ -352,7 +352,7 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
                     </AlertDescription>
                   </Alert>
                 )}
-                <p className="text-xs text-blue-600 font-medium mt-2">
+                <p className="mt-2 text-xs font-medium text-primary">
                   ⏳ Aguardando escaneamento...
                 </p>
               </div>
@@ -361,11 +361,11 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           
           {isConnected && (
             <div className="flex flex-col items-center gap-4">
-              <CheckCircle2 className="h-16 w-16 text-green-500 animate-in fade-in zoom-in duration-300" />
+              <CheckCircle2 className="h-16 w-16 animate-in text-emerald-600 fade-in zoom-in duration-300 dark:text-emerald-400" />
               <p className="text-center text-lg font-medium">WhatsApp Conectado!</p>
-              <Alert className="bg-green-50 border-green-200">
-                <InfoIcon className="h-4 w-4 mr-2 text-green-600" />
-                <AlertDescription className="text-green-800">
+              <Alert className="border-emerald-200 bg-emerald-500/10 dark:border-emerald-800/60 dark:bg-emerald-950/35">
+                <InfoIcon className="mr-2 h-4 w-4 text-emerald-700 dark:text-emerald-300" />
+                <AlertDescription className="text-emerald-900 dark:text-emerald-100">
                   Conexão estabelecida com sucesso. Fechando...
                 </AlertDescription>
               </Alert>

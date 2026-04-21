@@ -21,7 +21,7 @@ import {
 import { addClient } from "@/utils/clients-helpers";
 import { clientsService } from "@/services/clients";
 import type { Client } from "@/services/clients";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 export interface AddClientDialogProps {
   open: boolean;

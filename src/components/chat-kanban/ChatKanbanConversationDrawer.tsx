@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ImageIcon, Layers, LayoutTemplate, Loader2, RefreshCw, Send } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,8 @@ type Props = {
   boardName?: string | null;
   /** Nome da coluna do cartão (opcional, para `column_name`). */
   columnName?: string | null;
+  /** Coluna com criação automática de proposta ao mover o cartão. */
+  columnAutoCreatesProposal?: boolean;
   /** Atualizar board (ex.: preview) após envio */
   onAfterSend?: () => void;
 };
@@ -42,6 +44,7 @@ export function ChatKanbanConversationDrawer({
   card,
   boardName,
   columnName,
+  columnAutoCreatesProposal = false,
   onAfterSend,
 }: Props) {
   const { user, profile } = useAuth();
@@ -56,6 +59,8 @@ export function ChatKanbanConversationDrawer({
   const activeConversationIdRef = useRef<string | null>(null);
 
   const conversationId = card?.conversation_id ?? null;
+
+  const hasCrmLink = Boolean(card?.conv_client_id || card?.conv_lead_id);
 
   const templateContext = useMemo(
     () =>
@@ -247,6 +252,15 @@ export function ChatKanbanConversationDrawer({
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
+          {columnAutoCreatesProposal && hasCrmLink ? (
+            <div className="px-4 pb-2 shrink-0 rounded-md border border-border/50 bg-muted/15 mx-4 mb-1 py-2">
+              <p className="text-[10px] text-muted-foreground leading-snug">
+                <span className="font-medium text-foreground">Proposta automática:</span> ao mover o cartão para esta
+                coluna, o sistema cria a proposta com o modelo configurado. Use <strong>Propostas</strong> no menu para
+                rever ou partilhar o link público.
+              </p>
+            </div>
+          ) : null}
         </SheetHeader>
 
         <ScrollArea className="flex-1 min-h-0 [&_[data-radix-scroll-area-viewport]]:!block [&_[data-radix-scroll-area-scrollbar]]:w-1.5">

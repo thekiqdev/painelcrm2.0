@@ -34,9 +34,12 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { searchService } from '@/services/search';
-import { Logo } from '@/components/Logo';
+import { TenantBrandProvider } from '@/contexts/TenantBrandContext';
+import { TenantSidebarMark } from '@/components/tenant/TenantMarks';
 import { RequireModuleView } from '@/components/RequireModuleView';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { routePreload } from '@/routePreload';
+import { cn } from '@/lib/utils';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -79,23 +82,22 @@ const Nav = () => {
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
 
-  const getNavClass = ({ isActive }: { isActive: boolean }) => 
-    isActive ? "bg-crm-primary/10 text-crm-primary font-medium" : "hover:bg-muted/50";
+  const getNavClass = ({ isActive }: { isActive: boolean }) =>
+    isActive
+      ? "bg-crm-primary/10 text-crm-primary font-medium shadow-[inset_0_0_0_1px_hsl(221_83%_53%/0.22)] dark:bg-crm-primary/18 dark:text-crm-primary dark:shadow-[inset_0_0_0_1px_hsl(221_83%_53%/0.35)]"
+      : "hover:bg-muted/50 dark:hover:bg-sidebar-accent/95";
 
   return (
-    <Sidebar collapsible="icon" className={collapsed ? "w-16 transition-all duration-300" : "w-64 transition-all duration-300"}>
+    <Sidebar
+      collapsible="icon"
+      className={cn(
+        "border-r border-sidebar-border transition-all duration-300",
+        collapsed ? "w-16" : "w-64"
+      )}
+    >
       <SidebarTrigger className="m-2 self-end" />
       
-      <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-start px-4'} pb-2 mb-6`}>
-        {collapsed ? (
-          <Logo size="sm" variant="crm" />
-        ) : (
-          <div className="flex items-center">
-            <Logo size="sm" variant="crm" className="mr-3" />
-            <h1 className="text-lg font-bold">PainelCRM</h1>
-          </div>
-        )}
-      </div>
+      <TenantSidebarMark collapsed={collapsed} />
       
       <SidebarContent>
         <SidebarGroup>
@@ -429,8 +431,8 @@ const Header = () => {
   };
 
   return (
-    <header className="h-16 border-b flex items-center justify-between px-4">
-      <div className="flex items-center flex-1 max-w-xl">
+    <header className="relative z-[5] flex h-16 shrink-0 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur-sm">
+      <div className="flex max-w-xl flex-1 items-center">
         <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
           <PopoverTrigger asChild>
             <div className="relative w-full">
@@ -511,7 +513,8 @@ const Header = () => {
         </CommandList>
       </CommandDialog>
       
-      <div className="flex items-center space-x-2">
+      <div className="flex min-w-0 shrink-0 items-center gap-2">
+        <ThemeToggle />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="relative">
@@ -584,17 +587,19 @@ const Header = () => {
 
 const AppLayout = ({ children }: AppLayoutProps) => {
   return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full">
-        <Nav />
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <Header />
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-6">
-            <RequireModuleView>{children}</RequireModuleView>
-          </main>
+    <TenantBrandProvider>
+      <SidebarProvider>
+        <div className="flex min-h-screen w-full">
+          <Nav />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <Header />
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-6">
+              <RequireModuleView>{children}</RequireModuleView>
+            </main>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </TenantBrandProvider>
   );
 };
 

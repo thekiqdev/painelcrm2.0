@@ -14,8 +14,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FileSignature, Loader2, ShieldCheck, CheckCircle2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { SignaturePad, type SignaturePadHandle } from "@/components/contracts/SignaturePad";
+import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
+import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
+import { useTheme } from "next-themes";
+
+type TenantPublic = {
+  name: string | null;
+  logo_url: string | null;
+  logo_light_url?: string | null;
+  logo_dark_url?: string | null;
+};
 
 type PendingPayload = {
   kind: "contract_public_signature";
@@ -24,7 +34,7 @@ type PendingPayload = {
   contract_number: string;
   document_html: string;
   signer_name: string;
-  tenant: { name: string | null; logo_url: string | null };
+  tenant: TenantPublic;
   accept_terms_version: string;
   disclaimer: string;
 };
@@ -36,12 +46,13 @@ type AlreadyPayload = {
   contract_number: string;
   signer_name: string;
   signed_at: string | null;
-  tenant: { name: string | null; logo_url: string | null };
+  tenant: TenantPublic;
   message: string;
 };
 
 const PublicContractSign = () => {
   const { token } = useParams<{ token: string }>();
+  const { resolvedTheme } = useTheme();
   const [loading, setLoading] = useState(true);
   const [httpError, setHttpError] = useState<string | null>(null);
   const [payload, setPayload] = useState<PendingPayload | AlreadyPayload | null>(null);
@@ -163,19 +174,18 @@ const PublicContractSign = () => {
   }
 
   const p = payload as PendingPayload;
+  const hasTenantLogo = hasTenantLogoForTheme(resolvedTheme, p.tenant);
 
   return (
     <div className="min-h-screen bg-muted/40">
       <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="max-w-4xl mx-auto px-4 py-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex gap-3 min-w-0">
-            {p.tenant.logo_url ? (
-              <img src={p.tenant.logo_url} alt="" className="h-11 w-auto object-contain max-w-[120px] shrink-0" />
-            ) : (
-              <div className="h-11 w-11 rounded-md bg-muted flex items-center justify-center shrink-0">
-                <FileSignature className="h-5 w-5 text-muted-foreground" />
-              </div>
-            )}
+            <PublicTenantBrandMark
+              branding={p.tenant}
+              nameShownElsewhere
+              fallbackIcon={<FileSignature className="h-5 w-5 text-muted-foreground" />}
+            />
             <div className="min-w-0">
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
                 <FileSignature className="h-3 w-3" />
@@ -183,8 +193,8 @@ const PublicContractSign = () => {
               </p>
               <h1 className="text-lg sm:text-xl font-semibold leading-snug mt-0.5 truncate">{p.title}</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                {p.tenant.name ? <span>{p.tenant.name}</span> : null}
-                {p.tenant.name ? " · " : null}
+                {!hasTenantLogo && p.tenant.name ? <span>{p.tenant.name}</span> : null}
+                {!hasTenantLogo && p.tenant.name ? " · " : null}
                 <span>Nº {p.contract_number}</span>
               </p>
             </div>

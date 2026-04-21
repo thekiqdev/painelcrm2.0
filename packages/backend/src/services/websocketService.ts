@@ -279,6 +279,17 @@ export function emitToAll(event: string, data: any): void {
 /**
  * Emite atualização de conversa para um usuário específico
  */
+/**
+ * Atualização mínima da conversa para todos os sockets do tenant (ex.: Kanban após automação).
+ * O cliente usa `id` para refetch do quadro.
+ */
+export function emitConversationUpdatedToTenant(tenantId: string, payload: { id: string }): void {
+  if (!io) {
+    return;
+  }
+  io.to(`tenant:${tenantId}`).emit('conversation_updated', payload);
+}
+
 export function emitConversationUpdate(userId: string, conversation: any): void {
   if (!io) {
     console.warn('[WebSocket] Cannot emit conversation update: WebSocket server not initialized');

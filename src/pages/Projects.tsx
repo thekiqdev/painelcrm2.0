@@ -4,7 +4,7 @@ import { Link, useNavigate, useLocation, useSearchParams } from "react-router-do
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical, ChevronDown, ChevronUp } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { Switch } from "@/components/ui/switch";

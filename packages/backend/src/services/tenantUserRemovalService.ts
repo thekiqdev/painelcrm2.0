@@ -32,6 +32,7 @@ const USER_ID_TABLES: string[] = [
   'invoices',
   'expenses',
   'proposals',
+  'proposal_templates',
   'contracts',
   'contract_templates',
   'tickets',

@@ -31,7 +31,7 @@ import { customerChargesService } from "@/services/customerCharges";
 import { clientsService } from "@/services/clients";
 import type { CustomerChargeWithSummary } from "@/services/customerCharges";
 import type { Client } from "@/services/clients";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Plus, CreditCard, Filter } from "lucide-react";

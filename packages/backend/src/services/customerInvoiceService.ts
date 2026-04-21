@@ -94,8 +94,15 @@ export interface CreateManualCustomerInvoiceInput {
   gateway_metadata?: Record<string, unknown> | null;
   /** Cobrança à qual vincular a fatura (Fase 10). */
   charge_id?: string | null;
+  /** Proposta de origem (Etapa 2 — migração 118+). */
+  proposal_id?: string | null;
   /** Se informado, amount_cents é ignorado e calculado como soma dos total_cents dos itens. */
   items?: CreateManualCustomerInvoiceItemInput[];
+  /**
+   * Status inicial (CHECK em customer_invoices). Padrão: pending.
+   * waiting_payment = cobrança já emitida ao cliente (ex.: conversão de proposta com gateway).
+   */
+  initial_status?: 'pending' | 'waiting_payment';
 }
 
 /** Usado pelo worker para recorrência (não precisa ser globalmente único entre tenants). */
@@ -243,12 +250,15 @@ export async function createManualCustomerInvoice(
     if (amountCents <= 0) throw new Error('Total dos itens deve ser maior que zero');
   }
 
+  const initialStatus =
+    data.initial_status === 'waiting_payment' ? 'waiting_payment' : 'pending';
+
   const paymentToken = crypto.randomUUID();
   const r = await pool.query<{ id: string; created_at: string }>(
     `INSERT INTO customer_invoices (
       tenant_id, client_id, subscription_id, period_start, period_end, amount_cents, due_date,
-      status, origin, invoice_type, description, payment_method, gateway_metadata, payment_token, charge_id
-    ) VALUES ($1, $2, NULL, NULL, NULL, $3, $4, 'pending', 'manual', 'manual', $5, $6, $7, $8, $9)
+      status, origin, invoice_type, description, payment_method, gateway_metadata, payment_token, charge_id, proposal_id
+    ) VALUES ($1, $2, NULL, NULL, NULL, $3, $4, $11, 'manual', 'manual', $5, $6, $7, $8, $9, $10)
     RETURNING id, created_at`,
     [
       data.tenant_id,
@@ -260,6 +270,8 @@ export async function createManualCustomerInvoice(
       data.gateway_metadata ? JSON.stringify(data.gateway_metadata) : null,
       paymentToken,
       data.charge_id ?? null,
+      data.proposal_id ?? null,
+      initialStatus,
     ]
   );
   const inserted = r.rows[0];
@@ -504,6 +516,8 @@ export interface GetByPaymentTokenResult {
   tenant_branding: {
     name: string | null;
     logo_url: string | null;
+    logo_light_url: string | null;
+    logo_dark_url: string | null;
     billing_phone: string | null;
     billing_email: string | null;
   };
@@ -539,10 +553,12 @@ export async function getByPaymentToken(token: string): Promise<GetByPaymentToke
   const tenantResult = await pool.query<{
     name: string | null;
     logo_url: string | null;
+    logo_light_url: string | null;
+    logo_dark_url: string | null;
     billing_phone: string | null;
     billing_email: string | null;
   }>(
-    `SELECT name, logo_url, billing_phone, billing_email
+    `SELECT name, logo_url, logo_light_url, logo_dark_url, billing_phone, billing_email
      FROM tenants
      WHERE id = $1
      LIMIT 1`,
@@ -567,6 +583,8 @@ export async function getByPaymentToken(token: string): Promise<GetByPaymentToke
     tenant_branding: {
       name: tenant?.name ?? null,
       logo_url: tenant?.logo_url ?? null,
+      logo_light_url: tenant?.logo_light_url ?? null,
+      logo_dark_url: tenant?.logo_dark_url ?? null,
       billing_phone: tenant?.billing_phone ?? null,
       billing_email: tenant?.billing_email ?? null,
     },

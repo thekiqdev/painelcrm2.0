@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { ClientSidebar } from "@/components/clients/ClientSidebar";
 import { clientsService, type ClientTimelineEvent } from "@/services/clients";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
@@ -10,10 +10,11 @@ import { chatService, ChatMessage, normalizeChatMessage } from "@/services/chat"
 import { customerInvoicesService } from "@/services/customerInvoices";
 import { ChatBubbleContent } from "@/components/chat/ChatBubbleContent";
 import { MessageStatusIndicator } from "@/components/chat/MessageStatusIndicator";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -67,6 +68,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { canDeleteContractStatus } from "@/utils/contractStatusUi";
+import { proposalsService, type Proposal } from "@/services/proposals";
 const taskSchema = z.object({
   title: z.string().min(3, "Título deve ter pelo menos 3 caracteres"),
   description: z.string().optional(),
@@ -105,6 +107,32 @@ const statusLabels: Record<"pending" | "completed", string> = {
   completed: "Concluída",
 };
 
+const PROPOSAL_STATUS_LABELS: Record<Proposal["status"], string> = {
+  draft: "Rascunho",
+  sent: "Enviada",
+  accepted: "Aceita",
+  rejected: "Recusada",
+  expired: "Expirada",
+  invoiced: "Faturada",
+};
+
+const PROPOSAL_STATUS_CLASS: Record<Proposal["status"], string> = {
+  draft: "bg-gray-100 text-gray-800",
+  sent: "bg-amber-100 text-amber-800",
+  accepted: "bg-green-100 text-green-800",
+  rejected: "bg-red-100 text-red-800",
+  expired: "bg-red-100 text-red-800",
+  invoiced: "bg-blue-100 text-blue-800",
+};
+
+function clientProfileProposalCode(id: string): string {
+  return `PROP-${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+
+function formatProposalCurrency(value: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+}
+
 const timelineEventLabelMap: Record<string, string> = {
   chat_match_client_success: "Conversa vinculada automaticamente ao cliente",
   chat_link_manual: "Vínculo da conversa definido manualmente",
@@ -112,6 +140,10 @@ const timelineEventLabelMap: Record<string, string> = {
   chat_link_migrated_lead_to_client: "Lead convertido em cliente",
   chat_invoice_created: "Fatura criada a partir do chat",
   chat_invoice_sent: "Fatura enviada pelo WhatsApp",
+  chat_proposal_created: "Proposta criada a partir do chat",
+  chat_proposal_draft_saved: "Rascunho de proposta salvo a partir do chat",
+  chat_contract_draft_saved: "Rascunho de contrato salvo a partir do chat",
+  chat_contract_sent_for_signature: "Contrato enviado para assinatura a partir do chat",
   invoice_paid: "Fatura paga",
 };
 
@@ -146,11 +178,15 @@ const ClientProfile = () => {
   const [timelineEvents, setTimelineEvents] = useState<ClientTimelineEvent[]>([]);
   const [isLoadingTimeline, setIsLoadingTimeline] = useState(false);
   const [whatsappAvatarUrl, setWhatsappAvatarUrl] = useState<string | null>(null);
+  const [clientProposals, setClientProposals] = useState<Proposal[]>([]);
+  const [clientProposalsLoading, setClientProposalsLoading] = useState(false);
+  const [clientProposalsError, setClientProposalsError] = useState<string | null>(null);
+  const [clientProposalsReloadKey, setClientProposalsReloadKey] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   const { session } = useAuth();
-  const { canDeleteRecord } = useModulePermissions();
+  const { canDeleteRecord, canView, canCreate } = useModulePermissions();
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -206,6 +242,46 @@ const ClientProfile = () => {
   };
 
   const activeTab = getActiveTab();
+
+  const clientProposalStats = useMemo(() => {
+    const pending = clientProposals.filter((p) => p.status === "draft" || p.status === "sent").length;
+    const acceptedRows = clientProposals.filter((p) => p.status === "accepted" || p.status === "invoiced");
+    const acceptedCount = acceptedRows.length;
+    const acceptedTotal = acceptedRows.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const totalCount = clientProposals.length;
+    return { pending, acceptedCount, acceptedTotal, totalCount };
+  }, [clientProposals]);
+
+  useEffect(() => {
+    if (activeTab !== "opportunities" || !id || !canView("proposals")) {
+      return;
+    }
+    let cancelled = false;
+    setClientProposalsLoading(true);
+    setClientProposalsError(null);
+    void proposalsService
+      .getProposals({ client_id: id })
+      .then((rows) => {
+        if (!cancelled) {
+          setClientProposals(rows);
+          setClientProposalsError(null);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          const msg = e instanceof Error ? e.message : "Erro ao carregar propostas";
+          setClientProposalsError(msg);
+          setClientProposals([]);
+          toast.error(msg);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setClientProposalsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, id, canView, clientProposalsReloadKey]);
 
   /** Rota legada `/clients/:id/details` — unificada na visão geral. */
   useEffect(() => {
@@ -1615,7 +1691,7 @@ const ClientProfile = () => {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="relative min-h-[400px] p-4 bg-gray-50 rounded-lg">
+                <div className="relative min-h-[400px] rounded-lg border border-border/60 bg-muted/40 p-4 dark:bg-muted/25">
                   {notes.length > 0 ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                       {notes.map(note => (
@@ -1893,13 +1969,134 @@ const ClientProfile = () => {
             </Card>
           )}
 
-          {/* Outras abas - placeholder */}
-          {(activeTab === "opportunities" || activeTab === "calendar" || 
-            activeTab === "finance" || activeTab === "settings") && (
+          {activeTab === "opportunities" && (
+            <Card>
+              <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between space-y-0">
+                <CardTitle>Propostas</CardTitle>
+                {canView("proposals") && canCreate("proposals") && id ? (
+                  <Button size="sm" asChild>
+                    <Link to={`/proposals/new?clientId=${encodeURIComponent(id)}&from=client`}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Nova proposta
+                    </Link>
+                  </Button>
+                ) : null}
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {!canView("proposals") ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    Sem permissão para visualizar propostas.
+                  </p>
+                ) : clientProposalsLoading ? (
+                  <div className="flex justify-center py-12">
+                    <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : clientProposalsError ? (
+                  <Alert variant="destructive" className="border-destructive/60">
+                    <AlertTitle>Não foi possível carregar as propostas</AlertTitle>
+                    <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <span className="text-sm">{clientProposalsError}</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 border-destructive/40 bg-background"
+                        onClick={() => setClientProposalsReloadKey((k) => k + 1)}
+                      >
+                        Tentar novamente
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                      <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                        <p className="text-xs text-muted-foreground">Pendentes</p>
+                        <p className="text-lg font-semibold tabular-nums">{clientProposalStats.pending}</p>
+                        <p className="text-[10px] text-muted-foreground">Rascunho ou enviada</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                        <p className="text-xs text-muted-foreground">Aceitas / faturadas</p>
+                        <p className="text-lg font-semibold tabular-nums">{clientProposalStats.acceptedCount}</p>
+                        <p className="text-[10px] text-muted-foreground">Aceita ou faturada</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 px-3 py-2 col-span-2 lg:col-span-1">
+                        <p className="text-xs text-muted-foreground">Valor (aceitas + faturadas)</p>
+                        <p className="text-lg font-semibold tabular-nums">
+                          {formatProposalCurrency(clientProposalStats.acceptedTotal)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 px-3 py-2 col-span-2 lg:col-span-1">
+                        <p className="text-xs text-muted-foreground">Total de propostas</p>
+                        <p className="text-lg font-semibold tabular-nums">{clientProposalStats.totalCount}</p>
+                      </div>
+                    </div>
+                    {clientProposals.length === 0 ? (
+                      <div className="rounded-md border border-dashed py-10 text-center">
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Nenhuma proposta cadastrada para este cliente.
+                        </p>
+                        {canCreate("proposals") && id ? (
+                          <Button variant="outline" asChild>
+                            <Link to={`/proposals/new?clientId=${encodeURIComponent(id)}&from=client`}>
+                              <Plus className="mr-2 h-4 w-4" />
+                              Nova proposta
+                            </Link>
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="whitespace-nowrap">Código</TableHead>
+                              <TableHead>Título</TableHead>
+                              <TableHead className="whitespace-nowrap">Status</TableHead>
+                              <TableHead className="whitespace-nowrap hidden sm:table-cell">Validade</TableHead>
+                              <TableHead className="text-right whitespace-nowrap">Valor</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {clientProposals.map((p) => (
+                              <TableRow
+                                key={p.id}
+                                className="cursor-pointer hover:bg-muted/50"
+                                onClick={() => navigate(`/proposals/${p.id}`)}
+                              >
+                                <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">
+                                  {clientProfileProposalCode(p.id)}
+                                </TableCell>
+                                <TableCell className="font-medium max-w-[200px] truncate">{p.title}</TableCell>
+                                <TableCell>
+                                  <span
+                                    className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${PROPOSAL_STATUS_CLASS[p.status]}`}
+                                  >
+                                    {PROPOSAL_STATUS_LABELS[p.status]}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="hidden sm:table-cell text-sm text-muted-foreground whitespace-nowrap">
+                                  {p.valid_until ? format(new Date(p.valid_until), "dd/MM/yyyy") : "—"}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-sm font-medium">
+                                  {formatProposalCurrency(Number(p.amount) || 0)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {(activeTab === "calendar" || activeTab === "finance" || activeTab === "settings") && (
             <Card>
               <CardHeader>
                 <CardTitle>
-                  {activeTab === "opportunities" && "Oportunidades"}
                   {activeTab === "calendar" && "Agenda"}
                   {activeTab === "finance" && "Financeiro"}
                   {activeTab === "settings" && "Configurações"}

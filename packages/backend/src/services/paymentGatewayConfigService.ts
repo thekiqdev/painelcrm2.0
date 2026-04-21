@@ -4,6 +4,11 @@
  */
 import type { BillingType } from '../modules/payments/paymentGatewayTypes.js';
 import { pool } from '../utils/db.js';
+import {
+  mergeGatewayPaymentFieldsForSave,
+  paymentMethodSlugsFromConfigRow,
+  type GatewayPaymentMethodSlug,
+} from './gatewayPaymentMethodPolicy.js';
 
 export type PaymentGatewayConfigStatus = 'pending' | 'active' | 'error' | 'disabled';
 export type LastConnectionStatus = 'ok' | 'auth_error' | 'error';
@@ -20,6 +25,8 @@ export interface PaymentGatewayConfigRow {
   status?: PaymentGatewayConfigStatus;
   last_connection_test_at?: string | null;
   last_connection_status?: LastConnectionStatus | null;
+  enabled_payment_methods?: unknown;
+  default_payment_method?: string | null;
 }
 
 /** Config sem credenciais em claro (para API/front); indica se há credencial configurada. */
@@ -39,6 +46,10 @@ export interface PaymentGatewayConfigPublic {
   environment?: 'sandbox' | 'production' | null;
   /** Se a URL do webhook está definida (sempre true quando configurado para Asaas). */
   webhook_configured?: boolean;
+  /** Métodos disponíveis no checkout (slugs: pix, boleto, credit_card). */
+  enabled_payment_methods: GatewayPaymentMethodSlug[];
+  /** Método padrão para faturas automáticas ou null para usar ordem de fallback. */
+  default_payment_method: GatewayPaymentMethodSlug | null;
 }
 
 /** Item retornado por GET .../payment-gateways/status para montar os cards do painel. */
@@ -114,7 +125,8 @@ export async function getActiveConfig(
     if (!tenantId) return null;
     const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
       `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-              status, last_connection_test_at, last_connection_status
+              status, last_connection_test_at, last_connection_status,
+              enabled_payment_methods, default_payment_method
        FROM payment_gateway_configs
        WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true AND status = 'active'
        LIMIT 1`,
@@ -131,7 +143,8 @@ export async function getActiveConfig(
 
   const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
     `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-            status, last_connection_test_at, last_connection_status
+            status, last_connection_test_at, last_connection_status,
+            enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs
      WHERE scope = 'global' AND is_active = true AND status IN ('active', 'pending')
      ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END
@@ -160,7 +173,8 @@ export async function getConfigForTest(
     if (gatewayKey) {
       const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
         `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-                status, last_connection_test_at, last_connection_status
+                status, last_connection_test_at, last_connection_status,
+                enabled_payment_methods, default_payment_method
          FROM payment_gateway_configs
          WHERE scope = 'tenant' AND tenant_id = $1 AND gateway_key = $2
          LIMIT 1`,
@@ -172,7 +186,8 @@ export async function getConfigForTest(
     }
     const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
       `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-              status, last_connection_test_at, last_connection_status
+              status, last_connection_test_at, last_connection_status,
+              enabled_payment_methods, default_payment_method
        FROM payment_gateway_configs
        WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true
        LIMIT 1`,
@@ -184,7 +199,8 @@ export async function getConfigForTest(
   }
   const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
     `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-            status, last_connection_test_at, last_connection_status
+            status, last_connection_test_at, last_connection_status,
+            enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs
      WHERE scope = 'global' AND is_active = true
      LIMIT 1`
@@ -200,7 +216,8 @@ export async function getConfigForTest(
 export async function getGlobalConfig(): Promise<PaymentGatewayConfigPublic | null> {
   const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
     `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-            status, last_connection_test_at, last_connection_status
+            status, last_connection_test_at, last_connection_status,
+            enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs
      WHERE scope = 'global' AND is_active = true
      LIMIT 1`
@@ -209,6 +226,7 @@ export async function getGlobalConfig(): Promise<PaymentGatewayConfigPublic | nu
   if (!row) return null;
   const credentials = (row.credentials as Record<string, unknown>) ?? {};
   const env = credentials.env === 'production' ? 'production' : 'sandbox';
+  const pm = paymentMethodSlugsFromConfigRow(row);
   return {
     id: row.id,
     scope: 'global',
@@ -223,6 +241,8 @@ export async function getGlobalConfig(): Promise<PaymentGatewayConfigPublic | nu
     last_connection_status: (row.last_connection_status as LastConnectionStatus) ?? undefined,
     environment: env,
     webhook_configured: !!row.gateway_key,
+    enabled_payment_methods: pm.enabled_payment_methods,
+    default_payment_method: pm.default_payment_method,
   };
 }
 
@@ -235,6 +255,8 @@ export async function saveGlobalConfig(data: {
   display_name?: string | null;
   credentials: Record<string, unknown>;
   options?: Record<string, unknown>;
+  enabled_payment_methods?: string[];
+  default_payment_method?: string | null;
 }): Promise<PaymentGatewayConfigRow> {
   const valid = await isGatewayKeyValid(data.gateway_key);
   if (!valid) {
@@ -246,10 +268,18 @@ export async function saveGlobalConfig(data: {
   );
 
   const existing = await pool.query<PaymentGatewayConfigRow>(
-    `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options
+    `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
+            enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs WHERE scope = 'global' AND gateway_key = $1`,
     [data.gateway_key]
   );
+
+  const mergedPm = mergeGatewayPaymentFieldsForSave({
+    existingEnabledRaw: existing.rows[0]?.enabled_payment_methods,
+    existingDefault: existing.rows[0]?.default_payment_method ?? null,
+    bodyEnabled: data.enabled_payment_methods,
+    bodyDefault: data.default_payment_method,
+  });
 
   if (existing.rows.length > 0) {
     const existingCreds = (existing.rows[0].credentials as Record<string, unknown>) ?? {};
@@ -259,10 +289,19 @@ export async function saveGlobalConfig(data: {
     }
     const u = await pool.query<PaymentGatewayConfigRow>(
       `UPDATE payment_gateway_configs
-       SET is_active = true, status = 'active', display_name = $2, credentials = $3::jsonb, options = $4::jsonb, updated_at = now()
+       SET is_active = true, status = 'active', display_name = $2, credentials = $3::jsonb, options = $4::jsonb,
+           enabled_payment_methods = $5::jsonb, default_payment_method = $6, updated_at = now()
        WHERE scope = 'global' AND gateway_key = $1
-       RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options`,
-      [data.gateway_key, data.display_name ?? null, JSON.stringify(mergedCredentials), JSON.stringify(data.options ?? {})]
+       RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
+                 enabled_payment_methods, default_payment_method`,
+      [
+        data.gateway_key,
+        data.display_name ?? null,
+        JSON.stringify(mergedCredentials),
+        JSON.stringify(data.options ?? {}),
+        JSON.stringify(mergedPm.enabledSlugs),
+        mergedPm.defaultSlug,
+      ]
     );
     const row = u.rows[0];
     return {
@@ -273,10 +312,21 @@ export async function saveGlobalConfig(data: {
   }
 
   const ins = await pool.query<PaymentGatewayConfigRow>(
-    `INSERT INTO payment_gateway_configs (scope, gateway_key, is_active, status, display_name, credentials, options)
-     VALUES ('global', $1, true, 'active', $2, $3::jsonb, $4::jsonb)
-     RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options`,
-    [data.gateway_key, data.display_name ?? null, JSON.stringify(data.credentials), JSON.stringify(data.options ?? {})]
+    `INSERT INTO payment_gateway_configs (
+       scope, gateway_key, is_active, status, display_name, credentials, options,
+       enabled_payment_methods, default_payment_method
+     )
+     VALUES ('global', $1, true, 'active', $2, $3::jsonb, $4::jsonb, $5::jsonb, $6)
+     RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
+               enabled_payment_methods, default_payment_method`,
+    [
+      data.gateway_key,
+      data.display_name ?? null,
+      JSON.stringify(data.credentials),
+      JSON.stringify(data.options ?? {}),
+      JSON.stringify(mergedPm.enabledSlugs),
+      mergedPm.defaultSlug,
+    ]
   );
   const row = ins.rows[0];
   return {
@@ -293,7 +343,8 @@ export async function saveGlobalConfig(data: {
 export async function getTenantConfig(tenantId: string): Promise<PaymentGatewayConfigPublic | null> {
   const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
     `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-            status, last_connection_test_at, last_connection_status
+            status, last_connection_test_at, last_connection_status,
+            enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs
      WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true
      LIMIT 1`,
@@ -303,6 +354,7 @@ export async function getTenantConfig(tenantId: string): Promise<PaymentGatewayC
   if (!row) return null;
   const credentials = (row.credentials as Record<string, unknown>) ?? {};
   const env = credentials.env === 'production' ? 'production' : 'sandbox';
+  const pm = paymentMethodSlugsFromConfigRow(row);
   return {
     id: row.id,
     scope: 'tenant',
@@ -317,6 +369,8 @@ export async function getTenantConfig(tenantId: string): Promise<PaymentGatewayC
     last_connection_status: (row.last_connection_status as LastConnectionStatus) ?? undefined,
     environment: env,
     webhook_configured: !!row.gateway_key,
+    enabled_payment_methods: pm.enabled_payment_methods,
+    default_payment_method: pm.default_payment_method,
   };
 }
 
@@ -331,6 +385,8 @@ export async function saveTenantConfig(
     display_name?: string | null;
     credentials: Record<string, unknown>;
     options?: Record<string, unknown>;
+    enabled_payment_methods?: string[];
+    default_payment_method?: string | null;
   }
 ): Promise<PaymentGatewayConfigRow> {
   const valid = await isGatewayKeyValid(data.gateway_key);
@@ -344,10 +400,18 @@ export async function saveTenantConfig(
   );
 
   const existing = await pool.query<PaymentGatewayConfigRow>(
-    `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options
+    `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
+            enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs WHERE scope = 'tenant' AND tenant_id = $1 AND gateway_key = $2`,
     [tenantId, data.gateway_key]
   );
+
+  const mergedPm = mergeGatewayPaymentFieldsForSave({
+    existingEnabledRaw: existing.rows[0]?.enabled_payment_methods,
+    existingDefault: existing.rows[0]?.default_payment_method ?? null,
+    bodyEnabled: data.enabled_payment_methods,
+    bodyDefault: data.default_payment_method,
+  });
 
   if (existing.rows.length > 0) {
     const existingCreds = (existing.rows[0].credentials as Record<string, unknown>) ?? {};
@@ -357,10 +421,20 @@ export async function saveTenantConfig(
     }
     const u = await pool.query<PaymentGatewayConfigRow>(
       `UPDATE payment_gateway_configs
-       SET is_active = true, status = 'pending', display_name = $3, credentials = $4::jsonb, options = $5::jsonb, updated_at = now()
+       SET is_active = true, status = 'pending', display_name = $3, credentials = $4::jsonb, options = $5::jsonb,
+           enabled_payment_methods = $6::jsonb, default_payment_method = $7, updated_at = now()
        WHERE scope = 'tenant' AND tenant_id = $1 AND gateway_key = $2
-       RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options`,
-      [tenantId, data.gateway_key, data.display_name ?? null, JSON.stringify(mergedCredentials), JSON.stringify(data.options ?? {})]
+       RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
+                 enabled_payment_methods, default_payment_method`,
+      [
+        tenantId,
+        data.gateway_key,
+        data.display_name ?? null,
+        JSON.stringify(mergedCredentials),
+        JSON.stringify(data.options ?? {}),
+        JSON.stringify(mergedPm.enabledSlugs),
+        mergedPm.defaultSlug,
+      ]
     );
     const row = u.rows[0];
     return {
@@ -371,10 +445,22 @@ export async function saveTenantConfig(
   }
 
   const ins = await pool.query<PaymentGatewayConfigRow>(
-    `INSERT INTO payment_gateway_configs (scope, tenant_id, gateway_key, is_active, status, display_name, credentials, options)
-     VALUES ('tenant', $1, $2, true, 'pending', $3, $4::jsonb, $5::jsonb)
-     RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options`,
-    [tenantId, data.gateway_key, data.display_name ?? null, JSON.stringify(data.credentials), JSON.stringify(data.options ?? {})]
+    `INSERT INTO payment_gateway_configs (
+       scope, tenant_id, gateway_key, is_active, status, display_name, credentials, options,
+       enabled_payment_methods, default_payment_method
+     )
+     VALUES ('tenant', $1, $2, true, 'pending', $3, $4::jsonb, $5::jsonb, $6::jsonb, $7)
+     RETURNING id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
+               enabled_payment_methods, default_payment_method`,
+    [
+      tenantId,
+      data.gateway_key,
+      data.display_name ?? null,
+      JSON.stringify(data.credentials),
+      JSON.stringify(data.options ?? {}),
+      JSON.stringify(mergedPm.enabledSlugs),
+      mergedPm.defaultSlug,
+    ]
   );
   const row = ins.rows[0];
   return {

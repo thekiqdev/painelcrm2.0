@@ -25,7 +25,7 @@ import {
   Hash
 } from "lucide-react";
 import { chatService, ChatInstance, type BootstrapSyncMeta } from "@/services/chat";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import QRCodePopup from "./QRCodePopup";
 import { InstanceDetailsDialog } from "./InstanceDetailsDialog";
 
@@ -254,9 +254,23 @@ export const InstancesList: React.FC<InstancesListProps> = ({
   const getStatusBadge = (status: string) => {
     const statusLower = status.toLowerCase();
     if (statusLower === 'connected' || statusLower === 'open') {
-      return <Badge variant="default" className="bg-green-500 hover:bg-green-600 text-white border-0 text-xs font-medium px-2 py-0.5">Conectado</Badge>;
+      return (
+        <Badge
+          variant="default"
+          className="border-0 bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-600/90 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+        >
+          Conectado
+        </Badge>
+      );
     } else if (statusLower === 'connecting') {
-      return <Badge variant="default" className="bg-yellow-500 hover:bg-yellow-600 text-white border-0 text-xs font-medium px-2 py-0.5">Conectando</Badge>;
+      return (
+        <Badge
+          variant="default"
+          className="border-0 bg-amber-500 px-2 py-0.5 text-xs font-medium text-amber-950 hover:bg-amber-500/90 dark:bg-amber-600 dark:text-amber-50 dark:hover:bg-amber-500"
+        >
+          Conectando
+        </Badge>
+      );
     } else {
       return <Badge variant="secondary" className="text-xs font-medium px-2 py-0.5">Desconectado</Badge>;
     }
@@ -268,19 +282,20 @@ export const InstancesList: React.FC<InstancesListProps> = ({
     const map: Record<string, { label: string; className: string }> = {
       queued: {
         label: "Sync inicial",
-        className: "bg-slate-500/90 text-white border-0",
+        className:
+          "border-0 bg-muted text-foreground dark:bg-muted/80 dark:text-foreground",
       },
       running: {
         label: "Sincronizando…",
-        className: "bg-sky-600 text-white border-0",
+        className: "border-0 bg-sky-600 text-white dark:bg-sky-700",
       },
       completed: {
         label: "Histórico inicial ok",
-        className: "bg-emerald-600/90 text-white border-0",
+        className: "border-0 bg-emerald-600/90 text-white dark:bg-emerald-700",
       },
       failed: {
         label: "Sync inicial falhou",
-        className: "bg-red-600 text-white border-0",
+        className: "border-0 bg-red-600 text-white dark:bg-red-700",
       },
     };
     const v = map[bs.status];
@@ -295,11 +310,11 @@ export const InstancesList: React.FC<InstancesListProps> = ({
   const getStatusIcon = (status: string) => {
     const statusLower = status.toLowerCase();
     if (statusLower === 'connected' || statusLower === 'open') {
-      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      return <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />;
     } else if (statusLower === 'connecting') {
-      return <Clock className="h-4 w-4 text-yellow-500" />;
+      return <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />;
     } else {
-      return <XCircle className="h-4 w-4 text-gray-400" />;
+      return <XCircle className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
@@ -389,7 +404,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 pt-3 border-t" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-2 border-t border-border pt-3" onClick={(e) => e.stopPropagation()}>
                       <Button
                         variant="default"
                         size="sm"

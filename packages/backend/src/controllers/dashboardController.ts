@@ -65,18 +65,18 @@ export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
     const lastLeads = parseInt(lastMonthLeads.rows[0]?.count || '0');
     const leadsChange = lastLeads > 0 ? ((currentLeads - lastLeads) / lastLeads * 100) : 0;
 
-    // Propostas/Contratos (tenant)
+    // Propostas / orçamentos criados no mês (tenant)
     const currentMonthProposals = await pool.query(
-      `SELECT COUNT(*) as count FROM contracts c
-       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
-       WHERE EXTRACT(MONTH FROM c.created_at) = $2 AND EXTRACT(YEAR FROM c.created_at) = $3`,
+      `SELECT COUNT(*) as count FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM p.created_at) = $2 AND EXTRACT(YEAR FROM p.created_at) = $3`,
       [tenantId, currentMonth + 1, currentYear]
     );
 
     const lastMonthProposals = await pool.query(
-      `SELECT COUNT(*) as count FROM contracts c
-       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
-       WHERE EXTRACT(MONTH FROM c.created_at) = $2 AND EXTRACT(YEAR FROM c.created_at) = $3`,
+      `SELECT COUNT(*) as count FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE EXTRACT(MONTH FROM p.created_at) = $2 AND EXTRACT(YEAR FROM p.created_at) = $3`,
       [tenantId, lastMonth + 1, lastMonthYear]
     );
 
@@ -312,10 +312,10 @@ export async function getRecentActivities(req: AuthRequest, res: Response): Prom
 
     // Formatar com cores e informações do usuário
     const typeColors: { [key: string]: string } = {
-      'lead': 'bg-blue-100 text-blue-700',
-      'client': 'bg-green-100 text-green-700',
-      'contract': 'bg-purple-100 text-purple-700',
-      'task': 'bg-amber-100 text-amber-700'
+      lead: 'bg-blue-100 text-blue-800 ring-1 ring-blue-500/15 dark:bg-blue-950/45 dark:text-blue-200 dark:ring-blue-400/25',
+      client: 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-500/15 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-400/25',
+      contract: 'bg-violet-100 text-violet-800 ring-1 ring-violet-500/15 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-400/25',
+      task: 'bg-amber-100 text-amber-800 ring-1 ring-amber-500/15 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-400/25',
     };
 
     // Buscar informações do usuário para exibir
@@ -340,7 +340,9 @@ export async function getRecentActivities(req: AuthRequest, res: Response): Prom
         action: activity.action,
         entity: activity.entity_name,
         time: timeAgo,
-        color: typeColors[activity.type] || 'bg-gray-100 text-gray-700'
+        color:
+          typeColors[activity.type] ||
+          'bg-muted text-muted-foreground ring-1 ring-border dark:bg-muted/60 dark:text-foreground/90',
       };
     });
 
@@ -375,9 +377,11 @@ export async function getUpcomingTasks(req: AuthRequest, res: Response): Promise
     );
 
     const priorityColors: { [key: string]: string } = {
-      'high': 'bg-red-100 text-red-700 border-red-300',
-      'medium': 'bg-amber-100 text-amber-700 border-amber-300',
-      'low': 'bg-green-100 text-green-700 border-green-300'
+      high:
+        'bg-red-100 text-red-800 border-red-300 dark:bg-red-950/45 dark:text-red-200 dark:border-red-800/60',
+      medium:
+        'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/45 dark:text-amber-200 dark:border-amber-800/60',
+      low: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800/60',
     };
 
     const priorityLabels: { [key: string]: string } = {

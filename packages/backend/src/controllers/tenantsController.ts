@@ -23,6 +23,13 @@ const createTenantSchema = z.object({
   timezone: z.string().optional().nullable(),
   locale: z.string().optional().nullable(),
   logo_url: z.string().optional().nullable(),
+  logo_light_url: z.string().optional().nullable(),
+  logo_dark_url: z.string().optional().nullable(),
+  company_address_line: z.string().optional().nullable(),
+  company_city: z.string().optional().nullable(),
+  company_state: z.string().optional().nullable(),
+  company_postal_code: z.string().optional().nullable(),
+  company_whatsapp: z.string().optional().nullable(),
   max_users_override: z.number().int().min(0).optional().nullable(),
   max_whatsapp_instances_override: z.number().int().min(0).optional().nullable(),
 });
@@ -172,7 +179,36 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
     const updates: string[] = [];
     const values: any[] = [];
     let i = 1;
-    const fields: (keyof typeof body)[] = ['name', 'slug', 'domain', 'plan_id', 'status', 'trial_ends_at', 'timezone', 'locale', 'logo_url'];
+    const nullableStringFields = new Set([
+      'timezone',
+      'locale',
+      'logo_url',
+      'logo_light_url',
+      'logo_dark_url',
+      'company_address_line',
+      'company_city',
+      'company_state',
+      'company_postal_code',
+      'company_whatsapp',
+    ]);
+    const fields: (keyof typeof body)[] = [
+      'name',
+      'slug',
+      'domain',
+      'plan_id',
+      'status',
+      'trial_ends_at',
+      'timezone',
+      'locale',
+      'logo_url',
+      'logo_light_url',
+      'logo_dark_url',
+      'company_address_line',
+      'company_city',
+      'company_state',
+      'company_postal_code',
+      'company_whatsapp',
+    ];
     for (const key of fields) {
       if (body[key] !== undefined) {
         updates.push(`${key} = $${i}`);
@@ -181,7 +217,7 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
         } else if (key === 'trial_ends_at') {
           const v = body[key];
           values.push(v == null || v === '' ? null : new Date(v as string));
-        } else if (key === 'timezone' || key === 'locale' || key === 'logo_url') {
+        } else if (nullableStringFields.has(key as string)) {
           const v = body[key];
           values.push(v == null || v === '' ? null : v);
         } else {

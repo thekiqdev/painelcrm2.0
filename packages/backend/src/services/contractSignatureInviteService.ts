@@ -98,13 +98,15 @@ export type SignatureInviteFullRow = {
   invite_consumed: boolean;
   tenant_name: string | null;
   tenant_logo_url: string | null;
+  tenant_logo_light_url: string | null;
+  tenant_logo_dark_url: string | null;
 };
 
 export async function loadSignatureInviteByTokenHash(hash: string): Promise<SignatureInviteFullRow | null> {
   const r = await pool.query<SignatureInviteFullRow>(
     `SELECT tenant_id, contract_id, signer_id, invite_id, contract_title, contract_number, contract_status,
             document_html, signer_name, signer_signed_at, invite_revoked, invite_expired, invite_consumed,
-            tenant_name, tenant_logo_url
+            tenant_name, tenant_logo_url, tenant_logo_light_url, tenant_logo_dark_url
      FROM get_signature_invite_full_by_token_hash($1)`,
     [hash]
   );
@@ -181,7 +183,12 @@ export async function getPublicSignatureInvitePayload(rawToken: string): Promise
         contract_number: row.contract_number,
         signer_name: row.signer_name,
         signed_at: row.signer_signed_at,
-        tenant: { name: row.tenant_name, logo_url: row.tenant_logo_url },
+        tenant: {
+          name: row.tenant_name,
+          logo_url: row.tenant_logo_url,
+          logo_light_url: row.tenant_logo_light_url,
+          logo_dark_url: row.tenant_logo_dark_url,
+        },
         message: 'A assinatura deste convite já foi concluída.',
       },
     };
@@ -195,7 +202,12 @@ export async function getPublicSignatureInvitePayload(rawToken: string): Promise
       contract_number: row.contract_number,
       document_html: row.document_html,
       signer_name: row.signer_name,
-      tenant: { name: row.tenant_name, logo_url: row.tenant_logo_url },
+      tenant: {
+        name: row.tenant_name,
+        logo_url: row.tenant_logo_url,
+        logo_light_url: row.tenant_logo_light_url,
+        logo_dark_url: row.tenant_logo_dark_url,
+      },
       accept_terms_version: TERMS_VERSION,
       disclaimer:
         'Leia o documento, confirme o seu nome tal como registado e aceite os termos para assinar eletronicamente.',

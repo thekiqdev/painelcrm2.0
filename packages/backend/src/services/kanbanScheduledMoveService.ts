@@ -287,7 +287,7 @@ async function loadCardLocked(client: PoolClient, tenantId: string, cardId: stri
     | undefined;
 }
 
-async function enrichPhase2AfterCommit(
+export async function enrichPhase2AfterCommit(
   tenantId: string,
   cardId: string,
   conversationId: string,

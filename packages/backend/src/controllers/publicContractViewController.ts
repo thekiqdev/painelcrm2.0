@@ -47,6 +47,8 @@ export async function getPublicContractView(req: Request, res: Response): Promis
       tenant: {
         name: payload.tenant_name,
         logo_url: payload.tenant_logo_url,
+        logo_light_url: payload.tenant_logo_light_url,
+        logo_dark_url: payload.tenant_logo_dark_url,
       },
       responsible_display_name: payload.responsible_display_name,
       signers: payload.signers.map((s) => ({

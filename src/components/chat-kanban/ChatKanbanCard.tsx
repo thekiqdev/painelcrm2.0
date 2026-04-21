@@ -10,6 +10,7 @@ import {
   kanbanCardTitle,
   shortOperatorName,
 } from '@/utils/chatKanbanCardDisplay';
+import { parseKanbanProposalsDisplay } from '@/utils/kanbanColumnRulesUi';
 
 function kanbanLabelsFromMetadata(meta: unknown): string[] {
   if (!meta || typeof meta !== 'object') return [];
@@ -20,12 +21,18 @@ function kanbanLabelsFromMetadata(meta: unknown): string[] {
 
 type Props = {
   card: ChatKanbanBoardCard;
+  /** Metadata da coluna (`kanban_proposals`). */
+  columnMetadata?: Record<string, unknown> | null;
   onClick: () => void;
   /** Atributos/listeners do @dnd-kit (PointerSensor com distância evita conflito com clique). */
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
 };
 
-export function ChatKanbanCard({ card, onClick, dragHandleProps }: Props) {
+function formatBrl(n: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
+}
+
+export function ChatKanbanCard({ card, columnMetadata, onClick, dragHandleProps }: Props) {
   const title = kanbanCardTitle(card);
   const phone = kanbanCardPhoneLine(card);
   const preview = (card.conv_last_message_preview || '').trim() || 'Sem mensagens ainda';
@@ -33,6 +40,11 @@ export function ChatKanbanCard({ card, onClick, dragHandleProps }: Props) {
   const unread = card.conv_unread_count ?? 0;
   const att = kanbanAttendanceShort(card.conv_attendance_status);
   const kanbanLabels = kanbanLabelsFromMetadata(card.conv_metadata);
+  const pp = parseKanbanProposalsDisplay(columnMetadata);
+  const pend = Number(card.proposal_pending_total ?? 0);
+  const acc = Number(card.proposal_accepted_total ?? 0);
+  const hasCrm = Boolean(card.conv_client_id || card.conv_lead_id);
+  const showProposalRow = hasCrm && (pp.show_pending || pp.show_accepted);
 
   return (
     <button
@@ -64,6 +76,12 @@ export function ChatKanbanCard({ card, onClick, dragHandleProps }: Props) {
             <p className="text-[11px] text-muted-foreground tabular-nums truncate">{phone}</p>
           ) : null}
           <p className="text-xs text-muted-foreground line-clamp-2 leading-snug">{preview}</p>
+          {showProposalRow ? (
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5 pt-0.5 text-[10px] text-muted-foreground tabular-nums leading-tight border-t border-border/40 mt-1">
+              {pp.show_pending ? <span>Pendente: {formatBrl(pend)}</span> : null}
+              {pp.show_accepted ? <span>Aceita: {formatBrl(acc)}</span> : null}
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-1 pt-0.5">
             {unread > 0 ? (
               <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-5">

@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/table';
 import { useTenantDetail } from '@/contexts/TenantDetailContext';
 import { apiClient } from '@/integrations/api/client';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { UserCog, LogIn } from 'lucide-react';
 
 interface TenantUser {

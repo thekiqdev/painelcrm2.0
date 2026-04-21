@@ -18,7 +18,7 @@ import { clientsService } from "@/services/clients";
 import type { CustomerInvoice } from "@/services/customerInvoices";
 import type { RecurrenceHistoryInvoice } from "@/services/customerInvoices";
 import type { Client } from "@/services/clients";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -27,12 +27,33 @@ import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { INVOICE_ACTIONABLE } from "@/lib/customerInvoiceActions";
+import {
+  effectiveLinkPaymentMethods,
+  formatInvoicePaymentMethodLabel,
+  invoiceMethodsFromGatewaySlugs,
+  type InvoicePaymentMethodUi,
+} from "@/lib/crmGatewayPaymentMethods";
 
 function formatAmount(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
   }).format(cents / 100);
+}
+
+function storedAllowedFromInvoice(inv: CustomerInvoice): InvoicePaymentMethodUi[] | null {
+  if (Array.isArray(inv.allowed_payment_methods) && inv.allowed_payment_methods.length > 0) {
+    return inv.allowed_payment_methods.filter((m): m is InvoicePaymentMethodUi =>
+      m === "PIX" || m === "BOLETO" || m === "CREDIT_CARD"
+    );
+  }
+  const meta = inv.gateway_metadata as { allowed_payment_methods?: unknown } | null | undefined;
+  if (Array.isArray(meta?.allowed_payment_methods) && meta.allowed_payment_methods.length > 0) {
+    return (meta.allowed_payment_methods as string[]).filter(
+      (m): m is InvoicePaymentMethodUi => m === "PIX" || m === "BOLETO" || m === "CREDIT_CARD"
+    );
+  }
+  return null;
 }
 
 const CustomerInvoiceDetail = () => {
@@ -52,6 +73,12 @@ const CustomerInvoiceDetail = () => {
   const [cancelling, setCancelling] = useState(false);
   const [recurrenceHistory, setRecurrenceHistory] = useState<RecurrenceHistoryInvoice[]>([]);
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [gatewayEnabledMethods, setGatewayEnabledMethods] = useState<InvoicePaymentMethodUi[]>([
+    "PIX",
+    "BOLETO",
+    "CREDIT_CARD",
+  ]);
+  const [gatewayMethodsLoaded, setGatewayMethodsLoaded] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -92,6 +119,30 @@ const CustomerInvoiceDetail = () => {
     })();
     return () => { cancelled = true; };
   }, [id, navigate]);
+
+  useEffect(() => {
+    customerInvoicesService
+      .getGatewayStatus()
+      .then((s) => {
+        setGatewayEnabledMethods(invoiceMethodsFromGatewaySlugs(s.enabled_payment_methods));
+        setGatewayMethodsLoaded(true);
+      })
+      .catch(() => setGatewayMethodsLoaded(true));
+  }, []);
+
+  const displayLinkPaymentMethods =
+    invoice && gatewayMethodsLoaded
+      ? effectiveLinkPaymentMethods(storedAllowedFromInvoice(invoice), gatewayEnabledMethods)
+      : [];
+
+  const paymentMethodUi: InvoicePaymentMethodUi | null =
+    invoice?.payment_method === "PIX" ||
+    invoice?.payment_method === "BOLETO" ||
+    invoice?.payment_method === "CREDIT_CARD"
+      ? invoice.payment_method
+      : null;
+  const paymentMethodInactiveAtGateway =
+    Boolean(paymentMethodUi && gatewayMethodsLoaded && !gatewayEnabledMethods.includes(paymentMethodUi));
 
   const handleCancel = async () => {
     if (!id || !invoice || !INVOICE_ACTIONABLE.has(invoice.status)) return;
@@ -372,13 +423,31 @@ const CustomerInvoiceDetail = () => {
               </div>
             )}
             <div>
-              <dt className="text-muted-foreground">Forma de pagamento</dt>
-              <dd>{invoice.payment_method ?? "—"}</dd>
+              <dt className="text-muted-foreground">Forma de pagamento (cobrança)</dt>
+              <dd>
+                {formatInvoicePaymentMethodLabel(invoice.payment_method)}
+                {paymentMethodInactiveAtGateway && (
+                  <span className="block text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+                    Este método está desativado no gateway agora; a cobrança pode ter sido gerada antes da alteração.
+                  </span>
+                )}
+              </dd>
             </div>
+            {displayLinkPaymentMethods.length > 0 && (
+              <div>
+                <dt className="text-muted-foreground">Métodos no link de pagamento</dt>
+                <dd>
+                  {displayLinkPaymentMethods.map(formatInvoicePaymentMethodLabel).join(", ")}
+                  <span className="block text-xs text-muted-foreground mt-0.5">
+                    Conforme configuração atual do gateway e o que foi gravado na fatura.
+                  </span>
+                </dd>
+              </div>
+            )}
             <div>
               <dt className="text-muted-foreground">Situação no provedor</dt>
               <dd className="text-muted-foreground text-xs">
-                {(invoice as { gateway_status?: string | null }).gateway_status ?? invoice.asaas_status ?? "—"}
+                {invoice.gateway_status ?? invoice.asaas_status ?? "—"}
               </dd>
             </div>
             <div>

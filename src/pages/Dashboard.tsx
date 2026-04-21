@@ -1,5 +1,5 @@
-
 import React from "react";
+import { useTheme } from "next-themes";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,21 +8,59 @@ import { ArrowUp, ArrowDown, Users, DollarSign, List, FileText, Calendar } from 
 import { Progress } from "@/components/ui/progress";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 import { dashboardService, KPIData, ChartData, FunnelData, Activity, UpcomingTask } from "@/services/dashboard";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { DashboardActivationBlock } from "@/components/dashboard/DashboardActivationBlock";
 import { useAuth } from "@/contexts/AuthContext";
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+type ChartTooltipProps = {
+  active?: boolean;
+  payload?: Array<{ name?: string; value?: number }>;
+  label?: string;
+  valueMode?: "currency" | "number";
+};
+
+const ChartTooltip = ({ active, payload, label, valueMode = "number" }: ChartTooltipProps) => {
   if (active && payload && payload.length) {
+    const v = Number(payload[0].value);
+    const formatted =
+      valueMode === "currency"
+        ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })
+        : v.toLocaleString("pt-BR");
     return (
-      <div className="bg-white p-2 shadow-md border rounded">
-        <p className="font-medium">{`${label}`}</p>
-        <p className="text-sm">{`${payload[0].name}: R$ ${payload[0].value.toLocaleString('pt-BR')}`}</p>
+      <div className="rounded-md border border-border bg-popover p-2 text-sm text-popover-foreground shadow-md">
+        <p className="font-medium text-foreground">{`${label ?? ""}`}</p>
+        <p className="text-muted-foreground">
+          {payload[0].name ? `${payload[0].name}: ` : ""}
+          {formatted}
+        </p>
       </div>
     );
   }
   return null;
 };
+
+const PieFunnelTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ name?: string; value?: number; percent?: number }>;
+}) => {
+  if (!active || !payload?.length) return null;
+  const p = payload[0];
+  const pct = typeof p.percent === "number" ? `${(p.percent * 100).toFixed(0)}%` : "";
+  return (
+    <div className="rounded-md border border-border bg-popover p-2 text-sm text-popover-foreground shadow-md">
+      <p className="font-medium text-foreground">{p.name}</p>
+      <p className="text-muted-foreground">
+        {Number(p.value).toLocaleString("pt-BR")}
+        {pct ? ` · ${pct}` : ""}
+      </p>
+    </div>
+  );
+};
+
+const axisTickProps = { fill: "hsl(var(--muted-foreground))", fontSize: 11 };
 
 async function loadDashboardData() {
   const [kpisData, salesChart, leadsChart, funnel, activitiesData, tasksData] = await Promise.all([
@@ -44,7 +82,12 @@ async function loadDashboardData() {
 }
 
 const Dashboard = () => {
+  const { resolvedTheme } = useTheme();
   const { user } = useAuth();
+  const chartPrimary = "hsl(var(--primary))";
+  const chartPrimaryFill = "hsl(var(--primary) / 0.22)";
+  const chartLeadsFill =
+    resolvedTheme === "dark" ? "hsl(152 55% 42%)" : "hsl(152 60% 40%)";
   const trialEndsAt =
     user?.tenant_status === 'trial' && user?.trial_ends_at
       ? new Date(user.trial_ends_at)
@@ -99,32 +142,36 @@ const Dashboard = () => {
       change: formatChange(kpis.sales.change), 
       changeType: kpis.sales.changeType,
       icon: DollarSign,
-      color: "bg-blue-100 text-blue-700" 
+      color:
+        "bg-blue-500/10 text-blue-800 ring-1 ring-blue-500/15 dark:bg-blue-950/45 dark:text-blue-200 dark:ring-blue-400/20",
     },
-    { 
-      title: "Novos Leads", 
-      value: kpis.leads.value.toString(), 
-      change: formatChange(kpis.leads.change), 
+    {
+      title: "Novos Leads",
+      value: kpis.leads.value.toString(),
+      change: formatChange(kpis.leads.change),
       changeType: kpis.leads.changeType,
       icon: Users,
-      color: "bg-green-100 text-green-700" 
+      color:
+        "bg-emerald-500/10 text-emerald-800 ring-1 ring-emerald-500/15 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-400/20",
     },
-    { 
-      title: "Propostas Enviadas", 
-      value: kpis.proposals.value.toString(), 
-      change: formatChange(kpis.proposals.change), 
+    {
+      title: "Propostas Enviadas",
+      value: kpis.proposals.value.toString(),
+      change: formatChange(kpis.proposals.change),
       changeType: kpis.proposals.changeType,
       icon: FileText,
-      color: "bg-amber-100 text-amber-700" 
+      color:
+        "bg-amber-500/10 text-amber-900 ring-1 ring-amber-500/15 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-400/20",
     },
-    { 
-      title: "Tarefas Pendentes", 
-      value: kpis.tasks.value.toString(), 
-      change: formatChange(kpis.tasks.change), 
+    {
+      title: "Tarefas Pendentes",
+      value: kpis.tasks.value.toString(),
+      change: formatChange(kpis.tasks.change),
       changeType: kpis.tasks.changeType,
       icon: Calendar,
-      color: "bg-red-100 text-red-700" 
-    }
+      color:
+        "bg-red-500/10 text-red-800 ring-1 ring-red-500/15 dark:bg-red-950/45 dark:text-red-200 dark:ring-red-400/20",
+    },
   ] : [];
 
   return (
@@ -170,11 +217,17 @@ const Dashboard = () => {
             <CardContent>
               <div className="flex items-center">
                 {kpi.changeType === "positive" ? (
-                  <ArrowUp className="h-4 w-4 text-green-500 mr-1" />
+                  <ArrowUp className="mr-1 h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                 ) : (
-                  <ArrowDown className="h-4 w-4 text-red-500 mr-1" />
+                  <ArrowDown className="mr-1 h-4 w-4 text-red-600 dark:text-red-400" />
                 )}
-                <span className={`text-sm ${kpi.changeType === "positive" ? "text-green-500" : "text-red-500"}`}>
+                <span
+                  className={`text-sm ${
+                    kpi.changeType === "positive"
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-red-600 dark:text-red-400"
+                  }`}
+                >
                   {kpi.change} em relação ao mês anterior
                 </span>
               </div>
@@ -198,15 +251,15 @@ const Dashboard = () => {
                   data={salesData}
                   margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                 >
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip content={<CustomTooltip />} />
+                  <XAxis dataKey="name" tick={axisTickProps} />
+                  <YAxis tick={axisTickProps} width={36} />
+                  <Tooltip content={<ChartTooltip valueMode="currency" />} />
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke="#3b82f6"
-                    fill="#3b82f6"
-                    fillOpacity={0.2}
+                    stroke={chartPrimary}
+                    fill={chartPrimaryFill}
+                    fillOpacity={1}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -227,10 +280,10 @@ const Dashboard = () => {
                   data={leadsData}
                   margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                 >
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <XAxis dataKey="name" tick={axisTickProps} />
+                  <YAxis tick={axisTickProps} width={36} />
+                  <Tooltip content={<ChartTooltip valueMode="number" />} />
+                  <Bar dataKey="value" fill={chartLeadsFill} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -263,7 +316,7 @@ const Dashboard = () => {
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip content={<PieFunnelTooltip />} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -312,7 +365,7 @@ const Dashboard = () => {
                         <span className="font-medium">{activity.user}</span> {activity.action}
                         {activity.entity && <span className="text-muted-foreground">: {activity.entity}</span>}
                       </p>
-                      <p className="text-xs text-gray-500 mt-0.5">{activity.time}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{activity.time}</p>
                     </div>
                   </div>
                 ))
@@ -338,10 +391,13 @@ const Dashboard = () => {
             <div className="space-y-4">
               {tasks.length > 0 ? (
                 tasks.map((task) => (
-                  <div key={task.id} className="flex items-center p-3 border rounded-lg hover:bg-gray-50">
+                  <div
+                    key={task.id}
+                    className="flex items-center rounded-lg border border-border p-3 transition-colors hover:bg-muted/50"
+                  >
                     <div className="flex-1">
                       <p className="font-medium">{task.title}</p>
-                      <p className="text-sm text-gray-500">{task.time}</p>
+                      <p className="text-sm text-muted-foreground">{task.time}</p>
                     </div>
                     <div className={`px-2 py-0.5 text-xs rounded border ${task.color}`}>
                       {task.priority}

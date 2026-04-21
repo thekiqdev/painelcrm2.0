@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/integrations/api/client';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 
 export interface Notification {
   id: string;

@@ -9,7 +9,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { ChatKanbanBoardCard, ChatKanbanColumn } from '@/services/chatKanban';
 import { ChatKanbanSortableCard } from '@/components/chat-kanban/ChatKanbanSortableCard';
 import { kanbanColumnDropId } from '@/components/chat-kanban/kanbanDndIds';
-import { hasKanbanColumnAutomationIndicators, parseKanbanColumnRules } from '@/utils/kanbanColumnRulesUi';
+import {
+  hasKanbanColumnAutomationIndicators,
+  parseKanbanColumnRules,
+  parseKanbanProposalsDisplay,
+} from '@/utils/kanbanColumnRulesUi';
 
 type Props = {
   column: ChatKanbanColumn;
@@ -32,12 +36,30 @@ export function ChatKanbanBoardColumn({
   const dropId = kanbanColumnDropId(column.id);
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
   const rules = parseKanbanColumnRules(column.metadata);
+  const proposalDisplay = parseKanbanProposalsDisplay(column.metadata);
   const showRulesIcon = hasKanbanColumnAutomationIndicators(rules);
   const headerTinted = Boolean(column.color?.startsWith('bg-'));
 
   const orderedCards = cardIds
     .map((id) => cardMap.get(id))
     .filter((c): c is ChatKanbanBoardCard => c != null);
+
+  let columnTotalPending = 0;
+  let columnTotalAccepted = 0;
+  for (const c of orderedCards) {
+    if (proposalDisplay.show_pending) {
+      columnTotalPending += Number(c.proposal_pending_total ?? 0);
+    }
+    if (proposalDisplay.show_accepted) {
+      columnTotalAccepted += Number(c.proposal_accepted_total ?? 0);
+    }
+  }
+
+  const showProposalColumnTotals =
+    orderedCards.length > 0 && (proposalDisplay.show_pending || proposalDisplay.show_accepted);
+
+  const formatBrl = (n: number) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
 
   const headerClass = column.color?.startsWith('bg-')
     ? `${column.color} text-white border-0`
@@ -80,11 +102,12 @@ export function ChatKanbanBoardColumn({
                 </Badge>
               ) : null}
               {showRulesIcon ? (
-                <SlidersHorizontal
-                  className={cn('h-3.5 w-3.5 shrink-0 opacity-70', headerTinted && 'text-white/90')}
-                  aria-hidden
-                  title="Automações configuradas"
-                />
+                <span title="Automações configuradas">
+                  <SlidersHorizontal
+                    className={cn('h-3.5 w-3.5 shrink-0 opacity-70', headerTinted && 'text-white/90')}
+                    aria-hidden
+                  />
+                </span>
               ) : null}
             </div>
             <Badge
@@ -99,6 +122,26 @@ export function ChatKanbanBoardColumn({
             </Badge>
           </div>
         </button>
+        {showProposalColumnTotals ? (
+          <div
+            className={
+              headerTinted
+                ? 'mt-2 pt-2 border-t border-white/25 text-[10px] tabular-nums leading-tight text-white/90 flex flex-wrap gap-x-3 gap-y-0.5'
+                : 'mt-2 pt-2 border-t border-border/50 text-[10px] tabular-nums leading-tight text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5'
+            }
+          >
+            {proposalDisplay.show_pending ? (
+              <span title="Soma dos valores em propostas pendentes (enviadas) nos cartões desta coluna">
+                Total pendente: {formatBrl(columnTotalPending)}
+              </span>
+            ) : null}
+            {proposalDisplay.show_accepted ? (
+              <span title="Soma dos valores em propostas aceitas ou faturadas nos cartões desta coluna">
+                Total aceito: {formatBrl(columnTotalAccepted)}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent className="flex-1 min-h-0 p-0 bg-muted/10 flex flex-col">
         <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]]:!block [&_[data-radix-scroll-area-viewport]]:max-h-full">
@@ -123,7 +166,12 @@ export function ChatKanbanBoardColumn({
                 </div>
               ) : (
                 orderedCards.map((c) => (
-                  <ChatKanbanSortableCard key={c.id} card={c} onCardClick={onCardClick} />
+                  <ChatKanbanSortableCard
+                    key={c.id}
+                    card={c}
+                    columnMetadata={column.metadata}
+                    onCardClick={onCardClick}
+                  />
                 ))
               )}
             </div>

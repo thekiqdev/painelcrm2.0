@@ -26,6 +26,7 @@ import ticketsRoutes from './routes/ticketsRoutes.js';
 import ticketCategoriesRoutes from './routes/ticketCategoriesRoutes.js';
 import contractsRoutes from './routes/contractsRoutes.js';
 import contractTemplatesRoutes from './routes/contractTemplatesRoutes.js';
+import proposalTemplatesRoutes from './routes/proposalTemplatesRoutes.js';
 import projectTemplatesRoutes from './routes/projectTemplatesRoutes.js';
 import projectsRoutes from './routes/projectsRoutes.js';
 import projectListsRoutes from './routes/projectListsRoutes.js';
@@ -69,6 +70,7 @@ import onboardingRoutes from './routes/onboardingRoutes.js';
 import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
 import { processDueKanbanScheduledMovesBatch } from './services/kanbanScheduledMoveService.js';
+import { processProposalWebhookDeliveriesBatch } from './services/proposalWebhookDeliveryService.js';
 import { initializeWebSocket } from './services/websocketService.js';
 import { getCatalogMediaStorageRoot } from './services/catalogMediaUploadService.js';
 import {
@@ -337,6 +339,7 @@ app.use('/api/invoices', invoicesRoutes);
 app.use('/api/expenses', expensesRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/proposals', proposalsRoutes);
+app.use('/api/proposal-templates', proposalTemplatesRoutes);
 app.use('/api/members', membersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/chat', chatRoutes);
@@ -419,6 +422,12 @@ httpServer.listen(PORT, '0.0.0.0', () => {
       console.error('[kanbanScheduledMove] batch error', err),
     );
   }, kanbanPollMs);
+  const proposalWhPollMs = Math.max(20_000, parseInt(process.env.PROPOSAL_WEBHOOK_POLL_MS || '60000', 10));
+  setInterval(() => {
+    void processProposalWebhookDeliveriesBatch(20).catch((err) =>
+      console.error('[proposalWebhookDelivery] batch error', err),
+    );
+  }, proposalWhPollMs);
 });
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {

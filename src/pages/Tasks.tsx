@@ -16,7 +16,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { clientsService, Client } from "@/services/clients";
 import { UnifiedTaskCard, TaskSummaryPopover, TaskFullView } from "@/components/tasks";

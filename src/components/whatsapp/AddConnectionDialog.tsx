@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { InfoIcon, CheckCircle2, QrCode, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { chatService, type InstanceSyncMode } from "@/services/chat";
 import QRCodePopup from "./QRCodePopup";
 

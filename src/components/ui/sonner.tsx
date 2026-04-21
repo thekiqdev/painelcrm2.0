@@ -1,14 +1,73 @@
-import { useTheme } from "next-themes"
-import { Toaster as Sonner, toast } from "sonner"
+import { useTheme } from "next-themes";
+import { Toaster as Sonner, toast as sonnerToast, type ExternalToast } from "sonner";
+import type { ComponentProps, ReactNode } from "react";
 
-type ToasterProps = React.ComponentProps<typeof Sonner>
+type ToasterProps = ComponentProps<typeof Sonner>;
+
+/**
+ * Alinhado ao header principal do AppLayout (`h-16` = 4rem) + margem + safe area (mobile).
+ */
+export const TOAST_OFFSET_TOP =
+  "calc(4rem + 0.75rem + env(safe-area-inset-top, 0px))";
+
+const TOAST_DURATION_MS = {
+  success: 3000,
+  warning: 4000,
+  error: 5000,
+  info: 4000,
+  default: 3500,
+} as const;
+
+function withPresetDuration(
+  preset: keyof typeof TOAST_DURATION_MS,
+  data?: ExternalToast
+): ExternalToast | undefined {
+  if (data && data.duration !== undefined) {
+    return data;
+  }
+  return { ...(data ?? {}), duration: TOAST_DURATION_MS[preset] };
+}
+
+/**
+ * Toast padronizado: durações por tipo (sucesso / aviso / erro / info).
+ * Importar sempre de `@/components/ui/sonner`, não de `sonner` diretamente.
+ */
+export const toast = Object.assign(
+  (message: ReactNode, data?: ExternalToast) =>
+    sonnerToast(message, withPresetDuration("default", data)),
+  {
+    success: (message: ReactNode, data?: ExternalToast) =>
+      sonnerToast.success(message, withPresetDuration("success", data)),
+    error: (message: ReactNode, data?: ExternalToast) =>
+      sonnerToast.error(message, withPresetDuration("error", data)),
+    warning: (message: ReactNode, data?: ExternalToast) =>
+      sonnerToast.warning(message, withPresetDuration("warning", data)),
+    info: (message: ReactNode, data?: ExternalToast) =>
+      sonnerToast.info(message, withPresetDuration("info", data)),
+    message: (message: ReactNode, data?: ExternalToast) =>
+      sonnerToast.message(message, withPresetDuration("default", data)),
+    /** Mantém duração sob controle da chamada (ex.: loading indefinido). */
+    loading: (message: ReactNode, data?: ExternalToast) => sonnerToast.loading(message, data),
+    promise: sonnerToast.promise,
+    custom: sonnerToast.custom,
+    dismiss: sonnerToast.dismiss,
+    getHistory: sonnerToast.getHistory,
+  }
+);
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  const { resolvedTheme } = useTheme();
+  const theme = resolvedTheme === "dark" ? "dark" : "light";
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={theme}
+      position="top-right"
+      offset={TOAST_OFFSET_TOP}
+      closeButton
+      visibleToasts={3}
+      gap={10}
+      expand={false}
       className="toaster group"
       toastOptions={{
         classNames: {
@@ -19,11 +78,13 @@ const Toaster = ({ ...props }: ToasterProps) => {
             "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
           cancelButton:
             "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
+          closeButton:
+            "group-[.toast]:border-0 group-[.toast]:bg-transparent group-[.toast]:text-muted-foreground hover:group-[.toast]:bg-muted/80 hover:group-[.toast]:text-foreground",
         },
       }}
       {...props}
     />
-  )
-}
+  );
+};
 
-export { Toaster, toast }
+export { Toaster };

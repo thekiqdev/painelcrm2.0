@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, Users2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { SettingsSectionProps } from "./types";
 import { teamsService, type Team, type TeamMember } from "@/services/teams";
 import { getMyTenantUsers } from "@/services/tenantLimits";

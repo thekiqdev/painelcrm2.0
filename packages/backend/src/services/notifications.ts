@@ -14,7 +14,8 @@ export type NotificationType =
   | 'lead_updated'
   | 'instance_connected'
   | 'instance_disconnected'
-  | 'kanban_automation';
+  | 'kanban_automation'
+  | 'crm_proposal';
 
 /**
  * Interface para criar notificação

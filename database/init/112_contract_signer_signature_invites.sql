@@ -52,6 +52,9 @@ CREATE POLICY contract_signer_sig_invites_tenant_policy ON public.contract_signe
   );
 
 -- Leitura pública do convite (bypass RLS). O backend filtra colunas sensíveis na resposta HTTP.
+-- DROP necessário: CREATE OR REPLACE não pode alterar RETURNS TABLE (ex.: migrações posteriores com mais colunas).
+DROP FUNCTION IF EXISTS public.get_signature_invite_full_by_token_hash(TEXT);
+
 CREATE OR REPLACE FUNCTION public.get_signature_invite_full_by_token_hash(p_token_hash TEXT)
 RETURNS TABLE (
   tenant_id UUID,

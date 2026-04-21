@@ -63,6 +63,11 @@ import {
   type TenantBillingPaymentAttemptRow,
   type TbAttemptStatus,
 } from './tenantBillingPaymentAttemptsService.js';
+import {
+  mergePublicPayAllowedMethods,
+  paymentPolicyFromConfigRow,
+  pickFirstUiMethodByPreference,
+} from './gatewayPaymentMethodPolicy.js';
 
 export type { CustomerInvoiceRow };
 export { PreconditionFailedError };
@@ -78,6 +83,55 @@ function normalizeAllowedPaymentMethods(
   const normalized = methods.filter((m): m is UiPaymentMethod => allowed.has(m as UiPaymentMethod));
   if (normalized.length === 0) return null;
   return Array.from(new Set(normalized));
+}
+
+function computeEffectiveAllowedForInvoice(
+  normalizedRequestAllowed: UiPaymentMethod[] | null,
+  gatewayEnabledUi: UiPaymentMethod[],
+  policy: 'strict' | 'lenient'
+): UiPaymentMethod[] {
+  if (!normalizedRequestAllowed || normalizedRequestAllowed.length === 0) {
+    return [...gatewayEnabledUi];
+  }
+  const g = new Set(gatewayEnabledUi);
+  const hit = normalizedRequestAllowed.filter((m) => g.has(m));
+  if (hit.length === 0) {
+    if (policy === 'strict') {
+      throw new Error('Nenhum dos métodos permitidos na fatura está habilitado no gateway.');
+    }
+    return [...gatewayEnabledUi];
+  }
+  return hit;
+}
+
+function resolveChargeMethodWithGatewayPolicy(params: {
+  explicit: string | null | undefined;
+  effectiveAllowed: UiPaymentMethod[];
+  gatewayDefaultUi: UiPaymentMethod | null;
+  policy: 'strict' | 'lenient';
+}): UiPaymentMethod {
+  const ex =
+    params.explicit === 'PIX' || params.explicit === 'BOLETO' || params.explicit === 'CREDIT_CARD'
+      ? params.explicit
+      : null;
+  if (ex) {
+    if (params.effectiveAllowed.includes(ex)) return ex;
+    if (params.policy === 'strict') {
+      throw new Error('O método de pagamento selecionado não está habilitado para este gateway.');
+    }
+    return resolveImplicitChargeMethod(params.effectiveAllowed, params.gatewayDefaultUi);
+  }
+  return resolveImplicitChargeMethod(params.effectiveAllowed, params.gatewayDefaultUi);
+}
+
+function resolveImplicitChargeMethod(
+  effectiveAllowed: UiPaymentMethod[],
+  gatewayDefaultUi: UiPaymentMethod | null
+): UiPaymentMethod {
+  if (gatewayDefaultUi && effectiveAllowed.includes(gatewayDefaultUi)) {
+    return gatewayDefaultUi;
+  }
+  return pickFirstUiMethodByPreference(effectiveAllowed);
 }
 
 function resolveChargePaymentMethod(
@@ -157,6 +211,15 @@ export async function createManualInvoice(
     gateway_key?: string | null;
     items?: CreateManualCustomerInvoiceItemInput[];
     charge_id?: string | null;
+    /** Proposta de origem (Etapa 2). */
+    proposal_id?: string | null;
+    /** strict: API / ações explícitas; lenient: jobs automáticos (renovação). */
+    payment_method_policy?: 'strict' | 'lenient';
+    /**
+     * Status inicial da linha em customer_invoices após INSERT (antes do fluxo normal).
+     * Conversão de proposta usa waiting_payment = fatura já tratada como emitida ao cliente.
+     */
+    initial_invoice_status?: 'pending' | 'waiting_payment';
   }
 ): Promise<CreateManualInvoiceResult> {
   const hasItems = body.items && body.items.length > 0;
@@ -168,6 +231,7 @@ export async function createManualInvoice(
   }
 
   const effectiveInvoiceDescription = (body.description && body.description.trim()) || `Cobrança ${body.due_date}`;
+  const policyMode = body.payment_method_policy ?? 'strict';
 
   const baseInvoiceData = {
     tenant_id: tenantId,
@@ -180,6 +244,7 @@ export async function createManualInvoice(
     },
     items: body.items,
     charge_id: body.charge_id ?? null,
+    proposal_id: body.proposal_id ?? null,
   };
 
   if (!body.client_id) {
@@ -212,12 +277,14 @@ export async function createManualInvoice(
   const selectedGatewayKey = body.gateway_key?.trim() || null;
   let gatewayKey: string;
   let gateway = null;
+  let gatewayCfgRow: PaymentGatewayConfigRow | null = null;
 
   if (selectedGatewayKey) {
     // Quando o front escolhe o gateway, evitamos a resolução por "LIMIT 1" do getActiveConfig.
     const r = await pool.query<PaymentGatewayConfigRow>(
       `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-              status, last_connection_test_at, last_connection_status
+              status, last_connection_test_at, last_connection_status,
+              enabled_payment_methods, default_payment_method
        FROM payment_gateway_configs
        WHERE scope = 'tenant'
          AND tenant_id = $1
@@ -231,6 +298,7 @@ export async function createManualInvoice(
     if (!cfg) {
       throw new Error('Gateway de pagamento não configurado');
     }
+    gatewayCfgRow = cfg;
 
     gatewayKey = cfg.gateway_key;
     gateway = buildGateway(gatewayKey, {
@@ -239,11 +307,26 @@ export async function createManualInvoice(
     });
   } else {
     const config = await getActiveConfig('crm', tenantId);
+    gatewayCfgRow = config;
     gatewayKey = config?.gateway_key ?? 'asaas';
     gateway = await getActiveGateway({ billingType: 'crm', tenantId });
   }
 
   if (!gateway) throw new Error('Gateway de pagamento não configurado');
+
+  const gatewayPolicy = paymentPolicyFromConfigRow(gatewayCfgRow);
+  const normalizedRequestAllowed = normalizeAllowedPaymentMethods(body.allowed_payment_methods);
+  const effectiveAllowed = computeEffectiveAllowedForInvoice(
+    normalizedRequestAllowed,
+    gatewayPolicy.enabledUi,
+    policyMode
+  );
+  const chargePaymentMethod = resolveChargeMethodWithGatewayPolicy({
+    explicit: body.payment_method ?? null,
+    effectiveAllowed,
+    gatewayDefaultUi: gatewayPolicy.defaultUi,
+    policy: policyMode,
+  });
 
   const clientRow = await pool.query<{
     name: string;
@@ -278,12 +361,6 @@ export async function createManualInvoice(
     crmClientPayload
   );
 
-  const normalizedAllowedPaymentMethods = normalizeAllowedPaymentMethods(body.allowed_payment_methods);
-  const chargePaymentMethod = resolveChargePaymentMethod(
-    body.payment_method ?? null,
-    normalizedAllowedPaymentMethods
-  );
-
   const makeManualKeys = () => {
     const shortId = crypto.randomUUID().slice(0, 8).toLowerCase();
     return {
@@ -304,7 +381,7 @@ export async function createManualInvoice(
       amountCents,
       dueDate: body.due_date,
       paymentMethod: chargePaymentMethod,
-      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      allowedPaymentMethods: effectiveAllowed,
       description: effectiveInvoiceDescription,
       idempotencyKey,
       externalReference,
@@ -327,7 +404,7 @@ export async function createManualInvoice(
       amountCents,
       dueDate: body.due_date,
       paymentMethod: chargePaymentMethod,
-      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      allowedPaymentMethods: effectiveAllowed,
       description: effectiveInvoiceDescription,
       idempotencyKey,
       externalReference,
@@ -340,9 +417,13 @@ export async function createManualInvoice(
     amount_cents: amountCents,
     due_date: body.due_date,
     description: effectiveInvoiceDescription,
-    payment_method: body.payment_method ?? null,
+    payment_method: chargePaymentMethod,
     items: body.items,
     charge_id: body.charge_id ?? null,
+    proposal_id: body.proposal_id ?? null,
+    ...(body.initial_invoice_status === 'waiting_payment'
+      ? { initial_status: 'waiting_payment' as const }
+      : {}),
   };
   const invoice = await createManualCustomerInvoice(data);
   await updateCustomerInvoiceGatewayData(invoice.id, {
@@ -357,7 +438,7 @@ export async function createManualInvoice(
       bankSlipDigitableLine: chargeResult.bankSlipDigitableLine,
       pixQrCode: chargeResult.pixQrCode,
       pixCopyPaste: chargeResult.pixCopyPaste,
-      allowed_payment_methods: normalizedAllowedPaymentMethods,
+      allowed_payment_methods: effectiveAllowed,
     },
   });
   await createInvoicePaymentAttempt({
@@ -374,7 +455,7 @@ export async function createManualInvoice(
       bankSlipDigitableLine: chargeResult.bankSlipDigitableLine,
       pixQrCode: chargeResult.pixQrCode,
       pixCopyPaste: chargeResult.pixCopyPaste,
-      allowed_payment_methods: normalizedAllowedPaymentMethods,
+      allowed_payment_methods: effectiveAllowed,
     },
     idempotency_key: idempotencyKey,
     is_active: true,
@@ -500,7 +581,6 @@ export async function completePaymentByToken(
       ? (metadata!.allowed_payment_methods as string[])
       : null
   );
-  const resolvedPaymentMethod = resolveChargePaymentMethod(paymentMethod, normalizedAllowedPaymentMethods);
 
   const cpfCnpj = normalizeCpfCnpjDigits(body.cpf_cnpj);
   if (!cpfCnpj) {
@@ -576,6 +656,19 @@ export async function completePaymentByToken(
     throw new Error('Gateway de pagamento não configurado');
   }
 
+  const gatewayPolicy = paymentPolicyFromConfigRow(config);
+  const effectiveAllowed = computeEffectiveAllowedForInvoice(
+    normalizedAllowedPaymentMethods,
+    gatewayPolicy.enabledUi,
+    'lenient'
+  );
+  const resolvedPaymentMethod = resolveChargeMethodWithGatewayPolicy({
+    explicit: paymentMethod,
+    effectiveAllowed,
+    gatewayDefaultUi: gatewayPolicy.defaultUi,
+    policy: 'lenient',
+  });
+
   const linkClientPayload = {
     name: client.name,
     email: client.email ?? '',
@@ -608,7 +701,7 @@ export async function completePaymentByToken(
       amountCents,
       dueDate,
       paymentMethod: resolvedPaymentMethod,
-      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      allowedPaymentMethods: effectiveAllowed,
       description,
       idempotencyKey,
       externalReference,
@@ -631,7 +724,7 @@ export async function completePaymentByToken(
       amountCents,
       dueDate,
       paymentMethod: resolvedPaymentMethod,
-      allowedPaymentMethods: normalizedAllowedPaymentMethods ?? undefined,
+      allowedPaymentMethods: effectiveAllowed,
       description,
       idempotencyKey,
       externalReference,
@@ -650,7 +743,7 @@ export async function completePaymentByToken(
       bankSlipDigitableLine: chargeResult.bankSlipDigitableLine,
       pixQrCode: chargeResult.pixQrCode,
       pixCopyPaste: chargeResult.pixCopyPaste,
-      allowed_payment_methods: normalizedAllowedPaymentMethods,
+      allowed_payment_methods: effectiveAllowed,
     },
   });
   await createInvoicePaymentAttempt({
@@ -667,7 +760,7 @@ export async function completePaymentByToken(
       bankSlipDigitableLine: chargeResult.bankSlipDigitableLine,
       pixQrCode: chargeResult.pixQrCode,
       pixCopyPaste: chargeResult.pixCopyPaste,
-      allowed_payment_methods: normalizedAllowedPaymentMethods,
+      allowed_payment_methods: effectiveAllowed,
     },
     idempotency_key: idempotencyKey,
     is_active: true,
@@ -704,12 +797,15 @@ export async function switchPaymentMethodByToken(
   }
 
   const metadata = (data.invoice.gateway_metadata as Record<string, unknown> | null) ?? null;
-  const allowedPaymentMethods =
+  const cfg = await getActiveConfig('crm', data.tenant_id);
+  const allowedPaymentMethods = mergePublicPayAllowedMethods(
     normalizeAllowedPaymentMethods(
       Array.isArray(metadata?.allowed_payment_methods)
         ? (metadata.allowed_payment_methods as string[])
         : null
-    ) ?? ['PIX', 'BOLETO', 'CREDIT_CARD'];
+    ),
+    cfg
+  );
   if (!allowedPaymentMethods.includes(requestedMethod)) {
     throw new Error('Método não permitido para esta fatura');
   }

@@ -7,6 +7,9 @@ import { ModulePermissionError } from '../permissions/errors.js';
 import { incrementPermissionVersion } from './permissionVersionService.js';
 import type { AppRole } from './rolePermissionsService.js';
 import { isValidAppRole } from './rolePermissionsService.js';
+import type { ModulePermissionRow, ModulePermissionsMap } from '../permissions/permissionTypes.js';
+
+export type { ModulePermissionRow, ModulePermissionsMap };
 
 export const MODULE_IDS = [
   'dashboard',
@@ -34,20 +37,6 @@ export interface ModuleSchemaItem {
   label: string;
   supportsEditOwn: boolean;
   supportsDeleteOwn: boolean;
-}
-
-export interface ModulePermissionRow {
-  module: string;
-  can_view: boolean;
-  can_create: boolean;
-  can_edit: boolean;
-  can_delete: boolean;
-  edit_own_only: boolean;
-  delete_own_only: boolean;
-}
-
-export interface ModulePermissionsMap {
-  [module: string]: ModulePermissionRow;
 }
 
 const MODULE_LABELS: Record<ModuleId, string> = {
@@ -99,12 +88,14 @@ export async function getRoleModulePermissions(role: AppRole): Promise<ModulePer
   }
   try {
     const result = await pool.query(
-      `SELECT module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only
+      `SELECT module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only,
+              COALESCE(module_extras, '{}'::jsonb) AS module_extras
        FROM role_module_permissions WHERE role = $1`,
       [role]
     );
     const map: ModulePermissionsMap = {};
     for (const row of result.rows) {
+      const ex = row.module_extras;
       map[row.module] = {
         module: row.module,
         can_view: row.can_view === true,
@@ -113,11 +104,40 @@ export async function getRoleModulePermissions(role: AppRole): Promise<ModulePer
         can_delete: row.can_delete === true,
         edit_own_only: row.edit_own_only === true,
         delete_own_only: row.delete_own_only === true,
+        module_extras:
+          typeof ex === 'object' && ex !== null && !Array.isArray(ex) ? (ex as Record<string, unknown>) : {},
       };
     }
     return map;
   } catch (e: any) {
     if (e?.code === '42P01') return {};
+    if (e?.code === '42703') {
+      const result = await pool.query(
+        `SELECT module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only
+         FROM role_module_permissions WHERE role = $1`,
+        [role]
+      );
+      const map: ModulePermissionsMap = {};
+      const proposalsExtras =
+        role === 'admin' || role === 'manager'
+          ? { proposals_send: true, proposals_convert_invoice: true, proposals_manage_integrations: true }
+          : role === 'member'
+            ? { proposals_send: true, proposals_convert_invoice: true, proposals_manage_integrations: false }
+            : { proposals_send: false, proposals_convert_invoice: false, proposals_manage_integrations: false };
+      for (const row of result.rows) {
+        map[row.module] = {
+          module: row.module,
+          can_view: row.can_view === true,
+          can_create: row.can_create === true,
+          can_edit: row.can_edit === true,
+          can_delete: row.can_delete === true,
+          edit_own_only: row.edit_own_only === true,
+          delete_own_only: row.delete_own_only === true,
+          module_extras: row.module === 'proposals' ? proposalsExtras : {},
+        };
+      }
+      return map;
+    }
     throw e;
   }
 }
@@ -138,8 +158,8 @@ export async function setRoleModulePermissions(
     for (const moduleId of MODULE_IDS) {
       const p = permissions[moduleId];
       await client.query(
-        `INSERT INTO role_module_permissions (role, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO role_module_permissions (role, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only, module_extras)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb)
          ON CONFLICT (role, module) DO UPDATE SET
            can_view = EXCLUDED.can_view,
            can_create = EXCLUDED.can_create,
@@ -147,6 +167,7 @@ export async function setRoleModulePermissions(
            can_delete = EXCLUDED.can_delete,
            edit_own_only = EXCLUDED.edit_own_only,
            delete_own_only = EXCLUDED.delete_own_only,
+           module_extras = role_module_permissions.module_extras,
            updated_at = now()`,
         [
           role,

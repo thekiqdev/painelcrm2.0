@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 export function DateFilterPopover() {
   const [startDate, setStartDate] = useState<Date | null>(null);

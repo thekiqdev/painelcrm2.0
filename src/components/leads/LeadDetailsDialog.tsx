@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import {
   Dialog,
@@ -14,10 +13,9 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Edit } from "lucide-react";
 
-// Import our sub-components
 import LeadTasksTab from "./tabs/LeadTasksTab";
-import LeadNotesTab from "./tabs/LeadNotesTab";
-import LeadOpportunitiesTab from "./tabs/LeadOpportunitiesTab";
+import LeadStickyNotesTab from "./tabs/LeadStickyNotesTab";
+import LeadProposalsTab from "./tabs/LeadProposalsTab";
 import { chatService } from "@/services/chat";
 import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -34,7 +32,8 @@ interface LeadDetailsDialogProps {
   onConvertToClient: () => void;
   onAddTask: (values: any) => void;
   onUpdateTaskStatus: (taskId: string, status: string) => void;
-  onSaveNote: (values: { content: string }) => void;
+  onSaveStickyNotesJson: (notesJson: string) => void | Promise<void>;
+  onOpenProposalCreate: () => void;
 }
 
 const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
@@ -49,7 +48,8 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
   onConvertToClient,
   onAddTask,
   onUpdateTaskStatus,
-  onSaveNote,
+  onSaveStickyNotesJson,
+  onOpenProposalCreate,
 }) => {
   const [whatsappAvatarUrl, setWhatsappAvatarUrl] = useState<string | null>(null);
 
@@ -62,7 +62,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
   useEffect(() => {
     if (!isOpen || !lead?.id) return;
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const r = await chatService.getCrmWhatsappIdentity({ leadId: lead.id });
         if (!cancelled) {
@@ -96,19 +96,19 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
               <AvatarFallback>{profileAvatar.initials}</AvatarFallback>
             </Avatar>
             <span className="min-w-0">{lead.name}</span>
-            <Badge 
-              variant="outline" 
-              style={{ 
+            <Badge
+              variant="outline"
+              style={{
                 backgroundColor: getStatusVariant(lead.status).color,
-                color: '#fff'
+                color: "#fff",
               }}
             >
               {lead.status}
             </Badge>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="ml-auto" 
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto"
               onClick={(e) => {
                 e.stopPropagation();
                 onEditLead(lead);
@@ -124,7 +124,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
             <TabsTrigger value="details">Detalhes</TabsTrigger>
             <TabsTrigger value="tasks">Tarefas</TabsTrigger>
             <TabsTrigger value="notes">Anotações</TabsTrigger>
-            <TabsTrigger value="opportunities">Oportunidades</TabsTrigger>
+            <TabsTrigger value="proposals">Propostas</TabsTrigger>
           </TabsList>
           <TabsContent value="details">
             <div className="grid grid-cols-2 gap-4">
@@ -143,11 +143,11 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
               <div className="space-y-1">
                 <Label>Status</Label>
                 <p className="text-sm">
-                  <Badge 
+                  <Badge
                     variant="outline"
-                    style={{ 
+                    style={{
                       backgroundColor: getStatusVariant(lead.status).color,
-                      color: '#fff'
+                      color: "#fff",
                     }}
                   >
                     {lead.status}
@@ -160,11 +160,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
               </div>
             </div>
             <div className="mt-6">
-              <Button 
-                onClick={onConvertToClient} 
-                variant="outline" 
-                className="w-full"
-              >
+              <Button onClick={onConvertToClient} variant="outline" className="w-full">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="24"
@@ -186,19 +182,17 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
               </Button>
             </div>
           </TabsContent>
-          
-          <LeadTasksTab 
-            tasks={tasks}
-            onAddTask={onAddTask}
-            onUpdateTaskStatus={onUpdateTaskStatus}
-          />
 
-          <LeadNotesTab 
-            initialContent={lead.notes || ""} 
-            onSaveNote={onSaveNote} 
-          />
+          <LeadTasksTab tasks={tasks} onAddTask={onAddTask} onUpdateTaskStatus={onUpdateTaskStatus} />
 
-          <LeadOpportunitiesTab />
+          <LeadStickyNotesTab notesRaw={lead.notes} onSaveNotesJson={onSaveStickyNotesJson} />
+
+          <LeadProposalsTab
+            leadId={lead.id}
+            migratedClientId={lead.migrated_client_id}
+            leadName={lead.name || ""}
+            onCreateProposal={onOpenProposalCreate}
+          />
         </Tabs>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

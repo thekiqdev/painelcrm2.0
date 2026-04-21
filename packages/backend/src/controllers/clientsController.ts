@@ -68,6 +68,10 @@ const timelineEventNameSchema = z.enum([
   'chat_link_migrated_lead_to_client',
   'chat_invoice_sent',
   'chat_invoice_created',
+  'chat_proposal_created',
+  'chat_proposal_draft_saved',
+  'chat_contract_draft_saved',
+  'chat_contract_sent_for_signature',
   'invoice_paid',
 ]);
 

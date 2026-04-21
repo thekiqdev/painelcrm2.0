@@ -14,42 +14,42 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ status }) => {
       case "connected":
         return {
           label: "Conectado",
-          color: "bg-green-500",
-          textColor: "text-green-500",
+          color: "bg-emerald-500",
+          textColor: "text-emerald-700 dark:text-emerald-300",
           progress: 100,
-          description: "WhatsApp conectado e operacional."
+          description: "WhatsApp conectado e operacional.",
         };
       case "connecting":
         return {
           label: "Conectando",
-          color: "bg-yellow-500",
-          textColor: "text-yellow-500",
+          color: "bg-amber-500",
+          textColor: "text-amber-700 dark:text-amber-300",
           progress: 50,
-          description: "Aguardando escaneamento do QR code."
+          description: "Aguardando escaneamento do QR code.",
         };
       case "awaiting_scan":
         return {
           label: "Aguardando QR",
           color: "bg-orange-500",
-          textColor: "text-orange-500",
+          textColor: "text-orange-700 dark:text-orange-300",
           progress: 75,
-          description: "QR Code gerado, aguardando escaneamento."
+          description: "QR Code gerado, aguardando escaneamento.",
         };
       case "created":
         return {
           label: "Criada",
-          color: "bg-blue-500",
-          textColor: "text-blue-500",
+          color: "bg-primary",
+          textColor: "text-primary",
           progress: 25,
-          description: "Instância criada, aguardando geração do QR code."
+          description: "Instância criada, aguardando geração do QR code.",
         };
       default:
         return {
           label: "Desconectado",
-          color: "bg-gray-400",
-          textColor: "text-gray-400",
+          color: "bg-muted-foreground/40",
+          textColor: "text-muted-foreground",
           progress: 0,
-          description: "WhatsApp não está conectado."
+          description: "WhatsApp não está conectado.",
         };
     }
   };
@@ -60,10 +60,7 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ status }) => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <span className="font-medium">Status:</span>
-        <Badge 
-          variant="outline" 
-          className={`${details.textColor} border-current`}
-        >
+        <Badge variant="outline" className={`${details.textColor} border-border`}>
           {details.label}
         </Badge>
       </div>

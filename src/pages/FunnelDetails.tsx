@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import RuleForm from "@/components/funnel/RuleForm";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import ClientDetailsDialog from "@/components/clients/ClientDetailsDialog";
 import { SalesFunnel, Deal, Client, Rule, FunnelStage } from "@/components/funnel/types";
 import { clientTags, rules, sourcesOptions } from "@/components/funnel/mockData";
@@ -25,6 +25,8 @@ import {
 } from "@/components/funnel/utils";
 import { fetchFunnelById, createStage, updateStage, deleteStage, updateFunnel } from "@/services/funnels";
 import { clientsService } from "@/services/clients";
+import { proposalsService } from "@/services/proposals";
+import { mapProposalsToDeals } from "@/utils/proposalsToFunnelDeals";
 import {
   Table,
   TableBody,
@@ -114,6 +116,25 @@ const FunnelDetails: React.FC = () => {
         const mappedFunnel = funnelResponse.data;
         console.log("Funil carregado:", mappedFunnel);
         setFunnel(mappedFunnel);
+
+        if (mappedFunnel.type === "proposals") {
+          try {
+            const [proposalsList, clientsData] = await Promise.all([
+              proposalsService.getProposals({ funnel_id: funnelId }),
+              clientsService.getClients(),
+            ]);
+            const clientMap = new Map(
+              clientsData.map((c) => [c.id, c.name || c.company || "Cliente"])
+            );
+            setDeals(mapProposalsToDeals(proposalsList, clientMap, [mappedFunnel]));
+          } catch (propErr) {
+            console.error("Erro ao carregar propostas do funil:", propErr);
+            toast.error("Erro ao carregar propostas deste funil");
+            setDeals([]);
+          }
+        } else {
+          setDeals([]);
+        }
         
         // Fetch clients for this funnel (if it's a client funnel)
         if (mappedFunnel.type === "clients") {
@@ -497,7 +518,11 @@ const FunnelDetails: React.FC = () => {
                   {deals
                     .filter(deal => deal.stage === stage.id)
                     .map(deal => (
-                      <Card key={deal.id} className="cursor-pointer hover:shadow-md">
+                      <Card
+                        key={deal.id}
+                        className="cursor-pointer hover:shadow-md"
+                        onClick={() => navigate(`/proposals/${deal.id}`)}
+                      >
                         <CardContent className="p-3">
                           <p className="font-medium">{deal.title}</p>
                           <div className="flex justify-between items-center text-xs text-muted-foreground mt-2">
@@ -613,7 +638,11 @@ const FunnelDetails: React.FC = () => {
                     {deals.map((deal) => {
                       const stage = funnel.stages.find(s => s.id === deal.stage);
                       return (
-                        <tr key={deal.id} className="border-b hover:bg-muted/50 cursor-pointer">
+                        <tr
+                          key={deal.id}
+                          className="border-b hover:bg-muted/50 cursor-pointer"
+                          onClick={() => navigate(`/proposals/${deal.id}`)}
+                        >
                           <td className="py-3 px-4">{deal.title}</td>
                           <td className="py-3 px-4">{deal.client}</td>
                           <td className="py-3 px-4">{deal.amount}</td>

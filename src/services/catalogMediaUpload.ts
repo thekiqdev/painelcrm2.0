@@ -1,6 +1,11 @@
 import { apiClient } from '@/integrations/api/client';
 
-export type CatalogMediaScope = 'product' | 'store_logo' | 'store_banner';
+export type CatalogMediaScope =
+  | 'product'
+  | 'store_logo'
+  | 'store_banner'
+  | 'tenant_logo_light'
+  | 'tenant_logo_dark';
 
 export interface CatalogUploadResponse {
   publicUrl: string;

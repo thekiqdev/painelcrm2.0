@@ -13,6 +13,7 @@ import {
 } from '../services/paymentGatewayConfigService.js';
 import { listWebhookEvents } from '../services/paymentWebhookEventsService.js';
 import { invalidateGatewayCache } from '../modules/payments/gatewayProvider.js';
+import { paymentMethodSlugsFromConfigRow } from '../services/gatewayPaymentMethodPolicy.js';
 
 /**
  * GET /api/superadmin/payment-gateway
@@ -36,7 +37,8 @@ export async function getPaymentGatewayConfig(req: Request, res: Response): Prom
  */
 export async function putPaymentGatewayConfig(req: Request, res: Response): Promise<void> {
   try {
-    const { gateway_key, credentials, options, display_name } = req.body ?? {};
+    const { gateway_key, credentials, options, display_name, enabled_payment_methods, default_payment_method } =
+      req.body ?? {};
     if (!gateway_key || typeof gateway_key !== 'string') {
       res.status(400).json({ error: 'gateway_key é obrigatório' });
       return;
@@ -46,9 +48,19 @@ export async function putPaymentGatewayConfig(req: Request, res: Response): Prom
       display_name: display_name ?? null,
       credentials: typeof credentials === 'object' && credentials !== null ? credentials : {},
       options: typeof options === 'object' && options !== null ? options : {},
+      ...(Array.isArray(enabled_payment_methods) ? { enabled_payment_methods: enabled_payment_methods.map(String) } : {}),
+      ...(default_payment_method !== undefined
+        ? {
+            default_payment_method:
+              default_payment_method === null || default_payment_method === ''
+                ? null
+                : String(default_payment_method),
+          }
+        : {}),
     };
     const saved = await saveGlobalConfig(data);
     invalidateGatewayCache();
+    const pm = paymentMethodSlugsFromConfigRow(saved);
     res.json({
       id: saved.id,
       scope: saved.scope,
@@ -56,11 +68,17 @@ export async function putPaymentGatewayConfig(req: Request, res: Response): Prom
       display_name: saved.display_name,
       options: saved.options,
       hasCredentials: Object.keys(saved.credentials).length > 0,
+      enabled_payment_methods: pm.enabled_payment_methods,
+      default_payment_method: pm.default_payment_method,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     console.error('putPaymentGatewayConfig error:', error);
-    const isValidation = message.includes('não existe') || message.includes('não está habilitado');
+    const isValidation =
+      message.includes('não existe') ||
+      message.includes('não está habilitado') ||
+      message.includes('método') ||
+      message.includes('Método');
     res.status(isValidation ? 400 : 500).json({ error: message });
   }
 }

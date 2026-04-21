@@ -34,6 +34,8 @@ export interface CustomerInvoice {
   created_at: string;
   updated_at: string;
   items?: CustomerInvoiceItem[];
+  gateway_metadata?: Record<string, unknown> | null;
+  gateway_status?: string | null;
 }
 
 /** Item de linha para criação (opcional). Se enviado, amount_cents é calculado no backend. */
@@ -132,9 +134,11 @@ export interface ListCustomerInvoicesParams {
   offset?: number;
 }
 
-/** Resposta do GET /api/customer-invoices/gateway-status (Fase 1). */
+/** Resposta do GET /api/customer-invoices/gateway-status (Fase 1 + métodos do gateway). */
 export interface CustomerInvoicesGatewayStatus {
   gatewayConfigured: boolean;
+  enabled_payment_methods: Array<'pix' | 'boleto' | 'credit_card'>;
+  default_payment_method: 'pix' | 'boleto' | 'credit_card' | null;
 }
 
 /** Resposta do GET /api/customer-invoices/preconditions (Fase 3). */
@@ -179,8 +183,24 @@ export const customerInvoicesService = {
     const raw = response.data;
     if (!raw || typeof raw !== 'object') throw new Error('Resposta inválida ao verificar gateway');
     const r = raw as unknown as Record<string, unknown>;
+    const enabled = Array.isArray(r.enabled_payment_methods)
+      ? (r.enabled_payment_methods as string[])
+      : ['pix', 'boleto', 'credit_card'];
+    const allowedSlug = (s: string): s is 'pix' | 'boleto' | 'credit_card' =>
+      s === 'pix' || s === 'boleto' || s === 'credit_card';
+    const enabledNorm = enabled.filter(allowedSlug);
+    const defRaw = r.default_payment_method;
+    const default_payment_method =
+      defRaw === null || defRaw === undefined || defRaw === ''
+        ? null
+        : allowedSlug(String(defRaw))
+          ? (String(defRaw) as 'pix' | 'boleto' | 'credit_card')
+          : null;
+    const fallback: CustomerInvoicesGatewayStatus['enabled_payment_methods'] = ['pix', 'boleto', 'credit_card'];
     return {
       gatewayConfigured: Boolean(r.gatewayConfigured ?? r.gateway_configured),
+      enabled_payment_methods: enabledNorm.length > 0 ? (enabledNorm as CustomerInvoicesGatewayStatus['enabled_payment_methods']) : fallback,
+      default_payment_method,
     };
   },
 

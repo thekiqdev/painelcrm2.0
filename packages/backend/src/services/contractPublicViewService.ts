@@ -85,6 +85,8 @@ export interface ContractPublicViewPayload {
   client_name: string | null;
   tenant_name: string | null;
   tenant_logo_url: string | null;
+  tenant_logo_light_url: string | null;
+  tenant_logo_dark_url: string | null;
   responsible_display_name: string | null;
   signers: PublicContractViewSigner[];
 }
@@ -161,10 +163,13 @@ export async function getPublicContractViewByRawToken(rawToken: string): Promise
     client_name: string | null;
     tenant_name: string | null;
     tenant_logo_url: string | null;
+    tenant_logo_light_url: string | null;
+    tenant_logo_dark_url: string | null;
     responsible_display_name: string | null;
   }>(
     `SELECT contract_id::text AS contract_id, title, status::text AS status, contract_number, document_html,
-            client_name, tenant_name, tenant_logo_url, responsible_display_name
+            client_name, tenant_name, tenant_logo_url, tenant_logo_light_url, tenant_logo_dark_url,
+            responsible_display_name
      FROM get_contract_public_view_by_token_hash($1)`,
     [hash],
   );
@@ -181,6 +186,8 @@ export async function getPublicContractViewByRawToken(rawToken: string): Promise
     client_name: row.client_name,
     tenant_name: row.tenant_name,
     tenant_logo_url: row.tenant_logo_url,
+    tenant_logo_light_url: row.tenant_logo_light_url,
+    tenant_logo_dark_url: row.tenant_logo_dark_url,
     responsible_display_name: row.responsible_display_name,
     signers,
   };

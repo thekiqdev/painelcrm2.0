@@ -45,7 +45,7 @@ function SignersAppendix({ signers }: { signers: ContractA4SignerAppendixItem[] 
         Signatários e evidências mínimas
       </h2>
       {!signers.length ? (
-        <p className="text-sm text-muted-foreground">Nenhum signatário configurado para este contrato.</p>
+        <p className="text-sm text-zinc-600">Nenhum signatário configurado para este contrato.</p>
       ) : (
       <div className="space-y-8">
         {signers.map((s, idx) => (
@@ -54,28 +54,31 @@ function SignersAppendix({ signers }: { signers: ContractA4SignerAppendixItem[] 
             className="flex flex-col sm:flex-row sm:items-start gap-4 sm:gap-6"
           >
             <div className="flex-1 min-w-0 space-y-2">
-              <div className="font-semibold text-foreground">{s.name}</div>
-              <div className="text-sm text-muted-foreground break-words">{s.email}</div>
+              <div className="font-semibold text-zinc-900">{s.name}</div>
+              <div className="text-sm text-zinc-600 break-words">{s.email}</div>
               {s.tax_id ? (
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-zinc-600">
                   CPF/CNPJ: {formatBrazilTaxIdDisplay(s.tax_id)}
                 </div>
               ) : null}
               <div className="flex flex-wrap items-center gap-2 pt-0.5">
                 {s.signed ? (
-                  <Badge className="bg-green-600 gap-1 font-normal">
+                  <Badge className="bg-green-600 gap-1 font-normal text-white">
                     <CheckCircle2 className="h-3 w-3" />
                     Assinado
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                  <Badge
+                    variant="outline"
+                    className="gap-1 border-zinc-300 bg-white font-normal text-zinc-700 shadow-none"
+                  >
                     <Clock className="h-3 w-3" />
                     Pendente de assinatura
                   </Badge>
                 )}
               </div>
               {s.signed && s.signed_at ? (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-zinc-600">
                   {format(new Date(s.signed_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}{' '}
                   <span className="opacity-80">(hora do registo)</span>
                 </p>
@@ -83,7 +86,7 @@ function SignersAppendix({ signers }: { signers: ContractA4SignerAppendixItem[] 
             </div>
             {s.signed && s.signature_image_png_base64 ? (
               <div className="shrink-0 rounded-md border border-black/10 bg-white p-2.5 shadow-sm">
-                <p className="text-[10px] text-muted-foreground mb-1.5 uppercase tracking-wide">
+                <p className="text-[10px] mb-1.5 uppercase tracking-wide text-zinc-500">
                   Assinatura manuscrita (e-sign)
                 </p>
                 <img
@@ -95,7 +98,7 @@ function SignersAppendix({ signers }: { signers: ContractA4SignerAppendixItem[] 
                 />
               </div>
             ) : s.signed ? (
-              <p className="text-xs text-muted-foreground sm:self-center sm:max-w-[200px]">
+              <p className="text-xs text-zinc-600 sm:self-center sm:max-w-[200px]">
                 Pré-visualização da assinatura indisponível.
               </p>
             ) : null}
@@ -117,12 +120,14 @@ export function ContractA4Document({ html, className, highlightUnresolved, signe
           'contract-a4-sheet w-full max-w-[210mm] min-h-[297mm] bg-white text-[15px] leading-[1.75]',
           'shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-black/[0.06]',
           'px-[8mm] py-[10mm] sm:px-[14mm] sm:py-[16mm]',
-          'text-foreground [font-family:Georgia,"Times_New_Roman",serif]',
+          'text-zinc-950 [font-family:Georgia,"Times_New_Roman",serif]',
+          /* Folha sempre “papel”: não herdar paleta dark do tema na página */
+          '[color-scheme:light]',
         )}
       >
         <div
           className={cn(
-            'prose prose-sm max-w-none dark:prose-invert contract-a4-prose',
+            'prose prose-sm prose-neutral max-w-none contract-a4-prose text-zinc-900',
             '[&_p]:my-3 [&_p]:leading-[1.75]',
             '[&_li]:my-1 [&_li]:leading-[1.7]',
             '[&_h1]:text-xl [&_h1]:mt-8 [&_h1]:mb-3 [&_h1]:leading-snug',

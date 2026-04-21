@@ -39,7 +39,7 @@ import { customerInvoicesService } from "@/services/customerInvoices";
 import { clientsService } from "@/services/clients";
 import type { CustomerInvoice } from "@/services/customerInvoices";
 import type { Client } from "@/services/clients";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Plus, Filter, ExternalLink, AlertTriangle, Repeat2, MoreHorizontal, Pencil, XCircle, Trash2, Eye } from "lucide-react";
@@ -239,7 +239,19 @@ const CustomerInvoices = () => {
               </TableRow>
             ) : (
               invoices.map((inv) => (
-                <TableRow key={inv.id}>
+                <TableRow
+                  key={inv.id}
+                  role="button"
+                  tabIndex={0}
+                  className="cursor-pointer hover:bg-muted/60"
+                  onClick={() => navigate(`/customer-invoices/${inv.id}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      navigate(`/customer-invoices/${inv.id}`);
+                    }
+                  }}
+                >
                   <TableCell className="font-mono text-sm">
                     {inv.invoice_number ?? inv.id.slice(0, 8)}
                   </TableCell>
@@ -262,7 +274,11 @@ const CustomerInvoices = () => {
                     )}
                   </TableCell>
                   <TableCell>{format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell
+                    className="text-right"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button

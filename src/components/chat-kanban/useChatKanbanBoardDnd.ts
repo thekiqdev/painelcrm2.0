@@ -10,8 +10,9 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { chatKanbanService, type ChatKanbanBoardCard, type ChatKanbanColumn } from '@/services/chatKanban';
+import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
 import { computeKanbanInsertPosition } from '@/utils/kanbanFractionalPosition';
 import { KANBAN_DROP_PREFIX } from '@/components/chat-kanban/kanbanDndIds';
 import { parseKanbanColumnRules } from '@/utils/kanbanColumnRulesUi';
@@ -276,10 +277,32 @@ export function useChatKanbanBoardDnd({
           ...(moveReason ? { move_reason: moveReason } : {}),
           ...(moveConfirmed ? { move_confirmed: true } : {}),
         });
+        const auto = updated.kanban_auto_created_proposal;
+        if (auto) {
+          if (auto.public_link_path?.trim()) {
+            const full = `${window.location.origin}${auto.public_link_path.trim()}`;
+            setStoredProposalPublicUrl(auto.id, full);
+          }
+          toast.success('Proposta criada automaticamente', {
+            description: auto.title,
+            action: auto.public_link_path
+              ? {
+                  label: 'Abrir link',
+                  onClick: () =>
+                    window.open(
+                      `${window.location.origin}${auto.public_link_path!.trim()}`,
+                      '_blank',
+                      'noopener,noreferrer',
+                    ),
+                }
+              : undefined,
+          });
+        }
+        const { kanban_auto_created_proposal: _omitAuto, ...cardPayload } = updated;
         setCards((prev) =>
-          prev.map((c) => (c.id === activeIdStr ? { ...c, ...updated } : c)),
+          prev.map((c) => (c.id === activeIdStr ? { ...c, ...cardPayload } : c)),
         );
-        onCardSynced?.(updated);
+        onCardSynced?.(cardPayload);
       } catch (e) {
         setCards(snapshot);
         setDndItems(buildItemMap(snapshot, sortedColumns));

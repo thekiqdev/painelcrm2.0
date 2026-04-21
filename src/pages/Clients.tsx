@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -35,8 +35,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, CalendarIcon, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, CalendarIcon, Trash2, RefreshCw } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 import { clientsService } from "@/services/clients";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -52,6 +52,7 @@ import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { proposalsService, type Proposal } from "@/services/proposals";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -68,11 +69,37 @@ const MODULE_CLIENTS = 'clients';
 
 const CLIENTS_QUERY_KEY = ["clients", "list"] as const;
 
+const DIALOG_PROPOSAL_STATUS_LABELS: Record<Proposal["status"], string> = {
+  draft: "Rascunho",
+  sent: "Enviada",
+  accepted: "Aceita",
+  rejected: "Recusada",
+  expired: "Expirada",
+  invoiced: "Faturada",
+};
+
+const DIALOG_PROPOSAL_STATUS_CLASS: Record<Proposal["status"], string> = {
+  draft: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100",
+  sent: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-100",
+  accepted: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-100",
+  rejected: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-100",
+  expired: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-100",
+  invoiced: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-100",
+};
+
+function dialogClientProposalCode(id: string): string {
+  return `PROP-${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+
+function formatDialogProposalCurrency(value: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+}
+
 const Clients = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { canCreate, canEdit, canDelete } = useModulePermissions();
+  const { canCreate, canEdit, canDelete, canView } = useModulePermissions();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -93,6 +120,17 @@ const Clients = () => {
   const [tabSelected, setTabSelected] = useState("details");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
+  const [dialogProposals, setDialogProposals] = useState<Proposal[]>([]);
+  const [dialogProposalsLoading, setDialogProposalsLoading] = useState(false);
+
+  const dialogProposalStats = useMemo(() => {
+    const pending = dialogProposals.filter((p) => p.status === "draft" || p.status === "sent").length;
+    const acceptedRows = dialogProposals.filter((p) => p.status === "accepted" || p.status === "invoiced");
+    const acceptedCount = acceptedRows.length;
+    const acceptedTotal = acceptedRows.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const totalCount = dialogProposals.length;
+    return { pending, acceptedCount, acceptedTotal, totalCount };
+  }, [dialogProposals]);
 
   useEffect(() => {
     if (searchParams.get("new") === "1") {
@@ -102,6 +140,31 @@ const Clients = () => {
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!isViewDialogOpen || !selectedClient?.id || tabSelected !== "opportunities" || !canView("proposals")) {
+      return;
+    }
+    let cancelled = false;
+    setDialogProposalsLoading(true);
+    void proposalsService
+      .getProposals({ client_id: selectedClient.id })
+      .then((rows) => {
+        if (!cancelled) setDialogProposals(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Erro ao carregar propostas");
+          setDialogProposals([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDialogProposalsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isViewDialogOpen, selectedClient?.id, tabSelected, canView]);
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -1208,21 +1271,120 @@ const Clients = () => {
                 <Tabs value={tabSelected} onValueChange={setTabSelected} className="w-full">
                   <TabsList className="grid grid-cols-4 mb-4">
                     <TabsTrigger value="details">Detalhes</TabsTrigger>
-                    <TabsTrigger value="opportunities">Oportunidades</TabsTrigger>
+                    <TabsTrigger value="opportunities">Propostas</TabsTrigger>
                     <TabsTrigger value="tasks">Tarefas</TabsTrigger>
                     <TabsTrigger value="notes">Anotações</TabsTrigger>
                   </TabsList>
                   <TabsContent value="details">
                     {renderClientDetails()}
                   </TabsContent>
-                  <TabsContent value="opportunities">
-                    <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma oportunidade encontrada para este cliente.
-                    </p>
-                    <Button className="w-full">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Adicionar Oportunidade
-                    </Button>
+                  <TabsContent value="opportunities" className="space-y-4">
+                    {!canView("proposals") ? (
+                      <p className="text-sm text-muted-foreground text-center py-6">
+                        Sem permissão para visualizar propostas.
+                      </p>
+                    ) : dialogProposalsLoading ? (
+                      <div className="flex justify-center py-10">
+                        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Pendentes</p>
+                            <p className="text-base font-semibold tabular-nums">{dialogProposalStats.pending}</p>
+                            <p className="text-[10px] text-muted-foreground">Rascunho ou enviada</p>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Aceitas / faturadas</p>
+                            <p className="text-base font-semibold tabular-nums">{dialogProposalStats.acceptedCount}</p>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Valor (aceitas + faturadas)</p>
+                            <p className="text-base font-semibold tabular-nums">
+                              {formatDialogProposalCurrency(dialogProposalStats.acceptedTotal)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Total</p>
+                            <p className="text-base font-semibold tabular-nums">{dialogProposalStats.totalCount}</p>
+                          </div>
+                        </div>
+                        {dialogProposals.length === 0 ? (
+                          <div className="rounded-md border border-dashed py-8 text-center space-y-3">
+                            <p className="text-sm text-muted-foreground">
+                              Nenhuma proposta cadastrada para este cliente.
+                            </p>
+                            {canCreate("proposals") && selectedClient?.id ? (
+                              <Button variant="outline" asChild className="mx-auto">
+                                <Link
+                                  to={`/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`}
+                                  onClick={() => setIsViewDialogOpen(false)}
+                                >
+                                  <Plus className="mr-2 h-4 w-4" />
+                                  Nova proposta
+                                </Link>
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="rounded-md border overflow-x-auto max-h-[min(360px,50vh)] overflow-y-auto">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="whitespace-nowrap">Código</TableHead>
+                                  <TableHead>Título</TableHead>
+                                  <TableHead className="whitespace-nowrap">Status</TableHead>
+                                  <TableHead className="whitespace-nowrap hidden sm:table-cell">Validade</TableHead>
+                                  <TableHead className="text-right whitespace-nowrap">Valor</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {dialogProposals.map((p) => (
+                                  <TableRow
+                                    key={p.id}
+                                    className="cursor-pointer hover:bg-muted/50"
+                                    onClick={() => {
+                                      setIsViewDialogOpen(false);
+                                      navigate(`/proposals/${p.id}`);
+                                    }}
+                                  >
+                                    <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">
+                                      {dialogClientProposalCode(p.id)}
+                                    </TableCell>
+                                    <TableCell className="font-medium max-w-[140px] truncate">{p.title}</TableCell>
+                                    <TableCell>
+                                      <span
+                                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${DIALOG_PROPOSAL_STATUS_CLASS[p.status]}`}
+                                      >
+                                        {DIALOG_PROPOSAL_STATUS_LABELS[p.status]}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="hidden sm:table-cell text-sm text-muted-foreground whitespace-nowrap">
+                                      {p.valid_until ? format(new Date(p.valid_until), "dd/MM/yyyy") : "—"}
+                                    </TableCell>
+                                    <TableCell className="text-right tabular-nums text-sm font-medium">
+                                      {formatDialogProposalCurrency(Number(p.amount) || 0)}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
+                        {dialogProposals.length > 0 && canCreate("proposals") && selectedClient?.id ? (
+                          <Button className="w-full" variant="outline" asChild>
+                            <Link
+                              to={`/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`}
+                              onClick={() => setIsViewDialogOpen(false)}
+                            >
+                              <Plus className="mr-2 h-4 w-4" />
+                              Nova proposta
+                            </Link>
+                          </Button>
+                        ) : null}
+                      </>
+                    )}
                   </TabsContent>
                   <TabsContent value="tasks">
                     {renderTasksTab()}
@@ -1236,7 +1398,7 @@ const Clients = () => {
                           Nova Nota
                         </Button>
                       </div>
-                      <div className="relative min-h-[400px] p-4 bg-gray-50 rounded-lg">
+                      <div className="relative min-h-[400px] rounded-lg border border-border/60 bg-muted/40 p-4 dark:bg-muted/25">
                         {notes.length > 0 ? (
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                             {notes.map(note => (
@@ -1447,7 +1609,7 @@ const Clients = () => {
                             </DropdownMenuItem>
                             <DropdownMenuItem>
                               <UserPlus className="h-4 w-4 mr-2" />
-                              Adicionar Oportunidade
+                              Adicionar proposta
                             </DropdownMenuItem>
                             <DropdownMenuItem>
                               <FileText className="h-4 w-4 mr-2" />

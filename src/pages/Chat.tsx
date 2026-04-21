@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import {
   RefreshCw,
   Send,
@@ -19,7 +19,6 @@ import {
   User,
   Trash2,
   Users,
-  DollarSign,
   CalendarIcon,
   Image as ImageIcon,
   LayoutTemplate,
@@ -34,7 +33,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -81,15 +79,19 @@ import {
   parseMediaField,
 } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
+import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { ChatWhatsappModelPickerDialog } from '@/components/chat/ChatWhatsappModelPickerDialog';
 import { buildChatInboxTemplateContext } from '@/utils/chatInboxTemplateContext';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
-import { proposalsService } from '@/services/proposals';
+import ProposalCreateForm, {
+  type ProposalCreateSuccessPayload,
+} from '@/components/proposals/ProposalCreateForm';
 import { tasksService } from '@/services/tasks';
 import { ticketsService } from '@/services/tickets';
-import { contractsService } from '@/services/contracts';
-import { isBrazilTaxIdDigits, normalizeBrazilTaxIdInput } from '@/utils/brazilTaxId';
+import { normalizeBrazilTaxIdInput } from '@/utils/brazilTaxId';
+import ContractCreateForm from '@/components/contracts/ContractCreateForm';
+import type { Contract } from '@/types/contracts';
 import { clientsService } from '@/services/clients';
 import { recordClientTimelineEvent } from '@/services/clientTimeline';
 import { messagesService } from '@/services/messages';
@@ -103,6 +105,7 @@ import {
   buildClientProfileToFromChat,
   resolveRestoreConversationId,
 } from '@/utils/clientProfileNavigation';
+import { consumeKanbanProposalColumnContextIfMatch } from '@/utils/kanbanProposalColumnContext';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
@@ -181,11 +184,15 @@ const formatRelativeDate = (value?: string | null) => {
 };
 
 const statusBadgeClass = (status?: string | null) => {
-  if (!status) return 'bg-gray-100 text-gray-700 border-gray-200';
-  if (status === 'connected' || status === 'open') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
-  if (status === 'connecting') return 'bg-amber-100 text-amber-800 border-amber-200';
-  if (status === 'disconnected' || status === 'closed') return 'bg-rose-100 text-rose-800 border-rose-200';
-  return 'bg-gray-100 text-gray-700 border-gray-200';
+  if (!status)
+    return 'border-border bg-muted text-muted-foreground dark:bg-muted/70 dark:text-foreground/90';
+  if (status === 'connected' || status === 'open')
+    return 'border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/45 dark:text-emerald-200';
+  if (status === 'connecting')
+    return 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-200';
+  if (status === 'disconnected' || status === 'closed')
+    return 'border-rose-300 bg-rose-100 text-rose-900 dark:border-rose-800/60 dark:bg-rose-950/45 dark:text-rose-200';
+  return 'border-border bg-muted text-muted-foreground dark:bg-muted/70 dark:text-foreground/90';
 };
 
 /** Etapa 5 — rótulo curto para badge de atendimento (evita confundir com `status` da conversa Uaz). */
@@ -267,6 +274,9 @@ function resolveInstanceConnectionUi(instance: ChatInstance | null): {
 
 const Chat = () => {
   const { user, session, profile } = useAuth();
+  const { canCreate, loading: modulePermLoading } = useModulePermissions();
+  const canCreateProposalsInChat = canCreate('proposals') && !modulePermLoading;
+  const canCreateContractsInChat = canCreate('contracts') && !modulePermLoading;
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -335,8 +345,6 @@ const Chat = () => {
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
 
   // Estados para dialogs
-  const [contractDialogOpen, setContractDialogOpen] = useState(false);
-  const [proposalDialogOpen, setProposalDialogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [ticketDialogOpen, setTicketDialogOpen] = useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
@@ -346,29 +354,18 @@ const Chat = () => {
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [selectedLinkTarget, setSelectedLinkTarget] = useState<{ type: 'client' | 'lead'; id: string } | null>(null);
   const [linkPage, setLinkPage] = useState(1);
-  const [viewMode, setViewMode] = useState<'conversation' | 'invoice-create'>('conversation');
+  const [viewMode, setViewMode] = useState<
+    'conversation' | 'invoice-create' | 'proposal-create' | 'contract-create'
+  >('conversation');
+  /** Etapa 3+: modelo oficial (`proposal_templates`) e/ou legado rascunho `proposals` da coluna Kanban. */
+  const [proposalKanbanModelId, setProposalKanbanModelId] = useState<string | null>(null);
+  const [proposalKanbanLegacyDraftId, setProposalKanbanLegacyDraftId] = useState<string | null>(null);
   const [unlinkConfirmOpen, setUnlinkConfirmOpen] = useState(false);
   
   // Estados para formulários
   const [clients, setClients] = useState<any[]>([]);
   const [ticketCategories, setTicketCategories] = useState<any[]>([]);
   
-  // Estados para formulário de contrato
-  const [contractTitle, setContractTitle] = useState('');
-  const [contractContent, setContractContent] = useState('');
-  const [contractStartDate, setContractStartDate] = useState<string>('');
-  const [contractEndDate, setContractEndDate] = useState<string>('');
-  const [contractTotalValue, setContractTotalValue] = useState('');
-  const [contractCurrency, setContractCurrency] = useState('BRL');
-  const [contractAutoRenew, setContractAutoRenew] = useState(false);
-  const [contractRenewalPeriod, setContractRenewalPeriod] = useState('12');
-  const [contractSigners, setContractSigners] = useState<
-    Array<{ name: string; email: string; tax_id: string; role: 'CLIENT' | 'INTERNAL' }>
-  >([]);
-  const [contractInvitationMessage, setContractInvitationMessage] = useState('Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.');
-  const [contractRequireOtp, setContractRequireOtp] = useState(false);
-  const [contractRequireTerms, setContractRequireTerms] = useState(false);
-
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
     try {
@@ -1239,6 +1236,7 @@ const Chat = () => {
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
+
   const linkPageSize = 8;
   const filteredLinkClients = useMemo(() => {
     const q = linkSearch.trim().toLowerCase();
@@ -1292,6 +1290,25 @@ const Chat = () => {
       selectedConversation.leadId && !selectedConversation.client_id ? currentLead : null,
     );
   }, [selectedConversation, currentClient, currentLead]);
+
+  const chatContractInitialSigners = useMemo(() => {
+    const contact = currentClient || currentLead;
+    if (!contact) return [];
+    const taxFromClient = currentClient?.cpf_cnpj;
+    const taxFromLead =
+      currentLead &&
+      (typeof (currentLead as { cpf_cnpj?: string }).cpf_cnpj === 'string'
+        ? (currentLead as { cpf_cnpj?: string }).cpf_cnpj
+        : undefined);
+    return [
+      {
+        name: contact.name || '',
+        email: contact.email || '',
+        tax_id: normalizeBrazilTaxIdInput(taxFromClient || taxFromLead || ''),
+        role: 'CLIENT' as const,
+      },
+    ];
+  }, [currentClient, currentLead]);
 
   const inboxTemplateContext = useMemo(
     () =>
@@ -1779,10 +1796,6 @@ const Chat = () => {
     }
   };
 
-  const handleSendProposal = () => {
-    setProposalDialogOpen(true);
-  };
-
   // Função auxiliar para enviar notificação
   const sendNotification = async (
     resourceType: string,
@@ -1811,7 +1824,8 @@ const Chat = () => {
         variables,
         metadata: {
           resource_id: resourceId,
-          client_id: client.id,
+          /** Nunca enviar `leads.id` como client_id do CRM (evita vínculo inválido). */
+          ...(currentClient?.id ? { client_id: currentClient.id } : {}),
           created_from: 'chat_quick_action',
         },
       });
@@ -1849,39 +1863,71 @@ const Chat = () => {
     }
   };
 
-  const handleSaveProposal = async (formData: FormData) => {
+  const handleCreateProposal = () => {
+    if (!selectedConversation?.client_id && !selectedConversation?.leadId) return;
+    consumeKanbanProposalColumnContextIfMatch(selectedConversation.id);
+    setProposalKanbanModelId(null);
+    setProposalKanbanLegacyDraftId(null);
+    setViewMode('proposal-create');
+  };
+
+  const handleBackFromProposalCreate = () => {
+    setProposalKanbanModelId(null);
+    setProposalKanbanLegacyDraftId(null);
+    setViewMode('conversation');
+  };
+
+  const handleProposalCreatedInChat = async (
+    created: ProposalCreateSuccessPayload,
+    mode: 'sent' | 'draft'
+  ) => {
+    setProposalKanbanModelId(null);
+    setProposalKanbanLegacyDraftId(null);
+    setViewMode('conversation');
     try {
-      const title = formData.get('title') as string;
-      const description = formData.get('description') as string;
-      const amount = parseFloat(formData.get('amount') as string);
-
-      const proposal = await proposalsService.createProposal({
-        title,
-        description: description || null,
-        amount,
-        status: 'draft',
-        client_id: currentClient?.id || currentLead?.id || null,
-        items: [],
-      });
-
-      toast.success('Proposta criada com sucesso!');
-      setProposalDialogOpen(false);
-
-      // Enviar notificação
-      const client = currentClient || currentLead;
-      if (client) {
-        await sendNotification('proposals', 'created', {
-          client_name: client.name || 'Cliente',
-          proposal_title: title,
-          proposal_amount: amount.toFixed(2),
-          proposal_link: `${window.location.origin}/proposals/${proposal.id}`,
-        }, proposal.id);
+      const clientIdForTimeline = selectedConversation?.client_id ?? created.client_id ?? null;
+      if (clientIdForTimeline) {
+        await recordClientTimelineEvent(clientIdForTimeline, {
+          event_name: mode === 'sent' ? 'chat_proposal_created' : 'chat_proposal_draft_saved',
+          source: 'chat',
+          actor_type: 'user',
+          reference_type: 'proposal',
+          reference_id: created.id,
+          event_key: `chat_proposal_${mode}:${created.id}`,
+          metadata: {
+            conversation_id: selectedConversation?.id ?? null,
+            proposal_status: mode,
+          },
+        });
       }
     } catch (error) {
-      console.error('Erro ao criar proposta:', error);
-      toast.error('Não foi possível criar a proposta', {
-        description: error instanceof Error ? error.message : undefined,
-      });
+      console.error('Erro ao registrar timeline da proposta criada no chat:', error);
+    }
+
+    const contact = currentClient || currentLead;
+    if (contact) {
+      try {
+        const proposalLink = created.public_link_path
+          ? `${window.location.origin}${created.public_link_path}`
+          : `${window.location.origin}/proposals/${created.id}`;
+        await sendNotification('proposals', 'created', {
+          client_name: contact.name || 'Cliente',
+          proposal_title: created.title,
+          proposal_amount: (created.amount ?? 0).toLocaleString('pt-BR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }),
+          proposal_link: proposalLink,
+        }, created.id);
+      } catch (error) {
+        console.error('Erro ao notificar proposta criada no chat:', error);
+      }
+    }
+
+    if (mode === 'sent') {
+      toast.success('Proposta criada com sucesso');
+    } else {
+      toast.success('Rascunho de proposta salvo');
     }
   };
 
@@ -2038,140 +2084,65 @@ const Chat = () => {
   };
 
   const handleCreateContract = () => {
+    if (!selectedConversation?.client_id && !selectedConversation?.leadId) return;
     if (!currentClient && !currentLead) return;
-    // Preencher assinante com dados do cliente/lead
-    const defaultSigner = {
-      name: currentClient?.name || currentLead?.name || '',
-      email: currentClient?.email || currentLead?.email || '',
-      tax_id: normalizeBrazilTaxIdInput(currentClient?.cpf_cnpj || ''),
-      role: 'CLIENT' as const,
-    };
-    setContractSigners([defaultSigner]);
-    setContractDialogOpen(true);
+    setViewMode('contract-create');
   };
 
-  const handleSaveContract = async () => {
+  const handleBackFromContractCreate = () => {
+    setViewMode('conversation');
+  };
+
+  const handleContractCreatedInChat = async (created: Contract, mode: 'draft' | 'signature') => {
+    const createdWithView = created as Contract & {
+      public_view?: { public_view_url?: string | null; token?: string };
+    };
+    setViewMode('conversation');
     try {
-      if (!contractTitle) {
-        toast.error('O título do contrato é obrigatório');
-        return;
-      }
-
-      if (contractSigners.length === 0) {
-        toast.error('Adicione pelo menos um assinante');
-        return;
-      }
-
-      // Validar assinantes
-      for (const signer of contractSigners) {
-        if (!signer.name || !signer.email) {
-          toast.error('Todos os assinantes devem ter nome e e-mail');
-          return;
-        }
-        const tid = normalizeBrazilTaxIdInput(signer.tax_id || '');
-        if (!isBrazilTaxIdDigits(tid)) {
-          toast.error('Cada assinante precisa de CPF (11) ou CNPJ (14) dígitos');
-          return;
-        }
-      }
-
-      /**
-       * contracts.client_id referencia apenas `clients.id`. Leads estão em `leads` — não enviar lead.id
-       * (evita FK inválida e vínculo errado). Contrato sem cliente CRM permanece válido como rascunho.
-       */
-      const contract = await contractsService.createContract({
-        title: contractTitle,
-        ...(currentClient?.id ? { client_id: currentClient.id } : {}),
-        content_html: contractContent,
-        start_date: contractStartDate || null,
-        end_date: contractEndDate || null,
-        total_value: contractTotalValue ? parseFloat(contractTotalValue) : undefined,
-        currency: contractCurrency,
-        auto_renew: contractAutoRenew,
-        renewal_period: contractAutoRenew ? parseInt(contractRenewalPeriod) : 12,
-        signature_settings: {
-          require_otp: contractRequireOtp,
-          require_terms: contractRequireTerms,
-          invitation_message: contractInvitationMessage,
-        },
-        status: 'DRAFT',
-      });
-
-      // Criar assinantes
-      for (const signer of contractSigners) {
-        await contractsService.createContractSigner(contract.id, {
-          name: signer.name,
-          email: signer.email,
-          tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
-          role: signer.role,
+      const clientIdForTimeline = selectedConversation?.client_id ?? created.client_id ?? null;
+      if (clientIdForTimeline) {
+        await recordClientTimelineEvent(clientIdForTimeline, {
+          event_name:
+            mode === 'draft' ? 'chat_contract_draft_saved' : 'chat_contract_sent_for_signature',
+          source: 'chat',
+          actor_type: 'user',
+          reference_type: 'contract',
+          reference_id: created.id,
+          event_key: `chat_contract_${mode}:${created.id}`,
+          metadata: {
+            conversation_id: selectedConversation?.id ?? null,
+            contract_mode: mode,
+          },
         });
       }
-
-      // Criar evento
-      await contractsService.createContractEvent(contract.id, {
-        event_type: 'CREATED',
-        description: 'Contrato criado como rascunho',
-      });
-
-      toast.success('Contrato criado com sucesso!');
-      setContractDialogOpen(false);
-      
-      // Reset form
-      setContractTitle('');
-      setContractContent('');
-      setContractStartDate('');
-      setContractEndDate('');
-      setContractTotalValue('');
-      setContractCurrency('BRL');
-      setContractAutoRenew(false);
-      setContractRenewalPeriod('12');
-      setContractSigners([]);
-      setContractInvitationMessage('Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.');
-      setContractRequireOtp(false);
-      setContractRequireTerms(false);
-
-      // Enviar notificação
-      const client = currentClient || currentLead;
-      if (client) {
-        await sendNotification('contracts', 'created', {
-          client_name: client.name || 'Cliente',
-          contract_title: contractTitle,
-          contract_number: contract.id.substring(0, 8).toUpperCase(),
-          contract_link: `${window.location.origin}/contracts/${contract.id}`,
-          contract_public_view_url:
-            contract.public_view?.public_view_url ??
-            (contract.public_view?.token
-              ? `${window.location.origin}/contract-view/${contract.public_view.token}`
-              : undefined),
-        }, contract.id);
-      }
     } catch (error) {
-      console.error('Erro ao criar contrato:', error);
-      toast.error('Não foi possível criar o contrato', {
-        description: error instanceof Error ? error.message : undefined,
-      });
+      console.error('Erro ao registrar timeline do contrato criado no chat:', error);
     }
-  };
 
-  const handleAddContractSigner = () => {
-    setContractSigners([
-      ...contractSigners,
-      { name: '', email: '', tax_id: '', role: 'CLIENT' },
-    ]);
-  };
+    const contact = currentClient || currentLead;
+    if (contact) {
+      try {
+        await sendNotification('contracts', 'created', {
+          client_name: contact.name || 'Cliente',
+          contract_title: createdWithView.title,
+          contract_number: createdWithView.id.substring(0, 8).toUpperCase(),
+          contract_link: `${window.location.origin}/contracts/${createdWithView.id}`,
+          contract_public_view_url:
+            createdWithView.public_view?.public_view_url ??
+            (createdWithView.public_view?.token
+              ? `${window.location.origin}/contract-view/${createdWithView.public_view.token}`
+              : undefined),
+        }, createdWithView.id);
+      } catch (error) {
+        console.error('Erro ao notificar contrato criado no chat:', error);
+      }
+    }
 
-  const handleRemoveContractSigner = (index: number) => {
-    setContractSigners(contractSigners.filter((_, i) => i !== index));
-  };
-
-  const handleContractSignerChange = (
-    index: number,
-    field: 'name' | 'email' | 'tax_id' | 'role',
-    value: string
-  ) => {
-    const updated = [...contractSigners];
-    updated[index] = { ...updated[index], [field]: value };
-    setContractSigners(updated);
+    if (mode === 'draft') {
+      toast.success('Rascunho de contrato salvo');
+    } else {
+      toast.success('Contrato enviado para assinatura');
+    }
   };
 
   const handleNavigateToSettings = () => {
@@ -2376,8 +2347,8 @@ const Chat = () => {
         onClick={() => handleSelectConversation(conversation.id)}
         className={`w-full min-w-0 max-w-full box-border text-left my-1 rounded-lg px-3 py-2.5 border border-transparent transition-colors ${
           isActive
-            ? 'bg-primary/10 shadow-none'
-            : 'bg-background/50 hover:bg-muted/70 hover:border-border/40'
+            ? 'bg-primary/10 shadow-none ring-1 ring-primary/20 dark:bg-primary/15 dark:ring-primary/30'
+            : 'bg-background/50 hover:bg-muted/70 hover:border-border/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40'
         }`}
       >
       <div className="flex items-start gap-3">
@@ -2398,8 +2369,8 @@ const Chat = () => {
         </Avatar>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <div 
-                className={`font-medium truncate ${hasProfile ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+              <div
+                className={`truncate font-medium ${isActive ? 'text-foreground' : 'text-foreground/90'} ${hasProfile ? 'cursor-pointer transition-opacity hover:opacity-80' : ''}`}
                 onClick={hasProfile ? handleNameClick : undefined}
               >
                 {identity.displayName}
@@ -2440,7 +2411,7 @@ const Chat = () => {
             )}
               {conversation.assigned_team_id && !conversation.assignee_display && conversation.assigned_team_name ? (
                 <span
-                  className="inline-flex max-w-[140px] items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-900"
+                  className="inline-flex max-w-[140px] items-center gap-1 rounded-md border border-sky-300/80 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-100"
                   title={`Fila da equipe: ${conversation.assigned_team_name}`}
                 >
                   <Users className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
@@ -2449,7 +2420,7 @@ const Chat = () => {
               ) : null}
               {conversation.attendance_status === 'in_service' && conversation.assignee_display ? (
                 <span
-                  className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-900 max-w-[160px]"
+                  className="inline-flex max-w-[160px] items-center gap-1 rounded-md border border-violet-300/80 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
                   title={conversation.assignee_display}
                 >
                   <Headphones className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
@@ -2458,7 +2429,7 @@ const Chat = () => {
               ) : attendanceStatusLabel(conversation.attendance_status) ? (
                 <Badge
                   variant="outline"
-                  className="text-[10px] border-violet-200 text-violet-900 bg-violet-50 max-w-[200px] truncate"
+                  className="max-w-[200px] truncate border-violet-300/80 bg-violet-500/10 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
                   title={attendanceStatusLabel(conversation.attendance_status) || undefined}
                 >
                   {attendanceStatusLabel(conversation.attendance_status)}
@@ -2497,7 +2468,7 @@ const Chat = () => {
                                   className="object-cover"
                                 />
                               ) : (
-                                <AvatarFallback className="rounded-xl bg-emerald-600/12 text-emerald-800 text-sm font-semibold uppercase">
+                                <AvatarFallback className="rounded-xl bg-emerald-600/12 text-emerald-800 text-sm font-semibold uppercase dark:bg-emerald-950/40 dark:text-emerald-200">
                                   {(instanceConnectionUi.displayName || '?').slice(0, 2)}
                                 </AvatarFallback>
                               )}
@@ -2551,7 +2522,7 @@ const Chat = () => {
                 </PopoverTrigger>
                 <PopoverContent className="w-80 p-0" align="start">
                   <div className="p-2">
-                    <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground border-b">
+                    <div className="border-b border-border px-2 py-1.5 text-sm font-semibold text-muted-foreground">
                       Conexões WhatsApp
             </div>
                     <div className="max-h-[300px] overflow-y-auto">
@@ -2596,7 +2567,7 @@ const Chat = () => {
                                     className="object-cover"
                                   />
                                 ) : (
-                                  <AvatarFallback className="rounded-lg bg-emerald-600/12 text-emerald-800 text-xs font-semibold uppercase">
+                                  <AvatarFallback className="rounded-lg bg-emerald-600/12 text-emerald-800 text-xs font-semibold uppercase dark:bg-emerald-950/40 dark:text-emerald-200">
                                     {(rowUi.displayName || '?').slice(0, 2)}
                                   </AvatarFallback>
                                 )}
@@ -2624,7 +2595,7 @@ const Chat = () => {
                         );
                       })}
                     </div>
-                    <div className="border-t mt-1">
+                    <div className="mt-1 border-t border-border">
                       <div
                         className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors"
                         onClick={handleAddConnection}
@@ -2722,7 +2693,7 @@ const Chat = () => {
           <div className="flex-1 flex flex-col min-h-0 px-6 pb-6 overflow-hidden">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
                 <Card className="md:col-span-1 flex flex-col min-h-0 border-border/80 shadow-sm">
-                  <CardHeader className="px-3 py-3 border-b flex-shrink-0 space-y-3 bg-muted/20">
+                  <CardHeader className="flex-shrink-0 space-y-3 border-b border-border bg-muted/20 px-3 py-3">
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
@@ -2830,9 +2801,62 @@ const Chat = () => {
                             }}
                           />
                         </CardContent>
+                      ) : viewMode === 'proposal-create' ? (
+                        <CardContent className="p-4 flex-1 min-h-0 overflow-auto">
+                          <div className="mb-3">
+                            <Button variant="ghost" size="sm" onClick={handleBackFromProposalCreate}>
+                              Voltar para conversa
+                            </Button>
+                          </div>
+                          <ProposalCreateForm
+                            key={`${selectedConversation.id}:${proposalKanbanModelId ?? 'noM'}:${proposalKanbanLegacyDraftId ?? 'noD'}`}
+                            embedded
+                            initialClientId={selectedConversation.client_id ?? null}
+                            initialLeadId={
+                              selectedConversation.client_id ? null : selectedConversation.leadId ?? null
+                            }
+                            initialLeadName={
+                              !selectedConversation.client_id && currentLead?.name ? currentLead.name : null
+                            }
+                            initialTitle={
+                              currentClient?.name || currentLead?.name
+                                ? `Proposta — ${currentClient?.name || currentLead?.name}`
+                                : ''
+                            }
+                            initialProposalModelId={proposalKanbanModelId}
+                            initialTemplateProposalId={proposalKanbanLegacyDraftId}
+                            onBack={handleBackFromProposalCreate}
+                            onCreated={(created, mode) => {
+                              void handleProposalCreatedInChat(created, mode);
+                            }}
+                          />
+                        </CardContent>
+                      ) : viewMode === 'contract-create' ? (
+                        <CardContent className="p-4 flex-1 min-h-0 overflow-auto">
+                          <div className="mb-3">
+                            <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
+                              Voltar para conversa
+                            </Button>
+                          </div>
+                          <ContractCreateForm
+                            key={selectedConversation.id}
+                            embedded
+                            initialClientId={selectedConversation.client_id ?? null}
+                            initialSigners={chatContractInitialSigners}
+                            initialTitleHint={
+                              currentClient?.name || currentLead?.name
+                                ? `Contrato — ${currentClient?.name || currentLead?.name}`
+                                : ''
+                            }
+                            onBack={handleBackFromContractCreate}
+                            onCreated={(created, mode) => {
+                              void handleContractCreatedInChat(created, mode);
+                            }}
+                          />
+                        </CardContent>
                       ) : (
                         <>
-                      <CardHeader className="px-4 py-3 border-b space-y-3 flex-shrink-0 bg-muted/15">
+                      <CardHeader className="flex-shrink-0 space-y-3 border-b border-border bg-muted/15 px-4 py-3">
                         <div className="flex items-start justify-between gap-3 flex-wrap">
                           <div className="flex items-center gap-3 min-w-0 flex-1">
                             <Avatar 
@@ -2876,14 +2900,14 @@ const Chat = () => {
                                   </Badge>
                                 )}
                                 {!selectedConversation.client_id && selectedConversation.leadId && (
-                                  <Badge className="text-xs bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100">
+                                  <Badge className="border-blue-300/80 bg-blue-500/10 text-xs text-blue-900 hover:bg-blue-500/15 dark:border-blue-800/60 dark:bg-blue-950/45 dark:text-blue-200 dark:hover:bg-blue-950/55">
                                     Lead
                                   </Badge>
                                 )}
                                 {!selectedConversation.client_id &&
                                   !selectedConversation.leadId &&
                                   selectedConversation.link_state === 'review_required' && (
-                                    <Badge className="text-xs bg-amber-100 text-amber-900 border-amber-200 hover:bg-amber-100">
+                                    <Badge className="border-amber-300/80 bg-amber-500/10 text-xs text-amber-950 hover:bg-amber-500/15 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-100 dark:hover:bg-amber-950/55">
                                       Revisar vínculo
                                     </Badge>
                                   )}
@@ -2917,7 +2941,7 @@ const Chat = () => {
                                 {selectedConversation.assigned_team_id &&
                                 !selectedConversation.assignee_display &&
                                 selectedConversation.assigned_team_name ? (
-                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] text-sky-900">
+                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-300/80 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-100">
                                     <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
                                     <span className="font-medium truncate max-w-[200px]">
                                       Fila {selectedConversation.assigned_team_name}
@@ -2925,7 +2949,7 @@ const Chat = () => {
                                   </span>
                                 ) : selectedConversation.attendance_status === 'in_service' &&
                                 selectedConversation.assignee_display ? (
-                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] text-violet-900">
+                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-300/80 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100">
                                     <Headphones className="h-3.5 w-3.5 shrink-0" aria-hidden />
                                     <span className="font-medium truncate max-w-[200px]">
                                       {shortOperatorName(selectedConversation.assignee_display)}
@@ -2934,7 +2958,7 @@ const Chat = () => {
                                 ) : attendanceStatusLabel(selectedConversation.attendance_status) ? (
                                   <Badge
                                     variant="outline"
-                                    className="text-[10px] border-violet-200 text-violet-900 bg-violet-50"
+                                    className="border-violet-300/80 bg-violet-500/10 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
                                   >
                                     {attendanceStatusLabel(selectedConversation.attendance_status)}
                                   </Badge>
@@ -3043,14 +3067,18 @@ const Chat = () => {
                                       <Receipt className="mr-2 h-4 w-4" />
                                       Criar fatura
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={handleCreateContract}>
-                                      <FileSignature className="mr-2 h-4 w-4" />
-                                      Criar contrato
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={handleSendProposal}>
-                                      <FileText className="mr-2 h-4 w-4" />
-                                      Enviar proposta
-                                    </DropdownMenuItem>
+                                    {canCreateContractsInChat && (
+                                      <DropdownMenuItem onClick={handleCreateContract}>
+                                        <FileSignature className="mr-2 h-4 w-4" />
+                                        Criar contrato
+                                      </DropdownMenuItem>
+                                    )}
+                                    {canCreateProposalsInChat && (
+                                      <DropdownMenuItem onClick={handleCreateProposal}>
+                                        <FileText className="mr-2 h-4 w-4" />
+                                        Criar proposta
+                                      </DropdownMenuItem>
+                                    )}
                                     <DropdownMenuItem onClick={handleCreateTask}>
                                       <CheckSquare className="mr-2 h-4 w-4" />
                                       Criar tarefa
@@ -3067,10 +3095,18 @@ const Chat = () => {
                                       Converter para cliente
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
-                                    <DropdownMenuItem onClick={handleSendProposal}>
-                                      <FileText className="mr-2 h-4 w-4" />
-                                      Enviar proposta
-                                    </DropdownMenuItem>
+                                    {canCreateContractsInChat && (
+                                      <DropdownMenuItem onClick={handleCreateContract}>
+                                        <FileSignature className="mr-2 h-4 w-4" />
+                                        Criar contrato
+                                      </DropdownMenuItem>
+                                    )}
+                                    {canCreateProposalsInChat && (
+                                      <DropdownMenuItem onClick={handleCreateProposal}>
+                                        <FileText className="mr-2 h-4 w-4" />
+                                        Criar proposta
+                                      </DropdownMenuItem>
+                                    )}
                                     <DropdownMenuItem onClick={handleCreateTask}>
                                       <CheckSquare className="mr-2 h-4 w-4" />
                                       Criar tarefa
@@ -3131,10 +3167,10 @@ const Chat = () => {
                                     className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                               >
                                 <div 
-                                      className={`max-w-[min(82%,28rem)] rounded-xl px-3.5 py-2.5 text-sm shadow-sm leading-relaxed ${
+                                      className={`max-w-[min(82%,28rem)] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm ${
                                         message.direction === 'outgoing'
-                                      ? 'bg-primary text-primary-foreground' 
-                                      : 'bg-muted/90 border border-border/40'
+                                      ? 'bg-primary text-primary-foreground ring-1 ring-primary/20' 
+                                      : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
                                   }`}
                                 >
                                       <ChatBubbleContent message={message} />
@@ -3162,7 +3198,10 @@ const Chat = () => {
                             <div ref={messagesEndRef} />
                           </div>
                         </ScrollArea>
-                        <form onSubmit={handleSendMessage} className="border-t p-3 flex gap-2 flex-shrink-0">
+                        <form
+                          onSubmit={handleSendMessage}
+                          className="flex shrink-0 gap-2 border-t border-border bg-muted/20 p-3 backdrop-blur-sm dark:bg-muted/10"
+                        >
                             <input
                               ref={imageFileInputRef}
                               type="file"
@@ -3223,10 +3262,11 @@ const Chat = () => {
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
-                            <Input 
-                            placeholder="Mensagem ou legenda da imagem..."
+                            <Input
+                              placeholder="Mensagem ou legenda da imagem..."
                               value={newMessage}
-                            onChange={(event) => setNewMessage(event.target.value)}
+                              onChange={(event) => setNewMessage(event.target.value)}
+                              className="min-h-10 flex-1 border-border bg-background shadow-sm focus-visible:ring-primary/25"
                             />
                             <Button 
                               type="submit" 
@@ -3393,7 +3433,7 @@ const Chat = () => {
             </DialogDescription>
           </DialogHeader>
           {selectedConversation?.link_state === 'review_required' && suggestedCandidates.length > 0 && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <div className="rounded-md border border-amber-300/80 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100">
               Revisão necessária: foram encontrados múltiplos candidatos para este telefone.
             </div>
           )}
@@ -3409,9 +3449,9 @@ const Chat = () => {
               value={linkSearch}
               onChange={(e) => { setLinkSearch(e.target.value); setLinkPage(1); }}
             />
-            <div className="max-h-64 overflow-auto rounded-md border">
+            <div className="max-h-64 overflow-auto rounded-md border border-border">
               {linkTab === 'clients' ? (
-                <div className="divide-y">
+                <div className="divide-y divide-border">
                   {pagedLinkClients.map((c) => (
                     <button
                       key={c.id}
@@ -3433,7 +3473,7 @@ const Chat = () => {
                   )}
                 </div>
               ) : (
-                <div className="divide-y">
+                <div className="divide-y divide-border">
                   {loadingLeads ? (
                     <div className="px-3 py-6 text-sm text-muted-foreground text-center">Carregando leads...</div>
                   ) : pagedLinkLeads.length > 0 ? (
@@ -3472,286 +3512,6 @@ const Chat = () => {
               Confirmar vínculo
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog de Contrato */}
-      <Dialog open={contractDialogOpen} onOpenChange={setContractDialogOpen}>
-        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Criar Contrato</DialogTitle>
-            <DialogDescription>
-              Crie um novo contrato para {currentClient?.name || currentLead?.name || 'o cliente'}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <Tabs defaultValue="editor" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="editor">
-                <FileText className="mr-2 h-4 w-4" />
-                Editor
-              </TabsTrigger>
-              <TabsTrigger value="signers">
-                <Users className="mr-2 h-4 w-4" />
-                Assinantes
-              </TabsTrigger>
-              <TabsTrigger value="financial">
-                <DollarSign className="mr-2 h-4 w-4" />
-                Datas & Financeiro
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="editor" className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="contractTitle">Título do Contrato *</Label>
-                <Input 
-                  id="contractTitle" 
-                  value={contractTitle}
-                  onChange={(e) => setContractTitle(e.target.value)}
-                  placeholder="Ex: Contrato de Prestação de Serviços" 
-                  required 
-                />
-                                </div>
-              <div className="space-y-2">
-                <Label htmlFor="contractContent">Conteúdo do Contrato</Label>
-                <RichTextEditor
-                  value={contractContent}
-                  onChange={setContractContent}
-                  placeholder="Digite o conteúdo do contrato..."
-                />
-                            </div>
-            </TabsContent>
-
-            <TabsContent value="signers" className="space-y-4 mt-4">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Assinantes</Label>
-                    <p className="text-sm text-muted-foreground">Adicione as partes que devem assinar o contrato</p>
-                  </div>
-                  <Button type="button" onClick={handleAddContractSigner} size="sm">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Adicionar
-                  </Button>
-                </div>
-                
-                {contractSigners.map((signer, index) => (
-                  <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
-                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                      <div>
-                        <Label>Nome *</Label>
-                        <Input
-                          value={signer.name}
-                          onChange={(e) => handleContractSignerChange(index, 'name', e.target.value)}
-                          placeholder="Nome completo"
-                        />
-                      </div>
-                      <div>
-                        <Label>E-mail *</Label>
-                        <Input
-                          type="email"
-                          value={signer.email}
-                          onChange={(e) => handleContractSignerChange(index, 'email', e.target.value)}
-                          placeholder="email@exemplo.com"
-                        />
-                      </div>
-                      <div>
-                        <Label>CPF ou CNPJ *</Label>
-                        <Input
-                          value={signer.tax_id}
-                          onChange={(e) => handleContractSignerChange(index, 'tax_id', e.target.value)}
-                          placeholder="11 ou 14 dígitos"
-                          inputMode="numeric"
-                        />
-                      </div>
-                      <div>
-                        <Label>Tipo</Label>
-                        <Select
-                          value={signer.role}
-                          onValueChange={(value) => handleContractSignerChange(index, 'role', value as 'CLIENT' | 'INTERNAL')}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="CLIENT">Cliente</SelectItem>
-                            <SelectItem value="INTERNAL">Interno</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveContractSigner(index)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-
-                {contractSigners.length === 0 && (
-                  <div className="text-center py-8 text-muted-foreground">
-                    Nenhum assinante adicionado. Clique em "Adicionar" para começar.
-                  </div>
-                )}
-
-                <div className="space-y-4 pt-4 border-t">
-                  <div>
-                    <Label>Mensagem de Convite</Label>
-                    <Textarea
-                      value={contractInvitationMessage}
-                      onChange={(e) => setContractInvitationMessage(e.target.value)}
-                      rows={3}
-                      placeholder="Mensagem enviada aos assinantes..."
-                    />
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="require_otp"
-                      checked={contractRequireOtp}
-                      onCheckedChange={(checked) => setContractRequireOtp(checked as boolean)}
-                    />
-                    <Label htmlFor="require_otp" className="font-normal">
-                      Exigir OTP por e-mail
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="require_terms"
-                      checked={contractRequireTerms}
-                      onCheckedChange={(checked) => setContractRequireTerms(checked as boolean)}
-                    />
-                    <Label htmlFor="require_terms" className="font-normal">
-                      Exigir aceite de termos
-                    </Label>
-                  </div>
-                </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="financial" className="space-y-4 mt-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="contractStartDate">Data de Início</Label>
-                  <Input 
-                    id="contractStartDate" 
-                    type="date" 
-                    value={contractStartDate}
-                    onChange={(e) => setContractStartDate(e.target.value)}
-                  />
-                          </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contractEndDate">Data de Término</Label>
-                  <Input 
-                    id="contractEndDate" 
-                    type="date" 
-                    value={contractEndDate}
-                    onChange={(e) => setContractEndDate(e.target.value)}
-                  />
-                </div>
-              </div>
-              
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="auto_renew"
-                  checked={contractAutoRenew}
-                  onCheckedChange={(checked) => setContractAutoRenew(checked as boolean)}
-                />
-                <Label htmlFor="auto_renew" className="font-normal">
-                  Renovação automática
-                </Label>
-              </div>
-
-              {contractAutoRenew && (
-                <div className="space-y-2">
-                  <Label htmlFor="renewalPeriod">Período de Renovação (meses)</Label>
-                  <Input
-                    id="renewalPeriod"
-                    type="number"
-                    value={contractRenewalPeriod}
-                    onChange={(e) => setContractRenewalPeriod(e.target.value)}
-                    placeholder="12"
-                  />
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="contractValue">Valor Total</Label>
-                  <Input 
-                    id="contractValue" 
-                    type="number" 
-                    step="0.01" 
-                    value={contractTotalValue}
-                    onChange={(e) => setContractTotalValue(e.target.value)}
-                    placeholder="0.00" 
-                  />
-              </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contractCurrency">Moeda</Label>
-                  <Select value={contractCurrency} onValueChange={setContractCurrency}>
-                    <SelectTrigger id="contractCurrency">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="BRL">BRL (R$)</SelectItem>
-                      <SelectItem value="USD">USD ($)</SelectItem>
-                      <SelectItem value="EUR">EUR (€)</SelectItem>
-                    </SelectContent>
-                  </Select>
-            </div>
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          <DialogFooter className="mt-6">
-              <Button type="button" variant="outline" onClick={() => setContractDialogOpen(false)}>
-                Cancelar
-                            </Button>
-            <Button type="button" onClick={handleSaveContract}>
-              Criar Contrato
-            </Button>
-            </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog de Proposta */}
-      <Dialog open={proposalDialogOpen} onOpenChange={setProposalDialogOpen}>
-        <DialogContent className="sm:max-w-[550px]">
-          <DialogHeader>
-            <DialogTitle>Criar Proposta</DialogTitle>
-            <DialogDescription>
-              Crie uma nova proposta para {currentClient?.name || currentLead?.name || 'o cliente'}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
-            handleSaveProposal(formData);
-          }}>
-            <div className="grid gap-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="proposalTitle">Título</Label>
-                <Input id="proposalTitle" name="title" placeholder="Ex: Proposta de Serviços" required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="proposalDescription">Descrição</Label>
-                <Textarea id="proposalDescription" name="description" placeholder="Descrição da proposta..." />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="proposalAmount">Valor</Label>
-                <Input id="proposalAmount" name="amount" type="number" step="0.01" placeholder="0.00" required />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setProposalDialogOpen(false)}>
-                Cancelar
-                            </Button>
-              <Button type="submit">Criar Proposta</Button>
-            </DialogFooter>
-          </form>
         </DialogContent>
       </Dialog>
 

@@ -155,6 +155,26 @@ const order = [
   '116_contract_templates_value_tenancy.sql',
   /** Contratos: contract_id na função pública de view (assinaturas + PDF por token) */
   '117_contract_public_view_contract_id.sql',
+  /** Propostas: coluna preparatória proposal_id em customer_invoices (vínculo futuro com fatura) */
+  '118_customer_invoices_proposal_id.sql',
+  /** Propostas Etapa 2: invoiced, converted_invoice_id, timeline, unicidade fatura↔proposta */
+  '119_proposals_etapa2_invoiced_timeline.sql',
+  /** Propostas Etapa 3: tokens de link público (hash) */
+  '120_proposal_public_view_tokens.sql',
+  /** Propostas Etapa 4: política pós-aceite + eventos de integração */
+  '121_proposals_etapa4_automation.sql',
+  /** Propostas Etapa 5: webhooks outbound, entregas, permissões finas (module_extras) */
+  '122_proposals_etapa5_outbound.sql',
+  /** Gateway: métodos habilitados + padrão (pix/boleto/credit_card) */
+  '124_payment_gateway_payment_methods.sql',
+  /** Tenant: logos claro/escuro + endereço comercial (Configurações → Dados da Empresa) */
+  '125_tenant_company_branding.sql',
+  /** Propostas: lead_id (Kanban chat) + XOR com client_id */
+  '126_proposals_lead_id.sql',
+  /** Propostas: modelos dedicados (proposal_templates) */
+  '128_proposal_templates.sql',
+  /** Páginas públicas: funções SQL com logo clara/escura do tenant */
+  '127_public_tenant_brand_sql_functions.sql',
   'create-admin-user.sql',
 ];
 

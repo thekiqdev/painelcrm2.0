@@ -4,7 +4,8 @@
  */
 import { Response } from 'express';
 import { z } from 'zod';
-import { pool, escapeSetLocalAppValue } from '../utils/db.js';
+import { pool } from '../utils/db.js';
+import { beginKanbanTxWithRls } from '../utils/kanbanRlsTx.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { requireTenantId } from '../middleware/auth.js';
 import { isTenantAdmin } from '../utils/tenant.js';
@@ -35,6 +36,66 @@ import {
   userCanManageKanbanBoard,
   userCanViewKanbanBoard,
 } from '../services/kanbanBoardAccessService.js';
+import {
+  type KanbanProposalsMetadata,
+  parseKanbanProposalsMetadata,
+  sanitizeKanbanProposalsInMetadata,
+  validateKanbanProposalAcceptAutomation,
+  validateKanbanProposalAutoCreateOnEnter,
+} from '../utils/kanbanProposalsMetadata.js';
+import { issueNewPublicTokenForProposal } from '../services/proposalPublicViewService.js';
+import {
+  proposalPublicLinkPathFromRawToken,
+  saveProposalPublicLinkCiphertext,
+} from '../services/proposalPublicLinkCrmStore.js';
+import type { KanbanAutoCreatedProposalPayload } from '../services/kanbanColumnAutoProposalService.js';
+import { runKanbanAutoCreateProposalInTransaction } from '../services/kanbanColumnAutoProposalService.js';
+
+/** Modelo oficial (`proposal_templates`) ou legado (`proposals` em draft). */
+async function assertValidKanbanProposalColumnRefs(
+  tenantId: string,
+  kp: KanbanProposalsMetadata,
+): Promise<string[]> {
+  const errs: string[] = [];
+  if (kp.default_proposal_model_id) {
+    try {
+      const r = await pool.query(
+        `SELECT 1 FROM proposal_templates pt
+         INNER JOIN users u ON u.id = pt.user_id
+         WHERE pt.id = $1 AND u.tenant_id = $2 AND pt.is_active = true`,
+        [kp.default_proposal_model_id, tenantId],
+      );
+      if (r.rows.length === 0) {
+        errs.push(
+          'Modelo de proposta da coluna: seleção inválida ou inativa — escolha um modelo ativo ou remova.',
+        );
+      }
+    } catch (e: unknown) {
+      const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
+      if (code === '42P01') {
+        errs.push(
+          'Base desatualizada: execute a migração 128_proposal_templates.sql antes de usar modelos oficiais.',
+        );
+      } else {
+        throw e;
+      }
+    }
+  }
+  if (kp.default_proposal_template_id && !kp.default_proposal_model_id) {
+    const r = await pool.query(
+      `SELECT 1 FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id
+       WHERE p.id = $1 AND u.tenant_id = $2 AND p.status = 'draft'`,
+      [kp.default_proposal_template_id, tenantId],
+    );
+    if (r.rows.length === 0) {
+      errs.push(
+        'Referência legada a rascunho inválida — selecione um modelo oficial (Propostas → Modelos) ou remova.',
+      );
+    }
+  }
+  return errs;
+}
 
 function boardAccessFromRow(board: Record<string, unknown>): KanbanBoardAccessRow {
   return {
@@ -44,19 +105,6 @@ function boardAccessFromRow(board: Record<string, unknown>): KanbanBoardAccessRo
     is_active: board.is_active !== false,
     visibility_mode: String(board.visibility_mode || 'tenant_all'),
   };
-}
-
-/** Transação dedicada ao Kanban: RLS exige `app.current_tenant_id` na mesma sessão que o `UPDATE`/`INSERT`. */
-async function beginKanbanTxWithRls(
-  client: import('pg').PoolClient,
-  tenantId: string,
-  actorUserId: string,
-): Promise<void> {
-  await client.query('BEGIN');
-  const st = escapeSetLocalAppValue(tenantId);
-  const su = escapeSetLocalAppValue(actorUserId);
-  await client.query(`SET LOCAL app.current_tenant_id = '${st}'`);
-  await client.query(`SET LOCAL app.actor_user_id = '${su}'`);
 }
 
 const createBoardSchema = z.object({
@@ -262,12 +310,24 @@ async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
           WHEN c.lead_id IS NOT NULL THEN 'lead_linked'
           WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
           ELSE 'unlinked'
-        END AS conv_link_state
+        END AS conv_link_state,
+        proposal_agg.proposal_pending_total,
+        proposal_agg.proposal_accepted_total
       FROM chat_kanban_cards kc
       INNER JOIN chat_conversations c ON c.id = kc.conversation_id
       LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
       LEFT JOIN profiles pf ON pf.id = assignee.id
       LEFT JOIN teams t_team ON t_team.id = c.assigned_team_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(CASE WHEN p.status = 'sent' THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_pending_total,
+          COALESCE(SUM(CASE WHEN p.status IN ('accepted', 'invoiced') THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_accepted_total
+        FROM proposals p
+        INNER JOIN users pu ON pu.id = p.user_id AND pu.tenant_id = $2
+        WHERE
+          (c.client_id IS NOT NULL AND p.client_id = c.client_id)
+          OR (c.client_id IS NULL AND c.lead_id IS NOT NULL AND p.lead_id = c.lead_id)
+      ) proposal_agg ON TRUE
       WHERE kc.id = $1 AND kc.tenant_id = $2
       LIMIT 1
     `;
@@ -700,6 +760,7 @@ export async function createColumn(req: AuthRequest, res: Response): Promise<voi
       position = pr.rows[0]?.p ?? 0;
     }
     const meta = applyKanbanPhase2Defaults(body.metadata ?? {});
+    sanitizeKanbanProposalsInMetadata(meta);
     const phase2Issues = validateKanbanPhase2ForSave(meta);
     if (phase2Issues.length > 0) {
       res.status(400).json({ error: phase2Issues.join('; ') });
@@ -713,6 +774,22 @@ export async function createColumn(req: AuthRequest, res: Response): Promise<voi
     const autoMoveIssues = validateKanbanAutoMoveAgainstBoard(null, boardColSet, parseKanbanPhase2(meta));
     if (autoMoveIssues.length > 0) {
       res.status(400).json({ error: autoMoveIssues.join('; ') });
+      return;
+    }
+    const proposalAcceptIssues = validateKanbanProposalAcceptAutomation(null, meta, boardColSet);
+    if (proposalAcceptIssues.length > 0) {
+      res.status(400).json({ error: proposalAcceptIssues.join('; ') });
+      return;
+    }
+    const kpParsed = parseKanbanProposalsMetadata(meta);
+    const autoCreateIssues = validateKanbanProposalAutoCreateOnEnter(kpParsed);
+    if (autoCreateIssues.length > 0) {
+      res.status(400).json({ error: autoCreateIssues.join('; ') });
+      return;
+    }
+    const templateIssues = await assertValidKanbanProposalColumnRefs(tenantId, kpParsed);
+    if (templateIssues.length > 0) {
+      res.status(400).json({ error: templateIssues.join('; ') });
       return;
     }
     if (body.funnel_stage_id) {
@@ -824,6 +901,7 @@ export async function patchColumn(req: AuthRequest, res: Response): Promise<void
     }
     if (body.metadata !== undefined) {
       const normalizedMeta = applyKanbanPhase2Defaults(body.metadata);
+      sanitizeKanbanProposalsInMetadata(normalizedMeta);
       const phase2Issues = validateKanbanPhase2ForSave(normalizedMeta);
       if (phase2Issues.length > 0) {
         res.status(400).json({ error: phase2Issues.join('; ') });
@@ -837,6 +915,22 @@ export async function patchColumn(req: AuthRequest, res: Response): Promise<void
       const autoMoveIssues = validateKanbanAutoMoveAgainstBoard(columnId, boardColSet, parseKanbanPhase2(normalizedMeta));
       if (autoMoveIssues.length > 0) {
         res.status(400).json({ error: autoMoveIssues.join('; ') });
+        return;
+      }
+      const proposalAcceptIssues = validateKanbanProposalAcceptAutomation(columnId, normalizedMeta, boardColSet);
+      if (proposalAcceptIssues.length > 0) {
+        res.status(400).json({ error: proposalAcceptIssues.join('; ') });
+        return;
+      }
+      const kpParsed = parseKanbanProposalsMetadata(normalizedMeta);
+      const autoCreateIssues = validateKanbanProposalAutoCreateOnEnter(kpParsed);
+      if (autoCreateIssues.length > 0) {
+        res.status(400).json({ error: autoCreateIssues.join('; ') });
+        return;
+      }
+      const templateIssues = await assertValidKanbanProposalColumnRefs(tenantId, kpParsed);
+      if (templateIssues.length > 0) {
+        res.status(400).json({ error: templateIssues.join('; ') });
         return;
       }
       updates.push(`metadata = $${n++}::jsonb`);
@@ -1043,12 +1137,24 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
           WHEN c.lead_id IS NOT NULL THEN 'lead_linked'
           WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
           ELSE 'unlinked'
-        END AS conv_link_state
+        END AS conv_link_state,
+        proposal_agg.proposal_pending_total,
+        proposal_agg.proposal_accepted_total
       FROM chat_kanban_cards kc
       INNER JOIN chat_conversations c ON c.id = kc.conversation_id
       LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
       LEFT JOIN profiles pf ON pf.id = assignee.id
       LEFT JOIN teams t_team ON t_team.id = c.assigned_team_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(CASE WHEN p.status = 'sent' THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_pending_total,
+          COALESCE(SUM(CASE WHEN p.status IN ('accepted', 'invoiced') THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_accepted_total
+        FROM proposals p
+        INNER JOIN users pu ON pu.id = p.user_id AND pu.tenant_id = $2
+        WHERE
+          (c.client_id IS NOT NULL AND p.client_id = c.client_id)
+          OR (c.client_id IS NULL AND c.lead_id IS NOT NULL AND p.lead_id = c.lead_id)
+      ) proposal_agg ON TRUE
       WHERE kc.board_id = $1 AND kc.tenant_id = $2
       ${archivedClause}
       ORDER BY kc.column_id, kc.position ASC, kc.created_at ASC
@@ -1082,6 +1188,7 @@ export async function createCard(req: AuthRequest, res: Response): Promise<void>
     const meta = body.metadata ?? {};
     const client = await pool.connect();
     let created: Record<string, unknown>;
+    let createAutoPending: KanbanAutoCreatedProposalPayload | null = null;
     try {
       await beginKanbanTxWithRls(client, tenantId, userId);
       const r = await client.query(
@@ -1092,6 +1199,17 @@ export async function createCard(req: AuthRequest, res: Response): Promise<void>
         [boardId, body.column_id, tenantId, body.conversation_id, position, JSON.stringify(meta), userId],
       );
       created = r.rows[0] as Record<string, unknown>;
+      const auto = await runKanbanAutoCreateProposalInTransaction(client, {
+        tenantId,
+        actorUserId: userId,
+        cardId: String(created.id),
+        conversationId: body.conversation_id,
+        destColumnId: body.column_id,
+        destColumnMetadata: column.metadata,
+        boardId,
+      });
+      if (auto) createAutoPending = auto;
+
       const colMeta = await client.query<{ metadata: unknown }>(
         `SELECT metadata FROM chat_kanban_columns WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
         [body.column_id, tenantId],
@@ -1116,7 +1234,33 @@ export async function createCard(req: AuthRequest, res: Response): Promise<void>
     } finally {
       client.release();
     }
-    res.status(201).json(created);
+
+    let outPayload: Record<string, unknown> = { ...created };
+    if (createAutoPending && tenantId) {
+      let autoRes: KanbanAutoCreatedProposalPayload = { ...createAutoPending, public_link_path: null };
+      try {
+        const { rawToken } = await issueNewPublicTokenForProposal({
+          proposalId: createAutoPending.id,
+          tenantId,
+        });
+        const public_link_path = proposalPublicLinkPathFromRawToken(rawToken);
+        try {
+          await saveProposalPublicLinkCiphertext(createAutoPending.id, rawToken);
+        } catch (saveErr: unknown) {
+          const code =
+            typeof saveErr === 'object' && saveErr !== null && 'code' in saveErr
+              ? String((saveErr as { code: unknown }).code)
+              : '';
+          if (code !== '42703') throw saveErr;
+        }
+        autoRes = { ...createAutoPending, public_link_path };
+      } catch (e) {
+        console.error('[chatKanban] createCard auto proposal link público', e);
+      }
+      outPayload.kanban_auto_created_proposal = autoRes;
+    }
+
+    res.status(201).json(outPayload);
   } catch (e: any) {
     if (e instanceof z.ZodError) {
       res.status(400).json({ error: e.errors.map((x) => x.message).join('; ') });
@@ -1219,6 +1363,8 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
       return;
     }
 
+    let kanbanAutoPending: KanbanAutoCreatedProposalPayload | null = null;
+
     client = await pool.connect();
     await beginKanbanTxWithRls(client, tenantId, userId);
 
@@ -1295,7 +1441,7 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
 
     if (columnChanged && destColForRules) {
       try {
-        await runKanbanDestColumnPostUpdateAutomations(client, {
+        const postRes = await runKanbanDestColumnPostUpdateAutomations(client, {
           tenantId,
           actorUserId: userId,
           boardId: String(board.id),
@@ -1309,6 +1455,9 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
           cardId,
           conversationId: String(card.conversation_id),
         });
+        if (postRes.kanban_auto_created_proposal) {
+          kanbanAutoPending = postRes.kanban_auto_created_proposal;
+        }
       } catch (e: any) {
         await client.query('ROLLBACK');
         client.release();
@@ -1328,6 +1477,30 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
     }
 
     await client.query('COMMIT');
+
+    let kanbanAutoForResponse: KanbanAutoCreatedProposalPayload | undefined;
+    if (kanbanAutoPending && tenantId) {
+      kanbanAutoForResponse = { ...kanbanAutoPending, public_link_path: null };
+      try {
+        const { rawToken } = await issueNewPublicTokenForProposal({
+          proposalId: kanbanAutoPending.id,
+          tenantId,
+        });
+        const public_link_path = proposalPublicLinkPathFromRawToken(rawToken);
+        try {
+          await saveProposalPublicLinkCiphertext(kanbanAutoPending.id, rawToken);
+        } catch (saveErr: unknown) {
+          const code =
+            typeof saveErr === 'object' && saveErr !== null && 'code' in saveErr
+              ? String((saveErr as { code: unknown }).code)
+              : '';
+          if (code !== '42703') throw saveErr;
+        }
+        kanbanAutoForResponse = { ...kanbanAutoPending, public_link_path };
+      } catch (e) {
+        console.error('[chatKanban] patchCard auto proposal link público', e);
+      }
+    }
 
     if (columnChanged && destColForRules) {
       const schedClient = await pool.connect();
@@ -1475,6 +1648,9 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
           error: automationErr,
         });
       });
+    }
+    if (kanbanAutoForResponse) {
+      payload.kanban_auto_created_proposal = kanbanAutoForResponse;
     }
     res.json(payload);
   } catch (e: any) {

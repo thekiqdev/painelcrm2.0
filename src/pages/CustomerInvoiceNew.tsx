@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate, Link, useSearchParams, useMatch } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,11 +22,33 @@ import { apiClient } from "@/integrations/api/client";
 import type { CreateCustomerInvoiceBody, CustomerInvoiceItem, UpdateCustomerInvoiceBody } from "@/services/customerInvoices";
 import type { CustomerChargeWithSummary } from "@/services/customerCharges";
 import type { Product } from "@/types/products";
+import { resolvePublicCatalogUnitPrice } from "@/types/products";
 import type { Client } from "@/services/clients";
-import { toast } from "sonner";
-import { ArrowLeft, X, ExternalLink, Plus, Trash2, AlertTriangle, Link2, Settings2, ChevronDown, ChevronUp } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
+import {
+  ArrowLeft,
+  X,
+  ExternalLink,
+  Plus,
+  Trash2,
+  AlertTriangle,
+  Link2,
+  Settings2,
+  ChevronDown,
+  ChevronUp,
+  Package,
+  Briefcase,
+  Search,
+} from "lucide-react";
 import { parseBrl, formatBrlDisplay, sanitizeNumericFieldInput } from "@/lib/brlCurrencyInput";
 import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
+import {
+  effectiveLinkPaymentMethods,
+  invoiceMethodsFromGatewaySlugs,
+  type InvoicePaymentMethodUi,
+} from "@/lib/crmGatewayPaymentMethods";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 function todayLocalYmd(): string {
   const d = new Date();
@@ -50,7 +72,7 @@ function isCompleteYmdString(value: string): boolean {
 }
 
 export type InvoiceLineDiscountKind = "fixed" | "percent";
-type InvoicePaymentMethod = "PIX" | "BOLETO" | "CREDIT_CARD";
+type InvoicePaymentMethod = InvoicePaymentMethodUi;
 const PAYMENT_METHOD_OPTIONS: Array<{ value: InvoicePaymentMethod; label: string }> = [
   { value: "PIX", label: "PIX" },
   { value: "BOLETO", label: "Boleto" },
@@ -162,7 +184,9 @@ const CustomerInvoiceNew = ({
     amount: "",
     charge_id: null,
   });
-  const [lines, setLines] = useState<InvoiceLineRow[]>([defaultLine()]);
+  const [lines, setLines] = useState<InvoiceLineRow[]>([]);
+  const [invoicePickerOpen, setInvoicePickerOpen] = useState<"product" | "service" | null>(null);
+  const [invoicePickerQuery, setInvoicePickerQuery] = useState("");
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
@@ -178,6 +202,12 @@ const CustomerInvoiceNew = ({
   const [crmGatewayActive, setCrmGatewayActive] = useState<boolean | null>(null);
   const [gatewaysStatus, setGatewaysStatus] = useState<GatewayStatusItemForSelect[]>([]);
   const [gatewaysLoading, setGatewaysLoading] = useState(false);
+  const [gatewayEnabledMethods, setGatewayEnabledMethods] = useState<InvoicePaymentMethod[]>([
+    "PIX",
+    "BOLETO",
+    "CREDIT_CARD",
+  ]);
+  const [gatewayMethodsLoaded, setGatewayMethodsLoaded] = useState(false);
   const [allowedPaymentMethods, setAllowedPaymentMethods] = useState<InvoicePaymentMethod[]>([
     "PIX",
     "BOLETO",
@@ -248,9 +278,22 @@ const CustomerInvoiceNew = ({
   useEffect(() => {
     customerInvoicesService
       .getGatewayStatus()
-      .then((s) => setCrmGatewayActive(s.gatewayConfigured))
-      .catch(() => setCrmGatewayActive(null));
+      .then((s) => {
+        setCrmGatewayActive(s.gatewayConfigured);
+        setGatewayEnabledMethods(invoiceMethodsFromGatewaySlugs(s.enabled_payment_methods));
+        setGatewayMethodsLoaded(true);
+      })
+      .catch(() => {
+        setCrmGatewayActive(null);
+        setGatewayMethodsLoaded(true);
+      });
   }, []);
+
+  /** Mantém “permitidos no link” alinhados ao gateway (e às alterações após carregar edição). */
+  useEffect(() => {
+    if (!gatewayMethodsLoaded) return;
+    setAllowedPaymentMethods((prev) => effectiveLinkPaymentMethods(prev, gatewayEnabledMethods));
+  }, [gatewayMethodsLoaded, gatewayEnabledMethods, editReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -385,10 +428,57 @@ const CustomerInvoiceNew = ({
   const useSingleAmount = form.amount != null && form.amount.trim() !== "" && parseBrl(form.amount) > 0;
 
   const handleAddLine = () => setLines((prev) => [...prev, defaultLine()]);
+
   const handleRemoveLine = (id: string) => {
-    if (lines.length <= 1) return;
     setLines((prev) => prev.filter((l) => l.id !== id));
   };
+
+  const invoiceCatalogFiltered = useMemo(() => {
+    const type =
+      invoicePickerOpen === "product"
+        ? "product"
+        : invoicePickerOpen === "service"
+          ? "service"
+          : null;
+    if (!type) return [];
+    const q = invoicePickerQuery.trim().toLowerCase();
+    return products
+      .filter((p) => p.type === type && p.status !== "inactive")
+      .filter((p) => {
+        if (!q) return true;
+        return (
+          p.name.toLowerCase().includes(q) ||
+          (p.sku?.toLowerCase().includes(q) ?? false) ||
+          (p.short_description?.toLowerCase().includes(q) ?? false)
+        );
+      })
+      .slice(0, 80);
+  }, [products, invoicePickerOpen, invoicePickerQuery]);
+
+  const appendLineFromCatalog = useCallback((p: Product) => {
+    const unit =
+      resolvePublicCatalogUnitPrice({
+        price: p.price ?? null,
+        discount_price: p.discount_price ?? null,
+      }) ?? 0;
+    const desc =
+      [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
+    setLines((prev) => [
+      ...prev,
+      {
+        ...defaultLine(),
+        id: crypto.randomUUID(),
+        product_id: p.id,
+        description: desc.slice(0, 2000),
+        quantity: "1",
+        unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
+        discount: "0",
+        discount_kind: "fixed",
+      },
+    ]);
+    setInvoicePickerOpen(null);
+    setInvoicePickerQuery("");
+  }, []);
   const handleLineChange = (
     id: string,
     field: "description" | "quantity" | "unit_price" | "discount",
@@ -397,42 +487,6 @@ const CustomerInvoiceNew = ({
     const v =
       field === "description" ? value : sanitizeNumericFieldInput(value);
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, [field]: v } : l)));
-  };
-
-  const handleLineProductSelect = (lineId: string, product: Product | null) => {
-    if (!product) {
-      setLines((prev) =>
-        prev.map((l) =>
-          l.id === lineId
-            ? {
-                ...l,
-                product_id: null,
-                description: "",
-                unit_price: "",
-                discount: "0",
-                discount_kind: "fixed" as const,
-                is_recurring: true,
-                recurring_interval: "monthly",
-                scheduled_due_date: "",
-              }
-            : l
-        )
-      );
-      return;
-    }
-    const price = product.price ?? product.discount_price ?? 0;
-    setLines((prev) =>
-      prev.map((l) =>
-        l.id === lineId
-          ? {
-              ...l,
-              product_id: product.id,
-              description: product.name,
-              unit_price: price > 0 ? formatBrlDisplay(Number(price)) : "",
-            }
-          : l
-      )
-    );
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -618,7 +672,7 @@ const CustomerInvoiceNew = ({
       )}
 
       {crmGatewayActive === false && (
-        <Alert className="border-orange-500/60 bg-orange-50 text-orange-950 dark:bg-orange-950/30 dark:text-orange-100 dark:border-orange-500/50">
+        <Alert className="border-orange-500/50 bg-orange-500/10 text-orange-950 dark:border-orange-500/40 dark:bg-orange-950/35 dark:text-orange-50">
           <AlertTriangle className="h-4 w-4 text-orange-600 dark:text-orange-400" />
           <AlertDescription>
             Para emitir faturas com cobrança, o tenant precisa de uma configuração de <strong>pagamentos (CRM) ativa</strong>{" "}
@@ -714,7 +768,7 @@ const CustomerInvoiceNew = ({
             {form.client_id && !invoiceByLink && (
               <>
                 {selectedClient && (
-                  <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+                  <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
                     <p className="text-sm font-medium">Dados do cliente</p>
                     <div className="grid gap-2 text-sm">
                       <div><span className="text-muted-foreground">Nome:</span> {selectedClient.name || "—"}</div>
@@ -750,7 +804,7 @@ const CustomerInvoiceNew = ({
                 )}
 
                 {crmGatewayActive === false && (
-                <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+                <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
                   <p className="text-sm font-medium">Pré-requisitos para emitir fatura</p>
                   <ul className="space-y-2 text-sm list-none pl-0">
                     <li className="flex items-center gap-2 flex-wrap">
@@ -849,18 +903,125 @@ const CustomerInvoiceNew = ({
               </div>
               )}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <Label>Itens da fatura</Label>
-                  <Button type="button" variant="outline" size="sm" onClick={handleAddLine}>
+                <Label className="mb-2 block">Itens da fatura</Label>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <Button type="button" variant="secondary" size="sm" onClick={handleAddLine}>
                     <Plus className="h-4 w-4 mr-1" />
-                    Adicionar linha
+                    Linha manual
                   </Button>
+                  <Popover
+                    open={invoicePickerOpen === "product"}
+                    onOpenChange={(o) => {
+                      setInvoicePickerOpen(o ? "product" : null);
+                      if (!o) setInvoicePickerQuery("");
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={loadingProducts}
+                      >
+                        <Package className="h-4 w-4 mr-1" />
+                        Produto do catálogo
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-0" align="start">
+                      <div className="p-2 border-b flex items-center gap-2">
+                        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <Input
+                          className="h-8"
+                          placeholder="Buscar produto..."
+                          value={invoicePickerQuery}
+                          onChange={(e) => setInvoicePickerQuery(e.target.value)}
+                        />
+                      </div>
+                      <ScrollArea className="h-56">
+                        {invoiceCatalogFiltered.length === 0 ? (
+                          <p className="text-xs text-muted-foreground p-3">Nenhum produto encontrado.</p>
+                        ) : (
+                          <ul className="p-1">
+                            {invoiceCatalogFiltered.map((p) => (
+                              <li key={p.id}>
+                                <button
+                                  type="button"
+                                  className="w-full text-left text-sm px-2 py-2 rounded hover:bg-muted"
+                                  onClick={() => appendLineFromCatalog(p)}
+                                >
+                                  <span className="font-medium block truncate">{p.name}</span>
+                                  {p.short_description ? (
+                                    <span className="text-xs text-muted-foreground line-clamp-1">
+                                      {p.short_description}
+                                    </span>
+                                  ) : null}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </ScrollArea>
+                    </PopoverContent>
+                  </Popover>
+                  <Popover
+                    open={invoicePickerOpen === "service"}
+                    onOpenChange={(o) => {
+                      setInvoicePickerOpen(o ? "service" : null);
+                      if (!o) setInvoicePickerQuery("");
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={loadingProducts}
+                      >
+                        <Briefcase className="h-4 w-4 mr-1" />
+                        Serviço do catálogo
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-0" align="start">
+                      <div className="p-2 border-b flex items-center gap-2">
+                        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <Input
+                          className="h-8"
+                          placeholder="Buscar serviço..."
+                          value={invoicePickerQuery}
+                          onChange={(e) => setInvoicePickerQuery(e.target.value)}
+                        />
+                      </div>
+                      <ScrollArea className="h-56">
+                        {invoiceCatalogFiltered.length === 0 ? (
+                          <p className="text-xs text-muted-foreground p-3">Nenhum serviço encontrado.</p>
+                        ) : (
+                          <ul className="p-1">
+                            {invoiceCatalogFiltered.map((p) => (
+                              <li key={p.id}>
+                                <button
+                                  type="button"
+                                  className="w-full text-left text-sm px-2 py-2 rounded hover:bg-muted"
+                                  onClick={() => appendLineFromCatalog(p)}
+                                >
+                                  <span className="font-medium block truncate">{p.name}</span>
+                                  {p.short_description ? (
+                                    <span className="text-xs text-muted-foreground line-clamp-1">
+                                      {p.short_description}
+                                    </span>
+                                  ) : null}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </ScrollArea>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="rounded-md border overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left p-2 font-medium w-44">Do catálogo</th>
                         <th className="text-left p-2 font-medium">Descrição</th>
                         <th className="text-right p-2 w-20">Qtd</th>
                         <th className="text-right p-2 w-32">Valor un. (R$)</th>
@@ -870,31 +1031,16 @@ const CustomerInvoiceNew = ({
                       </tr>
                     </thead>
                     <tbody>
+                      {lines.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                            Nenhuma linha. Adicione itens manuais ou do catálogo — ou informe um valor único abaixo
+                            (quando não houver linhas).
+                          </td>
+                        </tr>
+                      ) : null}
                       {lines.flatMap((line) => [
                         <tr key={`${line.id}-main`} className="border-b">
-                          <td className="p-2">
-                            <Select
-                              value={line.product_id ?? "__manual__"}
-                              onValueChange={(v) =>
-                                handleLineProductSelect(
-                                  line.id,
-                                  v === "__manual__" ? null : products.find((p) => p.id === v) ?? null
-                                )
-                              }
-                            >
-                              <SelectTrigger className="h-8 text-xs">
-                                <SelectValue placeholder={loadingProducts ? "Carregando..." : "— Manual —"} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="__manual__">— Manual —</SelectItem>
-                                {products.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>
-                                    {p.name} {p.price != null ? `(R$ ${Number(p.price).toFixed(2)})` : ""}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
                           <td className="p-2">
                             <Input
                               placeholder="Descrição"
@@ -1016,25 +1162,23 @@ const CustomerInvoiceNew = ({
                               >
                                 <Settings2 className="h-4 w-4" />
                               </Button>
-                            {lines.length > 1 && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground"
-                                onClick={() => handleRemoveLine(line.id)}
-                                aria-label="Remover linha"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground"
+                              onClick={() => handleRemoveLine(line.id)}
+                              aria-label="Remover linha"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                             </div>
                           </td>
                         </tr>,
                         ...(line.show_advanced
                           ? [
                               <tr key={`${line.id}-adv`} className="border-b bg-muted/30">
-                            <td colSpan={7} className="p-2 text-xs text-muted-foreground">
+                            <td colSpan={6} className="p-2 text-xs text-muted-foreground">
                               <div className="flex items-center gap-2 mb-2 font-medium text-foreground">
                                 Opções avançadas do item
                                 {line.show_advanced ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
@@ -1173,8 +1317,12 @@ const CustomerInvoiceNew = ({
                 </div>
                 <div>
                   <Label>Métodos permitidos no link de pagamento</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Só é possível ativar métodos que estão ligados na configuração do gateway (Configurações → Pagamentos).
+                  </p>
                   <div className="mt-2 space-y-2 rounded-md border p-3">
-                    {PAYMENT_METHOD_OPTIONS.map((option) => {
+                    {PAYMENT_METHOD_OPTIONS.filter((option) => gatewayEnabledMethods.includes(option.value)).map(
+                      (option) => {
                       const checked = allowedPaymentMethods.includes(option.value);
                       return (
                         <div key={option.value} className="flex items-center space-x-2">
@@ -1200,10 +1348,13 @@ const CustomerInvoiceNew = ({
                           </Label>
                         </div>
                       );
-                    })}
-                    <p className="text-xs text-muted-foreground">
-                      Se nada vier definido no backend, a tela pública usa fallback para todos os métodos.
-                    </p>
+                    }
+                    )}
+                    {gatewayEnabledMethods.length === 0 && (
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Nenhum método ativo no gateway. Configure em Pagamentos antes de emitir cobrança com link.
+                      </p>
+                    )}
                   </div>
                   {showGatewaySelect && !isEditMode && (
                     <div className="mt-4">

@@ -17,6 +17,10 @@ import {
   runKanbanTaskAutomationInTransaction,
   type KanbanPhase2AutomationContext,
 } from './kanbanColumnAutomationService.js';
+import {
+  runKanbanAutoCreateProposalInTransaction,
+  type KanbanAutoCreatedProposalPayload,
+} from './kanbanColumnAutoProposalService.js';
 
 export type KanbanDestColumnPipelineRow = {
   id: string;
@@ -106,7 +110,7 @@ export async function runKanbanDestColumnPostUpdateAutomations(
     cardId: string;
     conversationId: string;
   },
-): Promise<void> {
+): Promise<{ kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }> {
   await runKanbanEnsureClientAutomationInTransaction(client, {
     tenantId: input.tenantId,
     actorUserId: input.actorUserId,
@@ -148,4 +152,15 @@ export async function runKanbanDestColumnPostUpdateAutomations(
     conversationId: input.conversationId,
     columnMetadata: input.destColumn.metadata,
   });
+
+  const auto = await runKanbanAutoCreateProposalInTransaction(client, {
+    tenantId: input.tenantId,
+    actorUserId: input.actorUserId,
+    cardId: input.cardId,
+    conversationId: input.conversationId,
+    destColumnId: String(input.destColumn.id),
+    destColumnMetadata: input.destColumn.metadata,
+    boardId: input.boardId,
+  });
+  return auto ? { kanban_auto_created_proposal: auto } : {};
 }

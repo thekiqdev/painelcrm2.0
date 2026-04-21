@@ -24,7 +24,7 @@ import {
   FileText,
   ChevronDown,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { formatPhoneBrDigits, formatCpfCnpjDigits } from "@/lib/brazilInputMasks";
 import { InlineCreditCardPaymentForm } from "@/components/payments/InlineCreditCardPaymentForm";
@@ -33,6 +33,9 @@ import {
   getCustomerInvoiceStatusLabel,
 } from "@/lib/customerInvoiceStatusUi";
 import { cn } from "@/lib/utils";
+import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
+import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
+import { useTheme } from "next-themes";
 
 export interface PayInvoiceResponse {
   invoice_number: string | null;
@@ -75,6 +78,8 @@ export interface PayInvoiceResponse {
   tenant_branding?: {
     name?: string | null;
     logo_url?: string | null;
+    logo_light_url?: string | null;
+    logo_dark_url?: string | null;
     billing_phone?: string | null;
     billing_email?: string | null;
   };
@@ -204,6 +209,7 @@ function toPixImageSrc(raw: string | undefined): string | null {
 
 const CustomerInvoicePay = () => {
   const { token } = useParams<{ token: string }>();
+  const { resolvedTheme } = useTheme();
   const [data, setData] = useState<PayInvoiceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -592,10 +598,11 @@ const CustomerInvoicePay = () => {
   const canPay = ["pending", "waiting_payment", "overdue"].includes(data.status);
   const isPaid = data.status === "paid";
   const tenantName = data.tenant_branding?.name?.trim() || "PainelCRM";
-  const tenantLogo = data.tenant_branding?.logo_url?.trim() || "";
-  const tenantContact = [data.tenant_branding?.billing_email, data.tenant_branding?.billing_phone]
-    .filter(Boolean)
-    .join(" • ");
+  const tb = data.tenant_branding;
+  const hasTenantLogo = Boolean(tb && hasTenantLogoForTheme(resolvedTheme, tb));
+  const billingEmail = (data.tenant_branding?.billing_email ?? "").trim();
+  const billingPhone = (data.tenant_branding?.billing_phone ?? "").trim();
+  const tenantContact = [billingEmail || null, billingPhone || null].filter(Boolean).join(" • ");
   const totalBrl = (data.amount_cents / 100).toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
   });
@@ -659,23 +666,40 @@ const CustomerInvoicePay = () => {
         <Card className="shadow-md border-border/80">
           <CardHeader className="pb-2 border-b bg-card/80 rounded-t-xl">
             <div className="flex items-center justify-between gap-3 pb-3 border-b">
-              <div className="flex items-center gap-3 min-w-0">
-                {tenantLogo ? (
-                  <img
-                    src={tenantLogo}
-                    alt={`Logo ${tenantName}`}
-                    className="h-10 w-10 rounded object-contain border bg-white p-1"
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                {tb ? (
+                  <PublicTenantBrandMark
+                    branding={tb}
+                    nameShownElsewhere
+                    className="shrink-0 items-start pt-0.5"
+                    imgClassName="max-h-12 max-w-[200px]"
                   />
                 ) : (
-                  <div className="h-10 w-10 rounded border bg-muted flex items-center justify-center text-xs font-semibold">
+                  <div className="h-10 w-10 shrink-0 rounded border bg-muted flex items-center justify-center text-xs font-semibold">
                     {tenantName.slice(0, 2).toUpperCase()}
                   </div>
                 )}
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold truncate">{tenantName}</p>
-                  {tenantContact ? (
-                    <p className="text-xs text-muted-foreground truncate">{tenantContact}</p>
-                  ) : null}
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  {hasTenantLogo ? (
+                    <>
+                      {billingEmail ? (
+                        <p className="text-xs text-muted-foreground truncate">{billingEmail}</p>
+                      ) : null}
+                      {billingPhone ? (
+                        <p className="text-xs text-muted-foreground truncate">{billingPhone}</p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold truncate">{tenantName}</p>
+                      {billingEmail ? (
+                        <p className="text-xs text-muted-foreground truncate">{billingEmail}</p>
+                      ) : null}
+                      {billingPhone ? (
+                        <p className="text-xs text-muted-foreground truncate">{billingPhone}</p>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               </div>
               <div className="text-right shrink-0 space-y-0.5">

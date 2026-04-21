@@ -5,7 +5,15 @@
 
 import type { ModuleId, PermissionAction, PermissionDescriptor } from './permissionTypes.js';
 
-const ALLOWED_ACTIONS: PermissionAction[] = ['create', 'view', 'edit', 'delete'];
+const ALLOWED_ACTIONS: PermissionAction[] = [
+  'create',
+  'view',
+  'edit',
+  'delete',
+  'proposals_send',
+  'proposals_convert_invoice',
+  'proposals_manage_integrations',
+];
 
 function isPermissionAction(s: string): s is PermissionAction {
   return ALLOWED_ACTIONS.includes(s as PermissionAction);

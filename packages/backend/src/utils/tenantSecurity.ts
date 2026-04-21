@@ -28,6 +28,7 @@ const TENANT_SCOPED_TABLES = [
   'funnel_stages',
   'products',
   'proposals',
+  'proposal_templates',
   'contracts',
   'contract_public_view_tokens',
   'contract_signer_signature_invites',

@@ -19,7 +19,8 @@ import { isPublicPayTelemetryEnabled, isPublicPaySwitchMethodEnabledForTenant } 
 import { pool } from '../utils/db.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
-import { getConfigForTest } from '../services/paymentGatewayConfigService.js';
+import { getActiveConfig, getConfigForTest } from '../services/paymentGatewayConfigService.js';
+import { mergePublicPayAllowedMethods } from '../services/gatewayPaymentMethodPolicy.js';
 import { normalizeGatewayStatus } from '../modules/payments/webhook/statusNormalizer.js';
 import { runPostPaidCleanupForCustomerInvoice } from '../services/billingGatewayChargeService.js';
 import {
@@ -218,10 +219,21 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
       pixQrCode: typeof activeMetadata.pixQrCode === 'string' ? activeMetadata.pixQrCode : undefined,
       pixCopyPaste: typeof activeMetadata.pixCopyPaste === 'string' ? activeMetadata.pixCopyPaste : undefined,
     };
-    const allowed_payment_methods = Array.isArray(activeMetadata.allowed_payment_methods)
-      ? activeMetadata.allowed_payment_methods
-          .filter((m): m is 'PIX' | 'BOLETO' | 'CREDIT_CARD' => m === 'PIX' || m === 'BOLETO' || m === 'CREDIT_CARD')
+    const storedMethodsNorm = Array.isArray(activeMetadata.allowed_payment_methods)
+      ? ([
+          ...new Set(
+            (activeMetadata.allowed_payment_methods as string[]).filter(
+              (m): m is 'PIX' | 'BOLETO' | 'CREDIT_CARD' =>
+                m === 'PIX' || m === 'BOLETO' || m === 'CREDIT_CARD'
+            )
+          ),
+        ] as Array<'PIX' | 'BOLETO' | 'CREDIT_CARD'>)
       : null;
+    const crmCfg = await getActiveConfig('crm', freshData.tenant_id);
+    const allowed_payment_methods = mergePublicPayAllowedMethods(
+      storedMethodsNorm && storedMethodsNorm.length > 0 ? storedMethodsNorm : null,
+      crmCfg
+    );
     let clientProfile: {
       name: string | null;
       email: string | null;

@@ -58,6 +58,8 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
     <div
       className={cn(
         "relative p-4 rounded-lg shadow-md transition-all duration-200 min-h-[150px] max-w-[250px]",
+        /* Post-it: cores pastel fixas + texto escuro (não herdar foreground do dark) */
+        "text-zinc-950 [color-scheme:light]",
         colorClass.value,
         colorClass.border,
         "border-2",
@@ -87,7 +89,7 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="h-6 w-6 text-zinc-800 hover:bg-black/10 hover:text-zinc-950"
           onClick={(e) => {
             e.stopPropagation();
             setIsEditing(true);
@@ -98,7 +100,7 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 text-red-600 hover:text-red-700"
+          className="h-6 w-6 text-red-700 hover:bg-red-500/10 hover:text-red-800"
           onClick={(e) => {
             e.stopPropagation();
             onDelete(note.id);
@@ -114,7 +116,7 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
           <Textarea
             value={editContent}
             onChange={(e) => setEditContent(e.target.value)}
-            className="min-h-[100px] bg-white/90 resize-none"
+            className="min-h-[100px] resize-none border-zinc-400 bg-white/95 text-zinc-950 caret-zinc-950 placeholder:text-zinc-500 focus-visible:ring-zinc-400 dark:bg-white dark:text-zinc-950 dark:placeholder:text-zinc-500"
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Escape") handleCancel();
@@ -122,17 +124,23 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
             }}
           />
           <div className="flex gap-2 justify-end">
-            <Button size="sm" variant="outline" onClick={handleCancel}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={handleCancel}
+              className="border-input bg-background text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground"
+            >
               Cancelar
             </Button>
-            <Button size="sm" onClick={handleSave}>
+            <Button type="button" size="sm" onClick={handleSave}>
               Salvar
             </Button>
           </div>
         </div>
       ) : (
         <div className="pt-6">
-          <p className="text-sm whitespace-pre-wrap break-words">
+          <p className="text-sm whitespace-pre-wrap break-words text-zinc-950">
             {note.content || "Nota vazia"}
           </p>
         </div>

@@ -7,11 +7,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
 import { apiClient } from "@/integrations/api/client";
-import { toast } from "sonner";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { z } from "zod";
 
 // Import our refactored components
 import LeadHeader from "@/components/leads/LeadHeader";
@@ -21,6 +19,16 @@ import LeadAddDialog from "@/components/leads/LeadAddDialog";
 import LeadEditDialog from "@/components/leads/LeadEditDialog";
 import LeadDetailsDialog from "@/components/leads/LeadDetailsDialog";
 import LeadConvertDialog from "@/components/leads/LeadConvertDialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import ProposalCreateForm, {
+  type ProposalCreateSuccessPayload,
+} from "@/components/proposals/ProposalCreateForm";
 
 // Schemas for form validation
 const leadFormSchema = z.object({
@@ -30,7 +38,6 @@ const leadFormSchema = z.object({
   phone: z.string().optional(),
   status: z.string(),
   source: z.string(),
-  notes: z.string().optional(),
 });
 
 const taskFormSchema = z.object({
@@ -40,13 +47,8 @@ const taskFormSchema = z.object({
   status: z.string(),
 });
 
-const noteFormSchema = z.object({
-  content: z.string().min(1, { message: "Conteúdo é obrigatório" }),
-});
-
 type LeadFormValues = z.infer<typeof leadFormSchema>;
 type TaskFormValues = z.infer<typeof taskFormSchema>;
-type NoteFormValues = z.infer<typeof noteFormSchema>;
 
 const DEFAULT_LEAD_STATUSES = [
   { id: "1", name: "Novo", color: "#6E56CF" },
@@ -71,15 +73,8 @@ const Leads = () => {
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState<any>(null);
+  const [isProposalSheetOpen, setIsProposalSheetOpen] = useState(false);
   const { user } = useAuth();
-
-  // Forms
-  const noteForm = useForm<NoteFormValues>({
-    resolver: zodResolver(noteFormSchema),
-    defaultValues: {
-      content: "",
-    },
-  });
 
   // Statuses em cache
   const { data: statusesData } = useQuery({
@@ -201,7 +196,6 @@ const Leads = () => {
         company: values.company || null,
         email: values.email || null,
         phone: values.phone || null,
-        notes: values.notes || null,
       };
 
       const response = await apiClient.patch(`/api/leads/${selectedLead.id}`, leadData);
@@ -209,19 +203,13 @@ const Leads = () => {
 
       toast.success("Lead atualizado com sucesso!");
       setIsEditDialogOpen(false);
-      
-      // Update the lead in the local list
+
       if (response.data) {
-      setLeads(leads.map(lead => 
-          lead.id === selectedLead.id ? response.data : lead
-      ));
-      
-      // Update selected lead if being viewed
-      if (isViewDialogOpen && selectedLead) {
+        if (isViewDialogOpen && selectedLead) {
           setSelectedLead(response.data);
         }
       }
-      
+
       fetchLeads();
     } catch (error: any) {
       console.error("Erro ao atualizar lead:", error.message);
@@ -261,10 +249,6 @@ const Leads = () => {
         leadData.source = "Outros"; // Default source
       }
       
-      if (values.notes && values.notes.trim()) {
-        leadData.notes = values.notes.trim();
-      }
-
       const response = await apiClient.post("/api/leads", leadData);
       if (response.error) throw new Error(response.error);
 
@@ -337,24 +321,20 @@ const Leads = () => {
     }
   };
 
-  // Save notes
-  const handleSaveNote = async (values: NoteFormValues) => {
+  const handleSaveStickyNotesJson = async (notesJson: string) => {
     if (!selectedLead || !user) return;
 
     try {
-      const response = await apiClient.patch(`/api/leads/${selectedLead.id}`, { notes: values.content });
+      const response = await apiClient.patch(`/api/leads/${selectedLead.id}`, { notes: notesJson });
       if (response.error) throw new Error(response.error);
 
-      toast.success("Nota salva com sucesso!");
-      setSelectedLead({ ...selectedLead, notes: values.content });
-      
-      // Update in local list
-      setLeads(leads.map(lead => 
-        lead.id === selectedLead.id ? { ...lead, notes: values.content } : lead
-      ));
+      toast.success("Notas salvas com sucesso!");
+      const next = response.data ?? { ...selectedLead, notes: notesJson };
+      setSelectedLead(next);
+      fetchLeads();
     } catch (error: any) {
-      console.error("Erro ao salvar nota:", error.message);
-      toast.error("Não foi possível salvar a nota");
+      console.error("Erro ao salvar notas:", error.message);
+      toast.error("Não foi possível salvar as notas");
     }
   };
 
@@ -435,16 +415,14 @@ const Leads = () => {
   };
 
 
-  // Effect to update note form when selected lead changes
-  useEffect(() => {
-    if (selectedLead && selectedLead.notes) {
-      noteForm.setValue("content", selectedLead.notes);
-    } else {
-      noteForm.setValue("content", "");
-    }
-  }, [selectedLead, activeTab]);
-
   const filteredLeads = getFilteredLeads();
+
+  const handleProposalCreatedFromLead = (_created: ProposalCreateSuccessPayload, mode: "sent" | "draft") => {
+    toast.success(mode === "draft" ? "Rascunho salvo." : "Proposta criada.");
+    setIsProposalSheetOpen(false);
+    void queryClient.invalidateQueries({ queryKey: ["proposals"] });
+    fetchLeads();
+  };
 
   return (
     <div className="space-y-6">
@@ -541,8 +519,40 @@ const Leads = () => {
         onConvertToClient={() => setIsConvertDialogOpen(true)}
         onAddTask={handleAddTask}
         onUpdateTaskStatus={updateTaskStatus}
-        onSaveNote={handleSaveNote}
+        onSaveStickyNotesJson={handleSaveStickyNotesJson}
+        onOpenProposalCreate={() => setIsProposalSheetOpen(true)}
       />
+
+      <Sheet open={isProposalSheetOpen} onOpenChange={setIsProposalSheetOpen}>
+        <SheetContent
+          side="right"
+          className="w-full overflow-y-auto sm:max-w-lg md:max-w-2xl lg:max-w-3xl"
+        >
+          <SheetHeader>
+            <SheetTitle>Nova proposta</SheetTitle>
+            <SheetDescription>
+              Mesmo fluxo do chat: com lead não convertido a proposta fica vinculada ao lead; após conversão, use o
+              cliente CRM para faturamento.
+            </SheetDescription>
+          </SheetHeader>
+          {selectedLead ? (
+            <div className="mt-4">
+              <ProposalCreateForm
+                key={selectedLead.id}
+                embedded
+                initialClientId={selectedLead.migrated_client_id ?? null}
+                initialLeadId={selectedLead.migrated_client_id ? null : selectedLead.id}
+                initialLeadName={selectedLead.name ?? null}
+                initialTitle={
+                  selectedLead.name ? `Proposta — ${selectedLead.name}` : ""
+                }
+                onBack={() => setIsProposalSheetOpen(false)}
+                onCreated={handleProposalCreatedFromLead}
+              />
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
 
       <LeadConvertDialog 
         isOpen={isConvertDialogOpen}

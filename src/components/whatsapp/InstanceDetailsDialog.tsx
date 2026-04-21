@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { chatService, ChatInstance, ChatConversation, type BootstrapSyncMeta } from "@/services/chat";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import QRCodePopup from "./QRCodePopup";
@@ -238,9 +238,23 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
   const getStatusBadge = (status: string) => {
     const statusLower = status.toLowerCase();
     if (statusLower === 'connected' || statusLower === 'open') {
-      return <Badge variant="default" className="bg-green-500 hover:bg-green-600 text-white border-0">Conectado</Badge>;
+      return (
+        <Badge
+          variant="default"
+          className="border-0 bg-emerald-600 text-white hover:bg-emerald-600/90 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+        >
+          Conectado
+        </Badge>
+      );
     } else if (statusLower === 'connecting') {
-      return <Badge variant="default" className="bg-yellow-500 hover:bg-yellow-600 text-white border-0">Conectando</Badge>;
+      return (
+        <Badge
+          variant="default"
+          className="border-0 bg-amber-500 text-amber-950 hover:bg-amber-500/90 dark:bg-amber-600 dark:text-amber-50 dark:hover:bg-amber-500"
+        >
+          Conectando
+        </Badge>
+      );
     } else {
       return <Badge variant="secondary">Desconectado</Badge>;
     }
@@ -249,11 +263,11 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
   const getStatusIcon = (status: string) => {
     const statusLower = status.toLowerCase();
     if (statusLower === 'connected' || statusLower === 'open') {
-      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      return <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />;
     } else if (statusLower === 'connecting') {
-      return <Clock className="h-4 w-4 text-yellow-500" />;
+      return <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />;
     } else {
-      return <XCircle className="h-4 w-4 text-gray-400" />;
+      return <XCircle className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
@@ -660,7 +674,7 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                     {conversations.map((conversation) => (
                       <div
                         key={conversation.id}
-                        className="p-3 border rounded-lg hover:bg-accent/50 transition-colors"
+                        className="rounded-lg border border-border p-3 transition-colors hover:bg-accent/50"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">

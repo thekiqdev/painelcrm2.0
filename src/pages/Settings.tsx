@@ -15,7 +15,7 @@ import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection
 import { UserManagementSection } from "@/components/settings/UserManagementSection";
 import { TeamsSection } from "@/components/settings/TeamsSection";
 import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesSection";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 const Settings = () => {
   const ctx = useContext(SettingsLayoutContext);

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiClient } from '@/integrations/api/client';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatMoneyBRL } from '@/lib/planCheckoutDisplay';
 import { formatCpfCnpjDigits } from '@/lib/brazilInputMasks';

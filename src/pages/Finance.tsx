@@ -10,7 +10,7 @@ import { Invoice, Expense } from "@/components/finance/types";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { financeService, Invoice as ApiInvoice, Expense as ApiExpense, BillingReceipt } from "@/services/finance";
 import { projectsService } from "@/services/projects";
 import { clientsService } from "@/services/clients";

@@ -13,7 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { customerChargesService } from "@/services/customerCharges";
 import type { CustomerChargeDetail as CustomerChargeDetailType } from "@/services/customerCharges";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ArrowLeft, FileText } from "lucide-react";

@@ -107,6 +107,43 @@ export async function checkPermission(
       logDenied('no_module_permission');
       return false;
     }
+  } else if (action === 'proposals_send' || action === 'proposals_convert_invoice') {
+    if (moduleId !== 'proposals') {
+      logDenied('no_module_permission');
+      return false;
+    }
+    if (!p.can_edit) {
+      logDenied('no_module_permission');
+      return false;
+    }
+    const extraKey = action === 'proposals_send' ? 'proposals_send' : 'proposals_convert_invoice';
+    const flag = p.module_extras?.[extraKey];
+    if (flag === false) {
+      logDenied('no_module_permission');
+      return false;
+    }
+    if (p.edit_own_only) {
+      const isOwner = resource?.ownerId != null && resource.ownerId === userId;
+      const isAssignee = resource?.assigneeId != null && resource.assigneeId === userId;
+      if (!isOwner && !isAssignee) {
+        logDenied('edit_own_only_not_owner');
+        return false;
+      }
+    }
+  } else if (action === 'proposals_manage_integrations') {
+    if (moduleId !== 'proposals') {
+      logDenied('no_module_permission');
+      return false;
+    }
+    if (!p.can_edit) {
+      logDenied('no_module_permission');
+      return false;
+    }
+    const m = p.module_extras?.proposals_manage_integrations;
+    if (m !== true) {
+      logDenied('no_module_permission');
+      return false;
+    }
   } else {
     logDenied('no_module_permission');
     return false;
@@ -124,7 +161,7 @@ export async function checkPermission(
     return false;
   }
 
-  // own_only: edit/delete restritos a owner ou assignee
+  // own_only: edit/delete restritos a owner ou assignee (proposals_send/convert tratados acima)
   if (action === 'edit' && p.edit_own_only) {
     const isOwner = resource?.ownerId != null && resource.ownerId === userId;
     const isAssignee = resource?.assigneeId != null && resource.assigneeId === userId;

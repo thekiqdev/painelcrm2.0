@@ -20,6 +20,7 @@ import { listWebhookEvents } from '../services/paymentWebhookEventsService.js';
 import { invalidateGatewayCache } from '../modules/payments/gatewayProvider.js';
 import { testConnection } from '../modules/gateways/asaas/index.js';
 import { checkPaymentGatewayTestRateLimit } from '../middleware/paymentGatewayTestRateLimit.js';
+import { paymentMethodSlugsFromConfigRow } from '../services/gatewayPaymentMethodPolicy.js';
 
 function getTenantId(req: AuthRequest): string | null {
   return req.tenantId ?? null;
@@ -63,7 +64,8 @@ export async function putMyTenantPaymentGatewayConfig(req: Request, res: Respons
       res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
       return;
     }
-    const { gateway_key, credentials, options, display_name } = req.body ?? {};
+    const { gateway_key, credentials, options, display_name, enabled_payment_methods, default_payment_method } =
+      req.body ?? {};
     if (!gateway_key || typeof gateway_key !== 'string') {
       res.status(400).json({ error: 'gateway_key é obrigatório' });
       return;
@@ -73,9 +75,19 @@ export async function putMyTenantPaymentGatewayConfig(req: Request, res: Respons
       display_name: display_name ?? null,
       credentials: typeof credentials === 'object' && credentials !== null ? credentials : {},
       options: typeof options === 'object' && options !== null ? options : {},
+      ...(Array.isArray(enabled_payment_methods) ? { enabled_payment_methods: enabled_payment_methods.map(String) } : {}),
+      ...(default_payment_method !== undefined
+        ? {
+            default_payment_method:
+              default_payment_method === null || default_payment_method === ''
+                ? null
+                : String(default_payment_method),
+          }
+        : {}),
     };
     const saved = await saveTenantConfig(tenantId, data);
     invalidateGatewayCache();
+    const pm = paymentMethodSlugsFromConfigRow(saved);
     res.json({
       id: saved.id,
       scope: saved.scope,
@@ -83,11 +95,17 @@ export async function putMyTenantPaymentGatewayConfig(req: Request, res: Respons
       display_name: saved.display_name,
       options: saved.options,
       hasCredentials: Object.keys(saved.credentials).length > 0,
+      enabled_payment_methods: pm.enabled_payment_methods,
+      default_payment_method: pm.default_payment_method,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     console.error('putMyTenantPaymentGatewayConfig error:', error);
-    const isValidation = message.includes('não existe') || message.includes('não está habilitado');
+    const isValidation =
+      message.includes('não existe') ||
+      message.includes('não está habilitado') ||
+      message.includes('método') ||
+      message.includes('Método');
     res.status(isValidation ? 400 : 500).json({ error: message });
   }
 }

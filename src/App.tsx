@@ -15,6 +15,8 @@ import SuperAdminLayout from "./layouts/SuperAdminLayout";
 import SettingsLayout from "./layouts/SettingsLayout";
 import NotFound from "./pages/NotFound";
 import HomeOrRedirect from "./components/HomeOrRedirect";
+import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "@/components/ui/sonner";
 
 // Lazy load todas as rotas protegidas para otimizar carregamento inicial
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -30,6 +32,9 @@ const ProjectTemplates = lazy(() => import("./pages/ProjectTemplates"));
 const Products = lazy(() => import("./pages/Products"));
 const StoreSettings = lazy(() => import("./pages/StoreSettings"));
 const Proposals = lazy(() => import("./pages/Proposals"));
+const ProposalTemplates = lazy(() => import("./pages/ProposalTemplates"));
+const ProposalTemplateFormPage = lazy(() => import("./pages/ProposalTemplateFormPage"));
+const NewProposal = lazy(() => import("./pages/NewProposal"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const ContractTemplates = lazy(() => import("./pages/ContractTemplates"));
 const ContractTemplateFormPage = lazy(() => import("./pages/ContractTemplateFormPage"));
@@ -41,6 +46,7 @@ const CustomerInvoiceDetail = lazy(() => import("./pages/CustomerInvoiceDetail")
 const CustomerInvoicePay = lazy(() => import("./pages/CustomerInvoicePay"));
 const PublicContractView = lazy(() => import("./pages/PublicContractView"));
 const PublicContractSign = lazy(() => import("./pages/PublicContractSign"));
+const PublicProposalView = lazy(() => import("./pages/PublicProposalView"));
 const CustomerCharges = lazy(() => import("./pages/CustomerCharges"));
 const CustomerChargeDetail = lazy(() => import("./pages/CustomerChargeDetail"));
 const Finance = lazy(() => import("./pages/Finance"));
@@ -117,6 +123,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <BrowserRouter>
+        <ThemeProvider>
         <AuthProvider>
           <ModulePermissionsProvider>
           <Suspense fallback={<LoadingFallback />}>
@@ -140,6 +147,7 @@ const App = () => (
             <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
             <Route path="/pay/:token" element={<Suspense fallback={<LoadingFallback />}><CustomerInvoicePay /></Suspense>} />
             <Route path="/contract-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractView /></Suspense>} />
+            <Route path="/proposal-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicProposalView /></Suspense>} />
             <Route path="/contract-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractSign /></Suspense>} />
 
               {/* Protected routes - lazy loaded */}
@@ -341,6 +349,51 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Proposals />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <NewProposal />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/templates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProposalTemplates />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/templates/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProposalTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/templates/:templateId/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProposalTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/:proposalId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProposalDetails />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>
@@ -605,6 +658,8 @@ const App = () => (
           </Suspense>
           </ModulePermissionsProvider>
         </AuthProvider>
+        <Toaster />
+        </ThemeProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

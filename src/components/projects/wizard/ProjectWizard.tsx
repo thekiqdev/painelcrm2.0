@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { StepIndicator } from "./StepIndicator";
 import { Step1SelectModel } from "./steps/Step1SelectModel";
 import { Step2BasicConfig } from "./steps/Step2BasicConfig";

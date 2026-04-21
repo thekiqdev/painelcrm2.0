@@ -8,6 +8,15 @@ import { migrateConversationLeadToClient } from '../services/conversationLinkSer
 
 const MODULE_LEADS = 'leads';
 
+function firstQueryString(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const s = value.find((v): v is string => typeof v === 'string');
+    return s;
+  }
+  return undefined;
+}
+
 const leadSchema = z.object({
   name: z.string().min(1),
   email: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
@@ -98,7 +107,21 @@ export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
       params.push(profileId);
     }
 
+    const qSearch = (firstQueryString(req.query.q) ?? '').trim();
+    if (qSearch.length > 0) {
+      query += ` AND (
+        l.name ILIKE $${params.length + 1}
+        OR COALESCE(l.email, '') ILIKE $${params.length + 1}
+        OR COALESCE(l.company, '') ILIKE $${params.length + 1}
+        OR COALESCE(l.phone, '') ILIKE $${params.length + 1}
+      )`;
+      params.push(`%${qSearch}%`);
+    }
+
     query += ' ORDER BY l.created_at DESC';
+    if (qSearch.length > 0) {
+      query += ' LIMIT 80';
+    }
 
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -372,6 +395,20 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
         }
 
         if (targetClientId) {
+          try {
+            await pool.query(
+              `UPDATE proposals p
+               SET client_id = $1, lead_id = NULL
+               FROM users u
+               WHERE p.user_id = u.id AND u.tenant_id = $2
+                 AND p.lead_id = $3::uuid
+                 AND p.client_id IS NULL`,
+              [targetClientId, tenantId, id],
+            );
+          } catch (propErr) {
+            console.error('[updateLead] migrate proposals lead→client failed:', propErr);
+          }
+
           const conversationRows = await pool.query<{ id: string; user_id: string }>(
             `
             SELECT c.id, c.user_id

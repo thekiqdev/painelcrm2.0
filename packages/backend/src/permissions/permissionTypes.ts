@@ -3,8 +3,15 @@
  * Fonte única de definições para módulo, ação e opções de own.
  */
 
-/** Ações que podem ser verificadas (create, edit, delete; view opcional para uso futuro). */
-export type PermissionAction = 'create' | 'edit' | 'delete' | 'view';
+/** Ações que podem ser verificadas (create, edit, delete; view; propostas Etapa 5). */
+export type PermissionAction =
+  | 'create'
+  | 'edit'
+  | 'delete'
+  | 'view'
+  | 'proposals_send'
+  | 'proposals_convert_invoice'
+  | 'proposals_manage_integrations';
 
 /** Módulos do sistema (alinhado a MODULE_IDS em modulePermissionsService). */
 export type ModuleId =
@@ -34,6 +41,8 @@ export interface ModulePermissionRow {
   can_delete: boolean;
   edit_own_only: boolean;
   delete_own_only: boolean;
+  /** Ex.: propostas — proposals_send, proposals_convert_invoice, proposals_manage_integrations */
+  module_extras?: Record<string, unknown>;
 }
 
 /** Mapa módulo → permissões (retorno de getEffectiveModulePermissions). */

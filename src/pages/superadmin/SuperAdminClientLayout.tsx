@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { TenantDetailProvider, useTenantDetail } from '@/contexts/TenantDetailContext';
 import { apiClient } from '@/integrations/api/client';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 
 const statusLabels: Record<string, string> = {
   active: 'Ativo',

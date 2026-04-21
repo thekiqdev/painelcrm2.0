@@ -22,7 +22,7 @@ import {
 import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { getContractDocumentHtml, hasMeaningfulDocumentHtml, isContractDraft } from "@/utils/contractDocument";
@@ -957,35 +957,35 @@ const ContractDetails = () => {
                       signer.signature_data as Record<string, unknown> | null | undefined
                     );
                     return (
-                      <TableRow key={signer.id}>
+                    <TableRow key={signer.id}>
                         <TableCell>{signer.signing_order || "-"}</TableCell>
-                        <TableCell className="font-medium">{signer.name}</TableCell>
+                      <TableCell className="font-medium">{signer.name}</TableCell>
                         <TableCell className="max-w-[180px] truncate" title={signer.email}>
                           {signer.email}
                         </TableCell>
                         <TableCell className="font-mono text-xs whitespace-nowrap">
                           {signer.tax_id ? formatBrazilTaxIdDisplay(signer.tax_id) : "—"}
                         </TableCell>
-                        <TableCell>
+                      <TableCell>
                           <Badge variant={signer.role === "CLIENT" ? "default" : "secondary"}>
                             {signer.role === "CLIENT" ? "Cliente" : "Interno"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {signer.signed_at ? (
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {signer.signed_at ? (
                             <Badge className="bg-green-500 whitespace-nowrap">
-                              <CheckCircle className="mr-1 h-3 w-3" />
-                              Assinado
-                            </Badge>
-                          ) : (
+                            <CheckCircle className="mr-1 h-3 w-3" />
+                            Assinado
+                          </Badge>
+                        ) : (
                             <Badge variant="outline" className="whitespace-nowrap">
-                              <Clock className="mr-1 h-3 w-3" />
-                              Pendente
-                            </Badge>
-                          )}
-                        </TableCell>
+                            <Clock className="mr-1 h-3 w-3" />
+                            Pendente
+                          </Badge>
+                        )}
+                      </TableCell>
                         <TableCell className="whitespace-nowrap text-sm">
-                          {signer.signed_at
+                        {signer.signed_at
                             ? format(new Date(signer.signed_at), "dd/MM/yyyy HH:mm")
                             : "—"}
                         </TableCell>
@@ -1078,8 +1078,8 @@ const ContractDetails = () => {
                           ) : (
                             "—"
                           )}
-                        </TableCell>
-                      </TableRow>
+                      </TableCell>
+                    </TableRow>
                     );
                   })}
                 </TableBody>

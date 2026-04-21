@@ -95,6 +95,58 @@ export type KanbanPhase2Config = {
   };
 };
 
+/** Exibição de totais de propostas no cartão do Kanban (metadata.kanban_proposals). */
+export type KanbanProposalsDisplay = {
+  show_pending: boolean;
+  show_accepted: boolean;
+  /** Etapa 2: mover cartão ao aceitar proposta (backend). */
+  move_on_proposal_accept: boolean;
+  target_column_id: string | null;
+  /**
+   * Quando verdadeiro, o backend cria proposta ao mover/criar o cartão nesta coluna (exige modelo abaixo).
+   */
+  auto_create_proposal_on_enter: boolean;
+  /** Modelo oficial (`proposal_templates`) para pré-preencher proposta no Chat a partir desta coluna. */
+  default_proposal_model_id: string | null;
+  /** Legado: rascunho em `proposals` (Etapa 3 inicial); mantido até reconfigurar a coluna. */
+  default_proposal_template_id: string | null;
+};
+
+export const EMPTY_KANBAN_PROPOSALS_DISPLAY: KanbanProposalsDisplay = {
+  show_pending: false,
+  show_accepted: false,
+  move_on_proposal_accept: false,
+  target_column_id: null,
+  auto_create_proposal_on_enter: false,
+  default_proposal_model_id: null,
+  default_proposal_template_id: null,
+};
+
+export function parseKanbanProposalsDisplay(metadata: unknown): KanbanProposalsDisplay {
+  if (!metadata || typeof metadata !== 'object') return { ...EMPTY_KANBAN_PROPOSALS_DISPLAY };
+  const root = metadata as Record<string, unknown>;
+  const raw = root.kanban_proposals;
+  if (!raw || typeof raw !== 'object') return { ...EMPTY_KANBAN_PROPOSALS_DISPLAY };
+  const o = raw as Record<string, unknown>;
+  const tid = o.target_column_id;
+  const targetStr = typeof tid === 'string' && UUID_RE.test(tid.trim()) ? tid.trim() : null;
+  const tplRaw = o.default_proposal_template_id;
+  const templateStr =
+    typeof tplRaw === 'string' && UUID_RE.test(tplRaw.trim()) ? tplRaw.trim() : null;
+  const modelRaw = o.default_proposal_model_id;
+  const modelStr =
+    typeof modelRaw === 'string' && UUID_RE.test(modelRaw.trim()) ? modelRaw.trim() : null;
+  return {
+    show_pending: o.show_pending === true,
+    show_accepted: o.show_accepted === true,
+    move_on_proposal_accept: o.move_on_proposal_accept === true,
+    target_column_id: targetStr,
+    auto_create_proposal_on_enter: o.auto_create_proposal_on_enter === true,
+    default_proposal_model_id: modelStr,
+    default_proposal_template_id: templateStr,
+  };
+}
+
 export const EMPTY_KANBAN_PHASE2: KanbanPhase2Config = {
   version: 1,
   notifications: {
@@ -430,6 +482,50 @@ export function mergeColumnMetadataFull(
   const normalizedPhase2 = phase2 ? parseKanbanPhase2({ kanban_phase2: phase2 }) : EMPTY_KANBAN_PHASE2;
   next.kanban_phase2 = normalizedPhase2;
   return next;
+}
+
+/** Injeta `kanban_proposals` no metadata preservando o restante (ex.: após mergeColumnMetadataFull). */
+export function mergeKanbanProposalsIntoMetadata(
+  meta: Record<string, unknown>,
+  display: KanbanProposalsDisplay,
+): Record<string, unknown> {
+  const out = { ...meta };
+  const modelId =
+    typeof display.default_proposal_model_id === 'string' &&
+    UUID_RE.test(display.default_proposal_model_id.trim())
+      ? display.default_proposal_model_id.trim()
+      : null;
+  const tpl =
+    typeof display.default_proposal_template_id === 'string' &&
+    UUID_RE.test(display.default_proposal_template_id.trim())
+      ? display.default_proposal_template_id.trim()
+      : null;
+  const autoOn = display.auto_create_proposal_on_enter === true;
+  const hasBlock =
+    display.show_pending ||
+    display.show_accepted ||
+    display.move_on_proposal_accept ||
+    autoOn;
+  if (!hasBlock) {
+    delete out.kanban_proposals;
+    return out;
+  }
+  const kp: Record<string, unknown> = {
+    show_pending: display.show_pending,
+    show_accepted: display.show_accepted,
+    move_on_proposal_accept: display.move_on_proposal_accept,
+    auto_create_proposal_on_enter: autoOn,
+  };
+  if (display.move_on_proposal_accept && display.target_column_id) {
+    kp.target_column_id = display.target_column_id;
+  }
+  if (autoOn && modelId) {
+    kp.default_proposal_model_id = modelId;
+  } else if (autoOn && tpl) {
+    kp.default_proposal_template_id = tpl;
+  }
+  out.kanban_proposals = kp;
+  return out;
 }
 
 /** @deprecated use mergeColumnMetadataFull — mantido para chamadas antigas */

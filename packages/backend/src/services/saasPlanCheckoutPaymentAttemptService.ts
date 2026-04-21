@@ -19,6 +19,8 @@ import type { InvoiceAttemptStatus } from './customerInvoicePaymentAttemptsServi
 import { normalizeGatewayStatus } from '../modules/payments/webhook/statusNormalizer.js';
 import type { PaymentGateway, PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import { billingLog } from './billingLogger.js';
+import { getActiveConfig } from './paymentGatewayConfigService.js';
+import { paymentPolicyFromConfigRow } from './gatewayPaymentMethodPolicy.js';
 import {
   activateTenantBillingPaymentAttempt,
   createTenantBillingPaymentAttempt,
@@ -288,7 +290,12 @@ export async function ensureSaasPlanCheckoutPaymentAttemptForSwitch(
   }
 
   const generatedIdem = buildSaasCheckoutChargeIdempotencyKey(billingId, requestedMethod);
-  const allowedPaymentMethods: PaymentMethod[] = ['PIX', 'BOLETO', 'CREDIT_CARD'];
+  const saasCfg = await getActiveConfig('saas');
+  const saasPolicy = paymentPolicyFromConfigRow(saasCfg);
+  if (!saasPolicy.enabledUi.includes(requestedMethod as 'PIX' | 'BOLETO' | 'CREDIT_CARD')) {
+    throw new Error('Método de pagamento não disponível para este gateway.');
+  }
+  const allowedPaymentMethods: PaymentMethod[] = saasPolicy.enabledUi as PaymentMethod[];
 
   const customerId = await gateway.ensureCustomer?.(tenantId);
   if (!customerId) throw new Error('ensureCustomer não retornou customerId');

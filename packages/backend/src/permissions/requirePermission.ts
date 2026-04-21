@@ -24,6 +24,9 @@ const ACTION_MESSAGES: Record<PermissionAction, string> = {
   edit: 'Sem permissão para editar neste módulo.',
   delete: 'Sem permissão para excluir neste módulo.',
   view: 'Sem permissão para visualizar neste módulo.',
+  proposals_send: 'Sem permissão para gerar ou revogar link público da proposta.',
+  proposals_convert_invoice: 'Sem permissão para converter proposta em fatura.',
+  proposals_manage_integrations: 'Sem permissão para configurar integrações de propostas.',
 };
 
 /**

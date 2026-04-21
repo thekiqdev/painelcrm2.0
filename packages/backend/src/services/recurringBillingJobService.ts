@@ -37,6 +37,7 @@ import { isAsaasInvalidCustomerError } from '../modules/gateways/asaas/asaasErro
 import { calculateInvoiceAmount, type BillingInterval } from './billingService.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
+import { resolveAutomaticInvoicePaymentMethod } from './gatewayPaymentMethodPolicy.js';
 import { calculateNextBillingDate } from './subscriptionService.js';
 import { getChildBillingBatchLimit, isChildItemInvoicesEnabled } from '../config/billingEnv.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
@@ -361,18 +362,22 @@ async function processOneRenewalJob(job: JobRow, subscription: SubscriptionRow):
       const customerId = await gateway.ensureCustomer?.(subscription.tenant_id);
       if (customerId) {
         const idempotencyKey = `saas_renew_${subscription.id}_${periodStart}`;
+        const renewalPm = resolveAutomaticInvoicePaymentMethod(
+          subscription.default_payment_method as string | null,
+          config
+        );
         const chargeResult = await gateway.createCharge({
           customerId,
           amountCents,
           dueDate: periodStart,
-          paymentMethod: (subscription.default_payment_method as 'PIX' | 'BOLETO' | 'CREDIT_CARD') ?? 'BOLETO',
+          paymentMethod: renewalPm,
           description: billing.invoice_number ?? `Renovação ${periodStart}`,
           idempotencyKey,
           externalReference: subscription.tenant_id,
         });
         await updateInvoiceGatewayData(billing.id, {
           gateway: gatewayKey,
-          payment_method: (subscription.default_payment_method as string) ?? null,
+          payment_method: renewalPm,
           gateway_reference_id: chargeResult.paymentId,
           gateway_status: chargeResult.status,
           idempotency_key: idempotencyKey,
@@ -567,12 +572,16 @@ async function processOneCustomerRenewalJob(job: JobRow, subscription: Subscript
       }
       if (customerId) {
         let idempotencyKey = `customer_renew_${subscription.id}_${periodStart}`;
+        const renewalPm = resolveAutomaticInvoicePaymentMethod(
+          subscription.default_payment_method as string | null,
+          config
+        );
         const runCharge = () =>
           gateway.createCharge({
             customerId: customerId!,
             amountCents,
             dueDate: periodStart,
-            paymentMethod: (subscription.default_payment_method as 'PIX' | 'BOLETO' | 'CREDIT_CARD') ?? 'BOLETO',
+            paymentMethod: renewalPm,
             description: inv.invoice_number ?? `Cobrança ${periodStart}`,
             idempotencyKey,
             externalReference: clientId,
@@ -601,7 +610,7 @@ async function processOneCustomerRenewalJob(job: JobRow, subscription: Subscript
         }
         await updateCustomerInvoiceGatewayData(inv.id, {
           gateway: gatewayKey,
-          payment_method: (subscription.default_payment_method as string) ?? null,
+          payment_method: renewalPm,
           gateway_reference_id: chargeResult.paymentId,
           gateway_status: chargeResult.status,
           idempotency_key: idempotencyKey,
@@ -821,12 +830,16 @@ export async function processChildItemDueInvoices(): Promise<ProcessChildInvoice
         }
         if (customerId) {
           let idempotencyKey = `customer_child_${row.item_id}_${due}`;
+          const childPm = resolveAutomaticInvoicePaymentMethod(
+            subscription.default_payment_method as string | null,
+            config
+          );
           const runChildCharge = () =>
             gateway.createCharge({
               customerId: customerId!,
               amountCents: Math.max(0, row.total_cents),
               dueDate: due,
-              paymentMethod: (subscription.default_payment_method as 'PIX' | 'BOLETO' | 'CREDIT_CARD') ?? 'BOLETO',
+              paymentMethod: childPm,
               description: childInv.invoice_number ?? `Cobrança item ${due}`,
               idempotencyKey,
               externalReference: clientId,
@@ -855,7 +868,7 @@ export async function processChildItemDueInvoices(): Promise<ProcessChildInvoice
           }
           await updateCustomerInvoiceGatewayData(childInv.id, {
             gateway: gatewayKey,
-            payment_method: (subscription.default_payment_method as string) ?? null,
+            payment_method: childPm,
             gateway_reference_id: chargeResult.paymentId,
             gateway_status: chargeResult.status,
             idempotency_key: idempotencyKey,

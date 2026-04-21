@@ -23,7 +23,6 @@ const leadFormSchema = z.object({
   phone: z.string().optional(),
   status: z.string(),
   source: z.string(),
-  notes: z.string().optional(),
 });
 
 type LeadFormValues = z.infer<typeof leadFormSchema>;
@@ -50,7 +49,6 @@ const LeadAddDialog: React.FC<LeadAddDialogProps> = ({
       phone: "",
       status: "Novo",
       source: "Direto",
-      notes: "",
     },
   });
 

@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import {
   getWhatsappMessageTemplate,
   listWhatsappMessageTemplates,
@@ -224,7 +224,7 @@ export function ChatWhatsappModelPickerDialog({
               Nenhum modelo ativo encontrado. Crie em Configurações → WhatsApp → Templates WhatsApp → Modelos.
             </p>
           ) : (
-            <ScrollArea className="h-[200px] rounded-md border">
+            <ScrollArea className="h-[200px] rounded-md border border-border">
               <ul className="p-1">
                 {filteredRows.map((r) => {
                   const active = selectedId === r.id;
@@ -235,7 +235,9 @@ export function ChatWhatsappModelPickerDialog({
                         onClick={() => setSelectedId(r.id)}
                         className={cn(
                           'w-full text-left rounded-md px-3 py-2.5 text-sm transition-colors',
-                          active ? 'bg-muted' : 'hover:bg-muted/60',
+                          active
+                            ? 'bg-muted ring-1 ring-border/60'
+                            : 'hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30',
                         )}
                       >
                         <div className="font-medium truncate">{r.name}</div>
@@ -251,7 +253,7 @@ export function ChatWhatsappModelPickerDialog({
           )}
 
           {selectedId ? (
-            <div className="border rounded-md p-2 space-y-2 bg-muted/20">
+            <div className="space-y-2 rounded-md border border-border bg-muted/20 p-2">
               <p className="text-[10px] font-medium text-muted-foreground">Pré-visualização da sequência (exemplo)</p>
               {loadingDetail ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
@@ -264,7 +266,7 @@ export function ChatWhatsappModelPickerDialog({
                     {detail.items.map((it, idx) => (
                       <li
                         key={`${it.position}-${idx}`}
-                        className="rounded border bg-background/80 px-2 py-1.5 text-[11px] space-y-1"
+                        className="space-y-1 rounded border border-border bg-background/80 px-2 py-1.5 text-[11px]"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-medium">
@@ -301,7 +303,7 @@ export function ChatWhatsappModelPickerDialog({
           ) : null}
         </div>
 
-        <DialogFooter className="px-4 py-3 border-t shrink-0 gap-2 sm:gap-0">
+        <DialogFooter className="shrink-0 gap-2 border-t border-border px-4 py-3 sm:gap-0">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={sending}>
             Cancelar
           </Button>

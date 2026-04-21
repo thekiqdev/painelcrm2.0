@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 
 /** Mapeia pathname para moduleId (ordem: mais específico primeiro). */

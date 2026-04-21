@@ -15,7 +15,12 @@ const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 /** Subpasta fixa dentro do storage: uploads/catalog-media (ou CATALOG_MEDIA_STORAGE_PATH/catalog-media). */
 export const CATALOG_MEDIA_SUBDIR = 'catalog-media';
 
-export type CatalogMediaScope = 'product' | 'store_logo' | 'store_banner';
+export type CatalogMediaScope =
+  | 'product'
+  | 'store_logo'
+  | 'store_banner'
+  | 'tenant_logo_light'
+  | 'tenant_logo_dark';
 
 /**
  * Raiz física dos arquivos (volume persistente no EasyPanel).

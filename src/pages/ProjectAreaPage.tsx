@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Kanban, ClipboardList, MessageCircle, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { BoardView } from "@/components/projects/BoardView";
 import { TaskListView } from "@/components/projects/TaskListView";
 import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";

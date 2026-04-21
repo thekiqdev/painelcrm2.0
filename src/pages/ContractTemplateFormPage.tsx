@@ -18,7 +18,7 @@ import { RichTextEditor } from "@/components/shared/RichTextEditor";
 import { ContractA4Document } from "@/components/contracts/ContractA4Document";
 import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { ArrowLeft, Braces, Plus, Trash2 } from "lucide-react";
 import type { ContractTemplate, ContractTenancyRules } from "@/types/contracts";
 import { applyContractMergeFieldsToHtml } from "@/utils/contractMergeFields";

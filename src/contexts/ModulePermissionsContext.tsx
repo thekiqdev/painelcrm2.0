@@ -14,6 +14,12 @@ interface ModulePermissionsContextValue {
   isDeleteOwnOnly: (moduleId: ModuleId) => boolean;
   canEditRecord: (moduleId: ModuleId, ownerOrAssigneeUserId?: string | null, currentUserId?: string | null) => boolean;
   canDeleteRecord: (moduleId: ModuleId, ownerOrAssigneeUserId?: string | null, currentUserId?: string | null) => boolean;
+  /** Etapa 5 propostas — link público / envio */
+  canProposalSendRecord: (ownerUserId?: string | null, currentUserId?: string | null) => boolean;
+  /** Etapa 5 propostas — converter em fatura */
+  canProposalConvertRecord: (ownerUserId?: string | null, currentUserId?: string | null) => boolean;
+  /** Etapa 5 propostas — webhooks / integrações */
+  canProposalManageIntegrations: () => boolean;
 }
 
 const defaultPerm: ModulePermission = {
@@ -125,6 +131,34 @@ export function ModulePermissionsProvider({ children }: { children: React.ReactN
     [canDelete, p]
   );
 
+  const canProposalSendRecord = useCallback(
+    (ownerUserId?: string | null, currentUserId?: string | null) => {
+      const perm = permissions.proposals;
+      if (!perm?.can_edit) return false;
+      if (perm.edit_own_only && ownerUserId && currentUserId && ownerUserId !== currentUserId) return false;
+      if (perm.module_extras?.proposals_send === false) return false;
+      return true;
+    },
+    [permissions.proposals]
+  );
+
+  const canProposalConvertRecord = useCallback(
+    (ownerUserId?: string | null, currentUserId?: string | null) => {
+      const perm = permissions.proposals;
+      if (!perm?.can_edit) return false;
+      if (perm.edit_own_only && ownerUserId && currentUserId && ownerUserId !== currentUserId) return false;
+      if (perm.module_extras?.proposals_convert_invoice === false) return false;
+      return true;
+    },
+    [permissions.proposals]
+  );
+
+  const canProposalManageIntegrations = useCallback(() => {
+    const perm = permissions.proposals;
+    if (!perm?.can_edit) return false;
+    return perm.module_extras?.proposals_manage_integrations === true;
+  }, [permissions.proposals]);
+
   const value: ModulePermissionsContextValue = {
     permissions,
     loading,
@@ -136,6 +170,9 @@ export function ModulePermissionsProvider({ children }: { children: React.ReactN
     isDeleteOwnOnly,
     canEditRecord,
     canDeleteRecord,
+    canProposalSendRecord,
+    canProposalConvertRecord,
+    canProposalManageIntegrations,
   };
 
   return (
@@ -159,6 +196,9 @@ export function useModulePermissions(): ModulePermissionsContextValue {
       isDeleteOwnOnly: () => false,
       canEditRecord: () => true,
       canDeleteRecord: () => true,
+      canProposalSendRecord: () => true,
+      canProposalConvertRecord: () => true,
+      canProposalManageIntegrations: () => true,
     };
   }
   return ctx;

@@ -73,10 +73,10 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
     },
     { 
       id: "opportunities", 
-      label: "Oportunidades", 
+      label: "Propostas", 
       icon: Briefcase, 
       path: `/clients/${clientId}/opportunities`,
-      description: "Oportunidades de negócio"
+      description: "Propostas comerciais"
     },
     { 
       id: "messages", 

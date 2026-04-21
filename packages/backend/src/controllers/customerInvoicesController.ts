@@ -19,6 +19,8 @@ import {
   isCrmGatewayActiveForTenant,
   validateInvoicePreconditions,
 } from '../services/customerInvoicePreconditions.js';
+import { getActiveConfig } from '../services/paymentGatewayConfigService.js';
+import { paymentMethodSlugsFromConfigRow } from '../services/gatewayPaymentMethodPolicy.js';
 import { getCustomerInvoiceItems } from '../services/customerInvoiceService.js';
 import {
   patchCustomerInvoiceWithGateway,
@@ -75,7 +77,13 @@ export async function getCustomerInvoicesGatewayStatus(req: AuthRequest, res: Re
       return;
     }
     const gatewayConfigured = await isCrmGatewayActiveForTenant(tenantId);
-    res.json({ gatewayConfigured });
+    const cfg = await getActiveConfig('crm', tenantId);
+    const pm = paymentMethodSlugsFromConfigRow(cfg);
+    res.json({
+      gatewayConfigured,
+      enabled_payment_methods: pm.enabled_payment_methods,
+      default_payment_method: pm.default_payment_method,
+    });
   } catch (err) {
     console.error('[customerInvoicesController] getCustomerInvoicesGatewayStatus error:', err);
     res.status(500).json({ error: 'Erro ao verificar gateway' });
@@ -247,6 +255,15 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
       return;
     }
     if (err instanceof Error && (err.message === 'Cliente não encontrado' || err.message === 'Não foi possível obter ou criar o cliente no gateway de pagamento')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    if (
+      err instanceof Error &&
+      (err.message.includes('não está habilitado') ||
+        err.message.includes('métodos permitidos na fatura') ||
+        err.message.includes('Método de pagamento selecionado'))
+    ) {
       res.status(400).json({ error: err.message });
       return;
     }

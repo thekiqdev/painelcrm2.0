@@ -37,7 +37,7 @@ import {
 import { Plus, Pencil, Trash2, FileText, Sparkles, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { SettingsSectionProps } from "./types";
 import { messageTemplatesService, MessageTemplate, CreateMessageTemplateParams, ResourceTypesResponse } from "@/services/messageTemplates";
 

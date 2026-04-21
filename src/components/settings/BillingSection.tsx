@@ -17,9 +17,9 @@ export const BillingSection: React.FC = () => {
           <div className="space-y-2">
             <h3 className="text-lg font-medium">Métodos de Pagamento</h3>
             <div className="space-y-4">
-              <div className="p-4 border rounded-md flex justify-between items-center">
+              <div className="flex items-center justify-between rounded-md border border-border p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-1.5 bg-gray-100 rounded-md">
+                  <div className="rounded-md bg-muted p-1.5 text-muted-foreground">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="2" y="5" width="20" height="14" rx="2" />
                       <line x1="2" y1="10" x2="22" y2="10" />
@@ -33,9 +33,9 @@ export const BillingSection: React.FC = () => {
                 <Button variant="outline" size="sm">Remover</Button>
               </div>
               
-              <div className="p-4 border rounded-md flex justify-between items-center">
+              <div className="flex items-center justify-between rounded-md border border-border p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-1.5 bg-gray-100 rounded-md">
+                  <div className="rounded-md bg-muted p-1.5 text-muted-foreground">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="12" y1="1" x2="12" y2="23" />
                       <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
@@ -60,7 +60,7 @@ export const BillingSection: React.FC = () => {
           
           <div className="space-y-2">
             <h3 className="text-lg font-medium">Histórico de Faturas</h3>
-            <div className="border rounded-md overflow-hidden">
+            <div className="overflow-hidden rounded-md border border-border">
               <table className="w-full">
                 <thead className="bg-muted/50">
                   <tr>
@@ -72,12 +72,12 @@ export const BillingSection: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-t">
+                  <tr className="border-t border-border">
                     <td className="px-4 py-3 text-sm">#INV-001</td>
                     <td className="px-4 py-3 text-sm">21/05/2023</td>
                     <td className="px-4 py-3 text-sm">R$ 149,90</td>
                     <td className="px-4 py-3 text-sm">
-                      <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+                      <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
                         Pago
                       </span>
                     </td>
@@ -85,12 +85,12 @@ export const BillingSection: React.FC = () => {
                       <Button variant="ghost" size="sm">Ver</Button>
                     </td>
                   </tr>
-                  <tr className="border-t">
+                  <tr className="border-t border-border">
                     <td className="px-4 py-3 text-sm">#INV-002</td>
                     <td className="px-4 py-3 text-sm">21/04/2023</td>
                     <td className="px-4 py-3 text-sm">R$ 149,90</td>
                     <td className="px-4 py-3 text-sm">
-                      <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+                      <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
                         Pago
                       </span>
                     </td>

@@ -26,7 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { PlusCircle, Edit2, Trash2, Check, AlertTriangle } from "lucide-react";
 import { evolutionApi, type EvolutionApiConfig } from "@/services/evolutionApi";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -195,7 +195,7 @@ export const EvolutionApiConfigComponent = () => {
                     <TableCell>{config.api_url}</TableCell>
                     <TableCell>
                       {config.is_active ? (
-                        <span className="inline-flex items-center px-2 py-1 rounded-md bg-green-100 text-green-800 text-xs font-medium">
+                        <span className="inline-flex items-center rounded-md bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
                           <Check className="h-3 w-3 mr-1" /> Ativa
                         </span>
                       ) : (

@@ -27,6 +27,9 @@ const ACTION_MESSAGES: Record<PermissionAction, string> = {
   edit: 'Sem permissão para editar neste módulo.',
   delete: 'Sem permissão para excluir neste módulo.',
   view: 'Sem permissão para visualizar neste módulo.',
+  proposals_send: 'Sem permissão para gerar ou revogar link público da proposta.',
+  proposals_convert_invoice: 'Sem permissão para converter proposta em fatura.',
+  proposals_manage_integrations: 'Sem permissão para configurar integrações de propostas (webhooks).',
 };
 
 const OWN_MESSAGES: Record<'edit' | 'delete', string> = {
@@ -46,7 +49,14 @@ const OWN_MESSAGES: Record<'edit' | 'delete', string> = {
 export async function assertModulePermission(
   userId: string,
   moduleId: ModuleId | string,
-  action: 'create' | 'view' | 'edit' | 'delete',
+  action:
+    | 'create'
+    | 'view'
+    | 'edit'
+    | 'delete'
+    | 'proposals_send'
+    | 'proposals_convert_invoice'
+    | 'proposals_manage_integrations',
   options?: AssertModulePermissionOptions,
   req?: ReqWithContext
 ): Promise<void> {
@@ -68,6 +78,13 @@ export async function assertModulePermission(
   }
   if (action === 'view') {
     throw new ModulePermissionError(403, ACTION_MESSAGES.view);
+  }
+  if (
+    action === 'proposals_send' ||
+    action === 'proposals_convert_invoice' ||
+    action === 'proposals_manage_integrations'
+  ) {
+    throw new ModulePermissionError(403, ACTION_MESSAGES[action]);
   }
   throw new ModulePermissionError(403, OWN_MESSAGES[action]);
 }

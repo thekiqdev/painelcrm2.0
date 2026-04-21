@@ -23,7 +23,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { UserTeamsDialog } from "./UserTeamsDialog";
 import { NewUserDialog } from "./NewUserDialog";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 function getInitials(user: TenantUser): string {
   if (user.full_name && user.full_name.trim()) {
@@ -163,8 +163,8 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
               </p>
             )}
 
-            <div className="border rounded-md">
-              <div className="grid grid-cols-12 gap-4 p-4 border-b font-medium text-sm">
+            <div className="overflow-hidden rounded-md border border-border">
+              <div className="grid grid-cols-12 gap-4 border-b border-border bg-muted/30 p-4 text-sm font-medium">
                 <div className="col-span-3">Nome</div>
                 <div className="col-span-4">Email</div>
                 <div className="col-span-3">Tipo de Acesso</div>
@@ -177,7 +177,7 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                 <div className="p-4 text-center text-sm text-muted-foreground">Nenhum usuário na conta. Use &quot;Novo Usuário&quot; (cadastro/convite) para adicionar.</div>
               ) : (
                 users.map((u) => (
-                  <div key={u.id} className="grid grid-cols-12 gap-4 p-4 border-b text-sm last:border-b-0">
+                  <div key={u.id} className="grid grid-cols-12 gap-4 border-b border-border p-4 text-sm last:border-b-0 hover:bg-muted/25">
                     <div className="col-span-3 flex items-center gap-2">
                       <Avatar className="h-8 w-8 shrink-0">
                         <AvatarFallback>{getInitials(u)}</AvatarFallback>

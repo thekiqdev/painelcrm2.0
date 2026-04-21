@@ -14,6 +14,8 @@ export interface ModulePermission {
   can_delete: boolean;
   edit_own_only: boolean;
   delete_own_only: boolean;
+  /** Extras do backend (ex.: propostas Etapa 5). */
+  module_extras?: Record<string, unknown>;
 }
 
 export interface ModulePermissionsMap {

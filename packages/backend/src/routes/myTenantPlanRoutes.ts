@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { tenantAuth, tenantAuthCommercialHub } from '../middleware/auth.js';
+import { tenantAuth, tenantAuthCommercialHub, tenantAuthCrm } from '../middleware/auth.js';
 import * as myTenantPlanController from '../controllers/myTenantPlanController.js';
 import * as myTenantPaymentGatewayController from '../controllers/myTenantPaymentGatewayController.js';
 import * as myTenantSubscriptionController from '../controllers/myTenantSubscriptionController.js';
@@ -7,6 +7,8 @@ import {
   getPlanCheckoutPending,
   postPlanCheckoutPreparePayment,
 } from '../controllers/planPurchaseController.js';
+import * as proposalWebhookSettingsController from '../controllers/proposalWebhookSettingsController.js';
+import * as myTenantCompanyController from '../controllers/myTenantCompanyController.js';
 
 const router = Router();
 
@@ -38,6 +40,9 @@ router.put('/payment-gateway', ...tenantAuth, myTenantPaymentGatewayController.p
 router.post('/payment-gateway/test', ...tenantAuth, myTenantPaymentGatewayController.postMyTenantPaymentGatewayTest);
 router.post('/payment-gateway/disable', ...tenantAuth, myTenantPaymentGatewayController.postMyTenantPaymentGatewayDisable);
 
+router.get('/company', ...tenantAuthCrm, myTenantCompanyController.getMyTenantCompany);
+router.put('/company', ...tenantAuthCrm, myTenantCompanyController.putMyTenantCompany);
+
 router.get('/limits', ...tenantAuth, myTenantPlanController.getMyTenantLimits);
 router.get('/roles', ...tenantAuth, myTenantPlanController.getMyTenantRoles);
 router.post('/roles', ...tenantAuth, myTenantPlanController.postMyTenantRole);
@@ -53,5 +58,21 @@ router.get('/custom-roles/:id/permissions', ...tenantAuth, myTenantPlanControlle
 router.put('/custom-roles/:id/permissions', ...tenantAuth, myTenantPlanController.putCustomRolePermissionsHandler);
 router.get('/roles/:role/permissions', ...tenantAuth, myTenantPlanController.getRolePermissionsHandler);
 router.put('/roles/:role/permissions', ...tenantAuth, myTenantPlanController.putRolePermissionsHandler);
+
+router.get(
+  '/proposal-webhook-settings',
+  ...tenantAuth,
+  proposalWebhookSettingsController.getProposalWebhookSettings
+);
+router.put(
+  '/proposal-webhook-settings',
+  ...tenantAuth,
+  proposalWebhookSettingsController.putProposalWebhookSettings
+);
+router.post(
+  '/proposal-webhook-deliveries/:id/retry',
+  ...tenantAuth,
+  proposalWebhookSettingsController.postProposalWebhookDeliveryRetry
+);
 
 export default router;

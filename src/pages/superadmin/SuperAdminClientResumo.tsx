@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useTenantDetail } from '@/contexts/TenantDetailContext';
 import { ExternalLink, UserCheck, UserX } from 'lucide-react';
 import { apiClient } from '@/integrations/api/client';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 
 const statusLabels: Record<string, string> = {
   active: 'Ativo',

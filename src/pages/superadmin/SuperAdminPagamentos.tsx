@@ -10,9 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { CreditCard } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
+
+type GatewayPaySlug = 'pix' | 'boleto' | 'credit_card';
 
 interface PaymentGatewayConfig {
   id: string;
@@ -22,6 +25,8 @@ interface PaymentGatewayConfig {
   options: Record<string, unknown>;
   hasCredentials: boolean;
   credentialsMasked?: Record<string, string>;
+  enabled_payment_methods?: GatewayPaySlug[];
+  default_payment_method?: GatewayPaySlug | null;
 }
 
 interface GatewayListItem {
@@ -42,6 +47,10 @@ export default function SuperAdminPagamentos() {
     api_key: '',
     env: 'sandbox' as 'sandbox' | 'production',
   });
+  const [payPix, setPayPix] = useState(true);
+  const [payBoleto, setPayBoleto] = useState(true);
+  const [payCard, setPayCard] = useState(true);
+  const [defaultPaySlug, setDefaultPaySlug] = useState<GatewayPaySlug | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -73,10 +82,38 @@ export default function SuperAdminPagamentos() {
     }
   }, [config, gateways]);
 
+  useEffect(() => {
+    if (!config) return;
+    const list = config.enabled_payment_methods;
+    if (!list || list.length === 0) {
+      setPayPix(true);
+      setPayBoleto(true);
+      setPayCard(true);
+    } else {
+      const s = new Set(list);
+      setPayPix(s.has('pix'));
+      setPayBoleto(s.has('boleto'));
+      setPayCard(s.has('credit_card'));
+    }
+    setDefaultPaySlug(config.default_payment_method ?? null);
+  }, [config?.id, config?.enabled_payment_methods, config?.default_payment_method]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.gateway_key.trim()) {
       toast.error('Selecione o gateway.');
+      return;
+    }
+    const enabled: GatewayPaySlug[] = [];
+    if (payPix) enabled.push('pix');
+    if (payBoleto) enabled.push('boleto');
+    if (payCard) enabled.push('credit_card');
+    if (enabled.length === 0) {
+      toast.error('Ative pelo menos um método de pagamento.');
+      return;
+    }
+    if (defaultPaySlug != null && !enabled.includes(defaultPaySlug)) {
+      toast.error('O método padrão deve estar entre os métodos ativos.');
       return;
     }
     setSaving(true);
@@ -92,6 +129,8 @@ export default function SuperAdminPagamentos() {
       gateway_key: form.gateway_key,
       credentials,
       options: { env: form.env },
+      enabled_payment_methods: enabled,
+      default_payment_method: defaultPaySlug,
     });
     if (res.error) {
       toast.error(res.error);
@@ -137,6 +176,16 @@ export default function SuperAdminPagamentos() {
               <span className="text-muted-foreground">API Key:</span>{' '}
               {config.hasCredentials ? 'Configurada (' + (config.credentialsMasked?.api_key ?? MASK) + ')' : 'Não configurada'}
             </p>
+            <p>
+              <span className="text-muted-foreground">Métodos no checkout:</span>{' '}
+              {(config.enabled_payment_methods?.length
+                ? config.enabled_payment_methods.join(', ')
+                : 'pix, boleto, credit_card')}
+            </p>
+            <p>
+              <span className="text-muted-foreground">Padrão:</span>{' '}
+              {config.default_payment_method ?? 'automático'}
+            </p>
           </CardContent>
         </Card>
       )}
@@ -174,6 +223,68 @@ export default function SuperAdminPagamentos() {
                 {enabledGateways.length === 0 && (
                   <p className="text-sm text-muted-foreground">Nenhum gateway habilitado no sistema.</p>
                 )}
+              </div>
+              <div className="grid gap-3 rounded-lg border p-4">
+                <div>
+                  <Label className="text-base">Métodos no checkout SaaS</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Controla quais opções aparecem ao pagar plano (PIX, boleto, cartão).
+                  </p>
+                </div>
+                <div className="flex flex-col divide-y rounded-md border bg-muted/30">
+                  <div className="flex items-center justify-between gap-4 px-3 py-3">
+                    <span className="text-sm font-medium">PIX</span>
+                    <Switch
+                      checked={payPix}
+                      onCheckedChange={(on) => {
+                        setPayPix(on);
+                        if (!on && defaultPaySlug === 'pix') setDefaultPaySlug(null);
+                      }}
+                      aria-label="Ativar PIX no checkout SaaS"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 px-3 py-3">
+                    <span className="text-sm font-medium">Boleto</span>
+                    <Switch
+                      checked={payBoleto}
+                      onCheckedChange={(on) => {
+                        setPayBoleto(on);
+                        if (!on && defaultPaySlug === 'boleto') setDefaultPaySlug(null);
+                      }}
+                      aria-label="Ativar boleto no checkout SaaS"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 px-3 py-3">
+                    <span className="text-sm font-medium">Cartão de crédito</span>
+                    <Switch
+                      checked={payCard}
+                      onCheckedChange={(on) => {
+                        setPayCard(on);
+                        if (!on && defaultPaySlug === 'credit_card') setDefaultPaySlug(null);
+                      }}
+                      aria-label="Ativar cartão no checkout SaaS"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Método padrão</Label>
+                  <Select
+                    value={defaultPaySlug ?? '__auto__'}
+                    onValueChange={(v) =>
+                      setDefaultPaySlug(v === '__auto__' ? null : (v as GatewayPaySlug))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Automático" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Automático (pix → boleto → cartão)</SelectItem>
+                      {payPix ? <SelectItem value="pix">PIX</SelectItem> : null}
+                      {payBoleto ? <SelectItem value="boleto">Boleto</SelectItem> : null}
+                      {payCard ? <SelectItem value="credit_card">Cartão de crédito</SelectItem> : null}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <div className="grid gap-2">
                 <Label>Ambiente</Label>

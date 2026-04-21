@@ -83,7 +83,7 @@ export default function SettingsLayout() {
   return (
     <SettingsLayoutContext.Provider value={{ activeSection, setActiveSection: handleSelect }}>
       <div className="container mx-auto py-6">
-        <h1 className="text-2xl font-bold mb-6">Configurações</h1>
+        <h1 className="mb-6 text-2xl font-bold text-foreground">Configurações</h1>
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-3">
             <SettingsMenu activeSection={activeSection} onSelect={handleSelect} />

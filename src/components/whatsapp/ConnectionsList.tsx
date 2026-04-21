@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Plus, Edit, CheckCircle2, Trash2, QrCode, RefreshCw } from "lucide-react";
 import { Connection, ConnectionStatus } from "@/components/settings/types";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import {
   AlertDialog,
   AlertDialogAction,

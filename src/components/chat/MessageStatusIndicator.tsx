@@ -48,14 +48,20 @@ export const MessageStatusIndicator: React.FC<{
   if (s === 'read') {
     return (
       <CheckCheck
-        className={`${className} shrink-0 text-sky-500`}
+        className={`${className} shrink-0 text-sky-200 dark:text-sky-400`}
         aria-label={label}
         title={label}
       />
     );
   }
   if (s === 'failed') {
-    return <AlertCircle className={className} aria-label={label} title={label} />;
+    return (
+      <AlertCircle
+        className={`${className} text-destructive`}
+        aria-label={label}
+        title={label}
+      />
+    );
   }
   return null;
 };

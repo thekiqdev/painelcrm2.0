@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Sparkles, X } from "lucide-react";
 import { dashboardService } from "@/services/dashboard";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 const ACTIVATION_CHECKLIST_KEY = ["dashboard", "activation-checklist"] as const;
 

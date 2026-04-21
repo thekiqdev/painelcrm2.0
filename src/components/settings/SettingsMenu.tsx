@@ -170,7 +170,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
   };
 
   return (
-    <div className="w-full h-full border rounded-md">
+    <div className="h-full w-full rounded-md border border-border bg-card shadow-sm">
       <div className="p-4">
         {categoryOrder.map(category => {
           const items = categorizedItems[category];

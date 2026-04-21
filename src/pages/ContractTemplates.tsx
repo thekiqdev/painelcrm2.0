@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ArrowLeft, FileText, Pencil, Plus, Trash2 } from "lucide-react";

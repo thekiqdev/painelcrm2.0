@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { CreditCard, ArrowLeft, Loader2 } from "lucide-react";
 import { apiClient } from "@/integrations/api/client";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { PaymentGatewayCard, type GatewayStatusItem } from "@/components/settings/PaymentGatewayCard";
 
 const API_STATUS = "/api/me/tenant/payment-gateways/status";

@@ -11,7 +11,7 @@ import {
   type CatalogMediaScope,
 } from '../services/catalogMediaUploadService.js';
 
-const scopeSchema = z.enum(['product', 'store_logo', 'store_banner']);
+const scopeSchema = z.enum(['product', 'store_logo', 'store_banner', 'tenant_logo_light', 'tenant_logo_dark']);
 
 export async function postCatalogMediaUpload(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -21,9 +21,13 @@ export async function postCatalogMediaUpload(req: AuthRequest, res: Response): P
     }
 
     const userId = req.userId!;
-    await assertModulePermission(userId, 'products', 'edit', undefined, req);
-
-    const scope = scopeSchema.parse(req.body?.scope);
+    const scopeRaw = scopeSchema.parse(req.body?.scope);
+    const scope = scopeRaw as CatalogMediaScope;
+    if (scope === 'tenant_logo_light' || scope === 'tenant_logo_dark') {
+      await assertModulePermission(userId, 'settings', 'edit', undefined, req);
+    } else {
+      await assertModulePermission(userId, 'products', 'edit', undefined, req);
+    }
     const file = req.file;
     if (!file?.buffer) {
       res.status(400).json({ error: 'Arquivo obrigatório (campo file).' });
@@ -36,7 +40,7 @@ export async function postCatalogMediaUpload(req: AuthRequest, res: Response): P
     const relativeKey = buildCatalogMediaRelativeKey({
       tenantId,
       userId,
-      scope: scope as CatalogMediaScope,
+      scope,
       contentType: file.mimetype,
       originalName: file.originalname,
     });

@@ -11,7 +11,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ContractA4Document } from "@/components/contracts/ContractA4Document";
 import { FileText, Loader2, Eye, Download } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
+import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
+import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
+import { useTheme } from "next-themes";
 
 export interface PublicContractViewSigner {
   name: string;
@@ -30,7 +33,12 @@ export interface PublicContractViewPayload {
   contract_number: string;
   document_html: string;
   client_name: string | null;
-  tenant: { name: string | null; logo_url: string | null };
+  tenant: {
+    name: string | null;
+    logo_url: string | null;
+    logo_light_url?: string | null;
+    logo_dark_url?: string | null;
+  };
   responsible_display_name: string | null;
   signers: PublicContractViewSigner[];
   disclaimer: string;
@@ -38,6 +46,7 @@ export interface PublicContractViewPayload {
 
 const PublicContractView = () => {
   const { token } = useParams<{ token: string }>();
+  const { resolvedTheme } = useTheme();
   const [data, setData] = useState<PublicContractViewPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,31 +121,23 @@ const PublicContractView = () => {
     );
   }
 
+  const hasTenantLogo = hasTenantLogoForTheme(resolvedTheme, data.tenant);
+
   return (
     <div className="min-h-screen bg-muted/40">
       <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="max-w-4xl mx-auto px-4 py-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex gap-3 min-w-0">
-            {data.tenant.logo_url ? (
-              <img
-                src={data.tenant.logo_url}
-                alt=""
-                className="h-11 w-auto object-contain max-w-[120px] shrink-0"
-              />
-            ) : (
-              <div className="h-11 w-11 rounded-md bg-muted flex items-center justify-center shrink-0">
-                <FileText className="h-5 w-5 text-muted-foreground" />
-              </div>
-            )}
+            <PublicTenantBrandMark
+              branding={data.tenant}
+              nameShownElsewhere
+              fallbackIcon={<FileText className="h-5 w-5 text-muted-foreground" />}
+            />
             <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-                <Eye className="h-3 w-3" />
-                Visualização pública · somente leitura
-              </p>
-              <h1 className="text-lg sm:text-xl font-semibold leading-snug mt-0.5">{data.title}</h1>
+              <h1 className="text-lg sm:text-xl font-semibold leading-snug">{data.title}</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                {data.tenant.name ? <span>{data.tenant.name}</span> : null}
-                {data.tenant.name ? " · " : null}
+                {!hasTenantLogo && data.tenant.name ? <span>{data.tenant.name}</span> : null}
+                {!hasTenantLogo && data.tenant.name ? " · " : null}
                 <span>Nº {data.contract_number}</span>
               </p>
             </div>
@@ -194,7 +195,7 @@ const PublicContractView = () => {
 
         <section className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">Documento</p>
-          <div className="rounded-xl bg-muted/50 p-3 sm:p-5 border border-border/60">
+          <div className="rounded-xl border border-border/60 bg-muted/30 p-3 sm:p-5 dark:bg-muted/20">
             <ContractA4Document
               html={data.document_html || "<p>Sem conteúdo.</p>"}
               signersAppendix={data.signers}

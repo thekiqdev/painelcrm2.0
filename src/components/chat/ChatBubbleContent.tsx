@@ -185,7 +185,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     };
     return (
       <div className="space-y-1">
-        <div className="rounded-md border px-2 py-1.5 bg-background/70">
+        <div className="rounded-md border border-border bg-background/70 px-2 py-1.5 dark:bg-background/50">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
