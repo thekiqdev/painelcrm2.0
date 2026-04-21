@@ -7,11 +7,57 @@ import {
   assertAllowedImageUpload,
   buildCatalogMediaPublicUrl,
   buildCatalogMediaRelativeKey,
+  getScopeFromCatalogMediaKey,
+  isCatalogMediaKeyOwnedByTenantUser,
   saveCatalogMediaBuffer,
+  unlinkCatalogMediaRelativeKey,
   type CatalogMediaScope,
 } from '../services/catalogMediaUploadService.js';
+import { extractCatalogMediaRelativeKeyFromStoredUrl } from '../utils/catalogMediaPublicSignedUrl.js';
 
 const scopeSchema = z.enum(['product', 'store_logo', 'store_banner', 'tenant_logo_light', 'tenant_logo_dark']);
+
+const deleteBodySchema = z.object({
+  key: z.string().min(1).max(2048),
+});
+
+function resolvePreviousCatalogKeyFromBody(
+  raw: unknown,
+  tenantId: string | null,
+  userId: string,
+  scope: CatalogMediaScope,
+): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const extracted =
+    extractCatalogMediaRelativeKeyFromStoredUrl(trimmed) ||
+    (trimmed.startsWith('tenants/') ? trimmed : null);
+  if (!extracted || !isCatalogMediaKeyOwnedByTenantUser(extracted, tenantId, userId)) return null;
+  const prevScope = getScopeFromCatalogMediaKey(extracted);
+  if (prevScope !== scope) return null;
+  return extracted;
+}
+
+async function maybeUnlinkPreviousCatalogFile(
+  previousKey: string | null,
+  newKey: string,
+  tenantId: string | null,
+  userId: string,
+  scope: CatalogMediaScope,
+): Promise<void> {
+  if (!previousKey || previousKey === newKey) return;
+  if (!isCatalogMediaKeyOwnedByTenantUser(previousKey, tenantId, userId)) return;
+  if (getScopeFromCatalogMediaKey(previousKey) !== scope) return;
+  try {
+    await unlinkCatalogMediaRelativeKey(previousKey);
+  } catch (e) {
+    console.warn('[catalogMediaUpload] falha ao remover ficheiro anterior', {
+      previousKey,
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
 
 export async function postCatalogMediaUpload(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -46,6 +92,9 @@ export async function postCatalogMediaUpload(req: AuthRequest, res: Response): P
     });
 
     await saveCatalogMediaBuffer(relativeKey, file.buffer);
+    const previousKey = resolvePreviousCatalogKeyFromBody(req.body?.previous_key, tenantId, userId, scope);
+    await maybeUnlinkPreviousCatalogFile(previousKey, relativeKey, tenantId, userId, scope);
+
     const publicUrl = buildCatalogMediaPublicUrl(req, relativeKey);
 
     res.json({ publicUrl, key: relativeKey });
@@ -88,6 +137,52 @@ export async function postCatalogMediaUpload(req: AuthRequest, res: Response): P
       userId: req.userId ?? null,
       scope: req.body?.scope ?? null,
     });
+    res.status(400).json({ error: errMsg });
+  }
+}
+
+/** POST /api/catalog-media/delete — remove ficheiro no disco (JSON { key }). */
+export async function postCatalogMediaDelete(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (process.env.CATALOG_MEDIA_UPLOAD_ENABLED === 'false') {
+      res.status(503).json({ error: 'Upload de mídia desabilitado neste ambiente.' });
+      return;
+    }
+
+    const userId = req.userId!;
+    const { key } = deleteBodySchema.parse(req.body);
+    const tenantId = getTenantIdOrNull(req.tenantId);
+
+    if (!isCatalogMediaKeyOwnedByTenantUser(key, tenantId, userId)) {
+      res.status(403).json({ error: 'Chave inválida ou sem permissão.' });
+      return;
+    }
+
+    const scope = getScopeFromCatalogMediaKey(key);
+    if (!scope) {
+      res.status(400).json({ error: 'Chave de arquivo inválida.' });
+      return;
+    }
+
+    if (scope === 'tenant_logo_light' || scope === 'tenant_logo_dark') {
+      await assertModulePermission(userId, 'settings', 'edit', undefined, req);
+    } else {
+      await assertModulePermission(userId, 'products', 'edit', undefined, req);
+    }
+
+    await unlinkCatalogMediaRelativeKey(key);
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const errMsg = error instanceof Error ? error.message : 'Erro ao remover arquivo';
+    console.error('[catalogMediaDelete]', errMsg);
     res.status(400).json({ error: errMsg });
   }
 }

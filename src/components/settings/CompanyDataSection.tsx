@@ -5,11 +5,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SettingsSectionProps } from './types';
 import { getMyTenantCompany, putMyTenantCompany } from '@/services/tenantCompany';
-import { uploadCatalogImageFile } from '@/services/catalogMediaUpload';
+import {
+  deleteCatalogMediaFileByKey,
+  extractCatalogMediaRelativeKeyFromUrl,
+  normalizeCatalogMediaUrlForBrowser,
+  uploadCatalogImageFile,
+} from '@/services/catalogMediaUpload';
 import { toast } from '@/components/ui/sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import { useTenantBrand } from '@/contexts/TenantBrandContext';
-import { normalizeCatalogMediaUrlForBrowser } from '@/services/catalogMediaUpload';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 
 const empty = '';
@@ -33,6 +37,8 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
   const [logoDarkUrl, setLogoDarkUrl] = useState<string | null>(null);
   const [uploadingLight, setUploadingLight] = useState(false);
   const [uploadingDark, setUploadingDark] = useState(false);
+  const [removingLight, setRemovingLight] = useState(false);
+  const [removingDark, setRemovingDark] = useState(false);
 
   const lightInputRef = useRef<HTMLInputElement>(null);
   const darkInputRef = useRef<HTMLInputElement>(null);
@@ -71,9 +77,10 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
   const uploadLogo = async (file: File, variant: 'light' | 'dark') => {
     const scope = variant === 'light' ? 'tenant_logo_light' : 'tenant_logo_dark';
     const setUpload = variant === 'light' ? setUploadingLight : setUploadingDark;
+    const previousUrl = variant === 'light' ? logoLightUrl : logoDarkUrl;
     setUpload(true);
     try {
-      const url = await uploadCatalogImageFile(file, scope);
+      const url = await uploadCatalogImageFile(file, scope, { previousUrl });
       if (variant === 'light') setLogoLightUrl(url);
       else setLogoDarkUrl(url);
       toast.success(variant === 'light' ? 'Logo (tema claro) carregada.' : 'Logo (tema escuro) carregada.');
@@ -81,6 +88,53 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
       toast.error(e instanceof Error ? e.message : 'Falha no upload');
     } finally {
       setUpload(false);
+    }
+  };
+
+  const removeLogo = async (variant: 'light' | 'dark') => {
+    if (!canSave) {
+      toast.error('Sem permissão para alterar configurações.');
+      return;
+    }
+    const url = variant === 'light' ? logoLightUrl : logoDarkUrl;
+    if (!url) return;
+    const setRemove = variant === 'light' ? setRemovingLight : setRemovingDark;
+    setRemove(true);
+    try {
+      const key = extractCatalogMediaRelativeKeyFromUrl(url);
+      if (key) {
+        try {
+          await deleteCatalogMediaFileByKey(key);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'Falha ao remover ficheiro no servidor.');
+          return;
+        }
+      }
+      const nextLight = variant === 'light' ? null : logoLightUrl;
+      const nextDark = variant === 'dark' ? null : logoDarkUrl;
+      const res = await putMyTenantCompany({
+        name: name.trim(),
+        cpf_cnpj: cpfCnpj.trim() || null,
+        billing_phone: phone.trim() || null,
+        company_whatsapp: whatsapp.trim() || null,
+        company_address_line: address.trim() || null,
+        company_city: city.trim() || null,
+        company_state: state.trim() || null,
+        company_postal_code: zipCode.trim() || null,
+        logo_light_url: nextLight,
+        logo_dark_url: nextDark,
+      });
+      if (res.error) {
+        toast.error(res.error);
+        return;
+      }
+      if (variant === 'light') setLogoLightUrl(null);
+      else setLogoDarkUrl(null);
+      toast.success(variant === 'light' ? 'Logo (tema claro) removida.' : 'Logo (tema escuro) removida.');
+      await refreshBrand();
+      await load();
+    } finally {
+      setRemove(false);
     }
   };
 
@@ -229,8 +283,20 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
                   }}
                 />
                 {logoLightUrl ? (
-                  <div className="mb-3 flex justify-center">
+                  <div className="relative mb-3 flex justify-center">
                     <img src={logoLightUrl} alt="Logo tema claro" className="max-h-20 max-w-full object-contain" />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      className="absolute right-0 top-0 h-7 w-7 shrink-0 rounded-full border shadow-sm"
+                      disabled={!canSave || removingLight}
+                      title="Remover logo"
+                      aria-label="Remover logo tema claro"
+                      onClick={() => void removeLogo('light')}
+                    >
+                      {removingLight ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                    </Button>
                   </div>
                 ) : null}
                 <Button
@@ -261,8 +327,20 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
                   }}
                 />
                 {logoDarkUrl ? (
-                  <div className="mb-3 flex justify-center rounded-md bg-muted/80 p-2">
+                  <div className="relative mb-3 flex justify-center rounded-md bg-muted/80 p-2">
                     <img src={logoDarkUrl} alt="Logo tema escuro" className="max-h-20 max-w-full object-contain" />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      className="absolute right-1 top-1 h-7 w-7 shrink-0 rounded-full border shadow-sm"
+                      disabled={!canSave || removingDark}
+                      title="Remover logo"
+                      aria-label="Remover logo tema escuro"
+                      onClick={() => void removeLogo('dark')}
+                    >
+                      {removingDark ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                    </Button>
                   </div>
                 ) : null}
                 <Button

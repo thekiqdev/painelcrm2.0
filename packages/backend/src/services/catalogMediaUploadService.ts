@@ -104,3 +104,51 @@ export async function saveCatalogMediaBuffer(relativeKey: string, buffer: Buffer
   await fs.writeFile(resolvedFile, buffer);
   return relativeKey;
 }
+
+const KNOWN_SCOPES: CatalogMediaScope[] = [
+  'product',
+  'store_logo',
+  'store_banner',
+  'tenant_logo_light',
+  'tenant_logo_dark',
+];
+
+/** Valida estrutura tenants/{tid}/users/{uid}/{scope}/... */
+export function isCatalogMediaKeyOwnedByTenantUser(
+  relativeKey: string,
+  tenantId: string | null,
+  userId: string,
+): boolean {
+  const parts = relativeKey.split('/').filter(Boolean);
+  if (parts.length < 5) return false;
+  if (parts[0] !== 'tenants') return false;
+  const tid = tenantId || 'no-tenant';
+  if (parts[1] !== tid) return false;
+  if (parts[2] !== 'users' || parts[3] !== userId) return false;
+  return KNOWN_SCOPES.includes(parts[4] as CatalogMediaScope);
+}
+
+export function getScopeFromCatalogMediaKey(relativeKey: string): CatalogMediaScope | null {
+  const parts = relativeKey.split('/').filter(Boolean);
+  if (parts.length < 5 || parts[0] !== 'tenants' || parts[2] !== 'users') return null;
+  const s = parts[4] as CatalogMediaScope;
+  return KNOWN_SCOPES.includes(s) ? s : null;
+}
+
+/** Remove ficheiro sob catalog-media se existir (ENOENT ignorado). */
+export async function unlinkCatalogMediaRelativeKey(relativeKey: string): Promise<void> {
+  const root = getCatalogMediaStorageRoot();
+  const abs = path.join(root, relativeKey);
+  const resolvedRoot = path.resolve(root);
+  const resolvedFile = path.resolve(abs);
+  if (!resolvedFile.startsWith(resolvedRoot + path.sep) && resolvedFile !== resolvedRoot) {
+    throw new Error('Caminho de arquivo inválido.');
+  }
+  try {
+    await fs.unlink(resolvedFile);
+  } catch (e) {
+    const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as NodeJS.ErrnoException).code) : '';
+    if (code === 'ENOENT') return;
+    throw e;
+  }
+}
