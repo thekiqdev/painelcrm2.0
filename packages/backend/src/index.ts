@@ -143,6 +143,14 @@ try {
       dotfiles: 'deny',
     })
   );
+  app.use(
+    '/api/catalog-media/public',
+    express.static(catalogMediaDir, {
+      maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
+      index: false,
+      dotfiles: 'deny',
+    })
+  );
 } catch (e) {
   console.error('[catalog-media] Falha ao preparar diretório estático:', e);
 }
@@ -233,6 +241,7 @@ const limiter = rateLimit({
     // Não contar rotas de auth no limite geral (têm seu próprio authLimiter)
     return p.startsWith('/api/auth/') || p.startsWith('auth/') ||
            p.startsWith('/api/store-checkout') ||
+           p.includes('/catalog-media/public/') ||
            p.includes('/test') || p.startsWith('/webhooks/') || p.startsWith('webhooks/');
   },
   standardHeaders: true,

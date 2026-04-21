@@ -43,7 +43,7 @@ function sanitizeFilename(name: string): string {
 }
 
 /**
- * Caminho relativo ao diretório catalog-media (sem path absoluto). Usado na URL /media/catalog/...
+ * Caminho relativo ao diretório catalog-media (sem path absoluto). URL pública: /api/catalog-media/public/... (e legado /media/catalog/...).
  */
 export function buildCatalogMediaRelativeKey(params: {
   tenantId: string | null;
@@ -110,7 +110,8 @@ export function buildCatalogMediaPublicUrl(req: Request, relativeKey: string): s
     .split('/')
     .map((seg) => encodeURIComponent(seg))
     .join('/');
-  return `${origin}/media/catalog/${safeKey}`;
+  /** Mesmo prefixo que o mount em index.ts: atrás de nginx só /api costuma ir para o Node. */
+  return `${origin}/api/catalog-media/public/${safeKey}`;
 }
 
 export async function saveCatalogMediaBuffer(relativeKey: string, buffer: Buffer): Promise<string> {

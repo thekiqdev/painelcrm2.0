@@ -1,14 +1,15 @@
 import { apiClient, getApiUrl } from '@/integrations/api/client';
+import { rewriteLegacyCatalogMediaPath } from '@/utils/catalogMediaPublicPath';
 import { normalizeBrandUrl } from '@/utils/tenantBranding';
 
 /**
  * Ajusta a URL devolvida pelo upload para o browser:
  * - força https quando a página é https (URLs antigas gravadas como http);
- * - em produção com API no mesmo host (base relativa), usa path `/media/catalog/...`
- *   para o pedido seguir o mesmo proxy que `/api` (evita 404 se a origem absoluta estiver errada).
+ * - em produção com API no mesmo host (base relativa), usa path relativo sob `/api/catalog-media/public/...`
+ *   para o pedido seguir o mesmo proxy que `/api` (nginx do SPA costuma não servir /media/catalog).
  */
 export function normalizeCatalogMediaUrlForBrowser(publicUrl: string): string {
-  const fixed = normalizeBrandUrl(publicUrl.trim());
+  const fixed = rewriteLegacyCatalogMediaPath(normalizeBrandUrl(publicUrl.trim()));
   if (!fixed || typeof window === 'undefined') return fixed;
   try {
     const apiBase = getApiUrl();

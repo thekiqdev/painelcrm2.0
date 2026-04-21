@@ -1,3 +1,5 @@
+import { rewriteLegacyCatalogMediaPath } from '@/utils/catalogMediaPublicPath';
+
 /**
  * Escolhe a URL da logo do tenant conforme o tema, com fallbacks seguros.
  * Centralizado para evitar duplicação (sidebar, header, etc.).
@@ -13,15 +15,15 @@ export type TenantBrandUrls = {
 export function normalizeBrandUrl(raw: string): string {
   const value = raw.trim();
   if (!value) return '';
-  if (typeof window === 'undefined') return value;
-  if (window.location.protocol !== 'https:') return value;
+  if (typeof window === 'undefined') return rewriteLegacyCatalogMediaPath(value);
+  if (window.location.protocol !== 'https:') return rewriteLegacyCatalogMediaPath(value);
   try {
     const u = new URL(value, window.location.origin);
     // Evita mixed content quando backend gravou http por proxy/protocolo incorreto.
     if (u.protocol === 'http:') u.protocol = 'https:';
-    return u.toString();
+    return rewriteLegacyCatalogMediaPath(u.toString());
   } catch {
-    return value;
+    return rewriteLegacyCatalogMediaPath(value);
   }
 }
 
