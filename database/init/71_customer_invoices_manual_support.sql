@@ -14,7 +14,7 @@ ALTER TABLE public.customer_invoices
   ALTER COLUMN period_start DROP NOT NULL,
   ALTER COLUMN period_end DROP NOT NULL;
 
--- 3) Ajustar CHECK de status (incluir failed, refunded)
+-- 3) Ajustar CHECK de status (alinhar a 75_payment_status_check_multi_gateway.sql: 8 valores internos)
 DO $$
 DECLARE
   conname text;
@@ -30,9 +30,29 @@ BEGIN
   END IF;
 END $$;
 
+-- Dados legados / fora do domínio (ex.: valores de 75 ou inserts sem CHECK) → pending
+UPDATE public.customer_invoices
+SET status = 'pending'
+WHERE status IS NULL
+   OR btrim(status::text) = ''
+   OR lower(btrim(status::text)) NOT IN (
+     'pending', 'waiting_payment', 'processing', 'paid', 'overdue',
+     'cancelled', 'failed', 'refunded'
+   );
+
+-- Canonicalizar capitalização para o CHECK literal (ex.: Paid → paid)
+UPDATE public.customer_invoices
+SET status = lower(btrim(status::text))
+WHERE status IS NOT NULL
+  AND lower(btrim(status::text)) IN (
+    'pending', 'waiting_payment', 'processing', 'paid', 'overdue',
+    'cancelled', 'failed', 'refunded'
+  )
+  AND status <> lower(btrim(status::text));
+
 ALTER TABLE public.customer_invoices
   ADD CONSTRAINT customer_invoices_status_check
-  CHECK (status IN ('pending', 'paid', 'overdue', 'cancelled', 'failed', 'refunded'));
+  CHECK (status IN ('pending', 'waiting_payment', 'processing', 'paid', 'overdue', 'cancelled', 'failed', 'refunded'));
 
 -- 4) CHECK de origin e invoice_type
 ALTER TABLE public.customer_invoices

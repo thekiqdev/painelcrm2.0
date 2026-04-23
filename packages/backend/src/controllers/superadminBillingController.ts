@@ -5,6 +5,10 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
 import { getBillingSettings, updateBillingSettings } from '../services/billingSettingsService.js';
+import {
+  getBillingRecurringJobsStatusSummary,
+  listBillingRecurringJobsForOps,
+} from '../services/billingRecurringJobsOpsService.js';
 import { z } from 'zod';
 
 /** GET /api/superadmin/billing/subscriptions – assinaturas ativas (saas). */
@@ -87,6 +91,28 @@ const updateSettingsSchema = z.object({
   grace_period_days: z.number().int().min(0).max(90).optional(),
   auto_suspend_enabled: z.boolean().optional(),
 });
+
+/** GET /api/superadmin/billing/recurring-jobs — diagnóstico operacional (CRM + SaaS). */
+export async function getBillingRecurringJobsOps(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const limit = Math.min(500, Math.max(1, parseInt(String(req.query.limit || 100), 10) || 100));
+    const windowDays = Math.min(365, Math.max(1, parseInt(String(req.query.window_days || 30), 10) || 30));
+    const sinceDaysRaw = req.query.since_days;
+    const sinceDays =
+      sinceDaysRaw === undefined || sinceDaysRaw === ''
+        ? null
+        : Math.min(365, Math.max(1, parseInt(String(sinceDaysRaw), 10) || 30));
+    const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const [summary, jobs] = await Promise.all([
+      getBillingRecurringJobsStatusSummary(windowDays),
+      listBillingRecurringJobsForOps({ limit, status, since_days: sinceDays }),
+    ]);
+    res.json({ summary, jobs, query: { limit, window_days: windowDays, since_days: sinceDays, status } });
+  } catch (e: any) {
+    console.error('[getBillingRecurringJobsOps]', e);
+    res.status(500).json({ error: e.message || 'Erro ao listar jobs de recorrência' });
+  }
+}
 
 /** PUT /api/superadmin/billing/settings – atualizar configurações de cobrança. */
 export async function putBillingSettingsHandler(req: AuthRequest, res: Response): Promise<void> {

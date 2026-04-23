@@ -14,6 +14,7 @@ import { isProposalDescriptionHtml, sanitizeProposalHtml } from "@/utils/proposa
 import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
 import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
 import { useTheme } from "next-themes";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 export interface PublicProposalItem {
   description: string;
@@ -86,14 +87,7 @@ const PublicProposalView = () => {
   const formatCurrency = (n: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
 
-  const formatDate = (iso: string | null | undefined) => {
-    if (!iso) return "—";
-    try {
-      return new Date(iso).toLocaleDateString("pt-BR");
-    } catch {
-      return iso;
-    }
-  };
+  const formatDate = (iso: string | null | undefined) => formatDateOnlyPtBr(iso);
 
   const handleAccept = async () => {
     const t = token?.trim();

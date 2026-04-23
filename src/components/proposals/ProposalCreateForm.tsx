@@ -24,6 +24,7 @@ import type { Product } from "@/types/products";
 import { fetchFunnels } from "@/services/funnels";
 import type { SalesFunnel } from "@/components/funnel/types";
 import { format } from "date-fns";
+import { formatDateOnlyIsoInput } from "@/utils/formatCalendarDate";
 import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
@@ -51,6 +52,13 @@ export interface ProposalCreateFormProps {
    * Quando definido (ex.: `?from=client` na rota `/proposals/new`), o cabeçalho oferece voltar ao perfil do cliente.
    */
   clientReturnPath?: string | null;
+  /**
+   * Quando true (ex.: abertura a partir do perfil do cliente com `?from=client`), o cliente não pode ser alterado.
+   * Outros fluxos (lista, chat) continuam sem este bloqueio.
+   */
+  lockClientPicker?: boolean;
+  /** Perfil do lead (`?from=lead`): lead pré-preenchido e não editável. */
+  lockLeadPicker?: boolean;
   onBack?: () => void;
   /**
    * Quando definido (ex.: chat), substitui toast+navegação padrão após criar.
@@ -64,9 +72,7 @@ export interface ProposalCreateFormProps {
 }
 
 function normalizeValidUntilForInput(v: string | null | undefined): string {
-  if (!v) return "";
-  const d = String(v).trim().slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
+  return formatDateOnlyIsoInput(v);
 }
 
 function ProposalCreateForm({
@@ -76,6 +82,8 @@ function ProposalCreateForm({
   initialLeadName = null,
   initialTitle = "",
   clientReturnPath = null,
+  lockClientPicker = false,
+  lockLeadPicker = false,
   initialTemplateProposalId = null,
   onBack,
   onCreated,
@@ -102,20 +110,22 @@ function ProposalCreateForm({
   const [standaloneAmount, setStandaloneAmount] = useState("");
   const templateAppliedForIdRef = useRef<string | null>(null);
 
-  /** Perfil do cliente (`from=client`): só vínculo CRM; sem alternar para lead. */
-  const lockToClientOnly = Boolean(initialClientId?.trim());
+  /** Cliente ou lead vindos do perfil: esconde alternância Cliente/Lead. */
+  const hideRecipientToggle = Boolean(initialClientId?.trim()) || Boolean(lockLeadPicker);
 
   const [contactMode, setContactMode] = useState<"client" | "lead">(() =>
-    lockToClientOnly ? "client" : initialLeadId?.trim() ? "lead" : "client",
+    initialClientId?.trim() ? "client" : initialLeadId?.trim() ? "lead" : "client",
   );
 
   useEffect(() => {
-    if (lockToClientOnly) {
+    if (initialClientId?.trim()) {
       setContactMode("client");
+    } else if (lockLeadPicker && initialLeadId?.trim()) {
+      setContactMode("lead");
     } else if (initialLeadId?.trim()) {
       setContactMode("lead");
     }
-  }, [lockToClientOnly, initialLeadId]);
+  }, [initialClientId, initialLeadId, lockLeadPicker]);
 
   useEffect(() => {
     const cid = initialClientId?.trim();
@@ -341,11 +351,19 @@ function ProposalCreateForm({
       const created = await proposalsService.createProposal(buildCreatePayload("sent"));
       afterSuccessfulCreate(created, "sent");
     } catch (e) {
+      const withProposal = e as Error & { code?: string; proposal?: Proposal };
+      if (withProposal.code === "PROPOSAL_SENT_REQUIRES_PUBLIC_LINK" && withProposal.proposal?.id) {
+        toast.message("Proposta guardada como rascunho", {
+          description: withProposal.message,
+        });
+        navigate(`/proposals/${withProposal.proposal.id}`);
+        return;
+      }
       toast.error(e instanceof Error ? e.message : "Erro ao criar proposta");
     } finally {
       setSaving(false);
     }
-  }, [validateBeforeCreate, buildCreatePayload, afterSuccessfulCreate]);
+  }, [validateBeforeCreate, buildCreatePayload, afterSuccessfulCreate, navigate]);
 
   const saveDraft = useCallback(async () => {
     if (!validateBeforeCreate()) return;
@@ -447,7 +465,7 @@ function ProposalCreateForm({
               />
             </div>
             <div className="space-y-2">
-              {!lockToClientOnly ? (
+              {!hideRecipientToggle ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-md border border-border/80 bg-muted/20 px-3 py-2">
                   <span className="text-sm font-medium text-foreground">Destinatário</span>
                   <ToggleGroup
@@ -475,24 +493,36 @@ function ProposalCreateForm({
                   </ToggleGroup>
                 </div>
               ) : null}
-              {lockToClientOnly || contactMode === "client" ? (
+              {hideRecipientToggle || contactMode === "client" ? (
                 <ClientSearchCombobox
                   id="np-client"
-                  label="Cliente CRM"
+                  label={lockClientPicker ? "Cliente CRM (fixo)" : "Cliente CRM"}
                   value={clientId}
                   onChange={handleClientChange}
+                  disabled={lockClientPicker}
                   remoteSearch
                   placeholderTrigger="Buscar cliente (nome, e-mail, telefone...)"
                 />
               ) : (
                 <LeadSearchCombobox
                   id="np-lead"
-                  label="Lead"
+                  label={lockLeadPicker ? "Lead (fixo)" : "Lead"}
                   value={leadId}
                   onChange={handleLeadChange}
+                  disabled={lockLeadPicker}
                   placeholderTrigger="Buscar lead (nome, e-mail, telefone...)"
                 />
               )}
+              {lockClientPicker ? (
+                <p className="text-xs text-muted-foreground">
+                  Proposta para o cliente aberto no perfil; o destinatário não pode ser alterado neste fluxo.
+                </p>
+              ) : null}
+              {lockLeadPicker ? (
+                <p className="text-xs text-muted-foreground">
+                  Proposta para o lead aberto no perfil; o destinatário não pode ser alterado neste fluxo.
+                </p>
+              ) : null}
               {isLeadOnly ? (
                 <p className="text-xs text-muted-foreground">
                   Proposta vinculada ao lead (sem cliente CRM). A opção de fatura automática após aceite fica

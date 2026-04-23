@@ -1,19 +1,13 @@
 import type { Deal, SalesFunnel } from "@/components/funnel/types";
 import type { Proposal } from "@/services/proposals";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 function formatBRL(n: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
 }
 
 function formatDatePt(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString("pt-BR");
-  } catch {
-    return "—";
-  }
+  return formatDateOnlyPtBr(iso);
 }
 
 function statusToProbability(status: Proposal["status"]): number {

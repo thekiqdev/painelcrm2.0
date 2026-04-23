@@ -159,7 +159,20 @@ export const proposalsService = {
       items: proposal.items || [],
       post_accept_billing_mode: proposal.post_accept_billing_mode,
     });
-    if (response.error) throw new Error(response.error);
+    if (response.error) {
+      const det = response.details as { proposal?: Proposal; status?: number } | undefined;
+      if (
+        response.code === 'PROPOSAL_SENT_REQUIRES_PUBLIC_LINK' &&
+        det?.proposal &&
+        typeof det.proposal.id === 'string'
+      ) {
+        const err = new Error(response.error) as Error & { code: string; proposal: Proposal };
+        err.code = response.code;
+        err.proposal = det.proposal;
+        throw err;
+      }
+      throw new Error(response.error);
+    }
     if (!response.data) throw new Error('Erro ao criar proposta');
     return response.data;
   },

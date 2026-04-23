@@ -13,6 +13,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { proposalsService, type Proposal } from "@/services/proposals";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import {
@@ -361,7 +362,7 @@ const Proposals = () => {
                       </span>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-sm text-muted-foreground whitespace-nowrap">
-                      {p.valid_until ? format(new Date(p.valid_until), "dd/MM/yyyy") : "—"}
+                      {p.valid_until ? formatDateOnlyPtBr(p.valid_until) : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-sm font-medium">
                       {formatCurrency(p.amount)}

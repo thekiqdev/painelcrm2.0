@@ -23,11 +23,11 @@ import {
   PostAcceptBillingMode,
 } from "@/services/proposals";
 import { clientsService } from "@/services/clients";
-import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
 import { ProposalItemsEditor, summarizeProposalLines } from "@/components/proposals/ProposalItemsEditor";
 import { productsService } from "@/services/products";
 import type { Product } from "@/types/products";
 import { format } from "date-fns";
+import { formatDateOnlyIsoInput, formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -93,7 +93,7 @@ const ProposalDetails = () => {
       setDescriptionDraft(proposalData.description ?? "");
       setItemsDraft(Array.isArray(proposalData.items) ? proposalData.items : []);
       const due = proposalData.valid_until
-        ? format(new Date(proposalData.valid_until), "yyyy-MM-dd")
+        ? formatDateOnlyIsoInput(proposalData.valid_until) || format(new Date(), "yyyy-MM-dd")
         : format(new Date(), "yyyy-MM-dd");
       setDueDate(due);
 
@@ -103,6 +103,10 @@ const ProposalDetails = () => {
         const clients = await clientsService.getClients();
         const client = clients.find((c) => c.id === proposalData.client_id);
         setClientName(client?.name || "Cliente não encontrado");
+      } else if (proposalData.lead_name?.trim()) {
+        setClientName(proposalData.lead_name.trim());
+      } else if (proposalData.lead_id) {
+        setClientName("Lead vinculado");
       } else {
         setClientName("—");
       }
@@ -313,17 +317,6 @@ const ProposalDetails = () => {
     }
   };
 
-  const handleClientChange = async (nextId: string | null) => {
-    if (!proposal) return;
-    try {
-      await proposalsService.updateProposal(proposal.id, { client_id: nextId });
-      toast.success("Cliente atualizado.");
-      await fetchProposal();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível atualizar o cliente.");
-    }
-  };
-
   const handleSaveItems = async () => {
     if (!proposal) return;
     setItemsSaving(true);
@@ -440,6 +433,9 @@ const ProposalDetails = () => {
     !isInvoiced &&
     (proposal.status === "draft" || proposal.status === "sent");
 
+  /** Itens/valores ainda editáveis em rascunho ou enviada; cliente/lead são imutáveis após criação. */
+  const canEditProposalItems = canEditCommercialLines;
+
   const canEditDescription = !!canEditThis && !isInvoiced;
 
   /** Link revogado (`active === false`) bloqueia; falha ao carregar meta não bloqueia se já há URL válida. */
@@ -474,7 +470,9 @@ const ProposalDetails = () => {
           </Button>
           <div className="min-w-0">
             <h1 className="text-2xl font-bold truncate">{proposal.title}</h1>
-            <p className="text-sm text-muted-foreground truncate">{clientName}</p>
+            <p className="text-sm text-muted-foreground truncate">
+              {proposal.client_id ? clientName : proposal.lead_id ? `Lead: ${clientName}` : clientName}
+            </p>
           </div>
         </div>
 
@@ -568,19 +566,13 @@ const ProposalDetails = () => {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Cliente</p>
-                {canEditCommercialLines ? (
-                  <ClientSearchCombobox
-                    id="proposal-client-edit"
-                    value={proposal.client_id ?? null}
-                    onChange={(id) => void handleClientChange(id)}
-                    remoteSearch
-                    selectedLabel={clientName !== "—" ? clientName : undefined}
-                    placeholderTrigger="Buscar ou alterar cliente..."
-                  />
-                ) : (
-                  <p className="font-medium">{clientName}</p>
-                )}
+                <p className="text-sm text-muted-foreground">
+                  {proposal.client_id ? "Cliente CRM" : proposal.lead_id ? "Lead" : "Destinatário"}
+                </p>
+                <p className="font-medium">{clientName !== "—" ? clientName : "—"}</p>
+                <p className="text-xs text-muted-foreground">
+                  O vínculo com cliente ou lead não pode ser alterado após a criação da proposta.
+                </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-1">
@@ -594,7 +586,7 @@ const ProposalDetails = () => {
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Validade</p>
                   <p className="font-medium">
-                    {proposal.valid_until ? format(new Date(proposal.valid_until), "dd/MM/yyyy") : "—"}
+                    {proposal.valid_until ? formatDateOnlyPtBr(proposal.valid_until) : "—"}
                   </p>
                 </div>
               </div>
@@ -603,7 +595,7 @@ const ProposalDetails = () => {
                 {proposal.sent_date && (
                   <div>
                     <span className="text-muted-foreground">Enviada em: </span>
-                    {format(new Date(proposal.sent_date), "dd/MM/yyyy")}
+                    {formatDateOnlyPtBr(proposal.sent_date)}
                   </div>
                 )}
                 <div>
@@ -656,7 +648,7 @@ const ProposalDetails = () => {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <CardTitle className="text-lg">Itens / serviços</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {canEditCommercialLines ? (
+                  {canEditProposalItems ? (
                     <>
                       Rascunho: subtotal {formatCurrency(itemsDraftSummary.gross)} · total previsto{" "}
                       {formatCurrency(itemsDraftSummary.total)} · gravado: {formatCurrency(proposal.amount)}
@@ -670,7 +662,7 @@ const ProposalDetails = () => {
               </div>
             </CardHeader>
             <CardContent>
-              {canEditCommercialLines && (
+              {canEditProposalItems && (
                 <div className="mb-4 space-y-3 rounded-lg border bg-muted/20 p-4">
                   <ProposalItemsEditor items={itemsDraft} onChange={setItemsDraft} catalog={catalog} />
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
@@ -688,7 +680,7 @@ const ProposalDetails = () => {
                   </div>
                 </div>
               )}
-              {!canEditCommercialLines && (
+              {!canEditProposalItems && (
                 <div className="rounded-md border overflow-x-auto">
                   <div className="min-w-[640px]">
                     <div className="grid grid-cols-12 bg-muted px-4 py-2 text-xs sm:text-sm font-medium gap-2">

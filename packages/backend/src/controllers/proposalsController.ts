@@ -9,11 +9,13 @@ import { insertProposalTimelineEvent, listProposalTimelineEvents } from '../serv
 import { runProposalKanbanAcceptAutomation } from '../services/proposalKanbanAcceptAutomationService.js';
 import { issueNewPublicTokenForProposal } from '../services/proposalPublicViewService.js';
 import {
+  buildAbsoluteProposalPublicLinkUrl,
   decryptProposalPublicLinkToken,
   proposalPublicLinkPathFromRawToken,
   saveProposalPublicLinkCiphertext,
 } from '../services/proposalPublicLinkCrmStore.js';
 import { PreconditionFailedError } from '../services/customerBillingService.js';
+import { runProposalNotificationAfterStatusChangeNow } from '../services/notificationsEngine/businessTransactionalNotifications.js';
 
 const paymentMethodSchema = z.enum(['PIX', 'BOLETO', 'CREDIT_CARD']);
 
@@ -60,6 +62,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function isUuidParam(value: string | undefined): boolean {
   return typeof value === 'string' && UUID_RE.test(value.trim());
+}
+
+function normalizeProposalContactId(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s.length > 0 ? s : null;
 }
 
 /** Qual extensão de schema em `proposals` falhou (migração parcial). */
@@ -550,6 +558,8 @@ export const createProposal = async (req: Request, res: Response) => {
 
     // Link público nativo no create: pronto para compartilhar (chat/kanban) sem passo manual de "gerar link".
     let public_link_path: string | null = null;
+    /** Passado ao motor quando o ciphertext não é gravado (sem PROPOSAL_WEBHOOK_SECRET_KEY), para o mesmo token da resposta HTTP. */
+    let resolvedPublicProposalUrlForNotify: string | undefined;
     if (tenantId && newProposalId) {
       try {
         const { rawToken } = await issueNewPublicTokenForProposal({
@@ -557,6 +567,7 @@ export const createProposal = async (req: Request, res: Response) => {
           tenantId,
         });
         public_link_path = proposalPublicLinkPathFromRawToken(rawToken);
+        resolvedPublicProposalUrlForNotify = buildAbsoluteProposalPublicLinkUrl(rawToken);
         try {
           await saveProposalPublicLinkCiphertext(newProposalId, rawToken);
         } catch (saveErr: unknown) {
@@ -570,6 +581,42 @@ export const createProposal = async (req: Request, res: Response) => {
         }
       } catch (e: unknown) {
         console.error('[createProposal] auto public link:', e);
+      }
+    }
+
+    // «Enviar proposta»: só publica proposal.sent depois de link público válido (path + URL de merge).
+    if (tenantId && validated.status === 'sent') {
+      const linkOk =
+        Boolean(public_link_path?.trim()) && Boolean(resolvedPublicProposalUrlForNotify?.trim());
+      if (!linkOk) {
+        await pool.query(`UPDATE proposals SET status = 'draft', sent_date = NULL WHERE id = $1`, [newProposalId]);
+        const proposalAsDraft = mapProposalRow({
+          ...insertedRow,
+          status: 'draft',
+          sent_date: null,
+        } as Record<string, unknown>);
+        return res.status(422).json({
+          error:
+            'Não foi possível gerar o link público obrigatório para enviar a proposta. Ela foi mantida como rascunho; corrija o ambiente (ex.: tenant, tabela de tokens) e tente enviar novamente.',
+          code: 'PROPOSAL_SENT_REQUIRES_PUBLIC_LINK',
+          details: {
+            proposal: proposalAsDraft,
+            public_link_path: null,
+          },
+        });
+      }
+      try {
+        await runProposalNotificationAfterStatusChangeNow({
+          pool,
+          tenantId,
+          proposalId: newProposalId,
+          eventKey: 'proposal.sent',
+          actorUserId: userId,
+          actor: { type: 'user', user_id: userId },
+          resolvedPublicProposalUrl: resolvedPublicProposalUrlForNotify,
+        });
+      } catch (notifyErr) {
+        console.error('[createProposal] proposal.sent (motor):', notifyErr);
       }
     }
 
@@ -615,6 +662,27 @@ export const updateProposal = async (req: Request, res: Response) => {
 
     const cur = existing.rows[0];
     const validated = proposalPatchSchema.parse(req.body);
+
+    const normCurClient = cur.client_id ? String(cur.client_id).trim() : null;
+    const normCurLead = cur.lead_id ? String(cur.lead_id).trim() : null;
+    if (validated.client_id !== undefined) {
+      const nv = normalizeProposalContactId(validated.client_id);
+      if (nv !== normCurClient) {
+        return res.status(409).json({
+          error: 'Não é permitido alterar o cliente CRM vinculado após a criação da proposta.',
+          code: 'PROPOSAL_CLIENT_IMMUTABLE',
+        });
+      }
+    }
+    if (validated.lead_id !== undefined) {
+      const nv = normalizeProposalContactId(validated.lead_id);
+      if (nv !== normCurLead) {
+        return res.status(409).json({
+          error: 'Não é permitido alterar o lead vinculado após a criação da proposta.',
+          code: 'PROPOSAL_LEAD_IMMUTABLE',
+        });
+      }
+    }
 
     if (cur.converted_invoice_id != null || cur.status === 'invoiced') {
       return res.status(409).json({ error: 'Proposta já faturada; não é possível alterar.' });
@@ -799,6 +867,42 @@ export const updateProposal = async (req: Request, res: Response) => {
         const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
         if (code !== '42P01') {
           console.error('[updateProposal] timeline insert failed:', e);
+        }
+      }
+
+      const tenantIdForNotify = (req as AuthRequest).tenantId;
+      if (tenantIdForNotify) {
+        try {
+          if (newStatus === 'sent' && oldStatus !== 'sent') {
+            await runProposalNotificationAfterStatusChangeNow({
+              pool,
+              tenantId: tenantIdForNotify,
+              proposalId: id,
+              eventKey: 'proposal.sent',
+              actorUserId: userId,
+              actor: { type: 'user', user_id: userId },
+            });
+          } else if (newStatus === 'accepted' && oldStatus !== 'accepted') {
+            await runProposalNotificationAfterStatusChangeNow({
+              pool,
+              tenantId: tenantIdForNotify,
+              proposalId: id,
+              eventKey: 'proposal.accepted',
+              actorUserId: userId,
+              actor: { type: 'user', user_id: userId },
+            });
+          } else if (newStatus === 'rejected' && oldStatus !== 'rejected') {
+            await runProposalNotificationAfterStatusChangeNow({
+              pool,
+              tenantId: tenantIdForNotify,
+              proposalId: id,
+              eventKey: 'proposal.rejected',
+              actorUserId: userId,
+              actor: { type: 'user', user_id: userId },
+            });
+          }
+        } catch (notifyErr) {
+          console.error('[updateProposal] notificação motor:', notifyErr);
         }
       }
     }

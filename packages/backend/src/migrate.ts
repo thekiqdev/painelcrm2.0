@@ -175,6 +175,16 @@ const order = [
   '128_proposal_templates.sql',
   /** Páginas públicas: funções SQL com logo clara/escura do tenant */
   '127_public_tenant_brand_sql_functions.sql',
+  /** Motor Central de Notificações — núcleo mínimo (Fase 2) */
+  '129_notifications_engine_core.sql',
+  /** Billing: outcome explícito em jobs de recorrência (Etapa 1 observabilidade) */
+  '130_billing_recurring_jobs_completion_outcome.sql',
+  /** Motor de notificações — retry básico + índices operacionais (Fase 4) */
+  '131_notifications_engine_retry_and_ops.sql',
+  /** Fase 1 — persistência de horário recorrência/notificação por tenant */
+  '137_tenant_billing_recurrence_preferences.sql',
+  /** Fase 4 — agendamento inicial outbound (dispatch_not_before) */
+  '138_notification_outbound_dispatch_not_before.sql',
   'create-admin-user.sql',
 ];
 

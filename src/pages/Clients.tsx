@@ -43,6 +43,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { format } from "date-fns";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
@@ -1361,7 +1362,7 @@ const Clients = () => {
                                       </span>
                                     </TableCell>
                                     <TableCell className="hidden sm:table-cell text-sm text-muted-foreground whitespace-nowrap">
-                                      {p.valid_until ? format(new Date(p.valid_until), "dd/MM/yyyy") : "—"}
+                                      {p.valid_until ? formatDateOnlyPtBr(p.valid_until) : "—"}
                                     </TableCell>
                                     <TableCell className="text-right tabular-nums text-sm font-medium">
                                       {formatDialogProposalCurrency(Number(p.amount) || 0)}

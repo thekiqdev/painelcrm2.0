@@ -17,6 +17,7 @@ import { computeCreationTenancyDates } from '../services/contractTenancyService.
 import { applyContractMergeFieldsToHtml } from '../utils/contractMergeFields.js';
 import { loadContractMergeEnrichment } from '../services/contractMergeContextLoader.js';
 import { z } from 'zod';
+import { publishContractSentNotifications } from '../services/notificationsEngine/businessTransactionalNotifications.js';
 
 const contractSchema = z.object({
   title: z.string().min(1),
@@ -578,6 +579,17 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
         });
       } catch (e) {
         console.error('bootstrapSignatureInvitesForContract:', e);
+      }
+
+      const tenantIdNotify = req.tenantId;
+      if (tenantIdNotify && signature_invite_bootstrap && signature_invite_bootstrap.length > 0) {
+        publishContractSentNotifications({
+          pool,
+          tenantId: tenantIdNotify,
+          contractId: id,
+          actorUserId: userId,
+          bootstrap: signature_invite_bootstrap,
+        });
       }
     }
 

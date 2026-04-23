@@ -70,12 +70,6 @@ export async function patchCustomerInvoiceWithGateway(
     throw new Error('Só é possível editar fatura pendente ou em cobrança');
   }
 
-  if (body.items !== undefined && inv.origin === 'subscription') {
-    throw new Error(
-      'Faturas geradas pela assinatura recorrente não permitem alterar itens por esta rota; cancele e crie uma nova se necessário.'
-    );
-  }
-
   const itemCountBefore = await countCustomerInvoiceItems(invoiceId, tenantId);
   if (body.items === undefined && body.amount_cents !== undefined && itemCountBefore > 0) {
     throw new Error(

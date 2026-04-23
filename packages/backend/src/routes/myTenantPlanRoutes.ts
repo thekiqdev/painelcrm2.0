@@ -9,6 +9,7 @@ import {
 } from '../controllers/planPurchaseController.js';
 import * as proposalWebhookSettingsController from '../controllers/proposalWebhookSettingsController.js';
 import * as myTenantCompanyController from '../controllers/myTenantCompanyController.js';
+import * as myTenantBillingPreferencesController from '../controllers/myTenantBillingPreferencesController.js';
 
 const router = Router();
 
@@ -42,6 +43,8 @@ router.post('/payment-gateway/disable', ...tenantAuth, myTenantPaymentGatewayCon
 
 router.get('/company', ...tenantAuthCrm, myTenantCompanyController.getMyTenantCompany);
 router.put('/company', ...tenantAuthCrm, myTenantCompanyController.putMyTenantCompany);
+router.get('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.getMyTenantBillingPreferences);
+router.put('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.putMyTenantBillingPreferences);
 
 router.get('/limits', ...tenantAuth, myTenantPlanController.getMyTenantLimits);
 router.get('/roles', ...tenantAuth, myTenantPlanController.getMyTenantRoles);

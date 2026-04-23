@@ -49,6 +49,7 @@ import chatKanbanRoutes from './routes/chatKanbanRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
+import notificationsEngineRoutes from './routes/notificationsEngineRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
 import tenantChatTemplatesRoutes from './routes/tenantChatTemplatesRoutes.js';
 import whatsappTemplateCategoriesRoutes from './routes/whatsappTemplateCategoriesRoutes.js';
@@ -71,6 +72,13 @@ import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
 import { processDueKanbanScheduledMovesBatch } from './services/kanbanScheduledMoveService.js';
 import { processProposalWebhookDeliveriesBatch } from './services/proposalWebhookDeliveryService.js';
+import { processNotificationOutboundRetriesBatch } from './services/notificationsEngine/notificationOutboundRetryWorker.js';
+import {
+  getNotificationsEngineOutboundRetryPollMs,
+  getNotificationsEngineInvoiceDigestPollMs,
+  isNotificationsEngineInvoiceDigestEnabled,
+} from './config/notificationsEngineEnv.js';
+import { runInvoiceDigestTickSafe } from './services/notificationsEngine/notificationInvoiceDigestWorker.js';
 import { initializeWebSocket } from './services/websocketService.js';
 import { getCatalogMediaStorageRoot } from './services/catalogMediaUploadService.js';
 import {
@@ -355,6 +363,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/chat/kanban', chatKanbanRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/notifications-engine', notificationsEngineRoutes);
 app.use('/api/message-templates', messageTemplatesRoutes);
 app.use('/api/tenant-chat-templates', tenantChatTemplatesRoutes);
 app.use('/api/whatsapp-template-categories', whatsappTemplateCategoriesRoutes);
@@ -438,6 +447,20 @@ httpServer.listen(PORT, '0.0.0.0', () => {
       console.error('[proposalWebhookDelivery] batch error', err),
     );
   }, proposalWhPollMs);
+
+  const neRetryPollMs = getNotificationsEngineOutboundRetryPollMs();
+  setInterval(() => {
+    void processNotificationOutboundRetriesBatch(25).catch((err) =>
+      console.error('[notifications-engine/retry] batch error', err),
+    );
+  }, neRetryPollMs);
+
+  if (isNotificationsEngineInvoiceDigestEnabled()) {
+    const digestMs = getNotificationsEngineInvoiceDigestPollMs();
+    setInterval(() => {
+      void runInvoiceDigestTickSafe();
+    }, digestMs);
+  }
 });
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {

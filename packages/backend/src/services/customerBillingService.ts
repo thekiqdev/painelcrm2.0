@@ -172,6 +172,8 @@ export interface RecurrenceHistoryInvoice {
   due_date: string;
   period_start: string | null;
   period_end: string | null;
+  paid_at: string | null;
+  payment_token: string | null;
   created_at: string;
 }
 
@@ -1488,10 +1490,10 @@ export async function listRecurrenceHistoryForInvoice(
   if (!subscriptionId) return [];
 
   const r = await pool.query<RecurrenceHistoryInvoice>(
-    `SELECT id, subscription_id, invoice_number, status, amount_cents, due_date, period_start, period_end, created_at
+    `SELECT id, subscription_id, invoice_number, status, amount_cents, due_date, period_start, period_end, paid_at, payment_token, created_at
      FROM customer_invoices
      WHERE tenant_id = $1 AND subscription_id = $2
-     ORDER BY due_date ASC, created_at ASC
+     ORDER BY due_date DESC, created_at DESC
      LIMIT 120`,
     [tenantId, subscriptionId]
   );

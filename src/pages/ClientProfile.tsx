@@ -25,6 +25,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { io, Socket } from "socket.io-client";
 import { format } from "date-fns";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { cn } from "@/lib/utils";
@@ -2076,7 +2077,7 @@ const ClientProfile = () => {
                                   </span>
                                 </TableCell>
                                 <TableCell className="hidden sm:table-cell text-sm text-muted-foreground whitespace-nowrap">
-                                  {p.valid_until ? format(new Date(p.valid_until), "dd/MM/yyyy") : "—"}
+                                  {p.valid_until ? formatDateOnlyPtBr(p.valid_until) : "—"}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums text-sm font-medium">
                                   {formatProposalCurrency(Number(p.amount) || 0)}

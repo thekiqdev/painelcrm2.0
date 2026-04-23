@@ -26,6 +26,8 @@ import {
   patchCustomerInvoiceWithGateway,
   deleteCustomerInvoiceWithGateway,
 } from '../services/customerInvoiceAdminService.js';
+import { getCustomerInvoiceRecurrenceInsight } from '../services/customerInvoiceRecurrenceInsightService.js';
+import { patchCustomerSubscriptionNextBillingFromPaidInvoice } from '../services/customerInvoiceRecurrenceNextBillingService.js';
 
 const createItemSchema = z.object({
   description: z.string().min(1, 'Descrição é obrigatória'),
@@ -170,6 +172,28 @@ export async function getCustomerInvoiceById(req: AuthRequest, res: Response): P
   } catch (err) {
     console.error('[customerInvoicesController] getCustomerInvoiceById error:', err);
     res.status(500).json({ error: 'Erro ao buscar fatura' });
+  }
+}
+
+/** GET /api/customer-invoices/:id/recurrence-insight — estado da recorrência para UI (assinatura + último job). */
+export async function getCustomerInvoiceRecurrenceInsightHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    const { id } = req.params;
+    const insight = await getCustomerInvoiceRecurrenceInsight(tenantId, id);
+    res.json(insight);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === 'Fatura não encontrada') {
+      res.status(404).json({ error: 'Fatura não encontrada' });
+      return;
+    }
+    console.error('[customerInvoicesController] getCustomerInvoiceRecurrenceInsightHandler error:', err);
+    res.status(500).json({ error: 'Erro ao carregar insight de recorrência' });
   }
 }
 
@@ -343,6 +367,63 @@ export async function updateCustomerInvoice(req: AuthRequest, res: Response): Pr
       error: 'Erro ao atualizar fatura',
       ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}),
     });
+  }
+}
+
+const patchRecurrenceNextBillingBodySchema = z.object({
+  next_billing_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'next_billing_date deve ser YYYY-MM-DD'),
+});
+
+/**
+ * PATCH /api/customer-invoices/:id/recurrence/next-billing
+ * Atualiza `subscriptions.next_billing_date` (fatura paga + origin subscription); cancela jobs pendentes obsoletos;
+ * tenta enfileirar job de imediato quando o ciclo já é elegível (CURRENT_DATE + janela local Fase 2), reativando
+ * linhas `cancelled`/`failed` do mesmo `cycle_key` se necessário.
+ */
+export async function patchCustomerInvoiceRecurrenceNextBilling(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+
+    const { id } = req.params;
+    const parsed = patchRecurrenceNextBillingBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+
+    const result = await patchCustomerSubscriptionNextBillingFromPaidInvoice({
+      tenantId,
+      invoiceId: id,
+      nextBillingDateYmd: parsed.data.next_billing_date,
+      actorUserId: req.userId ?? null,
+    });
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === 'Fatura não encontrada') {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (
+      msg.startsWith('Só é possível') ||
+      msg.startsWith('Reagendar') ||
+      msg.startsWith('Operação disponível') ||
+      msg.startsWith('Assinatura não está') ||
+      msg.startsWith('Assinatura não encontrada') ||
+      msg.startsWith('Fatura sem') ||
+      msg.startsWith('next_billing_date')
+    ) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error('[customerInvoicesController] patchCustomerInvoiceRecurrenceNextBilling error:', err);
+    res.status(500).json({ error: 'Erro ao atualizar próxima cobrança' });
   }
 }
 

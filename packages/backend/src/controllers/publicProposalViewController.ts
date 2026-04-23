@@ -4,6 +4,7 @@
  */
 import type { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
+import { publishProposalNotificationAfterStatusChange } from '../services/notificationsEngine/businessTransactionalNotifications.js';
 import {
   resolveProposalByPublicRawToken,
   loadProposalPublicPayload,
@@ -183,6 +184,15 @@ export async function postPublicProposalAccept(req: Request, res: Response): Pro
       console.error('[postPublicProposalAccept] kanban accept automation:', e);
     }
 
+    publishProposalNotificationAfterStatusChange({
+      pool,
+      tenantId: resolved.tenant_id,
+      proposalId: resolved.proposal_id,
+      eventKey: 'proposal.accepted',
+      actorUserId: row.user_id,
+      actor: { type: 'public_action', source: 'proposal_public_link', action: 'accept' },
+    });
+
     res.json({ ok: true, status: 'accepted' });
   } catch (e) {
     console.error('postPublicProposalAccept:', e);
@@ -247,6 +257,15 @@ export async function postPublicProposalReject(req: Request, res: Response): Pro
     } catch (e) {
       console.error('[postPublicProposalReject] hooks:', e);
     }
+
+    publishProposalNotificationAfterStatusChange({
+      pool,
+      tenantId: resolved.tenant_id,
+      proposalId: resolved.proposal_id,
+      eventKey: 'proposal.rejected',
+      actorUserId: rj.user_id,
+      actor: { type: 'public_action', source: 'proposal_public_link', action: 'reject' },
+    });
 
     res.json({ ok: true, status: 'rejected' });
   } catch (e) {

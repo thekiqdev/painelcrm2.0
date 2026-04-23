@@ -97,12 +97,65 @@ export interface RecurrenceHistoryInvoice {
   due_date: string;
   period_start: string | null;
   period_end: string | null;
+  paid_at: string | null;
+  payment_token: string | null;
   created_at: string;
 }
 
 export interface CustomerInvoiceRecurrenceHistoryResponse {
   subscription_id: string | null;
   history: RecurrenceHistoryInvoice[];
+}
+
+export type RecurrenceVisualTag =
+  | 'not_recurring'
+  | 'scheduled'
+  | 'processed'
+  | 'no_new_invoice'
+  | 'failed'
+  | 'cancelled';
+
+/** GET /api/customer-invoices/:id/recurrence-insight */
+export interface CustomerInvoiceRecurrenceInsight {
+  is_recurring: boolean;
+  visual_tag: RecurrenceVisualTag;
+  status_badge_pt: string;
+  is_queued: boolean;
+  subscription: {
+    id: string;
+    status: string;
+    billing_interval: string;
+    next_billing_date: string;
+    cancel_at_period_end: boolean;
+    current_period_start: string | null;
+    current_period_end: string | null;
+    type: string;
+  } | null;
+  next_charge_date: string | null;
+  periodicity_label_pt: string | null;
+  last_processing_at: string | null;
+  last_result_summary_pt: string;
+  problem_hint_pt: string | null;
+  pending_jobs_count: number;
+  latest_job: {
+    id: string;
+    status: string;
+    cycle_key: string;
+    updated_at: string;
+    completion_outcome: string | null;
+    completion_detail: string | null;
+    result_invoice_id: string | null;
+    error_message: string | null;
+  } | null;
+  last_generated_invoice_id: string | null;
+  operational: {
+    subscription_id: string;
+    latest_job_id: string | null;
+    completion_outcome: string | null;
+    completion_detail_raw: string | null;
+    completion_detail_parsed: Record<string, unknown> | null;
+    result_invoice_id: string | null;
+  } | null;
 }
 
 export interface UpdateCustomerInvoiceBody {
@@ -114,6 +167,33 @@ export interface UpdateCustomerInvoiceBody {
   items?: CreateCustomerInvoiceItemBody[];
   payment_method?: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | null;
   allowed_payment_methods?: Array<'PIX' | 'BOLETO' | 'CREDIT_CARD'> | null;
+}
+
+/** Motivos quando o backend não enfileirou job logo após o PATCH (regras do scheduler / janela local). */
+export type RecurrenceNextBillingEnqueueReason =
+  | 'subscription_not_found'
+  | 'subscription_not_active'
+  | 'subscription_type_unsupported'
+  | 'next_billing_after_db_today'
+  | 'outside_local_window'
+  | 'active_job_exists'
+  | 'completed_cycle_guard'
+  | 'internal_enqueue_error';
+
+/** Resposta de PATCH .../recurrence/next-billing (fatura paga + assinatura CRM). */
+export interface CustomerInvoiceRecurrenceNextBillingResult {
+  subscription: {
+    id: string;
+    next_billing_date: string;
+    billing_interval: string;
+    status: string;
+    type: string;
+  };
+  cancelled_pending_jobs: number;
+  /** Tentativa imediata de criar/reativar job (alinhada ao scheduler + Fase 2). */
+  enqueue_after_patch:
+    | { ok: true; mode: 'inserted' | 'reactivated' }
+    | { ok: false; reason: RecurrenceNextBillingEnqueueReason; error?: string };
 }
 
 export interface CreateCustomerInvoiceResult {
@@ -177,6 +257,14 @@ export const customerInvoicesService = {
     return response.data ?? { subscription_id: null, history: [] };
   },
 
+  async getRecurrenceInsight(id: string): Promise<CustomerInvoiceRecurrenceInsight> {
+    const response = await apiClient.get<CustomerInvoiceRecurrenceInsight>(`${BASE}/${id}/recurrence-insight`);
+    if (response.error) throw new Error(response.error);
+    const data = response.data;
+    if (!data || typeof data !== 'object') throw new Error('Resposta inválida ao carregar recorrência');
+    return data;
+  },
+
   async getGatewayStatus(): Promise<CustomerInvoicesGatewayStatus> {
     const response = await apiClient.get<CustomerInvoicesGatewayStatus>(`${BASE}/gateway-status`);
     if (response.error) throw new Error(response.error);
@@ -238,6 +326,25 @@ export const customerInvoicesService = {
     const response = await apiClient.patch<CustomerInvoice>(`${BASE}/${id}`, data);
     if (response.error) throw new Error(response.error);
     return response.data ?? null;
+  },
+
+  /**
+   * Atualiza apenas a próxima data de cobrança da assinatura (fatura recorrente já paga).
+   * Não altera a invoice nem a cobrança liquidada no gateway.
+   */
+  async updateRecurrenceNextBilling(
+    id: string,
+    body: { next_billing_date: string }
+  ): Promise<CustomerInvoiceRecurrenceNextBillingResult> {
+    const response = await apiClient.patch<CustomerInvoiceRecurrenceNextBillingResult>(
+      `${BASE}/${id}/recurrence/next-billing`,
+      body
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data || typeof response.data !== 'object') {
+      throw new Error('Resposta inválida ao atualizar próxima cobrança');
+    }
+    return response.data;
   },
 
   /** Exclui a fatura no sistema e cancela/remove a cobrança no Asaas (faturas de assinatura não permitidas). */

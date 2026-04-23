@@ -9,6 +9,10 @@ import { billingLog } from './billingLogger.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
 import { syncOrdersFromCustomerInvoiceStatus } from './orderInvoiceSyncService.js';
+import {
+  publishInvoiceCreatedNotification,
+  publishInvoicePaidNotification,
+} from './notificationsEngine/businessTransactionalNotifications.js';
 
 export interface CustomerInvoiceRow {
   id: string;
@@ -160,6 +164,15 @@ export async function createCustomerInvoice(data: CreateCustomerInvoiceInput): P
     periodStart: data.period_start,
     periodEnd: data.period_end,
     amount: data.amount_cents,
+    origin: row.origin,
+    invoice_type: row.invoice_type,
+    payment_token_present: Boolean(row.payment_token),
+  });
+  publishInvoiceCreatedNotification({
+    pool,
+    tenantId: data.tenant_id,
+    invoiceId: row.id,
+    preferredSenderUserId: null,
   });
   return {
     ...row,
@@ -225,6 +238,12 @@ export async function createChildCustomerInvoice(data: CreateChildCustomerInvoic
     parentItemId: data.parent_invoice_item_id,
     dueDate: due,
     amount: data.amount_cents,
+  });
+  publishInvoiceCreatedNotification({
+    pool,
+    tenantId: data.tenant_id,
+    invoiceId: row.id,
+    preferredSenderUserId: null,
   });
   return row;
 }
@@ -340,6 +359,12 @@ export async function createManualCustomerInvoice(
     invoiceNumber: row.invoice_number ?? undefined,
     amount: amountCents,
     origin: 'manual',
+  });
+  publishInvoiceCreatedNotification({
+    pool,
+    tenantId: data.tenant_id,
+    invoiceId: row.id,
+    preferredSenderUserId: null,
   });
   return row;
 }
@@ -689,6 +714,13 @@ export async function updateCustomerInvoiceStatus(
   paidAt?: Date | null,
   gatewayStatus?: string | null
 ): Promise<void> {
+  const prev = await pool.query<{ status: string; tenant_id: string }>(
+    `SELECT status, tenant_id::text AS tenant_id FROM customer_invoices WHERE id = $1 LIMIT 1`,
+    [invoiceId]
+  );
+  const oldStatus = prev.rows[0]?.status;
+  const tenantIdRow = prev.rows[0]?.tenant_id;
+
   if (status === 'paid') {
     await pool.query(
       `UPDATE customer_invoices
@@ -710,5 +742,14 @@ export async function updateCustomerInvoiceStatus(
     await syncOrdersFromCustomerInvoiceStatus(invoiceId, status);
   } catch (err) {
     console.error('[updateCustomerInvoiceStatus] syncOrdersFromCustomerInvoiceStatus:', err);
+  }
+
+  if (status === 'paid' && oldStatus !== 'paid' && tenantIdRow) {
+    publishInvoicePaidNotification({
+      pool,
+      tenantId: tenantIdRow,
+      invoiceId,
+      preferredSenderUserId: null,
+    });
   }
 }

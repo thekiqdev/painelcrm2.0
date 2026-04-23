@@ -73,6 +73,27 @@ function getClientIpForPublicPay(req: Request): string {
 
 const POLLABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
 
+/**
+ * Gateways podem devolver paidAt como YYYY-MM-DD (sem hora/fuso).
+ * Evita deslocamento para o dia anterior ao persistir em timestamptz.
+ */
+function parseGatewayPaidAtSafe(value: string | null | undefined): Date | undefined {
+  if (!value || typeof value !== 'string') return undefined;
+  const t = value.trim();
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  if (ymd) {
+    const y = Number(ymd[1]);
+    const m = Number(ymd[2]);
+    const d = Number(ymd[3]);
+    if (y > 0 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      // Usa meio-dia UTC para preservar o "dia de pagamento" no frontend (pt-BR) sem cair no dia anterior.
+      return new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    }
+  }
+  const parsed = new Date(t);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
 async function syncPublicInvoiceStatusFromGateway(params: {
   invoiceId: string;
   tenantId: string;
@@ -130,7 +151,7 @@ async function syncPublicInvoiceStatusFromGateway(params: {
       if (!externalStatus) continue;
       const normalizedStatus = normalizeGatewayStatus(invoice.gateway, externalStatus);
       if (normalizedStatus === 'paid') {
-        const paidAt = payment?.paidAt ? new Date(payment.paidAt) : new Date();
+        const paidAt = parseGatewayPaidAtSafe(payment?.paidAt) ?? new Date();
         await updateCustomerInvoiceStatus(params.invoiceId, 'paid', paidAt, externalStatus);
         await runPostPaidCleanupForCustomerInvoice({
           invoiceId: params.invoiceId,
@@ -160,7 +181,9 @@ async function syncPublicInvoiceStatusFromGateway(params: {
   if (!shouldUpdateStatus && !shouldUpdateGatewayStatus && !shouldSetPaidAt) return;
 
   const paidAtForUpdate =
-    normalizedStatus === 'paid' ? (payment?.paidAt ? new Date(payment.paidAt) : new Date()) : undefined;
+    normalizedStatus === 'paid'
+      ? (parseGatewayPaidAtSafe(payment?.paidAt) ?? new Date())
+      : undefined;
   await updateCustomerInvoiceStatus(
     params.invoiceId,
     normalizedStatus,

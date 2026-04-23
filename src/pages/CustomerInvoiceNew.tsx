@@ -19,7 +19,12 @@ import { customerChargesService } from "@/services/customerCharges";
 import { clientsService } from "@/services/clients";
 import { productsService } from "@/services/products";
 import { apiClient } from "@/integrations/api/client";
-import type { CreateCustomerInvoiceBody, CustomerInvoiceItem, UpdateCustomerInvoiceBody } from "@/services/customerInvoices";
+import type {
+  CreateCustomerInvoiceBody,
+  CustomerInvoiceItem,
+  RecurrenceNextBillingEnqueueReason,
+  UpdateCustomerInvoiceBody,
+} from "@/services/customerInvoices";
 import type { CustomerChargeWithSummary } from "@/services/customerCharges";
 import type { Product } from "@/types/products";
 import { resolvePublicCatalogUnitPrice } from "@/types/products";
@@ -47,6 +52,7 @@ import {
   invoiceMethodsFromGatewaySlugs,
   type InvoicePaymentMethodUi,
 } from "@/lib/crmGatewayPaymentMethods";
+import { INVOICE_ACTIONABLE } from "@/lib/customerInvoiceActions";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -171,6 +177,7 @@ const CustomerInvoiceNew = ({
   const editInvoiceId = embedded ? undefined : editMatch?.params?.id;
   const isEditMode = Boolean(editInvoiceId);
   const [searchParams] = useSearchParams();
+  const editFlowQuery = searchParams.get("flow");
   const queryClientId = searchParams.get("client_id");
   const prefillClientId = (initialClientId ?? queryClientId ?? "").trim();
   const forcedEmbeddedClientId = embedded ? prefillClientId : "";
@@ -214,6 +221,11 @@ const CustomerInvoiceNew = ({
     "CREDIT_CARD",
   ]);
   const [editReady, setEditReady] = useState(() => !isEditMode);
+  /** null até carregar; invoice = cobrança atual; renewal = só próxima data (fatura paga). */
+  const [editFlow, setEditFlow] = useState<"invoice" | "renewal" | null>(null);
+  const [nextRenewalDate, setNextRenewalDate] = useState("");
+  const [renewalSaving, setRenewalSaving] = useState(false);
+  const [editingSubscriptionInvoice, setEditingSubscriptionInvoice] = useState(false);
   const editInitialObservationsRef = useRef("");
 
   useEffect(() => {
@@ -221,6 +233,14 @@ const CustomerInvoiceNew = ({
     let cancelled = false;
     (async () => {
       try {
+        // Sempre reinicia o bootstrap: evita flash do formulário da fatura com editReady=true e editFlow=null
+        setEditReady(false);
+        if (editFlowQuery === "renewal") {
+          setEditFlow("renewal");
+        } else {
+          setEditFlow(null);
+        }
+
         const inv = await customerInvoicesService.getById(editInvoiceId);
         if (cancelled || !inv) {
           if (!cancelled) {
@@ -229,11 +249,47 @@ const CustomerInvoiceNew = ({
           }
           return;
         }
-        if (inv.origin === "subscription") {
-          toast.error("Faturas geradas pela assinatura não podem ser editadas nesta tela.");
+
+        if (inv.origin === "subscription" && inv.status === "paid") {
+          if (editFlowQuery === "invoice") {
+            if (!cancelled) {
+              toast.info(
+                "Esta fatura já está paga: não é possível editar a cobrança atual aqui. No detalhe da fatura use «Alterar próxima renovação» para mudar o ciclo da assinatura."
+              );
+              navigate(`/customer-invoices/${editInvoiceId}`);
+            }
+            return;
+          }
+          // URL canónica: fatura paga de assinatura só edita ciclo com ?flow=renewal
+          if (editFlowQuery !== "renewal") {
+            if (!cancelled) {
+              navigate(`/customer-invoices/${editInvoiceId}/edit?flow=renewal`, { replace: true });
+            }
+            return;
+          }
+          const insight = await customerInvoicesService.getRecurrenceInsight(editInvoiceId);
+          if (cancelled) return;
+          const nb =
+            insight.subscription?.next_billing_date?.slice(0, 10) ||
+            (insight.next_charge_date ? insight.next_charge_date.slice(0, 10) : "") ||
+            "";
+          setNextRenewalDate(nb);
+          setEditFlow("renewal");
+          setEditingSubscriptionInvoice(false);
+          setEditReady(true);
+          setStep("form");
+          return;
+        }
+
+        if (inv.origin === "subscription" && !INVOICE_ACTIONABLE.has(inv.status)) {
+          toast.error("Esta fatura recorrente não está em estado editável.");
           navigate(`/customer-invoices/${editInvoiceId}`);
           return;
         }
+
+        setEditFlow("invoice");
+        setEditingSubscriptionInvoice(inv.origin === "subscription");
+
         setInvoiceByLink(!inv.client_id);
         const dueYmd = inv.due_date.slice(0, 10);
         const observationText = effectiveInvoiceObservationText(dueYmd, inv.description);
@@ -273,7 +329,7 @@ const CustomerInvoiceNew = ({
     return () => {
       cancelled = true;
     };
-  }, [isEditMode, editInvoiceId, embedded, navigate]);
+  }, [isEditMode, editInvoiceId, embedded, navigate, editFlowQuery]);
 
   useEffect(() => {
     customerInvoicesService
@@ -489,6 +545,54 @@ const CustomerInvoiceNew = ({
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, [field]: v } : l)));
   };
 
+  const handleRenewalSave = async () => {
+    if (!editInvoiceId) return;
+    if (!isCompleteYmdString(nextRenewalDate)) {
+      toast.error("Informe a próxima data de cobrança (aaaa-mm-dd)");
+      return;
+    }
+    try {
+      setRenewalSaving(true);
+      const patchResult = await customerInvoicesService.updateRecurrenceNextBilling(editInvoiceId, {
+        next_billing_date: nextRenewalDate.trim(),
+      });
+      const enq = patchResult.enqueue_after_patch;
+      const base = "Próxima cobrança gravada na assinatura; jobs pendentes obsoletos foram cancelados quando existiam.";
+      if (enq.ok) {
+        toast.success(
+          enq.mode === "reactivated"
+            ? `${base} Job de recorrência reativado na fila (ciclo anterior cancelado ou falho).`
+            : `${base} Job de recorrência criado na fila — o worker processará dentro da janela habitual.`
+        );
+      } else {
+        const reasonCopy: Partial<Record<RecurrenceNextBillingEnqueueReason, string>> = {
+          next_billing_after_db_today:
+            "A data do ciclo ainda está à frente do calendário do servidor de base de dados; o scheduler enfileirará quando o dia for atingido.",
+          outside_local_window:
+            "Fora da janela horária local do tenant; o scheduler enfileirará quando a hora mínima configurada for atingida.",
+          active_job_exists: "Já existe job pendente ou em processamento para este ciclo — não foi criada duplicidade.",
+          completed_cycle_guard:
+            "Já existe um job concluído para este mesmo ciclo; não foi criada duplicidade (idempotência).",
+          subscription_not_active: "Assinatura não ativa — sem enfileiramento.",
+          subscription_type_unsupported: "Tipo de assinatura não suportado para esta fila.",
+          subscription_not_found: "Estado inesperado ao enfileirar.",
+          internal_enqueue_error: "Erro interno ao tentar enfileirar.",
+        };
+        const detail =
+          enq.reason === "internal_enqueue_error" && "error" in enq && enq.error
+            ? `${reasonCopy.internal_enqueue_error} ${enq.error}`
+            : reasonCopy[enq.reason] ??
+              "Não foi possível enfileirar neste momento; o scheduler continuará a tentar nas próximas execuções.";
+        toast.success(`${base} ${detail}`);
+      }
+      navigate(`/customer-invoices/${editInvoiceId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar");
+    } finally {
+      setRenewalSaving(false);
+    }
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isEditMode && editInvoiceId && !embedded) {
@@ -653,7 +757,7 @@ const CustomerInvoiceNew = ({
           <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-2xl font-bold">Editar fatura</h1>
+          <h1 className="text-2xl font-bold">Carregar fatura</h1>
         </div>
         <p className="text-muted-foreground">Carregando…</p>
       </div>
@@ -667,11 +771,61 @@ const CustomerInvoiceNew = ({
           <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-2xl font-bold">{isEditMode ? "Editar fatura" : "Nova fatura"}</h1>
+          <h1 className="text-2xl font-bold">
+            {isEditMode
+              ? editFlow === "renewal"
+                ? "Alterar próxima renovação"
+                : "Editar fatura"
+              : "Nova fatura"}
+          </h1>
         </div>
       )}
 
-      {crmGatewayActive === false && (
+      {isEditMode && editReady && editFlow === "renewal" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Próxima cobrança da assinatura</CardTitle>
+            <CardDescription>
+              <strong className="text-foreground">Nesta tela altera-se só a recorrência futura</strong> (data do próximo
+              ciclo na assinatura). <strong>Não</strong> se mexe no vencimento nem nos itens da fatura atual — essa fatura
+              já está paga e permanece como registo histórico.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 max-w-md">
+            <Alert className="border-primary/40 bg-primary/5">
+              <AlertTriangle className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-sm">
+                O valor guardado é <code className="text-xs font-mono">subscriptions.next_billing_date</code> (próxima
+                geração automática). Ao gravar, usa-se o endpoint de recorrência; a fatura atual não é o alvo da alteração.
+              </AlertDescription>
+            </Alert>
+            <CardDescription className="text-xs text-muted-foreground -mt-2">
+              Jobs pendentes obsoletos na fila são cancelados. Se a nova data já for elegível (calendário do servidor e
+              janela horária local do tenant), o backend pode enfileirar o job de imediato.
+            </CardDescription>
+            <div>
+              <Label htmlFor="next_renewal_date">Data da próxima cobrança (assinatura)</Label>
+              <Input
+                id="next_renewal_date"
+                type="date"
+                className="mt-1 max-w-xs"
+                value={nextRenewalDate}
+                onChange={(e) => setNextRenewalDate(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => navigate(`/customer-invoices/${editInvoiceId}`)}>
+                Voltar ao detalhe
+              </Button>
+              <Button type="button" onClick={() => void handleRenewalSave()} disabled={renewalSaving}>
+                {renewalSaving ? "Salvando…" : "Salvar próxima data"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {crmGatewayActive === false && !(isEditMode && editFlow === "renewal") && (
         <Alert className="border-orange-500/50 bg-orange-500/10 text-orange-950 dark:border-orange-500/40 dark:bg-orange-950/35 dark:text-orange-50">
           <AlertTriangle className="h-4 w-4 text-orange-600 dark:text-orange-400" />
           <AlertDescription>
@@ -685,7 +839,8 @@ const CustomerInvoiceNew = ({
         </Alert>
       )}
 
-      {step === "client" ? (
+      {(!isEditMode || !editReady || editFlow !== "renewal") &&
+        (step === "client" ? (
         <Card>
           <CardHeader>
             <CardTitle>{crmGatewayActive === false ? "Cliente e pré-requisitos" : "Cliente"}</CardTitle>
@@ -856,6 +1011,24 @@ const CustomerInvoiceNew = ({
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-6">
+              {isEditMode && editingSubscriptionInvoice && (
+                <Alert className="border-primary/45 bg-primary/5 dark:bg-primary/10">
+                  <Package className="h-4 w-4 text-primary" />
+                  <AlertDescription className="space-y-2">
+                    <p>
+                      <strong>Cobrança atual da recorrência.</strong> As alterações valem para esta fatura (e para a
+                      cobrança no Asaas, se existir). Itens marcados como recorrentes entram na base copiada pelo motor na
+                      próxima renovação.
+                    </p>
+                    <p className="text-muted-foreground text-sm border-t border-primary/20 pt-2">
+                      <strong className="text-foreground">Isto edita a cobrança atual</strong> (vencimento, itens,
+                      valor). <strong>Não</strong> altera a próxima renovação automática. O motor usa{" "}
+                      <code className="text-xs">subscriptions.next_billing_date</code>; para mudar essa data com fatura
+                      já paga, use no detalhe «Alterar próxima renovação».
+                    </p>
+                  </AlertDescription>
+                </Alert>
+              )}
               {!isEditMode && (
               <div>
                 <Label htmlFor="charge_search">Vincular à cobrança (opcional)</Label>
@@ -1448,7 +1621,7 @@ const CustomerInvoiceNew = ({
             </form>
           </CardContent>
         </Card>
-      )}
+      ))}
     </div>
   );
 };

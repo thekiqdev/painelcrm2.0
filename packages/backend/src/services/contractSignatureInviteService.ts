@@ -10,6 +10,7 @@ import {
 } from './contractPublicViewService.js';
 import { hasMeaningfulDocumentHtml, isDraftStatus, canTransitionStatus } from './contractLifecycle.js';
 import { findSignerInTenant } from '../utils/contractAccess.js';
+import { publishContractSignedNotification } from './notificationsEngine/businessTransactionalNotifications.js';
 
 const TERMS_VERSION = 'v2';
 
@@ -291,6 +292,7 @@ export async function submitPublicSignature(params: {
     signature_captured_at: signedAtIso,
   };
 
+  const activation = { becameActive: false };
   try {
     await withTenantRlsContext(base.tenant_id, async () => {
       await pool.query('BEGIN');
@@ -361,6 +363,7 @@ export async function submitPublicSignature(params: {
             nextStatus,
           ]);
           if (nextStatus === 'ACTIVE') {
+            activation.becameActive = true;
             const { applySignatureTenancyOnActivationInTx } = await import('./contractSnapshotMergeService.js');
             await applySignatureTenancyOnActivationInTx(pool, base.contract_id);
           }
@@ -399,6 +402,15 @@ export async function submitPublicSignature(params: {
     }
     console.error('submitPublicSignature:', err);
     return { httpStatus: 500, body: { error: 'Internal server error' } };
+  }
+
+  if (activation.becameActive) {
+    publishContractSignedNotification({
+      pool,
+      tenantId: base.tenant_id,
+      contractId: base.contract_id,
+      preferredSenderUserId: null,
+    });
   }
 
   return {

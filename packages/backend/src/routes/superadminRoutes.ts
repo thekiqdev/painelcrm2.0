@@ -8,6 +8,7 @@ import * as superadminUsersController from '../controllers/superadminUsersContro
 import * as systemFeaturesController from '../controllers/systemFeaturesController.js';
 import * as paymentGatewayConfigController from '../controllers/paymentGatewayConfigController.js';
 import * as superadminBillingController from '../controllers/superadminBillingController.js';
+import * as superadminNotificationsEngineController from '../controllers/superadminNotificationsEngineController.js';
 import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsService.js';
 
 const router = Router();
@@ -54,7 +55,11 @@ router.delete('/features/:id', systemFeaturesController.deleteSystemFeature);
 router.get('/billing/subscriptions', superadminBillingController.getBillingSubscriptions);
 router.get('/billing/upcoming', superadminBillingController.getBillingUpcoming);
 router.get('/billing/jobs-failed', superadminBillingController.getBillingJobsFailed);
+router.get('/billing/recurring-jobs', superadminBillingController.getBillingRecurringJobsOps);
 router.get('/billing/settings', superadminBillingController.getBillingSettingsHandler);
 router.put('/billing/settings', superadminBillingController.putBillingSettingsHandler);
+
+router.get('/notifications-engine/summary', superadminNotificationsEngineController.getNotificationsEngineOpsSummary);
+router.get('/notifications-engine/deliveries', superadminNotificationsEngineController.listNotificationsEngineDeliveries);
 
 export default router;

@@ -14,19 +14,35 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { customerInvoicesService } from "@/services/customerInvoices";
+import type {
+  CustomerInvoice,
+  CustomerInvoiceRecurrenceInsight,
+} from "@/services/customerInvoices";
 import { clientsService } from "@/services/clients";
-import type { CustomerInvoice } from "@/services/customerInvoices";
 import type { RecurrenceHistoryInvoice } from "@/services/customerInvoices";
 import type { Client } from "@/services/clients";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ArrowLeft, FileText, XCircle, Link2, Copy, Repeat2, ChevronDown, Pencil, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  FileText,
+  XCircle,
+  Link2,
+  Copy,
+  Repeat2,
+  ChevronDown,
+  Pencil,
+  Trash2,
+  ExternalLink,
+  CalendarClock,
+} from "lucide-react";
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { INVOICE_ACTIONABLE } from "@/lib/customerInvoiceActions";
+import { useAuth } from "@/contexts/AuthContext";
+import { InvoiceRecurrenceBlock } from "@/components/invoices/InvoiceRecurrenceBlock";
 import {
   effectiveLinkPaymentMethods,
   formatInvoicePaymentMethodLabel,
@@ -39,6 +55,20 @@ function formatAmount(cents: number): string {
     style: "currency",
     currency: "BRL",
   }).format(cents / 100);
+}
+
+function formatInvoiceDateTimePtBr(value: string | null | undefined): string {
+  if (!value || typeof value !== "string") return "—";
+  const t = value.trim();
+  if (!t) return "—";
+  // Corrige exibição para timestamps persistidos como meia-noite UTC (origem YYYY-MM-DD do gateway).
+  const midnightUtc = /^(\d{4})-(\d{2})-(\d{2})T00:00:00(?:\.000)?Z$/.exec(t);
+  if (midnightUtc) {
+    return `${midnightUtc[3]}/${midnightUtc[2]}/${midnightUtc[1]} 00:00`;
+  }
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return "—";
+  return format(d, "dd/MM/yyyy HH:mm", { locale: ptBR });
 }
 
 function storedAllowedFromInvoice(inv: CustomerInvoice): InvoicePaymentMethodUi[] | null {
@@ -60,6 +90,10 @@ const CustomerInvoiceDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const showRecurrenceOperational = Boolean(
+    user?.is_tenant_admin || user?.can_manage_plan || user?.is_super_admin
+  );
 
   useEffect(() => {
     if ((location.state as { fromNewInvoice?: boolean } | null)?.fromNewInvoice) {
@@ -79,6 +113,9 @@ const CustomerInvoiceDetail = () => {
     "CREDIT_CARD",
   ]);
   const [gatewayMethodsLoaded, setGatewayMethodsLoaded] = useState(false);
+  const [recurrenceInsight, setRecurrenceInsight] = useState<CustomerInvoiceRecurrenceInsight | null>(null);
+  const [recurrenceInsightLoading, setRecurrenceInsightLoading] = useState(false);
+  const [recurrenceInsightError, setRecurrenceInsightError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -119,6 +156,34 @@ const CustomerInvoiceDetail = () => {
     })();
     return () => { cancelled = true; };
   }, [id, navigate]);
+
+  useEffect(() => {
+    if (!id || !invoice?.subscription_id) {
+      setRecurrenceInsight(null);
+      setRecurrenceInsightError(null);
+      setRecurrenceInsightLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        setRecurrenceInsightLoading(true);
+        setRecurrenceInsightError(null);
+        const insight = await customerInvoicesService.getRecurrenceInsight(id);
+        if (!cancelled) setRecurrenceInsight(insight);
+      } catch (e) {
+        if (!cancelled) {
+          setRecurrenceInsightError(e instanceof Error ? e.message : "Não foi possível carregar a recorrência.");
+          setRecurrenceInsight(null);
+        }
+      } finally {
+        if (!cancelled) setRecurrenceInsightLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, invoice?.subscription_id, location.key]);
 
   useEffect(() => {
     customerInvoicesService
@@ -216,9 +281,22 @@ const CustomerInvoiceDetail = () => {
               onClick={() => id && navigate(`/customer-invoices/${id}/edit`)}
             >
               <Pencil className="mr-2 h-4 w-4" />
-              Editar
+              {invoice.origin === "subscription" ? "Editar cobrança atual" : "Editar"}
             </Button>
           )}
+          {invoice.origin === "subscription" &&
+            invoice.status === "paid" &&
+            Boolean(invoice.subscription_id) && (
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => id && navigate(`/customer-invoices/${id}/edit?flow=renewal`)}
+              >
+                <CalendarClock className="mr-2 h-4 w-4" />
+                Alterar próxima renovação
+              </Button>
+            )}
           {actionable && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -323,6 +401,21 @@ const CustomerInvoiceDetail = () => {
                     const url =
                       typeof window !== "undefined"
                         ? `${window.location.origin}/pay/${invoice.payment_token}`
+                        : `/pay/${invoice.payment_token}`;
+                    window.open(url, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  <ExternalLink className="h-4 w-4 mr-1" />
+                  Abrir
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => {
+                    const url =
+                      typeof window !== "undefined"
+                        ? `${window.location.origin}/pay/${invoice.payment_token}`
                         : `${invoice.payment_token}`;
                     void navigator.clipboard.writeText(url).then(() => toast.success("Link copiado"));
                   }}
@@ -331,66 +424,6 @@ const CustomerInvoiceDetail = () => {
                   Copiar
                 </Button>
               </div>
-            </div>
-          )}
-          {invoice.subscription_id && (
-            <Alert className="border-primary/30 bg-primary/5 dark:bg-primary/10">
-              <Repeat2 className="h-4 w-4 text-primary" aria-hidden />
-              <AlertTitle className="text-primary">Fatura recorrente</AlertTitle>
-              <AlertDescription className="text-sm text-muted-foreground leading-relaxed">
-                Esta fatura faz parte de uma <strong>cobrança recorrente</strong>. Novas faturas podem ser
-                geradas automaticamente conforme o plano e a periodicidade acordados. Use o histórico abaixo
-                para acompanhar os ciclos já emitidos.
-              </AlertDescription>
-            </Alert>
-          )}
-          {invoice.subscription_id && (
-            <div className="rounded-lg border border-dashed border-primary/20 bg-muted/10 p-3 space-y-2">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <Repeat2 className="h-4 w-4 text-primary shrink-0" aria-hidden />
-                Histórico da recorrência
-              </h4>
-              {recurrenceHistory.length > 0 ? (
-                <div className="rounded-md border bg-card text-sm">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b bg-muted/50 text-muted-foreground">
-                        <th className="text-left p-2">Fatura</th>
-                        <th className="text-left p-2">Período</th>
-                        <th className="text-right p-2">Valor</th>
-                        <th className="text-left p-2">Vencimento</th>
-                        <th className="text-left p-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recurrenceHistory.map((h) => {
-                        const isCurrent = h.id === invoice.id;
-                        return (
-                          <tr key={h.id} className={`border-b last:border-0 ${isCurrent ? "bg-primary/5" : ""}`}>
-                            <td className="p-2 font-mono text-xs">
-                              {h.invoice_number ?? h.id.slice(0, 8)}
-                              {isCurrent ? " (atual)" : ""}
-                            </td>
-                            <td className="p-2">
-                              {h.period_start && h.period_end
-                                ? `${formatInvoiceDueDatePtBr(h.period_start)} - ${formatInvoiceDueDatePtBr(h.period_end)}`
-                                : "—"}
-                            </td>
-                            <td className="p-2 text-right">{formatAmount(h.amount_cents)}</td>
-                            <td className="p-2">{formatInvoiceDueDatePtBr(h.due_date)}</td>
-                            <td className="p-2"><CustomerInvoiceStatusBadge status={h.status} /></td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Ainda não há outras faturas listadas neste histórico. Quando novos ciclos forem gerados, eles
-                  aparecerão aqui.
-                </p>
-              )}
             </div>
           )}
           <dl className="grid gap-2 text-sm">
@@ -496,6 +529,130 @@ const CustomerInvoiceDetail = () => {
                 </tbody>
               </table>
             </div>
+          )}
+          {invoice.subscription_id && (
+            <InvoiceRecurrenceBlock
+              insight={recurrenceInsight}
+              loading={recurrenceInsightLoading}
+              error={recurrenceInsightError}
+              showOperational={showRecurrenceOperational}
+              currentInvoiceId={invoice.id}
+            />
+          )}
+          {invoice.subscription_id && (
+            <Card className="border-dashed border-primary/30">
+              <CardHeader className="py-3 pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Repeat2 className="h-4 w-4 text-primary shrink-0" aria-hidden />
+                  Faturas desta recorrência
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0 pb-4">
+                {recurrenceHistory.length > 0 ? (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Histórico agrupado por assinatura (`subscription_id`), ordenado por vencimento mais recente.
+                    </p>
+                    <div className="rounded-md border overflow-x-auto">
+                      <table className="w-full min-w-[860px] text-xs">
+                        <thead className="bg-muted/40 text-muted-foreground">
+                          <tr className="border-b">
+                            <th className="text-left font-medium px-2 py-1.5">Fatura</th>
+                            <th className="text-left font-medium px-2 py-1.5">Período</th>
+                            <th className="text-left font-medium px-2 py-1.5">Vencimento</th>
+                            <th className="text-right font-medium px-2 py-1.5">Valor</th>
+                            <th className="text-left font-medium px-2 py-1.5">Status</th>
+                            <th className="text-left font-medium px-2 py-1.5">Pago em</th>
+                            <th className="text-left font-medium px-2 py-1.5">Criada em</th>
+                            <th className="text-right font-medium px-2 py-1.5">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {recurrenceHistory.map((h) => {
+                            const isCurrent = h.id === invoice.id;
+                            const paymentUrl =
+                              h.payment_token && typeof window !== "undefined"
+                                ? `${window.location.origin}/pay/${h.payment_token}`
+                                : null;
+                            return (
+                              <tr
+                                key={h.id}
+                                className={`border-b last:border-0 ${
+                                  isCurrent ? "bg-primary/5" : "bg-card"
+                                }`}
+                              >
+                                <td className="px-2 py-1.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-medium">
+                                      {h.invoice_number ?? h.id.slice(0, 8)}
+                                    </span>
+                                    {isCurrent && (
+                                      <span className="inline-flex items-center rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0 text-[10px] font-medium text-primary">
+                                        Atual
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-2 py-1.5 text-muted-foreground">
+                                  {h.period_start && h.period_end
+                                    ? `${formatInvoiceDueDatePtBr(h.period_start)} - ${formatInvoiceDueDatePtBr(h.period_end)}`
+                                    : "—"}
+                                </td>
+                                <td className="px-2 py-1.5">{formatInvoiceDueDatePtBr(h.due_date)}</td>
+                                <td className="px-2 py-1.5 text-right font-medium">
+                                  {formatAmount(h.amount_cents)}
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <CustomerInvoiceStatusBadge status={h.status} />
+                                </td>
+                                <td className="px-2 py-1.5 text-muted-foreground">
+                                  {h.paid_at
+                                    ? formatInvoiceDateTimePtBr(h.paid_at)
+                                    : "—"}
+                                </td>
+                                <td className="px-2 py-1.5 text-muted-foreground">
+                                  {formatInvoiceDateTimePtBr(h.created_at)}
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <div className="flex justify-end items-center gap-1.5">
+                                    {!isCurrent && (
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 px-2 text-[11px]"
+                                        onClick={() => navigate(`/customer-invoices/${h.id}`)}
+                                      >
+                                        Abrir
+                                      </Button>
+                                    )}
+                                    {paymentUrl && (
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 px-2 text-[11px]"
+                                        onClick={() => window.open(paymentUrl, "_blank", "noopener,noreferrer")}
+                                      >
+                                        Pagar
+                                      </Button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Esta recorrência ainda não gerou faturas no histórico.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           )}
         </CardContent>
       </Card>

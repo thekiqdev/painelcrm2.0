@@ -37,3 +37,16 @@ export async function clearProposalPublicLinkCiphertext(proposalId: string): Pro
 export function proposalPublicLinkPathFromRawToken(rawToken: string): string {
   return `/proposal-view/${encodeURIComponent(rawToken)}`;
 }
+
+/** Mesma heurística do motor de notificações: primeiro `FRONTEND_URL`, senão `PUBLIC_APP_URL`. */
+export function resolveFrontendBaseUrlForProposalLinks(): string {
+  const raw = (process.env.FRONTEND_URL || process.env.PUBLIC_APP_URL || '').split(',')[0]?.trim() ?? '';
+  return raw.replace(/\/$/, '');
+}
+
+/** URL absoluta do link público da proposta (WhatsApp / merge fields), a partir do token cru. */
+export function buildAbsoluteProposalPublicLinkUrl(rawToken: string): string {
+  const base = resolveFrontendBaseUrlForProposalLinks();
+  const path = proposalPublicLinkPathFromRawToken(rawToken);
+  return base ? `${base}${path}` : path;
+}
