@@ -247,10 +247,20 @@ export async function runPostPaidCleanupForTenantBilling(params: {
   const ref = params.paidGatewayReferenceId?.trim();
   if (!ref) return;
 
+  const { getInvoiceById } = await import('./invoiceService.js');
+  const rowBefore = await getInvoiceById(params.billingId);
+  const wasAlreadyPaid = rowBefore?.status === 'paid';
+
   if (!(await hasTenantBillingPaymentAttemptsTable())) {
     const pm = (params.paymentMethodFallback || 'PIX').toUpperCase().trim() || 'PIX';
     await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
     await activatePlanFromBilling(params.billingId);
+    if (!wasAlreadyPaid) {
+      const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
+        './platformNotifications/platformBusinessNotifications.js'
+      );
+      schedulePublishPlatformBillingPaymentConfirmed(params.billingId);
+    }
     return;
   }
 
@@ -295,10 +305,22 @@ export async function runPostPaidCleanupForTenantBilling(params: {
     await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
     await activatePlanFromBilling(params.billingId);
     await supersedeOtherPendingTenantBillingAttemptsAfterPaid(params.billingId, paidAttemptId, params.tenantId);
+    if (!wasAlreadyPaid) {
+      const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
+        './platformNotifications/platformBusinessNotifications.js'
+      );
+      schedulePublishPlatformBillingPaymentConfirmed(params.billingId);
+    }
   } else {
     const pm = (params.paymentMethodFallback || 'PIX').toUpperCase().trim() || 'PIX';
     await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
     await activatePlanFromBilling(params.billingId);
+    if (!wasAlreadyPaid) {
+      const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
+        './platformNotifications/platformBusinessNotifications.js'
+      );
+      schedulePublishPlatformBillingPaymentConfirmed(params.billingId);
+    }
   }
 }
 

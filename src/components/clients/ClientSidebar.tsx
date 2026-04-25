@@ -175,8 +175,38 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
           </div>
         </SidebarGroup>
 
-        {/* Navegação */}
-        <SidebarGroup>
+        {/* Navegação mobile: chips horizontais (evita lista longa antes do conteúdo) */}
+        <SidebarGroup className="p-0 lg:hidden">
+          <div className="flex gap-1.5 overflow-x-auto px-2 pb-2 pt-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {menuItems.map((item) => {
+              const active = isActive(item.path);
+              return (
+                <button
+                  key={`m-${item.id}`}
+                  type="button"
+                  onClick={() =>
+                    navigate({
+                      pathname: item.path,
+                      search: location.search,
+                      state: location.state,
+                    })
+                  }
+                  className={cn(
+                    "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                    active
+                      ? "border-primary bg-primary/12 text-primary"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/70",
+                  )}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        </SidebarGroup>
+
+        {/* Navegação desktop */}
+        <SidebarGroup className="hidden lg:block">
           <SidebarGroupContent>
             <SidebarMenu>
               {menuItems.map((item) => {

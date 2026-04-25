@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, FileText, Loader2, Trash2, Eye, Pencil, ExternalLink, Search, X } from "lucide-react";
+import { Plus, FileText, Loader2, Trash2, Eye, Pencil, ExternalLink, Search, X, Filter } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -9,7 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import { proposalsService, type Proposal } from "@/services/proposals";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
@@ -26,6 +26,15 @@ import { MoreHorizontal } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -35,6 +44,7 @@ import {
 import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
 import { getMyTenantUsers, type TenantUser } from "@/services/tenantLimits";
 import { getStoredProposalPublicUrl } from "@/utils/proposalPublicLinkSession";
+import { applyUrlPatch } from "@/lib/listFiltersUrl";
 
 const STATUS_LABELS: Record<Proposal["status"], string> = {
   draft: "Rascunho",
@@ -70,26 +80,104 @@ function tryOpenStoredPublicProposal(proposalId: string): void {
   });
 }
 
+function parseOwnerFromUrl(raw: string | null): string {
+  if (!raw || raw === "all") return "__all__";
+  if (raw === "mine") return "__mine__";
+  return raw;
+}
+
+function parseValidityFromUrl(raw: string | null): string {
+  if (raw === "valid" || raw === "expired") return raw;
+  return "__all__";
+}
+
+function parseConversionFromUrl(raw: string | null): string {
+  if (raw === "yes" || raw === "no") return raw;
+  return "__all__";
+}
+
 const Proposals = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { canCreate, canEditRecord, canDeleteRecord, loading: permLoading } = useModulePermissions();
   const [list, setList] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
 
-  const [searchInput, setSearchInput] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("__all__");
-  const [clientFilterId, setClientFilterId] = useState<string | null>(null);
-  const [ownerFilter, setOwnerFilter] = useState<string>("__all__");
-  const [validityFilter, setValidityFilter] = useState<string>("__all__");
-  const [conversionFilter, setConversionFilter] = useState<string>("__all__");
+  const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
+  const [debouncedQ, setDebouncedQ] = useState(() => searchParams.get("q") ?? "");
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const s = searchParams.get("status");
+    if (!s) return "__all__";
+    return (Object.keys(STATUS_LABELS) as Proposal["status"][]).includes(s as Proposal["status"])
+      ? s
+      : "__all__";
+  });
+  const [clientFilterId, setClientFilterId] = useState<string | null>(() => searchParams.get("client"));
+  const [ownerFilter, setOwnerFilter] = useState(() => parseOwnerFromUrl(searchParams.get("owner")));
+  const [validityFilter, setValidityFilter] = useState(() => parseValidityFromUrl(searchParams.get("val")));
+  const [conversionFilter, setConversionFilter] = useState(() =>
+    parseConversionFromUrl(searchParams.get("conv")),
+  );
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(searchInput.trim()), 320);
     return () => window.clearTimeout(t);
   }, [searchInput]);
+
+  useEffect(() => {
+    const q = searchParams.get("q") ?? "";
+    const st = searchParams.get("status");
+    const nextStatus =
+      st && (Object.keys(STATUS_LABELS) as Proposal["status"][]).includes(st as Proposal["status"])
+        ? st
+        : "__all__";
+    const client = searchParams.get("client");
+    const owner = parseOwnerFromUrl(searchParams.get("owner"));
+    const val = parseValidityFromUrl(searchParams.get("val"));
+    const conv = parseConversionFromUrl(searchParams.get("conv"));
+
+    setSearchInput((prev) => (prev !== q ? q : prev));
+    setDebouncedQ((prev) => (prev !== q ? q : prev));
+    setStatusFilter((prev) => (prev !== nextStatus ? nextStatus : prev));
+    setClientFilterId((prev) => (prev !== (client || null) ? client || null : prev));
+    setOwnerFilter((prev) => (prev !== owner ? owner : prev));
+    setValidityFilter((prev) => (prev !== val ? val : prev));
+    setConversionFilter((prev) => (prev !== conv ? conv : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    const ownerParam =
+      ownerFilter === "__all__" ? null : ownerFilter === "__mine__" ? "mine" : ownerFilter;
+    const valParam =
+      validityFilter === "__all__" ? null : validityFilter === "valid" ? "valid" : validityFilter === "expired" ? "expired" : null;
+    const convParam =
+      conversionFilter === "__all__" ? null : conversionFilter === "yes" ? "yes" : conversionFilter === "no" ? "no" : null;
+
+    setSearchParams(
+      (prev) =>
+        applyUrlPatch(prev, {
+          q: debouncedQ.trim() || null,
+          status: statusFilter !== "__all__" ? statusFilter : null,
+          client: clientFilterId || null,
+          owner: ownerParam,
+          val: valParam,
+          conv: convParam,
+        }),
+      { replace: true },
+    );
+  }, [
+    debouncedQ,
+    statusFilter,
+    clientFilterId,
+    ownerFilter,
+    validityFilter,
+    conversionFilter,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,8 +275,121 @@ const Proposals = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-2xl font-bold">Propostas / Orçamentos</h1>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-2xl font-bold">Propostas / Orçamentos</h1>
+          <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
+            <SheetTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="gap-1 md:hidden">
+                <Filter className="h-4 w-4" />
+                Filtros
+                {hasActiveFilters ? <span className="ml-1 h-2 w-2 rounded-full bg-primary" aria-hidden /> : null}
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto rounded-t-2xl pb-[max(1.25rem,env(safe-area-inset-bottom))] md:hidden">
+              <SheetHeader className="text-left">
+                <SheetTitle>Filtros</SheetTitle>
+                <SheetDescription>Busca e critérios da lista.</SheetDescription>
+              </SheetHeader>
+              <div className="mt-4 space-y-4 px-1 pb-6">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Buscar</Label>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="pl-9"
+                      placeholder="Título ou descrição..."
+                      value={searchInput}
+                      onChange={(e) => setSearchInput(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Status</Label>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos</SelectItem>
+                      {(Object.keys(STATUS_LABELS) as Proposal["status"][]).map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {STATUS_LABELS[s]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Cliente</Label>
+                  <ClientSearchCombobox
+                    id="proposals-sheet-client"
+                    label=""
+                    value={clientFilterId}
+                    onChange={setClientFilterId}
+                    remoteSearch
+                    placeholderTrigger="Qualquer cliente"
+                    className="w-full"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Responsável</Label>
+                  <Select value={ownerFilter} onValueChange={setOwnerFilter}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Responsável" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos</SelectItem>
+                      <SelectItem value="__mine__">Minhas propostas</SelectItem>
+                      {tenantUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.full_name?.trim() || u.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Validade</Label>
+                  <Select value={validityFilter} onValueChange={setValidityFilter}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todas</SelectItem>
+                      <SelectItem value="valid">Dentro do prazo / sem data</SelectItem>
+                      <SelectItem value="expired">Vencidas (por data)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Faturamento</Label>
+                  <Select value={conversionFilter} onValueChange={setConversionFilter}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todas</SelectItem>
+                      <SelectItem value="yes">Com fatura</SelectItem>
+                      <SelectItem value="no">Sem fatura</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {hasActiveFilters && (
+                  <Button type="button" variant="ghost" className="w-full" onClick={clearFilters}>
+                    <X className="mr-2 h-4 w-4" />
+                    Limpar filtros
+                  </Button>
+                )}
+                <SheetClose asChild>
+                  <Button type="button" className="w-full">
+                    Concluir
+                  </Button>
+                </SheetClose>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
 
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => navigate("/proposals/templates")}>
@@ -204,8 +405,8 @@ const Proposals = () => {
         </div>
       </div>
 
-      <div className="rounded-lg border bg-card p-4 space-y-3">
-        <div className="flex flex-wrap gap-3 items-end">
+      <div className="hidden space-y-3 rounded-lg border bg-card p-4 md:block">
+        <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[200px] space-y-1.5">
             <Label className="text-xs text-muted-foreground">Buscar</Label>
             <div className="relative">
@@ -300,14 +501,20 @@ const Proposals = () => {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          Carregando propostas...
+        <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center text-muted-foreground">
+          <Loader2 className="h-7 w-7 animate-spin" />
+          <p className="text-sm font-medium text-foreground">Carregando propostas</p>
+          <p className="text-xs text-muted-foreground">Estamos preparando sua lista.</p>
         </div>
       ) : list.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma proposta com estes filtros.</p>
+        <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
+          <FileText className="h-7 w-7 text-muted-foreground/80" aria-hidden />
+          <p className="text-sm font-medium text-foreground">Nenhuma proposta com estes filtros</p>
+          <p className="text-xs text-muted-foreground">Ajuste os filtros ou crie uma nova proposta.</p>
+        </div>
       ) : (
-        <div className="rounded-md border bg-card">
+        <>
+        <div className="hidden rounded-md border bg-card md:block">
           <Table>
             <TableHeader>
               <TableRow>
@@ -410,6 +617,75 @@ const Proposals = () => {
             </TableBody>
           </Table>
         </div>
+
+        <div className="space-y-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
+          {list.map((p) => {
+            const clientLabel = p.client_name?.trim() || (p.client_id ? "Cliente" : "—");
+            const canEdit = user?.id ? canEditRecord("proposals", p.user_id, user.id) : false;
+            const canDelete = user?.id ? canDeleteRecord("proposals", p.user_id, user.id) : false;
+            const goDetail = () => navigate(`/proposals/${p.id}`);
+            return (
+              <div
+                key={`m-${p.id}`}
+                className="min-h-[8.25rem] rounded-2xl border border-border bg-card p-4 shadow-sm"
+              >
+                <button type="button" onClick={goDetail} className="w-full text-left">
+                  <p className="font-mono text-xs text-muted-foreground">{proposalCode(p.id)}</p>
+                  <p className="mt-1 font-semibold leading-snug">{p.title}</p>
+                  <p className="mt-1 truncate text-sm text-muted-foreground">{clientLabel}</p>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    <span
+                      className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[p.status]}`}
+                    >
+                      {STATUS_LABELS[p.status]}
+                    </span>
+                    <span className="text-sm font-semibold tabular-nums">{formatCurrency(p.amount)}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {p.valid_until ? `Validade ${formatDateOnlyPtBr(p.valid_until)}` : "Sem data de validade"}
+                    {p.updated_at ? ` · Atual. ${format(new Date(p.updated_at), "dd/MM/yyyy")}` : ""}
+                  </p>
+                </button>
+                <div className="mt-3 flex justify-end border-t border-border/60 pt-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 gap-1 px-3">
+                        Ações
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => navigate(`/proposals/${p.id}`)}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        Abrir
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => tryOpenStoredPublicProposal(p.id)}>
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        Proposta pública
+                      </DropdownMenuItem>
+                      {canEdit && (
+                        <DropdownMenuItem onClick={() => navigate(`/proposals/${p.id}`)}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Editar
+                        </DropdownMenuItem>
+                      )}
+                      {canDelete && (
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => void handleDelete(p)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Excluir
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        </>
       )}
 
       <div className="text-center">

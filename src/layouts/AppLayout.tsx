@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, DollarSign, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard, LayoutGrid, Store, Package, ShoppingCart } from 'lucide-react';
+import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard, LayoutGrid, Store, Package, ShoppingCart, CalendarSync, Landmark, Receipt, PieChart, ArrowLeftRight, Tags, Repeat } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -40,6 +40,7 @@ import { RequireModuleView } from '@/components/RequireModuleView';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { routePreload } from '@/routePreload';
 import { cn } from '@/lib/utils';
+import { MobileAppNavigation } from '@/components/navigation/MobileAppNavigation';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -148,6 +149,46 @@ const Nav = () => {
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+              )}
+              {show(hasInvoices, 'billing') && (
+                <>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink
+                        to="/customer-invoices"
+                        className={getNavClass}
+                        onMouseEnter={() => routePreload.customerInvoices()}
+                      >
+                        <FileText className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Faturas</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink
+                        to="/customer-charges"
+                        className={getNavClass}
+                        onMouseEnter={() => routePreload.customerCharges()}
+                      >
+                        <CreditCard className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Cobranças</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink
+                        to="/crm-subscriptions"
+                        className={getNavClass}
+                        onMouseEnter={() => routePreload.crmSubscriptions()}
+                      >
+                        <CalendarSync className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Assinaturas</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </>
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -297,35 +338,73 @@ const Nav = () => {
           <SidebarGroupLabel className={collapsed ? "sr-only" : ""}>Financeiro</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {show(hasInvoices, 'billing') && (
+              {show(hasExpenses, 'finance') && (
                 <>
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild>
-                      <NavLink to="/customer-invoices" className={getNavClass} onMouseEnter={() => routePreload.customerInvoices()}>
-                        <FileText className="mr-2 h-5 w-5" />
-                        {!collapsed && <span>Faturas de clientes</span>}
+                      <NavLink to="/finance" end className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                        <LayoutDashboard className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Resumo geral</span>}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild>
-                      <NavLink to="/customer-charges" className={getNavClass} onMouseEnter={() => routePreload.customerCharges()}>
+                      <NavLink to="/finance/accounts" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                        <Landmark className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Bancos e contas</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/finance/transactions" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                        <ArrowLeftRight className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Entradas e saídas</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/finance/expenses" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                        <Receipt className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Despesas</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/finance/categories" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                        <Tags className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Categorias</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/finance/recurring-expenses" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                        <Repeat className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Despesas recorrentes</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/finance/credit-cards" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
                         <CreditCard className="mr-2 h-5 w-5" />
-                        {!collapsed && <span>Cobranças</span>}
+                        {!collapsed && <span>Cartões de crédito</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <NavLink to="/finance/relatorios" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
+                        <PieChart className="mr-2 h-5 w-5" />
+                        {!collapsed && <span>Relatórios</span>}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 </>
-              )}
-              {show(hasExpenses, 'finance') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
-                    <NavLink to="/finance" className={getNavClass} onMouseEnter={() => routePreload.finance()}>
-                      <DollarSign className="mr-2 h-5 w-5" />
-                      {!collapsed && <span>Financeiro</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -431,11 +510,20 @@ const Header = () => {
   };
 
   return (
-    <header className="relative z-[5] flex h-16 shrink-0 items-center justify-between border-b border-border bg-background/95 px-4 backdrop-blur-sm">
+    <header className="relative z-[5] flex min-h-16 shrink-0 items-center justify-between border-b border-border bg-background/95 px-4 pt-[env(safe-area-inset-top,0px)] backdrop-blur-sm">
       <div className="flex max-w-xl flex-1 items-center">
+        <Button
+          variant="outline"
+          size="icon"
+          className="mr-2 shrink-0 md:hidden"
+          onClick={() => setCommandDialogOpen(true)}
+          aria-label="Buscar"
+        >
+          <Search className="h-4 w-4" />
+        </Button>
         <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
           <PopoverTrigger asChild>
-            <div className="relative w-full">
+            <div className="relative hidden w-full md:block">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar clientes, contratos, produtos..."
@@ -557,7 +645,7 @@ const Header = () => {
               <User className="mr-2 h-4 w-4" />
               <span>Perfil</span>
             </DropdownMenuItem>
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate('/settings')}>
               <Settings className="mr-2 h-4 w-4" />
               <span>Configurações</span>
             </DropdownMenuItem>
@@ -590,12 +678,15 @@ const AppLayout = ({ children }: AppLayoutProps) => {
     <TenantBrandProvider>
       <SidebarProvider>
         <div className="flex min-h-screen w-full">
-          <Nav />
+          <div className="hidden md:block">
+            <Nav />
+          </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <Header />
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-6">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-4 pb-28 md:p-6 md:pb-6">
               <RequireModuleView>{children}</RequireModuleView>
             </main>
+            <MobileAppNavigation />
           </div>
         </div>
       </SidebarProvider>

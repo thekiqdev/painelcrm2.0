@@ -8,6 +8,8 @@ import { checkTenantUsersLimit, checkTenantProfilesLimit, checkTenantWhatsAppIns
 import { getActiveGateway, getActiveAsaasConfigForSaas } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from '../services/paymentGatewayConfigService.js';
 import { ensureCustomerForTenant } from '../modules/gateways/asaas/index.js';
+import { schedulePublishPlatformBillingChargeCreated } from '../services/platformNotifications/platformBusinessNotifications.js';
+import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { z } from 'zod';
 
 const createTenantSchema = z.object({
@@ -744,19 +746,22 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
       amount = body.amount_cents ?? row.price_cents ?? 0;
     }
 
-    let dueDate: Date;
-    if (body.due_date) {
-      dueDate = new Date(body.due_date);
-      if (isNaN(dueDate.getTime())) {
+    let dueDateStr: string;
+    if (body.due_date?.trim()) {
+      dueDateStr = yyyyMmDdFromDbDateValue(body.due_date.trim());
+      if (!dueDateStr) {
         res.status(400).json({ error: 'Data de vencimento inválida' });
         return;
       }
     } else {
       const d = new Date();
       d.setMonth(d.getMonth() + 1);
-      dueDate = d;
+      dueDateStr = yyyyMmDdFromDbDateValue(d);
+      if (!dueDateStr) {
+        res.status(400).json({ error: 'Data de vencimento inválida' });
+        return;
+      }
     }
-    const dueDateStr = dueDate.toISOString().slice(0, 10);
     const invoiceNumber = `INV-${id.slice(0, 8)}-${Date.now().toString(36).toUpperCase()}`;
     const idempotencyKey = `saas_${id}_${planId}_${dueDateStr}`;
 
@@ -806,7 +811,7 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
         planId,
         billingInterval,
         amount,
-        dueDate,
+        dueDateStr,
         invoiceNumber,
         gatewayKey,
         chargeResult ? 'BOLETO' : null,
@@ -830,6 +835,7 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
     if (chargeResult?.bankSlipUrl) response.bankSlipUrl = chargeResult.bankSlipUrl;
     if (chargeResult?.pixQrCode) response.pixQrCode = chargeResult.pixQrCode;
     if (chargeResult?.pixCopyPaste) response.pixCopyPaste = chargeResult.pixCopyPaste;
+    schedulePublishPlatformBillingChargeCreated(String(createdCharge.id));
     res.status(201).json(response);
   } catch (error) {
     if (error instanceof z.ZodError) {

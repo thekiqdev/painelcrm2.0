@@ -68,6 +68,16 @@ const TENANT_SCOPED_TABLES = [
   'subscriptions',
   'payment_customers',
   'billing_recurring_jobs',
+  'subscription_cycles',
+  'financial_accounts',
+  'financial_transactions',
+  'expense_categories',
+  'financial_recurring_expenses',
+  'financial_recurring_expense_occurrences',
+  'financial_credit_cards',
+  'financial_credit_card_purchases',
+  'financial_credit_card_installments',
+  'financial_credit_card_statements',
 ] as const;
 
 /** Padrões que indicam filtro por tenant (query considerada segura se algum estiver presente). */

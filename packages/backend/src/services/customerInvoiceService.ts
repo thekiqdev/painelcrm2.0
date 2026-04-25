@@ -43,6 +43,8 @@ export interface CustomerInvoiceRow {
   charge_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Preenchido em `listInvoices` (JOIN subscriptions): próxima cobrança da assinatura CRM. */
+  subscription_next_billing_date?: string | null;
 }
 
 export interface CreateCustomerInvoiceInput {

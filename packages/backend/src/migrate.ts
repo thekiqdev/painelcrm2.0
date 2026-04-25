@@ -185,6 +185,36 @@ const order = [
   '137_tenant_billing_recurrence_preferences.sql',
   /** Fase 4 — agendamento inicial outbound (dispatch_not_before) */
   '138_notification_outbound_dispatch_not_before.sql',
+  /** Motor de Notificações da PLATAFORMA — núcleo (Fase 2); domínio separado do tenant */
+  '139_platform_notifications_engine_core.sql',
+  /** Billing: cycle_key canónico YYYY-MM-DD + dedupe legado ISO */
+  '140_billing_recurring_jobs_normalize_cycle_key.sql',
+  /** Billing: subscription_cycles (Etapa 1) + RLS + flags + backfill idempotente */
+  '141_subscription_cycles_phase1.sql',
+  /** Motor da PLATAFORMA: trial started/ended + templates revisados */
+  '142_platform_notifications_trial_and_template_refresh.sql',
+  /** Billing: defaults ativos para flags subscription_cycles_* (painel Super Admin pode desligar) */
+  '143_subscription_cycles_superadmin_defaults.sql',
+  /** Cobrança SaaS: token público /saas-pay/:token (mesma tenant_billing) */
+  '144_tenant_billing_platform_public_pay_token.sql',
+  /** Notificação platform.billing.charge.created: merge billing.platform_invoice_url */
+  '145_platform_notification_billing_platform_invoice_url.sql',
+  /** Plataforma: opção de botão PIX copia e cola no WhatsApp (templates cobrança SaaS) */
+  '146_platform_notification_whatsapp_pix_button.sql',
+  '147_password_reset_whatsapp.sql',
+  '148_tenants_recurring_invoice_generate_days_before_due.sql',
+  /** Módulo financeiro Fase 1: contas, categorias, entradas e despesas (tenant-scoped) */
+  '149_finance_module_phase1.sql',
+  /** Modelo unificado /api/financial: financial_accounts, financial_transactions, expense_categories */
+  '150_financial_unified.sql',
+  /** Financeiro Fase 2: despesas recorrentes + ocorrências */
+  '151_financial_recurring_expenses.sql',
+  '152_financial_credit_cards.sql',
+  '153_financial_cc_purchase_amount_mode.sql',
+  /** Assinaturas CRM: ciclos ilimitados / max_cycles (relatórios e configuração) */
+  '154_subscriptions_cycles_config.sql',
+  /** Financeiro: account_scope + transferências internas */
+  '155_financial_accounts_scope_and_transfers.sql',
   'create-admin-user.sql',
 ];
 

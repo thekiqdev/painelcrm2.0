@@ -1,5 +1,6 @@
 /**
- * Scheduler do Billing Engine: enfileira jobs de renovação (next_billing_date <= CURRENT_DATE, LIMIT 500).
+ * Scheduler do Billing Engine: enfileira jobs de renovação quando
+ * (next_billing_date − dias de antecipação do tenant) <= CURRENT_DATE, depois janela local (LIMIT 500).
  * Uso: cron a cada 10–15 min. Ex.: npx tsx src/scripts/runRecurringScheduler.ts
  */
 import dotenv from 'dotenv';

@@ -9,6 +9,9 @@ import * as systemFeaturesController from '../controllers/systemFeaturesControll
 import * as paymentGatewayConfigController from '../controllers/paymentGatewayConfigController.js';
 import * as superadminBillingController from '../controllers/superadminBillingController.js';
 import * as superadminNotificationsEngineController from '../controllers/superadminNotificationsEngineController.js';
+import * as superadminPlatformNotificationsController from '../controllers/superadminPlatformNotificationsController.js';
+import * as superadminPlatformWhatsAppController from '../controllers/superadminPlatformWhatsAppController.js';
+import * as superadminPlatformBillingsController from '../controllers/superadminPlatformBillingsController.js';
 import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsService.js';
 
 const router = Router();
@@ -51,6 +54,13 @@ router.post('/features', systemFeaturesController.createSystemFeature);
 router.put('/features/:id', systemFeaturesController.updateSystemFeature);
 router.delete('/features/:id', systemFeaturesController.deleteSystemFeature);
 
+router.get('/platform-billings', superadminPlatformBillingsController.getSuperadminPlatformBillings);
+router.get('/platform-billings/:id', superadminPlatformBillingsController.getSuperadminPlatformBillingById);
+router.post(
+  '/platform-billings/:id/public-link',
+  superadminPlatformBillingsController.postSuperadminPlatformBillingEnsurePublicLink,
+);
+
 // Billing Engine – relatórios e configurações (Fase 3)
 router.get('/billing/subscriptions', superadminBillingController.getBillingSubscriptions);
 router.get('/billing/upcoming', superadminBillingController.getBillingUpcoming);
@@ -58,8 +68,66 @@ router.get('/billing/jobs-failed', superadminBillingController.getBillingJobsFai
 router.get('/billing/recurring-jobs', superadminBillingController.getBillingRecurringJobsOps);
 router.get('/billing/settings', superadminBillingController.getBillingSettingsHandler);
 router.put('/billing/settings', superadminBillingController.putBillingSettingsHandler);
+router.get(
+  '/billing/subscription-cycles-flags',
+  superadminBillingController.getSubscriptionCyclesFlagsHandler,
+);
+router.put(
+  '/billing/subscription-cycles-flags',
+  superadminBillingController.putSubscriptionCyclesFlagsHandler,
+);
 
 router.get('/notifications-engine/summary', superadminNotificationsEngineController.getNotificationsEngineOpsSummary);
 router.get('/notifications-engine/deliveries', superadminNotificationsEngineController.listNotificationsEngineDeliveries);
+
+// Motor de Notificações da PLATAFORMA (domínio separado do tenant)
+router.get(
+  '/platform-notifications/catalog/events',
+  superadminPlatformNotificationsController.listPlatformNotificationCatalog,
+);
+router.patch(
+  '/platform-notifications/catalog/events/:eventKey/active',
+  superadminPlatformNotificationsController.patchPlatformNotificationCatalogEventActive,
+);
+router.get(
+  '/platform-notifications/catalog/events/:eventKey',
+  superadminPlatformNotificationsController.getPlatformNotificationCatalogEventDetail,
+);
+router.get(
+  '/platform-notifications/deliveries',
+  superadminPlatformNotificationsController.listPlatformNotificationDeliveries,
+);
+router.get(
+  '/platform-notifications/global-settings',
+  superadminPlatformNotificationsController.getPlatformNotificationsGlobalSettingsHandler,
+);
+router.put(
+  '/platform-notifications/global-settings',
+  superadminPlatformNotificationsController.putPlatformNotificationsGlobalSettingsHandler,
+);
+router.post(
+  '/platform-notifications/preview',
+  superadminPlatformNotificationsController.postPlatformNotificationPreview,
+);
+router.post(
+  '/platform-notifications/simulate',
+  superadminPlatformNotificationsController.postPlatformNotificationSimulate,
+);
+router.put(
+  '/platform-notifications/template-overrides',
+  superadminPlatformNotificationsController.putPlatformNotificationTemplateOverride,
+);
+router.delete(
+  '/platform-notifications/template-overrides',
+  superadminPlatformNotificationsController.deletePlatformNotificationTemplateOverrideHandler,
+);
+
+// WhatsApp da plataforma (UazAPI + chat_instances do Super Admin — não usa tenant de dispatch)
+router.get('/platform-whatsapp/instances', superadminPlatformWhatsAppController.listInstances);
+router.post('/platform-whatsapp/instances', superadminPlatformWhatsAppController.createInstance);
+router.post('/platform-whatsapp/instances/:id/connect', superadminPlatformWhatsAppController.connectInstance);
+router.get('/platform-whatsapp/instances/:id/status', superadminPlatformWhatsAppController.getInstanceStatus);
+router.patch('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.patchInstance);
+router.delete('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.deleteSuperadminPlatformWhatsAppInstance);
 
 export default router;

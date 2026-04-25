@@ -5,23 +5,28 @@ export interface TenantBillingPreferencesResponse {
   recurring_generate_time_local: string | null;
   invoice_notify_same_as_generation: boolean | null;
   invoice_notify_time_local: string | null;
+  /** Dias antes do vencimento do ciclo para gerar/enfileirar a fatura recorrente (0 = no dia do vencimento). */
+  recurring_invoice_generate_days_before_due?: number | null;
   defaults?: {
     timezone: string;
     recurring_generate_time_local: string;
     invoice_notify_same_as_generation: boolean;
     invoice_notify_time_local: string | null;
+    recurring_invoice_generate_days_before_due: number;
   };
   sources?: {
     timezone: 'tenant' | 'fallback_default';
     recurring_generate_time_local: 'tenant' | 'fallback_default';
     invoice_notify_same_as_generation: 'tenant' | 'fallback_default';
     invoice_notify_time_local: 'tenant' | 'derived_from_generation' | 'fallback_default';
+    recurring_invoice_generate_days_before_due: 'tenant' | 'fallback_default';
   };
   effective?: {
     timezone: string;
     recurring_generate_time_local: string;
     invoice_notify_same_as_generation: boolean;
     invoice_notify_time_local: string | null;
+    recurring_invoice_generate_days_before_due: number;
   };
   message?: string;
 }
@@ -31,6 +36,7 @@ export interface PutTenantBillingPreferencesBody {
   recurring_generate_time_local: string;
   invoice_notify_same_as_generation: boolean;
   invoice_notify_time_local?: string | null;
+  recurring_invoice_generate_days_before_due: number;
 }
 
 export async function getMyTenantBillingPreferences(): Promise<{

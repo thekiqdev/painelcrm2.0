@@ -29,6 +29,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -54,9 +63,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { proposalsService, type Proposal } from "@/services/proposals";
+import { cn } from "@/lib/utils";
+import { applyUrlPatch } from "@/lib/listFiltersUrl";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
+
+const CLIENT_SORT_WHITELIST = new Set(["name", "company", "email", "phone", "status", "group"]);
 
 // Schema de validação para as tarefas
 const taskSchema = z.object({
@@ -103,24 +116,39 @@ const Clients = () => {
   const { canCreate, canEdit, canDelete, canView } = useModulePermissions();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(() => searchParams.get("q") ?? "");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedClient, setSelectedClient] = useState<any>(null);
-  const [sortField, setSortField] = useState("name");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [activeTab, setActiveTab] = useState("all");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [sortField, setSortField] = useState(() => {
+    const s = searchParams.get("sort");
+    return s && CLIENT_SORT_WHITELIST.has(s) ? s : "name";
+  });
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">(() =>
+    searchParams.get("dir") === "desc" ? "desc" : "asc",
+  );
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = searchParams.get("tab");
+    return t === "active" || t === "inactive" ? t : "all";
+  });
+  const [currentPage, setCurrentPage] = useState(() => {
+    const p = parseInt(searchParams.get("page") || "1", 10);
+    return Number.isFinite(p) && p > 0 ? p : 1;
+  });
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => searchParams.get("group"));
   const [newClientGroup, setNewClientGroup] = useState("");
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [itemsPerPage, setItemsPerPage] = useState(() => {
+    const per = parseInt(searchParams.get("per") || "10", 10);
+    return itemsPerPageOptions.includes(per) ? per : 10;
+  });
   const [notes, setNotes] = useState<StickyNoteData[]>([]);
   const [clientTasks, setClientTasks] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [tabSelected, setTabSelected] = useState("details");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [dialogProposals, setDialogProposals] = useState<Proposal[]>([]);
   const [dialogProposalsLoading, setDialogProposalsLoading] = useState(false);
 
@@ -141,6 +169,56 @@ const Clients = () => {
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);
+
+  // Hidratar filtros a partir da URL (voltar do detalhe, link partilhado).
+  useEffect(() => {
+    const q = searchParams.get("q") ?? "";
+    const tabRaw = searchParams.get("tab");
+    const tab = tabRaw === "active" || tabRaw === "inactive" ? tabRaw : "all";
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+    const perRaw = parseInt(searchParams.get("per") || "10", 10);
+    const per = itemsPerPageOptions.includes(perRaw) ? perRaw : 10;
+    const groupRaw = searchParams.get("group");
+    const group = groupRaw && groupRaw.length > 0 ? groupRaw : null;
+    const sRaw = searchParams.get("sort");
+    const sort = sRaw && CLIENT_SORT_WHITELIST.has(sRaw) ? sRaw : "name";
+    const dir: "asc" | "desc" = searchParams.get("dir") === "desc" ? "desc" : "asc";
+
+    setSearchTerm((prev) => (prev !== q ? q : prev));
+    setActiveTab((prev) => (prev !== tab ? tab : prev));
+    setCurrentPage((prev) => (prev !== page ? page : prev));
+    setItemsPerPage((prev) => (prev !== per ? per : prev));
+    setSelectedGroup((prev) => (prev !== group ? group : prev));
+    setSortField((prev) => (prev !== sort ? sort : prev));
+    setSortDirection((prev) => (prev !== dir ? dir : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intencional: só reagir a mudanças na URL
+  }, [searchParams]);
+
+  // Persistir filtros na URL (substitui entrada atual para não poluir histórico).
+  useEffect(() => {
+    setSearchParams(
+      (prev) =>
+        applyUrlPatch(prev, {
+          q: searchTerm.trim() || null,
+          tab: activeTab === "all" ? null : activeTab,
+          group: selectedGroup || null,
+          page: currentPage > 1 ? currentPage : null,
+          per: itemsPerPage !== 10 ? itemsPerPage : null,
+          sort: sortField !== "name" ? sortField : null,
+          dir: sortDirection !== "asc" ? sortDirection : null,
+        }),
+      { replace: true },
+    );
+  }, [
+    searchTerm,
+    activeTab,
+    selectedGroup,
+    currentPage,
+    itemsPerPage,
+    sortField,
+    sortDirection,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     if (!isViewDialogOpen || !selectedClient?.id || tabSelected !== "opportunities" || !canView("proposals")) {
@@ -1005,7 +1083,7 @@ const Clients = () => {
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-4 sm:space-y-0">
         <h1 className="text-2xl font-bold">Clientes</h1>
         <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-          <div className="relative">
+          <div className="relative hidden md:block">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
@@ -1015,6 +1093,87 @@ const Clients = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+            <SheetTrigger asChild>
+              <Button type="button" variant="outline" className="md:hidden gap-2">
+                <Filter className="h-4 w-4" />
+                Busca e filtros
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="max-h-[88vh] overflow-y-auto rounded-t-2xl px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 md:hidden">
+              <SheetHeader className="text-left">
+                <SheetTitle>Busca e filtros</SheetTitle>
+                <SheetDescription>Refine a lista de clientes.</SheetDescription>
+              </SheetHeader>
+              <div className="mt-4 space-y-4">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    placeholder="Buscar por nome, empresa ou e-mail..."
+                    className="pl-8"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Situação</p>
+                  <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="all">Todos</TabsTrigger>
+                      <TabsTrigger value="active">Ativos</TabsTrigger>
+                      <TabsTrigger value="inactive">Inativos</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Grupo</p>
+                  <Select
+                    value={selectedGroup || "all"}
+                    onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Grupo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os grupos</SelectItem>
+                      {clientGroups.map((group) => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Itens por página</p>
+                  <Select
+                    value={itemsPerPage.toString()}
+                    onValueChange={(value) => {
+                      setItemsPerPage(Number(value));
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {itemsPerPageOptions.map((option) => (
+                        <SelectItem key={option} value={option.toString()}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <SheetClose asChild>
+                  <Button type="button" className="w-full">
+                    Concluir
+                  </Button>
+                </SheetClose>
+              </div>
+            </SheetContent>
+          </Sheet>
           {canCreate(MODULE_CLIENTS) && (
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
@@ -1456,8 +1615,8 @@ const Clients = () => {
         </div>
       </div>
 
-      {/* Tabs e Filtros */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
+      {/* Tabs e Filtros — desktop (no mobile ficam no sheet) */}
+      <div className="hidden flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 md:flex">
         <Tabs defaultValue="all" value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="all">Todos</TabsTrigger>
@@ -1482,7 +1641,7 @@ const Clients = () => {
             </SelectContent>
           </Select>
           
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" type="button" className="hidden lg:inline-flex">
             <Filter className="h-4 w-4 mr-2" />
             Mais Filtros
           </Button>
@@ -1500,7 +1659,7 @@ const Clients = () => {
                 Mostrando {paginatedClients.length} de {filteredClients.length} clientes
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-2 md:flex">
               <span className="text-sm">Mostrar</span>
               <Select 
                 value={itemsPerPage.toString()} 
@@ -1525,40 +1684,135 @@ const Clients = () => {
           </div>
           
           {isLoading && clients.length === 0 ? (
-            <div className="py-10 text-center">
-              <p className="text-muted-foreground">Carregando clientes...</p>
+            <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
+              <UserPlus className="h-7 w-7 text-muted-foreground/80" aria-hidden />
+              <p className="text-sm font-medium text-foreground">Carregando clientes</p>
+              <p className="text-xs text-muted-foreground">Aguarde enquanto buscamos sua base.</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12" aria-label="Avatar" />
-                  <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
-                    <div className="flex items-center">
-                      Nome
-                      <SortIcon field="name" />
-                    </div>
-                  </TableHead>
-                  <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
-                    <div className="flex items-center">
-                      Empresa
-                      <SortIcon field="company" />
-                    </div>
-                  </TableHead>
-                  <TableHead>E-mail</TableHead>
-                  <TableHead>Telefone</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Grupo</TableHead>
-                  <TableHead>Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              <div className="hidden overflow-x-auto md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12" aria-label="Avatar" />
+                      <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
+                        <div className="flex items-center">
+                          Nome
+                          <SortIcon field="name" />
+                        </div>
+                      </TableHead>
+                      <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
+                        <div className="flex items-center">
+                          Empresa
+                          <SortIcon field="company" />
+                        </div>
+                      </TableHead>
+                      <TableHead>E-mail</TableHead>
+                      <TableHead>Telefone</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Grupo</TableHead>
+                      <TableHead>Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedClients.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center text-muted-foreground">
+                          Nenhum cliente encontrado com os critérios de busca
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginatedClients.map((client) => {
+                        const listAvatar = resolveProfileAvatarUrl(
+                          client,
+                          client.whatsapp_avatar_url ?? null
+                        );
+                        return (
+                        <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
+                          <TableCell className="w-12">
+                            <Avatar className="h-8 w-8">
+                              {listAvatar.src ? (
+                                <AvatarImage src={listAvatar.src} alt={client.name} />
+                              ) : null}
+                              <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                            </Avatar>
+                          </TableCell>
+                          <TableCell>{client.name}</TableCell>
+                          <TableCell>{client.company || "—"}</TableCell>
+                          <TableCell>{client.email || "—"}</TableCell>
+                          <TableCell>{client.phone || "—"}</TableCell>
+                          <TableCell>
+                            <Badge 
+                              variant={
+                                client.status === "Ativo" ? "default" :
+                                client.status === "Inativo" ? "destructive" :
+                                "outline"
+                              }
+                            >
+                              {client.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{client.group || "—"}</TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                <Button variant="ghost" size="icon">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>Ações</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/clients/${client.id}/tasks`);
+                                }}>
+                                  <Plus className="h-4 w-4 mr-2" />
+                                  Adicionar Tarefa
+                                </DropdownMenuItem>
+                                {canCreate("proposals") && (
+                                  <DropdownMenuItem asChild>
+                                    <Link
+                                      to={`/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <UserPlus className="h-4 w-4 mr-2" />
+                                      Nova proposta
+                                    </Link>
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator />
+                                {canDelete(MODULE_CLIENTS) && (
+                                <DropdownMenuItem 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    confirmDeleteClient(client);
+                                  }}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Excluir Cliente
+                                </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="space-y-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
                 {paginatedClients.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground">
-                      Nenhum cliente encontrado com os critérios de busca
-                    </TableCell>
-                  </TableRow>
+                  <div className="flex min-h-[11rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
+                    <Search className="h-7 w-7 text-muted-foreground/80" aria-hidden />
+                    <p className="text-sm font-medium text-foreground">Nenhum cliente encontrado</p>
+                    <p className="text-xs text-muted-foreground">Ajuste filtros ou termos de busca para continuar.</p>
+                  </div>
                 ) : (
                   paginatedClients.map((client) => {
                     const listAvatar = resolveProfileAvatarUrl(
@@ -1566,78 +1820,111 @@ const Clients = () => {
                       client.whatsapp_avatar_url ?? null
                     );
                     return (
-                    <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
-                      <TableCell className="w-12">
-                        <Avatar className="h-8 w-8">
-                          {listAvatar.src ? (
-                            <AvatarImage src={listAvatar.src} alt={client.name} />
-                          ) : null}
-                          <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
-                        </Avatar>
-                      </TableCell>
-                      <TableCell>{client.name}</TableCell>
-                      <TableCell>{client.company || "—"}</TableCell>
-                      <TableCell>{client.email || "—"}</TableCell>
-                      <TableCell>{client.phone || "—"}</TableCell>
-                      <TableCell>
-                        <Badge 
-                          variant={
-                            client.status === "Ativo" ? "default" :
-                            client.status === "Inativo" ? "destructive" :
-                            "outline"
+                      <div
+                        key={`m-${client.id}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleViewClient(client)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleViewClient(client);
                           }
-                        >
-                          {client.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{client.group || "—"}</TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/clients/${client.id}/tasks`);
-                            }}>
-                              <Plus className="h-4 w-4 mr-2" />
-                              Adicionar Tarefa
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <UserPlus className="h-4 w-4 mr-2" />
-                              Adicionar proposta
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <FileText className="h-4 w-4 mr-2" />
-                              Gerar Proposta
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            {canDelete(MODULE_CLIENTS) && (
-                            <DropdownMenuItem 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                confirmDeleteClient(client);
-                              }}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Excluir Cliente
-                            </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                        }}
+                        className={cn(
+                          "w-full min-h-[8.25rem] rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-colors",
+                          "active:bg-muted/50",
+                        )}
+                      >
+                        <div className="flex gap-3">
+                          <Avatar className="h-11 w-11 shrink-0">
+                            {listAvatar.src ? (
+                              <AvatarImage src={listAvatar.src} alt={client.name} />
+                            ) : null}
+                            <AvatarFallback>{listAvatar.initials}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="font-semibold leading-tight">{client.name}</p>
+                                {client.company ? (
+                                  <p className="mt-0.5 truncate text-sm text-muted-foreground">{client.company}</p>
+                                ) : null}
+                              </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 -mr-1">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuLabel>Ações</DropdownMenuLabel>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigate(`/clients/${client.id}/tasks`);
+                                    }}
+                                  >
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    Adicionar tarefa
+                                  </DropdownMenuItem>
+                                  {canCreate("proposals") && (
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={`/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <UserPlus className="mr-2 h-4 w-4" />
+                                        Nova proposta
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canDelete(MODULE_CLIENTS) && (
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        confirmDeleteClient(client);
+                                      }}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Excluir
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                              {client.phone ? <span>{client.phone}</span> : null}
+                              {client.email ? <span className="truncate max-w-[200px]">{client.email}</span> : null}
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <Badge
+                                variant={
+                                  client.status === "Ativo"
+                                    ? "default"
+                                    : client.status === "Inativo"
+                                      ? "destructive"
+                                      : "outline"
+                                }
+                              >
+                                {client.status}
+                              </Badge>
+                              {client.group ? (
+                                <Badge variant="outline" className="max-w-[140px] truncate font-normal">
+                                  {client.group}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     );
                   })
                 )}
-              </TableBody>
-            </Table>
+              </div>
+            </>
           )}
 
           <div className="mt-4">

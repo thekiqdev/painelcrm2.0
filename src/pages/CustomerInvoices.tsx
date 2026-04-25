@@ -20,13 +20,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -35,35 +28,64 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Card, CardContent } from "@/components/ui/card";
 import { customerInvoicesService } from "@/services/customerInvoices";
+import type { CustomerInvoicesSummary, ListCustomerInvoicesParams } from "@/services/customerInvoices";
 import { clientsService } from "@/services/clients";
 import type { CustomerInvoice } from "@/services/customerInvoices";
 import type { Client } from "@/services/clients";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Plus, Filter, ExternalLink, AlertTriangle, Repeat2, MoreHorizontal, Pencil, XCircle, Trash2, Eye } from "lucide-react";
+import {
+  Plus,
+  ExternalLink,
+  AlertTriangle,
+  MoreHorizontal,
+  Pencil,
+  XCircle,
+  Trash2,
+  Eye,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Layers,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
-import { canDeleteCustomerInvoice, isInvoiceActionable } from "@/lib/customerInvoiceActions";
+import {
+  canDeleteCustomerInvoice,
+  isInvoiceActionable,
+  isSubscriptionInvoicePurgeable,
+} from "@/lib/customerInvoiceActions";
 
-const PAGE_SIZE = 50;
-const STATUS_OPTIONS = [
-  { value: "all", label: "Todos" },
-  { value: "pending", label: "Pendente" },
-  { value: "waiting_payment", label: "Aguardando pagamento" },
-  { value: "processing", label: "Processando" },
-  { value: "paid", label: "Pago" },
-  { value: "overdue", label: "Vencido" },
-  { value: "cancelled", label: "Cancelado" },
-  { value: "failed", label: "Falhou" },
-  { value: "refunded", label: "Reembolsado" },
-];
+const PAGE_SIZE = 20;
+/** Filtro agrupado: pendente + aguardando pagamento (alinhado ao card e ao resumo). */
+const PENDING_OPEN_FILTER = "pending_open";
 
 function formatAmount(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
   }).format(cents / 100);
+}
+
+function isSubscriptionRecurringListItem(inv: CustomerInvoice): boolean {
+  return Boolean(inv.subscription_id && inv.origin === "subscription");
+}
+
+function ymdFromApi(d: string | null | undefined): string | null {
+  if (d == null || typeof d !== "string") return null;
+  const t = d.trim();
+  return t.length >= 10 ? t.slice(0, 10) : null;
+}
+
+type ListRowModel = { kind: "standalone"; inv: CustomerInvoice; sortTs: number };
+
+function buildInvoiceListRows(invoices: CustomerInvoice[]): ListRowModel[] {
+  return [...invoices]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map((inv) => ({ kind: "standalone" as const, inv, sortTs: new Date(inv.created_at).getTime() }));
 }
 
 const CustomerInvoices = () => {
@@ -78,6 +100,15 @@ const CustomerInvoices = () => {
   const [invoiceToDelete, setInvoiceToDelete] = useState<CustomerInvoice | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [summary, setSummary] = useState<CustomerInvoicesSummary | null>(null);
+
+  const refreshSummary = useCallback(() => {
+    customerInvoicesService.getSummary().then(setSummary).catch(() => setSummary(null));
+  }, []);
+
+  useEffect(() => {
+    refreshSummary();
+  }, [refreshSummary]);
 
   useEffect(() => {
     customerInvoicesService
@@ -89,11 +120,13 @@ const CustomerInvoices = () => {
   const loadInvoices = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await customerInvoicesService.list({
-        status: statusFilter || undefined,
-        limit: PAGE_SIZE,
-        offset,
-      });
+      const params: ListCustomerInvoicesParams = { limit: PAGE_SIZE, offset };
+      if (statusFilter === PENDING_OPEN_FILTER) {
+        params.status_in = ["pending", "waiting_payment"];
+      } else if (statusFilter) {
+        params.status = statusFilter;
+      }
+      const data = await customerInvoicesService.list(params);
       setInvoices(data);
     } catch (err) {
       console.error("Erro ao carregar faturas:", err);
@@ -121,6 +154,8 @@ const CustomerInvoices = () => {
     return m;
   }, [clients]);
 
+  const listRows = React.useMemo(() => buildInvoiceListRows(invoices), [invoices]);
+
   const handleConfirmCancel = async () => {
     if (!invoiceToCancel) return;
     try {
@@ -129,6 +164,7 @@ const CustomerInvoices = () => {
       toast.success("Fatura cancelada no sistema e no provedor de pagamento");
       setInvoiceToCancel(null);
       await loadInvoices();
+      refreshSummary();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao cancelar fatura";
       toast.error(msg);
@@ -145,6 +181,7 @@ const CustomerInvoices = () => {
       toast.success("Fatura excluída");
       setInvoiceToDelete(null);
       await loadInvoices();
+      refreshSummary();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao excluir fatura";
       toast.error(msg);
@@ -168,8 +205,18 @@ const CustomerInvoices = () => {
         </Alert>
       )}
 
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Faturas de clientes</h1>
+      <div className="flex justify-between items-center gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold">Faturas</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Todas as faturas em ordem cronológica. Para visão por assinatura (histórico, estatísticas e próximas
+            cobranças), use{" "}
+            <Link to="/crm-subscriptions" className="font-medium text-primary underline hover:no-underline">
+              Financeiro → Assinaturas
+            </Link>
+            .
+          </p>
+        </div>
         <Button asChild>
           <Link to="/customer-invoices/new">
             <Plus className="mr-2 h-4 w-4" />
@@ -178,39 +225,108 @@ const CustomerInvoices = () => {
         </Button>
       </div>
 
-      <div className="bg-card rounded-lg border p-4 space-y-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Filter className="h-4 w-4" />
-          <span className="font-medium">Filtros</span>
+      {summary && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Card
+            className={cn(
+              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+              statusFilter === "paid" && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
+            )}
+            onClick={() => setStatusFilter("paid")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter("paid");
+              }
+            }}
+          >
+            <CardContent className="p-4 pt-4">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Pagas</p>
+                <CheckCircle2 className="h-4 w-4 text-emerald-600/80 shrink-0" aria-hidden />
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.paid_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.paid_amount_cents)}</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={cn(
+              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+              statusFilter === PENDING_OPEN_FILTER && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
+            )}
+            onClick={() => setStatusFilter(PENDING_OPEN_FILTER)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter(PENDING_OPEN_FILTER);
+              }
+            }}
+          >
+            <CardContent className="p-4 pt-4">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Pendentes</p>
+                <Clock className="h-4 w-4 text-amber-600/85 shrink-0" aria-hidden />
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.pending_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.pending_amount_cents)}</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={cn(
+              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+              statusFilter === "overdue" && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
+            )}
+            onClick={() => setStatusFilter("overdue")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter("overdue");
+              }
+            }}
+          >
+            <CardContent className="p-4 pt-4">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
+                <AlertCircle className="h-4 w-4 text-red-600/75 shrink-0" aria-hidden />
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.overdue_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.overdue_amount_cents)}</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={cn(
+              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+              statusFilter === "" && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
+            )}
+            onClick={() => setStatusFilter("")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter("");
+              }
+            }}
+          >
+            <CardContent className="p-4 pt-4">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Total</p>
+                <Layers className="h-4 w-4 text-muted-foreground shrink-0 opacity-70" aria-hidden />
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.total_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.total_amount_cents)}</p>
+            </CardContent>
+          </Card>
         </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <Select value={statusFilter || "all"} onValueChange={(v) => setStatusFilter(v === "all" ? "" : v)}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              {STATUS_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" onClick={() => setOffset(0)}>
-            Primeira página
-          </Button>
-          {offset >= PAGE_SIZE && (
-            <Button variant="outline" size="sm" onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}>
-              Anterior
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={() => setOffset((o) => o + PAGE_SIZE)}>
-            Próxima
-          </Button>
-        </div>
-      </div>
+      )}
 
-      <div className="bg-card rounded-lg border">
+      <div className="bg-card rounded-lg border overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -234,118 +350,171 @@ const CustomerInvoices = () => {
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   <span className="block font-medium text-foreground mb-1">Nenhuma fatura encontrada</span>
-                  Crie uma nova fatura ou ajuste o filtro de status.
+                  Crie uma nova fatura ou use os cards acima para outro status.
                 </TableCell>
               </TableRow>
             ) : (
-              invoices.map((inv) => (
-                <TableRow
-                  key={inv.id}
-                  role="button"
-                  tabIndex={0}
-                  className="cursor-pointer hover:bg-muted/60"
-                  onClick={() => navigate(`/customer-invoices/${inv.id}`)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      navigate(`/customer-invoices/${inv.id}`);
-                    }
-                  }}
-                >
-                  <TableCell className="font-mono text-sm">
-                    {inv.invoice_number ?? inv.id.slice(0, 8)}
-                  </TableCell>
-                  <TableCell>{inv.client_id ? (clientMap[inv.client_id] ?? inv.client_id.slice(0, 8)) : "Sem cliente"}</TableCell>
-                  <TableCell>{formatAmount(inv.amount_cents)}</TableCell>
-                  <TableCell>
-                    <CustomerInvoiceStatusBadge status={inv.status} />
-                  </TableCell>
-                  <TableCell>
-                    {inv.subscription_id ? (
-                      <span
-                        className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary"
-                        title="Fatura recorrente — cobrança automática conforme o plano"
-                      >
-                        <Repeat2 className="h-3 w-3 shrink-0" aria-hidden />
-                        Recorrente
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell>{format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
-                  <TableCell
-                    className="text-right"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
+              listRows.map((row) => {
+                const inv = row.inv;
+                const nextBill = ymdFromApi(inv.subscription_next_billing_date);
+                return (
+                  <TableRow
+                    key={inv.id}
+                    role="button"
+                    tabIndex={0}
+                    className="cursor-pointer hover:bg-muted/60"
+                    onClick={() => navigate(`/customer-invoices/${inv.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        navigate(`/customer-invoices/${inv.id}`);
+                      }
+                    }}
                   >
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 gap-1 px-2"
-                          aria-label="Ações rápidas"
+                    <TableCell className="font-mono text-sm">
+                      {inv.invoice_number ?? inv.id.slice(0, 8)}
+                    </TableCell>
+                    <TableCell>{inv.client_id ? (clientMap[inv.client_id] ?? inv.client_id.slice(0, 8)) : "Sem cliente"}</TableCell>
+                    <TableCell>{formatAmount(inv.amount_cents)}</TableCell>
+                    <TableCell>
+                      <CustomerInvoiceStatusBadge status={inv.status} />
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      {isSubscriptionRecurringListItem(inv) && inv.subscription_id ? (
+                        <Link
+                          to={`/crm-subscriptions/${inv.subscription_id}`}
+                          className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                          onKeyDown={(e) => e.stopPropagation()}
                         >
-                          <MoreHorizontal className="h-4 w-4" />
-                          <span className="hidden sm:inline text-xs">Ações</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-52">
-                        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                          Ações rápidas
-                        </DropdownMenuLabel>
-                        <DropdownMenuItem
-                          onSelect={() => navigate(`/customer-invoices/${inv.id}`)}
-                        >
-                          <Eye className="mr-2 h-4 w-4" />
-                          Ver detalhes
-                        </DropdownMenuItem>
-                        {isInvoiceActionable(inv.status) && (
-                          <DropdownMenuItem
-                            onSelect={() =>
-                              navigate(`/customer-invoices/${inv.id}/edit`)
-                            }
+                          Assinatura
+                          {nextBill ? (
+                            <span className="block text-[10px] text-muted-foreground font-normal tabular-nums mt-0.5">
+                              Próx.: {format(new Date(nextBill + "T12:00:00"), "dd/MM/yyyy", { locale: ptBR })}
+                            </span>
+                          ) : null}
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>{format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
+                    <TableCell
+                      className="text-right"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1 px-2"
+                            aria-label="Ações rápidas"
                           >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Editar
+                            <MoreHorizontal className="h-4 w-4" />
+                            <span className="hidden sm:inline text-xs">Ações</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-52">
+                          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                            Ações rápidas
+                          </DropdownMenuLabel>
+                          <DropdownMenuItem
+                            onSelect={() => navigate(`/customer-invoices/${inv.id}`)}
+                          >
+                            <Eye className="mr-2 h-4 w-4" />
+                            Ver detalhes
                           </DropdownMenuItem>
-                        )}
-                        {isInvoiceActionable(inv.status) && (
-                          <>
-                            <DropdownMenuSeparator />
+                          {isInvoiceActionable(inv.status) && (
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                navigate(`/customer-invoices/${inv.id}/edit`)
+                              }
+                            >
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Editar
+                            </DropdownMenuItem>
+                          )}
+                          {isInvoiceActionable(inv.status) && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onSelect={(e) => {
+                                  e.preventDefault();
+                                  setInvoiceToCancel(inv);
+                                }}
+                              >
+                                <XCircle className="mr-2 h-4 w-4" />
+                                Cancelar fatura
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                          {canDeleteCustomerInvoice(inv) && (
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
                               onSelect={(e) => {
                                 e.preventDefault();
-                                setInvoiceToCancel(inv);
+                                setInvoiceToDelete(inv);
                               }}
                             >
-                              <XCircle className="mr-2 h-4 w-4" />
-                              Cancelar fatura
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Excluir
                             </DropdownMenuItem>
-                          </>
-                        )}
-                        {canDeleteCustomerInvoice(inv) && (
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onSelect={(e) => {
-                              e.preventDefault();
-                              setInvoiceToDelete(inv);
-                            }}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Excluir
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
+        {!loading && (invoices.length > 0 || offset > 0) && (
+          <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between bg-muted/20">
+            <p className="text-sm text-muted-foreground tabular-nums">
+              {invoices.length > 0 ? (
+                <>
+                  Página {Math.floor(offset / PAGE_SIZE) + 1}
+                  <span className="mx-1.5 text-border">·</span>
+                  {offset + 1}–{offset + invoices.length}
+                </>
+              ) : (
+                <>Nenhum resultado nesta página</>
+              )}
+            </p>
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={offset === 0}
+                onClick={() => setOffset(0)}
+              >
+                Início
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={offset === 0}
+                onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+              >
+                Anterior
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={invoices.length < PAGE_SIZE}
+                onClick={() => setOffset((o) => o + PAGE_SIZE)}
+              >
+                Próxima
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <AlertDialog open={invoiceToCancel !== null} onOpenChange={(open) => !open && setInvoiceToCancel(null)}>
@@ -378,8 +547,18 @@ const CustomerInvoices = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir fatura?</AlertDialogTitle>
             <AlertDialogDescription>
-              A cobrança será removida no provedor e o registro será apagado. Número:{" "}
-              <span className="font-mono">{invoiceToDelete?.invoice_number ?? invoiceToDelete?.id.slice(0, 8)}</span>
+              {invoiceToDelete && isSubscriptionInvoicePurgeable(invoiceToDelete) ? (
+                <>
+                  Esta cobrança de assinatura já está encerrada (cancelada ou falhou). O registro será removido
+                  definitivamente aqui. Número:{" "}
+                  <span className="font-mono">{invoiceToDelete.invoice_number ?? invoiceToDelete.id.slice(0, 8)}</span>
+                </>
+              ) : (
+                <>
+                  A cobrança será removida no provedor e o registro será apagado. Número:{" "}
+                  <span className="font-mono">{invoiceToDelete?.invoice_number ?? invoiceToDelete?.id.slice(0, 8)}</span>
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

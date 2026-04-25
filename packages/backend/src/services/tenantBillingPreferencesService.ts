@@ -1,9 +1,11 @@
 import { pool } from '../utils/db.js';
+import { clampRecurringInvoiceGenerateDaysBeforeDue } from '../utils/billingGenerationDate.js';
 
 export const BILLING_PREFERENCES_DEFAULTS = {
   timezone: 'America/Sao_Paulo',
   recurring_generate_time_local: '09:00',
   invoice_notify_same_as_generation: true,
+  recurring_invoice_generate_days_before_due: 0,
 } as const;
 
 export interface TenantBillingPreferencesRow {
@@ -11,6 +13,7 @@ export interface TenantBillingPreferencesRow {
   recurring_generate_time_local: string | null;
   invoice_notify_same_as_generation: boolean | null;
   invoice_notify_time_local: string | null;
+  recurring_invoice_generate_days_before_due: number | null;
 }
 
 export interface TenantBillingPreferencesResolved {
@@ -23,6 +26,8 @@ export interface TenantBillingPreferencesResolved {
   invoice_notify_same_as_generation_source: 'tenant' | 'fallback_default';
   invoice_notify_time_local_effective: string | null;
   invoice_notify_time_source: 'tenant' | 'derived_from_generation' | 'fallback_default';
+  recurring_invoice_generate_days_before_due_effective: number;
+  recurring_invoice_generate_days_before_due_source: 'tenant' | 'fallback_default';
 }
 
 export function normalizeTimeToHhMm(input: string | null | undefined): string | null {
@@ -84,6 +89,13 @@ export function resolveTenantBillingPreferences(
     invoice_notify_time_source = 'fallback_default';
   }
 
+  const daysFromDb = raw?.recurring_invoice_generate_days_before_due;
+  const recurring_invoice_generate_days_before_due_effective = clampRecurringInvoiceGenerateDaysBeforeDue(
+    typeof daysFromDb === 'number' ? daysFromDb : BILLING_PREFERENCES_DEFAULTS.recurring_invoice_generate_days_before_due
+  );
+  const recurring_invoice_generate_days_before_due_source: 'tenant' | 'fallback_default' =
+    typeof daysFromDb === 'number' ? 'tenant' : 'fallback_default';
+
   return {
     timezone_effective,
     timezone_source,
@@ -94,6 +106,8 @@ export function resolveTenantBillingPreferences(
     invoice_notify_same_as_generation_source,
     invoice_notify_time_local_effective,
     invoice_notify_time_source,
+    recurring_invoice_generate_days_before_due_effective,
+    recurring_invoice_generate_days_before_due_source,
   };
 }
 
@@ -102,7 +116,8 @@ export async function getTenantBillingPreferences(tenantId: string): Promise<Ten
     `SELECT timezone::text,
             recurring_generate_time_local::text,
             invoice_notify_same_as_generation,
-            invoice_notify_time_local::text
+            invoice_notify_time_local::text,
+            recurring_invoice_generate_days_before_due
      FROM tenants
      WHERE id = $1
      LIMIT 1`,
@@ -118,21 +133,32 @@ export async function updateTenantBillingPreferences(
     recurring_generate_time_local: string;
     invoice_notify_same_as_generation: boolean;
     invoice_notify_time_local: string | null;
+    recurring_invoice_generate_days_before_due: number;
   }
 ): Promise<TenantBillingPreferencesRow | null> {
   const recurring = normalizeTimeToHhMm(data.recurring_generate_time_local);
   const notify = normalizeTimeToHhMm(data.invoice_notify_time_local);
+  const daysBefore = clampRecurringInvoiceGenerateDaysBeforeDue(data.recurring_invoice_generate_days_before_due);
   const r = await pool.query<TenantBillingPreferencesRow>(
     `UPDATE tenants
      SET timezone = $1::text,
          recurring_generate_time_local = $2::time,
          invoice_notify_same_as_generation = $3::boolean,
          invoice_notify_time_local = $4::time,
+         recurring_invoice_generate_days_before_due = $6::int,
          updated_at = now()
      WHERE id = $5
      RETURNING timezone::text, recurring_generate_time_local::text,
-               invoice_notify_same_as_generation, invoice_notify_time_local::text`,
-    [data.timezone, recurring, data.invoice_notify_same_as_generation, data.invoice_notify_same_as_generation ? null : notify, tenantId]
+               invoice_notify_same_as_generation, invoice_notify_time_local::text,
+               recurring_invoice_generate_days_before_due`,
+    [
+      data.timezone,
+      recurring,
+      data.invoice_notify_same_as_generation,
+      data.invoice_notify_same_as_generation ? null : notify,
+      tenantId,
+      daysBefore,
+    ]
   );
   return r.rows[0] ?? null;
 }

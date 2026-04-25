@@ -236,16 +236,17 @@ class ApiClient {
       }
 
       if (!response.ok) {
+        const body = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
         return {
-          error: data.error || data.message || 'Request failed',
-          code: typeof data.code === 'string' ? data.code : undefined,
-          hint: typeof data.hint === 'string' ? data.hint : undefined,
-          field: typeof data.field === 'string' ? data.field : undefined,
-          details: { 
-            ...data.details, 
-            status: response.status, 
+          error: (body.error as string) || (body.message as string) || 'Request failed',
+          code: typeof body.code === 'string' ? body.code : undefined,
+          hint: typeof body.hint === 'string' ? body.hint : undefined,
+          field: typeof body.field === 'string' ? body.field : undefined,
+          details: {
+            ...body,
+            status: response.status,
             statusText: response.statusText,
-            url 
+            url,
           },
         };
       }

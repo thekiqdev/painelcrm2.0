@@ -1,5 +1,5 @@
 /**
- * Customer Billing: faturas do tenant para seus clientes (customer_invoices).
+ * Customer Billing: faturas do tenant (customer_invoices).
  * Todas as rotas exigem tenantAuth; list e get filtram por tenant_id.
  */
 import type { Response } from 'express';
@@ -13,6 +13,7 @@ import {
   listRecurrenceHistoryForInvoice,
   clientBelongsToTenant,
   PreconditionFailedError,
+  getCustomerInvoicesSummary,
   type ListCustomerInvoicesFilters,
 } from '../services/customerBillingService.js';
 import {
@@ -56,6 +57,8 @@ const createBodySchema = z.object({
   recurring: z.boolean().optional(),
   billing_interval: billingIntervalSchema.optional(),
   charge_id: z.string().uuid('charge_id inválido').optional().nullable(),
+  cycles_unlimited: z.boolean().optional(),
+  max_cycles: z.number().int().positive().nullable().optional(),
 })
   .refine((data) => (data.items?.length ?? 0) > 0 || (data.amount_cents != null && data.amount_cents >= 1), {
     message: 'Informe amount_cents ou pelo menos um item',
@@ -65,9 +68,16 @@ const createBodySchema = z.object({
     message: 'Para fatura recorrente informe billing_interval (monthly, quarterly, semi_annual, yearly)',
     path: ['billing_interval'],
   })
-  .refine((data) => data.recurring !== true || (data.client_id != null && data.client_id !== ''), {
-    message: 'Fatura recorrente exige cliente',
-    path: ['client_id'],
+  .superRefine((data, ctx) => {
+    if (data.recurring !== true) return;
+    const unlimited = data.cycles_unlimited !== false;
+    if (!unlimited && (data.max_cycles == null || data.max_cycles < 1)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Informe max_cycles > 0 quando cycles_unlimited é false',
+        path: ['max_cycles'],
+      });
+    }
   });
 
 /** GET /api/customer-invoices/gateway-status — se o gateway CRM está ativo (alinha a validateInvoicePreconditions). Fase 1. */
@@ -127,7 +137,23 @@ export async function getCustomerInvoicePreconditions(req: AuthRequest, res: Res
   }
 }
 
-/** GET /api/customer-invoices — lista faturas do tenant (filtros: client_id?, status?, limit?, offset?). */
+/** GET /api/customer-invoices/summary — totais por estado (tenant), para cards no painel. */
+export async function getCustomerInvoicesSummaryHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    const summary = await getCustomerInvoicesSummary(tenantId);
+    res.json(summary);
+  } catch (err) {
+    console.error('[customerInvoicesController] getCustomerInvoicesSummaryHandler error:', err);
+    res.status(500).json({ error: 'Erro ao carregar resumo de faturas' });
+  }
+}
+
+/** GET /api/customer-invoices — lista faturas do tenant (filtros: client_id?, status?, status_in?, limit?, offset?). */
 export async function listCustomerInvoices(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
@@ -136,10 +162,24 @@ export async function listCustomerInvoices(req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const { client_id, status, limit, offset } = req.query;
+    const { client_id, status, status_in, limit, offset } = req.query;
     const filters: ListCustomerInvoicesFilters = {};
     if (typeof client_id === 'string') filters.client_id = client_id;
-    if (typeof status === 'string') filters.status = status;
+    const statusInParts: string[] = [];
+    if (typeof status_in === 'string' && status_in.trim()) {
+      statusInParts.push(...status_in.split(',').map((s) => s.trim()).filter(Boolean));
+    } else if (Array.isArray(status_in)) {
+      for (const raw of status_in) {
+        if (typeof raw === 'string' && raw.trim()) {
+          statusInParts.push(...raw.split(',').map((s) => s.trim()).filter(Boolean));
+        }
+      }
+    }
+    if (statusInParts.length > 0) {
+      filters.status_in = statusInParts;
+    } else if (typeof status === 'string' && status.trim()) {
+      filters.status = status;
+    }
     if (typeof limit === 'string') filters.limit = parseInt(limit, 10);
     if (typeof offset === 'string') filters.offset = parseInt(offset, 10);
 
@@ -238,7 +278,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
 
     const result = isRecurring
       ? await createRecurringManualInvoice(tenantId, {
-          client_id: parsed.data.client_id!,
+          client_id: parsed.data.client_id ?? null,
           amount_cents: parsed.data.amount_cents,
           due_date: parsed.data.due_date,
           description: parsed.data.description ?? null,
@@ -247,6 +287,8 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
           gateway_key: parsed.data.gateway_key ?? null,
           billing_interval: parsed.data.billing_interval!,
           items: parsed.data.items,
+          cycles_unlimited: parsed.data.cycles_unlimited,
+          max_cycles: parsed.data.max_cycles ?? null,
         })
       : await createManualInvoice(tenantId, {
           client_id: parsed.data.client_id,
@@ -427,7 +469,7 @@ export async function patchCustomerInvoiceRecurrenceNextBilling(req: AuthRequest
   }
 }
 
-/** DELETE /api/customer-invoices/:id — exclui fatura manual e remove/cancela cobrança no Asaas. Faturas de assinatura (origin=subscription) não podem ser excluídas. */
+/** DELETE /api/customer-invoices/:id — exclui fatura manual (gateway) ou fatura de assinatura cancelada/falhada (apenas registro). */
 export async function deleteCustomerInvoice(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
@@ -444,7 +486,11 @@ export async function deleteCustomerInvoice(req: AuthRequest, res: Response): Pr
       res.status(404).json({ error: msg });
       return;
     }
-    if (msg.startsWith('Faturas geradas') || msg.startsWith('Só é possível excluir')) {
+    if (
+      msg.startsWith('Faturas geradas') ||
+      msg.startsWith('Só é possível excluir') ||
+      msg.startsWith('Faturas de assinatura só podem ser excluídas')
+    ) {
       res.status(400).json({ error: msg });
       return;
     }

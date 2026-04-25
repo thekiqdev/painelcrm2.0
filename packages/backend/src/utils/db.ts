@@ -39,9 +39,16 @@ export function escapeSetLocalAppValue(value: string): string {
 export async function withBillingWorkerRlsBypass<T>(work: () => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
-    await client.query("SET LOCAL app.bypass_rls = '1'");
+    // SET LOCAL só vive até ao fim da transação implícita de um statement; em autocommit o bypass
+    // não chegava aos UPDATEs seguintes (ex.: subscriptions após customer_invoices). Session-level:
+    await client.query(`SELECT set_config('app.bypass_rls', '1', false)`);
     return await dbRequestStorage.run({ client }, work);
   } finally {
+    try {
+      await client.query(`SELECT set_config('app.bypass_rls', '', false)`);
+    } catch {
+      /* evitar bloquear release se reset falhar */
+    }
     client.release();
   }
 }

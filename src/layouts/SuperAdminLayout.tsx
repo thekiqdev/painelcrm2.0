@@ -12,6 +12,9 @@ import {
   Bell,
   CreditCard,
   Settings2,
+  Building2,
+  Repeat2,
+  Receipt,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -75,6 +78,14 @@ export default function SuperAdminLayout() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
+                    <NavLink to="/superadmin/platform-billings" className={getNavClass}>
+                      <Receipt className="mr-2 h-5 w-5" />
+                      <span>Cobranças da plataforma</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
                     <NavLink to="/superadmin/features" className={getNavClass}>
                       <Flag className="mr-2 h-5 w-5" />
                       <span>Features</span>
@@ -130,9 +141,25 @@ export default function SuperAdminLayout() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
+                    <NavLink to="/superadmin/platform-notifications" className={getNavClass}>
+                      <Building2 className="mr-2 h-5 w-5" />
+                      <span>Notificações da plataforma</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
                     <NavLink to="/superadmin/notifications-engine" className={getNavClass}>
                       <Settings2 className="mr-2 h-5 w-5" />
-                      <span>Motor de notificações</span>
+                      <span>Motor CRM (tenants)</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/superadmin/subscription-cycles" className={getNavClass}>
+                      <Repeat2 className="mr-2 h-5 w-5" />
+                      <span>Ciclos de assinatura</span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

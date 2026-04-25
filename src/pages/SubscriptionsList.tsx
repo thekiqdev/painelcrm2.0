@@ -1,0 +1,244 @@
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { crmSubscriptionsService, type CrmSubscriptionListItem } from "@/services/crmSubscriptions";
+import { toast } from "@/components/ui/sonner";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { ArrowRight, CalendarSync, Eye, EyeOff, Filter } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const HIDE_ENDED_STORAGE_KEY = "crm_subscriptions_hide_ended";
+
+function readStoredHideEnded(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = localStorage.getItem(HIDE_ENDED_STORAGE_KEY);
+    if (raw === null) return true;
+    return raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function isSubscriptionEnded(row: CrmSubscriptionListItem): boolean {
+  return row.status === "cancelled";
+}
+
+function formatAmount(cents: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+}
+
+function intervalLabel(interval: string): string {
+  const m: Record<string, string> = {
+    monthly: "Mensal",
+    quarterly: "Trimestral",
+    semi_annual: "Semestral",
+    yearly: "Anual",
+  };
+  return m[interval] ?? interval;
+}
+
+function subscriptionStatusUi(row: CrmSubscriptionListItem): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
+  if (row.status === "cancelled") return { label: "Encerrada", variant: "secondary" };
+  if (row.status !== "active") return { label: row.status, variant: "outline" };
+  if (row.cancel_at_period_end) return { label: "Encerra ao fim do período", variant: "outline" };
+  return { label: "Ativa", variant: "default" };
+}
+
+const SubscriptionsList = () => {
+  const navigate = useNavigate();
+  const [rows, setRows] = useState<CrmSubscriptionListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [hideEnded, setHideEnded] = useState<boolean>(readStoredHideEnded);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HIDE_ENDED_STORAGE_KEY, hideEnded ? "true" : "false");
+    } catch {
+      /* ignore */
+    }
+  }, [hideEnded]);
+
+  const displayedRows = useMemo(() => {
+    if (!hideEnded) return rows;
+    return rows.filter((r) => !isSubscriptionEnded(r));
+  }, [rows, hideEnded]);
+
+  const endedCount = useMemo(() => rows.filter(isSubscriptionEnded).length, [rows]);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await crmSubscriptionsService.list();
+      setRows(data);
+    } catch (e) {
+      console.error(e);
+      toast.error(e instanceof Error ? e.message : "Erro ao carregar assinaturas");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="space-y-6 max-w-[1200px]">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
+            <CalendarSync className="h-4 w-4" />
+            <span>Financeiro</span>
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight">Assinaturas</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Cobranças automáticas por cliente: valor, periodicidade e próxima data. O histórico de faturas fica no detalhe
+            de cada assinatura.
+          </p>
+        </div>
+        <Button variant="outline" asChild className="shrink-0">
+          <Link to="/customer-invoices/new">Nova fatura ou assinatura</Link>
+        </Button>
+      </div>
+
+      <div className="rounded-xl border bg-card shadow-sm p-4 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground shrink-0">
+          <Filter className="h-4 w-4" aria-hidden />
+          <span>Filtros</span>
+        </div>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant={hideEnded ? "secondary" : "outline"}
+                size="sm"
+                className={cn("gap-2 shrink-0", hideEnded && "border-transparent")}
+                onClick={() => setHideEnded((v) => !v)}
+                aria-pressed={hideEnded}
+                aria-label={hideEnded ? "Mostrar assinaturas encerradas" : "Ocultar assinaturas encerradas"}
+              >
+                {hideEnded ? (
+                  <EyeOff className="h-4 w-4 text-muted-foreground" aria-hidden />
+                ) : (
+                  <Eye className="h-4 w-4" aria-hidden />
+                )}
+                <span>{hideEnded ? "Mostrar encerradas" : "Ocultar encerradas"}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              {hideEnded
+                ? "Assinaturas encerradas estão ocultas. Clique para exibir (a preferência fica guardada neste navegador)."
+                : "Todas as assinaturas visíveis. Clique para ocultar as encerradas."}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        {hideEnded && endedCount > 0 && (
+          <span className="text-xs text-muted-foreground">
+            {endedCount} encerrada{endedCount !== 1 ? "s" : ""} oculta{endedCount !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+
+      <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent bg-muted/40">
+              <TableHead>Cliente</TableHead>
+              <TableHead>Plano / descrição</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead>Próxima cobrança</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right w-[140px]">Ações</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                  Carregando…
+                </TableCell>
+              </TableRow>
+            ) : rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                  Nenhuma assinatura ainda. Crie uma fatura recorrente para gerar a primeira assinatura.
+                </TableCell>
+              </TableRow>
+            ) : displayedRows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                  <p className="font-medium text-foreground mb-1">Só há assinaturas encerradas</p>
+                  <p className="text-sm max-w-md mx-auto">
+                    Ative <strong className="text-foreground">Mostrar encerradas</strong> nos filtros acima para vê-las
+                    (a opção é lembrada neste navegador).
+                  </p>
+                </TableCell>
+              </TableRow>
+            ) : (
+              displayedRows.map((row) => {
+                const st = subscriptionStatusUi(row);
+                const next = row.next_billing_date?.slice(0, 10);
+                return (
+                  <TableRow
+                    key={row.id}
+                    className="cursor-pointer group"
+                    onClick={() => navigate(`/crm-subscriptions/${row.id}`)}
+                  >
+                    <TableCell className="font-medium">
+                      {row.client_name ?? (row.client_id ? "Cliente" : "Sem cliente")}
+                    </TableCell>
+                    <TableCell className="max-w-[280px]">
+                      <span className="line-clamp-2 text-sm text-muted-foreground">
+                        {row.plan_label?.trim() || `Assinatura · ${intervalLabel(row.billing_interval)}`}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{formatAmount(row.amount_cents)}</TableCell>
+                    <TableCell className="tabular-nums text-sm">
+                      {next
+                        ? format(new Date(`${next}T12:00:00`), "dd/MM/yyyy", { locale: ptBR })
+                        : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={st.variant} className={cn(st.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25")}>
+                        {st.label}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <Button size="sm" variant="ghost" className="gap-1" asChild>
+                        <Link to={`/crm-subscriptions/${row.id}`}>
+                          <Eye className="h-4 w-4" />
+                          Abrir
+                          <ArrowRight className="h-3 w-3 opacity-60" />
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+};
+
+export default SubscriptionsList;

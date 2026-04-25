@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/components/ui/sonner';
 import {
@@ -7,7 +7,7 @@ import {
   Send,
   Search,
   MessageSquare,
-  ChevronDown,
+  ChevronLeft,
   Plus,
   MoreVertical,
   UserPlus,
@@ -106,6 +106,9 @@ import {
   resolveRestoreConversationId,
 } from '@/utils/clientProfileNavigation';
 import { consumeKanbanProposalColumnContextIfMatch } from '@/utils/kanbanProposalColumnContext';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { useVisualKeyboardInset } from '@/hooks/useVisualKeyboardInset';
+import { cn } from '@/lib/utils';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
@@ -272,6 +275,8 @@ function resolveInstanceConnectionUi(instance: ChatInstance | null): {
   };
 }
 
+const CHAT_COMPOSER_MAX_HEIGHT_PX = 120;
+
 const Chat = () => {
   const { user, session, profile } = useAuth();
   const { canCreate, loading: modulePermLoading } = useModulePermissions();
@@ -279,12 +284,13 @@ const Chat = () => {
   const canCreateContractsInChat = canCreate('contracts') && !modulePermLoading;
   const navigate = useNavigate();
   const location = useLocation();
+  const { conversationId: routeConversationId } = useParams<{ conversationId: string }>();
+  const isMobile = useIsMobile();
   const queryClient = useQueryClient();
 
   const [instances, setInstances] = useState<ChatInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [enabledInstanceIds, setEnabledInstanceIds] = useState<Set<string>>(new Set());
-  const [popoverOpen, setPopoverOpen] = useState(false);
   const [filtersPopoverOpen, setFiltersPopoverOpen] = useState(false);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -328,6 +334,7 @@ const Chat = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const documentFileInputRef = useRef<HTMLInputElement>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const socketRef = useRef<Socket | null>(null);
   // Refs para evitar closure stale nos handlers do Socket.IO
   const selectedConversationIdRef = useRef<string | null>(null);
@@ -357,6 +364,12 @@ const Chat = () => {
   const [viewMode, setViewMode] = useState<
     'conversation' | 'invoice-create' | 'proposal-create' | 'contract-create'
   >('conversation');
+  const isMobileConversationView = Boolean(
+    isMobile && routeConversationId && viewMode === 'conversation',
+  );
+  const keyboardInset = useVisualKeyboardInset(
+    Boolean(isMobile && routeConversationId && viewMode === 'conversation'),
+  );
   /** Etapa 3+: modelo oficial (`proposal_templates`) e/ou legado rascunho `proposals` da coluna Kanban. */
   const [proposalKanbanModelId, setProposalKanbanModelId] = useState<string | null>(null);
   const [proposalKanbanLegacyDraftId, setProposalKanbanLegacyDraftId] = useState<string | null>(null);
@@ -1330,6 +1343,9 @@ const Chat = () => {
   );
 
   const handleSelectConversation = (conversationId: string) => {
+    if (isMobile) {
+      navigate(`/chat/${conversationId}`);
+    }
     setSelectedConversationId(conversationId);
 
     void chatService.syncConversationMessages(conversationId, { limit: 100, syncMode: 'full' }).catch((error) => {
@@ -1399,6 +1415,28 @@ const Chat = () => {
     pendingConversationRestoreRef.current = null;
     void handleSelectConversationRef.current(resolved);
   }, [conversations, loadingConversations, enabledInstanceIds.size]);
+
+  /** Mobile: apenas lista em `/chat` — limpa thread ao voltar ou ao abrir a lista. */
+  useEffect(() => {
+    if (!isMobile) return;
+    if (!/^\/chat$/.test(location.pathname)) return;
+    setSelectedConversationId(null);
+    setMessages([]);
+  }, [isMobile, location.pathname]);
+
+  /** `/chat/:conversationId` — hidrata seleção (deep link ou refresh). */
+  useEffect(() => {
+    if (!routeConversationId) return;
+    if (selectedConversationId === routeConversationId) return;
+    void handleSelectConversationRef.current(routeConversationId);
+  }, [routeConversationId, selectedConversationId]);
+
+  useLayoutEffect(() => {
+    const el = composerTextareaRef.current;
+    if (!el) return;
+    el.style.height = '0px';
+    el.style.height = `${Math.min(el.scrollHeight, CHAT_COMPOSER_MAX_HEIGHT_PX)}px`;
+  }, [newMessage]);
 
   const handleSendMessage = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -2304,7 +2342,7 @@ const Chat = () => {
   };
 
   const handleAddConnection = () => {
-    setPopoverOpen(false);
+    setFiltersPopoverOpen(false);
     handleNavigateToSettings();
   };
 
@@ -2342,76 +2380,86 @@ const Chat = () => {
 
     return (
       <button
-      key={conversation.id}
+        key={conversation.id}
         type="button"
         onClick={() => handleSelectConversation(conversation.id)}
-        className={`w-full min-w-0 max-w-full box-border text-left my-1 rounded-lg px-3 py-2.5 border border-transparent transition-colors ${
+        className={cn(
+          'my-1 box-border w-full max-w-full min-w-0 rounded-xl border border-transparent px-3 py-3 text-left transition-colors active:bg-muted/40 md:min-h-0 md:py-2.5',
+          'min-h-[4.5rem] touch-manipulation',
           isActive
-            ? 'bg-primary/10 shadow-none ring-1 ring-primary/20 dark:bg-primary/15 dark:ring-primary/30'
-            : 'bg-background/50 hover:bg-muted/70 hover:border-border/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40'
-        }`}
+            ? 'bg-primary/10 shadow-none ring-1 ring-primary/25 dark:bg-primary/15 dark:ring-primary/35'
+            : 'bg-background/50 hover:border-border/40 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+        )}
       >
-      <div className="flex items-start gap-3">
-          <Avatar 
-            className={`h-10 w-10 ${hasProfile ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-            onClick={hasProfile ? handleAvatarClick : undefined}
-          >
-            {identity.avatarUrl ? (
-              <AvatarImage
-                src={identity.avatarUrl}
-                alt={identity.displayName || 'Contato'}
-              />
-            ) : (
-              <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
-              {identity.initials}
-              </AvatarFallback>
-            )}
-        </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-2">
+        <div className="flex items-start gap-3">
+          <div className="relative shrink-0">
+            <Avatar
+              className={cn(
+                'h-11 w-11 md:h-10 md:w-10',
+                hasProfile ? 'cursor-pointer transition-opacity hover:opacity-85' : '',
+              )}
+              onClick={hasProfile ? handleAvatarClick : undefined}
+            >
+              {identity.avatarUrl ? (
+                <AvatarImage src={identity.avatarUrl} alt={identity.displayName || 'Contato'} />
+              ) : (
+                <AvatarFallback className="bg-primary/10 text-sm font-semibold uppercase text-primary">
+                  {identity.initials}
+                </AvatarFallback>
+              )}
+            </Avatar>
+            {unread > 0 ? (
+              <span
+                className="absolute -right-1 -top-1 flex h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-none text-primary-foreground shadow-sm"
+                aria-label={`${unread} não lidas`}
+              >
+                {unread > 99 ? '99+' : unread}
+              </span>
+            ) : null}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
               <div
-                className={`truncate font-medium ${isActive ? 'text-foreground' : 'text-foreground/90'} ${hasProfile ? 'cursor-pointer transition-opacity hover:opacity-80' : ''}`}
+                className={cn(
+                  'min-w-0 flex-1 truncate text-[15px] font-semibold leading-tight md:text-sm md:font-medium',
+                  isActive ? 'text-foreground' : 'text-foreground/95',
+                  hasProfile ? 'cursor-pointer transition-opacity hover:opacity-80' : '',
+                )}
                 onClick={hasProfile ? handleNameClick : undefined}
               >
                 {identity.displayName}
               </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
+              <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
                 {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
-            </span>
-          </div>
-          {showPhoneRow && (
-            <p className="text-xs text-muted-foreground truncate">{identity.phoneLine}</p>
-          )}
-          <p className="text-xs text-muted-foreground truncate">
+              </span>
+            </div>
+            {showPhoneRow ? (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{identity.phoneLine}</p>
+            ) : null}
+            <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-muted-foreground md:text-xs">
               {conversation.lastMessagePreview || 'Sem mensagens recentes'}
-          </p>
-          <div className="flex items-center gap-2 mt-1">
-              {conversation.client_id && (
-                <Badge variant="default" className="text-[10px]">
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {conversation.client_id ? (
+                <Badge variant="default" className="px-1.5 py-0 text-[10px] font-medium">
                   Cliente
                 </Badge>
-              )}
-              {!conversation.client_id && conversation.leadId && (
-                <Badge variant="secondary" className="text-[10px]">
+              ) : null}
+              {!conversation.client_id && conversation.leadId ? (
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium">
                   Lead
                 </Badge>
-              )}
-              {conversation.status && (
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] ${statusBadgeClass(conversation.status)}`}
-                >
+              ) : null}
+              {conversation.status ? (
+                <Badge variant="outline" className={cn('px-1.5 py-0 text-[10px]', statusBadgeClass(conversation.status))}>
                   {conversation.status}
-              </Badge>
-            )}
-              {unread > 0 && (
-                <Badge className="text-[10px] bg-primary text-primary-foreground px-2">
-                  {unread} novas
-              </Badge>
-            )}
-              {conversation.assigned_team_id && !conversation.assignee_display && conversation.assigned_team_name ? (
+                </Badge>
+              ) : null}
+              {conversation.assigned_team_id &&
+              !conversation.assignee_display &&
+              conversation.assigned_team_name ? (
                 <span
-                  className="inline-flex max-w-[140px] items-center gap-1 rounded-md border border-sky-300/80 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-100"
+                  className="inline-flex max-w-[9.5rem] items-center gap-1 rounded-md border border-sky-300/80 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-100"
                   title={`Fila da equipe: ${conversation.assigned_team_name}`}
                 >
                   <Users className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
@@ -2420,7 +2468,7 @@ const Chat = () => {
               ) : null}
               {conversation.attendance_status === 'in_service' && conversation.assignee_display ? (
                 <span
-                  className="inline-flex max-w-[160px] items-center gap-1 rounded-md border border-violet-300/80 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
+                  className="inline-flex max-w-[10rem] items-center gap-1 rounded-md border border-violet-300/80 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
                   title={conversation.assignee_display}
                 >
                   <Headphones className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
@@ -2429,285 +2477,293 @@ const Chat = () => {
               ) : attendanceStatusLabel(conversation.attendance_status) ? (
                 <Badge
                   variant="outline"
-                  className="max-w-[200px] truncate border-violet-300/80 bg-violet-500/10 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
+                  className="max-w-[11rem] truncate border-violet-300/80 bg-violet-500/10 px-1.5 py-0 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
                   title={attendanceStatusLabel(conversation.attendance_status) || undefined}
                 >
                   {attendanceStatusLabel(conversation.attendance_status)}
                 </Badge>
               ) : null}
+            </div>
           </div>
         </div>
-        </div>
       </button>
-  );
+    );
   };
 
   return (
-    <div className="flex flex-col h-screen max-h-screen -m-6">
-      {/* Barra superior: conexão (perfil WhatsApp) + filtro (tipo / inbox) */}
-      <div className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-border/50 bg-gradient-to-b from-muted/30 to-background">
-        <div className="flex items-center gap-3 flex-wrap">
-          {instances.length > 0 && (
-            <div className="flex flex-shrink-0 items-center gap-2">
-              <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-auto min-h-[52px] py-2 pl-2.5 pr-2 rounded-xl border-2 border-primary/15 bg-card/80 shadow-sm hover:border-primary/35 hover:shadow-md transition-all inline-flex items-center gap-1.5 w-fit max-w-[min(100%,380px)]"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {activeInstance ? (
-                        <>
-                          <div className="relative shrink-0">
-                            <Avatar className="h-10 w-10 rounded-xl ring-2 ring-background shadow-sm">
-                              {instanceConnectionUi.avatarUrl ? (
-                                <AvatarImage
-                                  src={instanceConnectionUi.avatarUrl}
-                                  alt=""
-                                  className="object-cover"
-                                />
-                              ) : (
-                                <AvatarFallback className="rounded-xl bg-emerald-600/12 text-emerald-800 text-sm font-semibold uppercase dark:bg-emerald-950/40 dark:text-emerald-200">
-                                  {(instanceConnectionUi.displayName || '?').slice(0, 2)}
-                                </AvatarFallback>
-                              )}
-                            </Avatar>
-                            <span
-                              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card ${
-                                activeInstance.status === 'connected'
-                                  ? 'bg-emerald-500'
-                                  : activeInstance.status === 'connecting'
-                                    ? 'bg-amber-500'
-                                    : 'bg-muted-foreground/50'
-                              }`}
-                              aria-hidden
-                            />
-                          </div>
-                          <div className="min-w-0 text-left">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-sm font-semibold leading-snug truncate">
-                                {instanceConnectionUi.displayName}
-                              </span>
-                              {enabledInstanceIds.size > 1 && (
-                                <Badge
-                                  variant="secondary"
-                                  className="text-[10px] px-1.5 py-0 h-4 shrink-0"
-                                >
-                                  +{enabledInstanceIds.size - 1}
-                                </Badge>
-                              )}
-                            </div>
-                            {instanceConnectionUi.phoneDisplay ? (
-                              <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5 whitespace-nowrap">
-                                {instanceConnectionUi.phoneDisplay}
-                              </p>
-                            ) : (
-                              <p className="text-[11px] text-muted-foreground mt-0.5">
-                                {activeInstance.status === 'connected'
-                                  ? 'Conectado'
-                                  : activeInstance.status === 'connecting'
-                                    ? 'A conectar…'
-                                    : 'Desconectado'}
-                              </p>
-                            )}
-                          </div>
-                        </>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">Selecione uma instância</span>
-                      )}
-                    </div>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-80" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80 p-0" align="start">
-                  <div className="p-2">
-                    <div className="border-b border-border px-2 py-1.5 text-sm font-semibold text-muted-foreground">
-                      Conexões WhatsApp
-            </div>
-                    <div className="max-h-[300px] overflow-y-auto">
-                      {instances.map((instance) => {
-                        const isEnabled = enabledInstanceIds.has(instance.id);
-                        const rowUi = resolveInstanceConnectionUi(instance);
-                        const statusLine =
-                          instance.status === 'connected'
-                            ? 'Conectado'
-                            : instance.status === 'connecting'
-                              ? 'A conectar…'
-                              : 'Desconectado';
-                        return (
-                          <div
-                            key={instance.id}
-                            className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors"
-                            onClick={() => {
-                              handleToggleInstance(instance.id);
-                              if (!isEnabled) {
-                                setSelectedInstanceId(instance.id);
-                              }
-                            }}
-                          >
-                            <Checkbox
-                              checked={isEnabled}
-                              disabled={instance.can_manage === false}
-                              className="shrink-0"
-                              onCheckedChange={() => {
-                                if (instance.can_manage === false) return;
-                                handleToggleInstance(instance.id);
-                                if (!isEnabled) {
-                                  setSelectedInstanceId(instance.id);
-                                }
-                              }}
-                            />
-                            <div className="relative h-9 w-9 shrink-0">
-                              <Avatar className="h-9 w-9 rounded-lg ring-1 ring-border">
-                                {rowUi.avatarUrl ? (
-                                  <AvatarImage
-                                    src={rowUi.avatarUrl}
-                                    alt=""
-                                    className="object-cover"
-                                  />
-                                ) : (
-                                  <AvatarFallback className="rounded-lg bg-emerald-600/12 text-emerald-800 text-xs font-semibold uppercase dark:bg-emerald-950/40 dark:text-emerald-200">
-                                    {(rowUi.displayName || '?').slice(0, 2)}
-                                  </AvatarFallback>
-                                )}
-                              </Avatar>
-                              <span
-                                className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-popover ${
-                                  instance.status === 'connected'
-                                    ? 'bg-emerald-500'
-                                    : instance.status === 'connecting'
-                                      ? 'bg-amber-500'
-                                      : 'bg-muted-foreground/50'
-                                }`}
-                                aria-hidden
-                              />
-                            </div>
-                            <div className="min-w-0 flex-1 text-left">
-                              <div className="text-sm font-semibold leading-snug truncate">
-                                {rowUi.displayName}
-                              </div>
-                              <div className="text-xs text-muted-foreground tabular-nums truncate">
-                                {rowUi.phoneDisplay || statusLine}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-1 border-t border-border">
-                      <div
-                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors"
-                        onClick={handleAddConnection}
-                      >
-                        <div className="h-4 w-4 rounded border-2 border-dashed border-muted-foreground/50 flex items-center justify-center">
-                          <Plus className="h-3 w-3 text-muted-foreground" />
-            </div>
-                        <span className="text-sm text-muted-foreground">Adicionar conexão</span>
-          </div>
-              </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-
-              <Popover open={filtersPopoverOpen} onOpenChange={setFiltersPopoverOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={filtersPopoverOpen ? 'secondary' : 'outline'}
-                    size="icon"
-                    className="h-10 w-10 shrink-0 rounded-xl border-2 border-primary/15 shadow-sm hover:border-primary/35"
-                    aria-label="Filtros: tipo de conversa e inbox"
-                    aria-expanded={filtersPopoverOpen}
-                  >
-                    <ListFilter className="h-4 w-4" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[min(100vw-2rem,20rem)] p-0" align="start">
-                  <div className="p-3 space-y-4">
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-                        Tipo de conversa
-                      </p>
-                      <Tabs
-                        value={activeTab}
-                        onValueChange={(value) =>
-                          setActiveTab(value as 'all' | 'unread' | 'leads' | 'clients')
-                        }
-                        className="w-full"
-                      >
-                        <TabsList className="h-auto w-full flex flex-wrap gap-1 justify-start bg-muted/50 p-1">
-                          <TabsTrigger value="all" className="text-xs px-2.5 py-1.5 h-8">
-                            Todas
-                          </TabsTrigger>
-                          <TabsTrigger value="unread" className="text-xs px-2.5 py-1.5 h-8 gap-1">
-                            Não lidas
-                            {attendanceCounts.unread > 0 && (
-                              <Badge
-                                variant="destructive"
-                                className="text-[10px] px-1.5 py-0 h-4 min-w-[1.25rem] justify-center"
-                              >
-                                {attendanceCounts.unread > 99 ? '99+' : attendanceCounts.unread}
-                              </Badge>
-                            )}
-                          </TabsTrigger>
-                          <TabsTrigger value="leads" className="text-xs px-2.5 py-1.5 h-8">
-                            Leads
-                          </TabsTrigger>
-                          <TabsTrigger value="clients" className="text-xs px-2.5 py-1.5 h-8">
-                            Clientes
-                          </TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    </div>
-                    {user?.tenant_id ? (
-                      <div className="space-y-1.5">
-                        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-                          Inbox
-                        </p>
-                        <Select
-                          value={chatInboxScope}
-                          onValueChange={(v) => setChatInboxScope(v as 'owner' | 'tenant')}
-                        >
-                          <SelectTrigger className="h-9 w-full text-xs">
-                            <SelectValue placeholder="Inbox" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="owner">Só as minhas (criador da conversa)</SelectItem>
-                            <SelectItem value="tenant">Equipa — mesmo tenant</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ) : null}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-          )}
-        </div>
-      </div>
-
+    <div
+      className={cn(
+        'flex flex-col h-screen max-h-screen -m-6',
+        isMobileConversationView &&
+          'fixed inset-0 z-[60] m-0 h-[100dvh] max-h-[100dvh] bg-background',
+      )}
+    >
       {enabledInstanceIds.size > 0 ? (
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
-          <div className="flex-1 flex flex-col min-h-0 px-6 pb-6 overflow-hidden">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
-                <Card className="md:col-span-1 flex flex-col min-h-0 border-border/80 shadow-sm">
+          <div
+            className={cn(
+              'flex-1 flex flex-col min-h-0 px-6 pt-4 pb-6 md:pt-6 overflow-hidden',
+              isMobileConversationView && 'px-0 pt-0 pb-0',
+            )}
+          >
+            <div
+              className={cn(
+                'grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0',
+                isMobileConversationView && 'gap-0',
+              )}
+            >
+                <Card
+                  className={cn(
+                    'md:col-span-1 flex flex-col min-h-0 border-border/80 shadow-sm',
+                    isMobile && routeConversationId && 'hidden md:flex',
+                  )}
+                >
                   <CardHeader className="flex-shrink-0 space-y-3 border-b border-border bg-muted/20 px-3 py-3">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        placeholder="Buscar por nome ou telefone..."
-                        className="pl-9 h-9 bg-background"
-                      />
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="relative min-w-0 flex-1">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={searchTerm}
+                          onChange={(event) => setSearchTerm(event.target.value)}
+                          placeholder="Buscar por nome ou telefone..."
+                          className="h-9 bg-background pl-9"
+                        />
+                      </div>
+                      <Popover open={filtersPopoverOpen} onOpenChange={setFiltersPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant={filtersPopoverOpen ? 'secondary' : 'outline'}
+                            size="icon"
+                            className="h-9 w-9 shrink-0 rounded-lg"
+                            aria-label="WhatsApp e filtros da lista"
+                            aria-expanded={filtersPopoverOpen}
+                          >
+                            <ListFilter className="h-4 w-4" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          className="w-[min(100vw-1.5rem,22rem)] p-0"
+                          align="end"
+                          sideOffset={6}
+                        >
+                          <div className="max-h-[min(72dvh,520px)] overflow-y-auto overscroll-contain">
+                            {instances.length > 0 ? (
+                              <>
+                                <div className="border-b border-border bg-muted/20 px-3 py-2.5">
+                                  <div className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border/60 bg-card/90 px-2.5 py-2 shadow-sm">
+                                    {activeInstance ? (
+                                      <>
+                                        <div className="relative shrink-0">
+                                          <Avatar className="h-9 w-9 rounded-lg shadow-sm ring-2 ring-background">
+                                            {instanceConnectionUi.avatarUrl ? (
+                                              <AvatarImage
+                                                src={instanceConnectionUi.avatarUrl}
+                                                alt=""
+                                                className="object-cover"
+                                              />
+                                            ) : (
+                                              <AvatarFallback className="rounded-lg bg-emerald-600/12 text-sm font-semibold uppercase text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                                                {(instanceConnectionUi.displayName || '?').slice(0, 2)}
+                                              </AvatarFallback>
+                                            )}
+                                          </Avatar>
+                                          <span
+                                            className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card ${
+                                              activeInstance.status === 'connected'
+                                                ? 'bg-emerald-500'
+                                                : activeInstance.status === 'connecting'
+                                                  ? 'bg-amber-500'
+                                                  : 'bg-muted-foreground/50'
+                                            }`}
+                                            aria-hidden
+                                          />
+                                        </div>
+                                        <div className="min-w-0 flex-1 text-left">
+                                          <div className="flex min-w-0 items-center gap-2">
+                                            <span className="truncate text-sm font-semibold leading-snug">
+                                              {instanceConnectionUi.displayName}
+                                            </span>
+                                            {enabledInstanceIds.size > 1 && (
+                                              <Badge
+                                                variant="secondary"
+                                                className="h-4 shrink-0 px-1.5 py-0 text-[10px]"
+                                              >
+                                                +{enabledInstanceIds.size - 1}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                          {instanceConnectionUi.phoneDisplay ? (
+                                            <p className="mt-0.5 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
+                                              {instanceConnectionUi.phoneDisplay}
+                                            </p>
+                                          ) : (
+                                            <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                              {activeInstance.status === 'connected'
+                                                ? 'Conectado'
+                                                : activeInstance.status === 'connecting'
+                                                  ? 'A conectar…'
+                                                  : 'Desconectado'}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <span className="text-sm text-muted-foreground">Selecione uma instância</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="p-2">
+                                  <div className="border-b border-border px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                                    Conexões WhatsApp
+                                  </div>
+                                  <div className="max-h-[240px] overflow-y-auto">
+                                    {instances.map((instance) => {
+                                      const isEnabled = enabledInstanceIds.has(instance.id);
+                                      const rowUi = resolveInstanceConnectionUi(instance);
+                                      const statusLine =
+                                        instance.status === 'connected'
+                                          ? 'Conectado'
+                                          : instance.status === 'connecting'
+                                            ? 'A conectar…'
+                                            : 'Desconectado';
+                                      return (
+                                        <div
+                                          key={instance.id}
+                                          className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50"
+                                          onClick={() => {
+                                            void handleToggleInstance(instance.id);
+                                            if (!isEnabled) {
+                                              setSelectedInstanceId(instance.id);
+                                            }
+                                          }}
+                                        >
+                                          <Checkbox
+                                            checked={isEnabled}
+                                            disabled={instance.can_manage === false}
+                                            className="shrink-0"
+                                            onCheckedChange={() => {
+                                              if (instance.can_manage === false) return;
+                                              void handleToggleInstance(instance.id);
+                                              if (!isEnabled) {
+                                                setSelectedInstanceId(instance.id);
+                                              }
+                                            }}
+                                          />
+                                          <div className="relative h-9 w-9 shrink-0">
+                                            <Avatar className="h-9 w-9 rounded-lg ring-1 ring-border">
+                                              {rowUi.avatarUrl ? (
+                                                <AvatarImage src={rowUi.avatarUrl} alt="" className="object-cover" />
+                                              ) : (
+                                                <AvatarFallback className="rounded-lg bg-emerald-600/12 text-xs font-semibold uppercase text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                                                  {(rowUi.displayName || '?').slice(0, 2)}
+                                                </AvatarFallback>
+                                              )}
+                                            </Avatar>
+                                            <span
+                                              className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-popover ${
+                                                instance.status === 'connected'
+                                                  ? 'bg-emerald-500'
+                                                  : instance.status === 'connecting'
+                                                    ? 'bg-amber-500'
+                                                    : 'bg-muted-foreground/50'
+                                              }`}
+                                              aria-hidden
+                                            />
+                                          </div>
+                                          <div className="min-w-0 flex-1 text-left">
+                                            <div className="truncate text-sm font-semibold leading-snug">
+                                              {rowUi.displayName}
+                                            </div>
+                                            <div className="truncate text-xs tabular-nums text-muted-foreground">
+                                              {rowUi.phoneDisplay || statusLine}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="mt-1 border-t border-border">
+                                    <div
+                                      className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50"
+                                      onClick={handleAddConnection}
+                                    >
+                                      <div className="flex h-4 w-4 items-center justify-center rounded border-2 border-dashed border-muted-foreground/50">
+                                        <Plus className="h-3 w-3 text-muted-foreground" />
+                                      </div>
+                                      <span className="text-sm text-muted-foreground">Adicionar conexão</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </>
+                            ) : null}
+                            <div
+                              className={cn(
+                                'space-y-4 p-3',
+                                instances.length > 0 && 'border-t border-border',
+                              )}
+                            >
+                              <div className="space-y-1.5">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Tipo de conversa
+                                </p>
+                                <Tabs
+                                  value={activeTab}
+                                  onValueChange={(value) =>
+                                    setActiveTab(value as 'all' | 'unread' | 'leads' | 'clients')
+                                  }
+                                  className="w-full"
+                                >
+                                  <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-muted/50 p-1">
+                                    <TabsTrigger value="all" className="h-8 px-2.5 py-1.5 text-xs">
+                                      Todas
+                                    </TabsTrigger>
+                                    <TabsTrigger value="unread" className="h-8 gap-1 px-2.5 py-1.5 text-xs">
+                                      Não lidas
+                                      {attendanceCounts.unread > 0 && (
+                                        <Badge
+                                          variant="destructive"
+                                          className="h-4 min-w-[1.25rem] justify-center px-1.5 py-0 text-[10px]"
+                                        >
+                                          {attendanceCounts.unread > 99 ? '99+' : attendanceCounts.unread}
+                                        </Badge>
+                                      )}
+                                    </TabsTrigger>
+                                    <TabsTrigger value="leads" className="h-8 px-2.5 py-1.5 text-xs">
+                                      Leads
+                                    </TabsTrigger>
+                                    <TabsTrigger value="clients" className="h-8 px-2.5 py-1.5 text-xs">
+                                      Clientes
+                                    </TabsTrigger>
+                                  </TabsList>
+                                </Tabs>
+                              </div>
+                              {user?.tenant_id ? (
+                                <div className="space-y-1.5">
+                                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Inbox
+                                  </p>
+                                  <Select
+                                    value={chatInboxScope}
+                                    onValueChange={(v) => setChatInboxScope(v as 'owner' | 'tenant')}
+                                  >
+                                    <SelectTrigger className="h-9 w-full text-xs">
+                                      <SelectValue placeholder="Inbox" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="owner">Só as minhas (criador da conversa)</SelectItem>
+                                      <SelectItem value="tenant">Equipa — mesmo tenant</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </div>
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-                        Atendimento
-                      </p>
-                      <div className="overflow-x-auto -mx-0.5 px-0.5 pb-0.5">
+                    <div className="overflow-x-auto -mx-0.5 px-0.5 pb-0.5">
                         <ToggleGroup
                           type="single"
                           value={chatAttendanceFilter === '' ? 'all' : chatAttendanceFilter}
@@ -2761,28 +2817,44 @@ const Chat = () => {
                             )}
                           </ToggleGroupItem>
                         </ToggleGroup>
-                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
                     <ScrollArea className="h-full [&>div>div[data-radix-scroll-area-viewport]]:!block [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
                       {loadingConversations ? (
-                        <div className="p-4 text-center text-muted-foreground flex items-center justify-center gap-2">
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                            Carregando conversas...
+                        <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center text-muted-foreground">
+                          <RefreshCw className="h-8 w-8 animate-spin text-primary/70" aria-hidden />
+                          <div>
+                            <p className="text-sm font-medium text-foreground">Carregando conversas</p>
+                            <p className="mt-1 text-xs">Aguarde um momento.</p>
                           </div>
+                        </div>
                       ) : conversationsToShow.length === 0 ? (
-                        <div className="p-4 text-center text-muted-foreground">
-                          Nenhuma conversa encontrada
+                        <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+                          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                            <MessageSquare className="h-7 w-7 text-muted-foreground" aria-hidden />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-foreground">Nenhuma conversa</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Ajuste a pesquisa, os filtros ou as conexões WhatsApp.
+                            </p>
+                          </div>
                         </div>
                       ) : (
-                        <div className="px-1.5 pb-2 min-w-0">{conversationsToShow.map(renderConversationItem)}</div>
+                        <div className="min-w-0 px-1 pb-2 pt-0.5">{conversationsToShow.map(renderConversationItem)}</div>
                       )}
                     </ScrollArea>
                   </CardContent>
                 </Card>
 
-                <Card className="md:col-span-2 flex flex-col min-h-0 border-border/80 shadow-sm">
+                <Card
+                  className={cn(
+                    'md:col-span-2 flex min-h-0 flex-1 flex-col overflow-hidden border-border/80 shadow-sm md:flex-none',
+                    isMobile && !routeConversationId && 'hidden md:flex',
+                    isMobileConversationView && 'rounded-none border-0 shadow-none',
+                  )}
+                >
                   {selectedConversation ? (
                     <>
                       {viewMode === 'invoice-create' ? (
@@ -2856,11 +2928,38 @@ const Chat = () => {
                         </CardContent>
                       ) : (
                         <>
-                      <CardHeader className="flex-shrink-0 space-y-3 border-b border-border bg-muted/15 px-4 py-3">
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <Avatar 
-                              className={`h-11 w-11 shrink-0 ${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                      <CardHeader
+                        className={cn(
+                          'flex-shrink-0 border-b border-border bg-muted/15',
+                          isMobile && routeConversationId
+                            ? 'space-y-2 px-3 py-2'
+                            : 'space-y-3 px-4 py-3',
+                          isMobileConversationView &&
+                            'sticky top-0 z-30 bg-background/96 pb-1.5 pt-[max(0.35rem,env(safe-area-inset-top))] backdrop-blur pointer-events-auto',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2 md:gap-3">
+                          <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
+                            {isMobile && routeConversationId ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 shrink-0 md:hidden"
+                                aria-label="Voltar às conversas"
+                                onClick={() => {
+                                  setViewMode('conversation');
+                                  navigate('/chat');
+                                }}
+                              >
+                                <ChevronLeft className="h-5 w-5" />
+                              </Button>
+                            ) : null}
+                            <Avatar
+                              className={cn(
+                                'h-8 w-8 shrink-0 md:h-11 md:w-11',
+                                (currentClient || currentLead) && 'cursor-pointer transition-opacity hover:opacity-80',
+                              )}
                               onClick={() => {
                                 if (currentClient && selectedConversation) {
                                   goToClientProfileFromChat(currentClient.id, selectedConversation);
@@ -2880,8 +2979,13 @@ const Chat = () => {
                                 </AvatarFallback>
                               )}
                             </Avatar>
-                            <div 
-                              className={`${(currentClient || currentLead) ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+                            <div
+                              className={cn(
+                                'min-w-0 flex-1',
+                                (currentClient || currentLead)
+                                  ? 'cursor-pointer transition-opacity hover:opacity-80'
+                                  : '',
+                              )}
                               onClick={() => {
                                 if (currentClient && selectedConversation) {
                                   goToClientProfileFromChat(currentClient.id, selectedConversation);
@@ -2890,24 +2994,24 @@ const Chat = () => {
                                 }
                               }}
                             >
-                              <div className="flex items-center gap-2">
-                              <h3 className="font-semibold">
-                                {selectedIdentity?.displayName ?? '—'}
-                              </h3>
+                              <div className="flex min-w-0 items-center gap-1.5 md:gap-2">
+                                <h3 className="truncate text-[15px] font-semibold leading-tight md:text-lg">
+                                  {selectedIdentity?.displayName ?? '—'}
+                                </h3>
                                 {selectedConversation.client_id && (
-                                  <Badge variant="default" className="text-xs">
+                                  <Badge variant="default" className="hidden text-xs md:inline-flex">
                                     Cliente
                                   </Badge>
                                 )}
                                 {!selectedConversation.client_id && selectedConversation.leadId && (
-                                  <Badge className="border-blue-300/80 bg-blue-500/10 text-xs text-blue-900 hover:bg-blue-500/15 dark:border-blue-800/60 dark:bg-blue-950/45 dark:text-blue-200 dark:hover:bg-blue-950/55">
+                                  <Badge className="hidden border-blue-300/80 bg-blue-500/10 text-xs text-blue-900 hover:bg-blue-500/15 dark:border-blue-800/60 dark:bg-blue-950/45 dark:text-blue-200 dark:hover:bg-blue-950/55 md:inline-flex">
                                     Lead
                                   </Badge>
                                 )}
                                 {!selectedConversation.client_id &&
                                   !selectedConversation.leadId &&
                                   selectedConversation.link_state === 'review_required' && (
-                                    <Badge className="border-amber-300/80 bg-amber-500/10 text-xs text-amber-950 hover:bg-amber-500/15 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-100 dark:hover:bg-amber-950/55">
+                                    <Badge className="hidden border-amber-300/80 bg-amber-500/10 text-xs text-amber-950 hover:bg-amber-500/15 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-100 dark:hover:bg-amber-950/55 md:inline-flex">
                                       Revisar vínculo
                                     </Badge>
                                   )}
@@ -2915,23 +3019,43 @@ const Chat = () => {
                                   !selectedConversation.leadId &&
                                   (!selectedConversation.link_state ||
                                     selectedConversation.link_state === 'unlinked') && (
-                                    <Badge variant="outline" className="text-xs bg-muted text-muted-foreground">
+                                    <Badge
+                                      variant="outline"
+                                      className="hidden bg-muted text-xs text-muted-foreground md:inline-flex"
+                                    >
                                       Sem vínculo
                                     </Badge>
                                   )}
                               </div>
+                              {isMobile && routeConversationId ? (
+                                <p className="mt-0.5 truncate text-[11px] text-muted-foreground md:hidden">
+                                  {[
+                                    selectedIdentity?.phoneLine,
+                                    selectedConversation.instance_name ? `WhatsApp ${selectedConversation.instance_name}` : null,
+                                    selectedConversation.assignee_display?.trim()
+                                      ? shortOperatorName(selectedConversation.assignee_display)
+                                      : selectedConversation.assigned_team_id &&
+                                          selectedConversation.assigned_team_name
+                                        ? `Fila ${selectedConversation.assigned_team_name}`
+                                        : null,
+                                    attendanceStatusLabel(selectedConversation.attendance_status),
+                                  ]
+                                    .filter((s): s is string => Boolean(s && String(s).trim()))
+                                    .join(' · ')}
+                                </p>
+                              ) : null}
                               {selectedIdentity?.waSubtitle && (
-                                <p className="text-xs text-muted-foreground/90 truncate max-w-[280px]">
+                                <p className="hidden max-w-[280px] truncate text-xs text-muted-foreground/90 md:block">
                                   WhatsApp: {selectedIdentity.waSubtitle}
                                 </p>
                               )}
                               {selectedIdentity?.phoneLine &&
                                 selectedIdentity.displayName.trim() !== selectedIdentity.phoneLine.trim() && (
-                              <p className="text-xs text-muted-foreground">
-                                  {selectedIdentity.phoneLine}
-                              </p>
-                              )}
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <p className="hidden text-xs text-muted-foreground md:block">
+                                    {selectedIdentity.phoneLine}
+                                  </p>
+                                )}
+                              <div className="mt-2 hidden flex-wrap items-center gap-2 md:flex">
                                 <span className="inline-flex items-center rounded-md border border-border/60 bg-background/90 px-2 py-0.5 text-[11px] text-muted-foreground">
                                   WhatsApp
                                   {selectedConversation.instance_name
@@ -2982,7 +3106,7 @@ const Chat = () => {
                               </div>
                             </div>
                           </div>
-                          <div className="flex flex-wrap gap-2 items-center shrink-0 justify-end">
+                          <div className="flex shrink-0 items-center justify-end gap-1 md:gap-2">
                             {user &&
                               selectedConversation &&
                               (() => {
@@ -3010,22 +3134,30 @@ const Chat = () => {
                                           <Button
                                             variant="destructive"
                                             size="sm"
-                                            className="h-8 gap-1"
+                                            className={cn(
+                                              'h-7 gap-0.5 px-2 text-[11px] md:h-8 md:gap-1 md:px-3 md:text-sm',
+                                              isMobileConversationView && 'h-7 w-7 px-0',
+                                            )}
                                             onClick={() => void handleCloseAttendance()}
+                                            title="Encerrar atendimento"
                                           >
-                                            <XCircle className="h-3.5 w-3.5" />
-                                            Encerrar
+                                            <XCircle className={cn('h-3.5 w-3.5', isMobileConversationView && 'h-3.5 w-3.5')} />
+                                            <span className={cn(isMobileConversationView && 'sr-only')}>Encerrar</span>
                                           </Button>
                                         ) : (
                                           <Button
                                             variant="secondary"
                                             size="sm"
-                                            className="h-8 gap-1"
+                                            className={cn(
+                                              'h-7 gap-0.5 px-2 text-[11px] md:h-8 md:gap-1 md:px-3 md:text-sm',
+                                              isMobileConversationView && 'h-7 w-7 px-0',
+                                            )}
                                             disabled={attendingConversation}
                                             onClick={() => void handleAttendConversation()}
+                                            title="Atender conversa"
                                           >
-                                            <UserCheck className="h-3.5 w-3.5" />
-                                            Atender
+                                            <UserCheck className={cn('h-3.5 w-3.5', isMobileConversationView && 'h-3.5 w-3.5')} />
+                                            <span className={cn(isMobileConversationView && 'sr-only')}>Atender</span>
                                           </Button>
                                         )}
                                       </>
@@ -3034,7 +3166,7 @@ const Chat = () => {
                                       <Button
                                         variant="outline"
                                         size="sm"
-                                        className="h-8 gap-1"
+                                        className="hidden h-7 gap-0.5 px-2 text-[11px] md:inline-flex md:h-8 md:gap-1 md:px-3 md:text-sm"
                                         onClick={() => void openTransferDialog()}
                                       >
                                         <ArrowRightLeft className="h-3.5 w-3.5" />
@@ -3049,18 +3181,60 @@ const Chat = () => {
                               size="icon"
                               onClick={() => void handleSyncConversation()}
                               disabled={syncingMessages}
-                              className="h-8 w-8"
+                              className={cn(
+                                'h-8 w-8',
+                                isMobile && routeConversationId && 'hidden md:inline-flex md:h-8 md:w-8',
+                              )}
                               title="Sincronizar mensagens e identidade do contato"
                             >
                               <RefreshCw className={`h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`} />
                             </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                  <MoreVertical className="h-4 w-4" />
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className={cn(
+                                    'h-8 w-8 pointer-events-auto',
+                                    isMobile && routeConversationId && 'h-7 w-7 shrink-0',
+                                  )}
+                                >
+                                  <MoreVertical className="h-3.5 w-3.5" />
                             </Button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
+                              <DropdownMenuContent
+                                align="end"
+                                className="z-[80] max-h-[min(70dvh,28rem)] overflow-y-auto"
+                              >
+                                {user && selectedConversation && isMobile && routeConversationId ? (
+                                  <>
+                                    <DropdownMenuItem
+                                      onClick={() => void handleSyncConversation()}
+                                      disabled={syncingMessages}
+                                    >
+                                      <RefreshCw
+                                        className={`mr-2 h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`}
+                                      />
+                                      Sincronizar conversa
+                                    </DropdownMenuItem>
+                                    {(() => {
+                                      const adminBypass = user.is_tenant_admin === true;
+                                      const canTransferMobile =
+                                        !!user.tenant_id &&
+                                        selectedConversation.attendance_status === 'in_service' &&
+                                        !!selectedConversation.assigned_to_user_id &&
+                                        (selectedConversation.assigned_to_user_id === user.id || adminBypass);
+                                      return canTransferMobile ? (
+                                        <DropdownMenuItem onClick={() => void openTransferDialog()}>
+                                          <ArrowRightLeft className="mr-2 h-4 w-4" />
+                                          Transferir atendimento
+                                        </DropdownMenuItem>
+                                      ) : null;
+                                    })()}
+                                    <DropdownMenuSeparator />
+                                  </>
+                                ) : null}
                                 {selectedConversation.client_id ? (
                                   <>
                                     <DropdownMenuItem onClick={handleCreateInvoice}>
@@ -3147,32 +3321,42 @@ const Chat = () => {
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent className="p-0 flex-1 flex flex-col min-h-0">
-                        <ScrollArea className="flex-1 min-h-0 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
-                          <div className="p-4">
+                      <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+                        <ScrollArea
+                          className={cn(
+                            'min-h-0 flex-1 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50',
+                            isMobileConversationView && 'overflow-hidden',
+                          )}
+                        >
+                          <div className="px-3 py-3 md:p-4">
                             {loadingMessages ? (
-                              <div className="text-center text-muted-foreground flex items-center justify-center gap-2 py-8">
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                                Carregando mensagens...
-                          </div>
+                              <div className="flex min-h-[10rem] flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
+                                <RefreshCw className="h-7 w-7 animate-spin text-primary/70" aria-hidden />
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">Carregando mensagens</p>
+                                  <p className="mt-1 text-xs">Histórico da conversa.</p>
+                                </div>
+                              </div>
                             ) : messages.length === 0 ? (
-                              <div className="text-center text-muted-foreground text-sm py-8">
-                                Nenhuma mensagem disponível para esta conversa
-                        </div>
-                      ) : (
-                              <div className="space-y-3 pb-6 max-w-3xl mx-auto w-full">
-                            {messages.map((message) => (
-                              <div 
+                              <div className="flex min-h-[10rem] flex-col items-center justify-center gap-2 px-4 py-10 text-center">
+                                <MessageSquare className="h-8 w-8 text-muted-foreground/80" aria-hidden />
+                                <p className="text-sm font-medium text-foreground">Sem mensagens ainda</p>
+                                <p className="text-xs text-muted-foreground">Envie a primeira mensagem abaixo.</p>
+                              </div>
+                            ) : (
+                              <div className="mx-auto w-full max-w-3xl space-y-3.5 pb-6 md:space-y-3">
+                                {messages.map((message) => (
+                                  <div
                                     key={message.id}
                                     className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
-                              >
-                                <div 
-                                      className={`max-w-[min(82%,28rem)] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm ${
+                                  >
+                                    <div
+                                      className={`max-w-[min(88%,28rem)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm md:max-w-[min(82%,28rem)] md:rounded-xl ${
                                         message.direction === 'outgoing'
-                                      ? 'bg-primary text-primary-foreground ring-1 ring-primary/20' 
-                                      : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
-                                  }`}
-                                >
+                                          ? 'bg-primary text-primary-foreground ring-1 ring-primary/20'
+                                          : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
+                                      }`}
+                                    >
                                       <ChatBubbleContent message={message} />
                                       <span
                                         className={`text-[10px] mt-1 flex items-center gap-1 ${
@@ -3200,7 +3384,17 @@ const Chat = () => {
                         </ScrollArea>
                         <form
                           onSubmit={handleSendMessage}
-                          className="flex shrink-0 gap-2 border-t border-border bg-muted/20 p-3 backdrop-blur-sm dark:bg-muted/10"
+                          className={cn(
+                            'flex shrink-0 gap-2 border-t border-border bg-muted/20 p-2 backdrop-blur-sm dark:bg-muted/10 md:p-3',
+                            isMobile &&
+                              routeConversationId &&
+                              'sticky bottom-0 z-40 border-border bg-background/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.12)] pointer-events-auto dark:bg-background/92 dark:shadow-[0_-10px_28px_-14px_rgba(0,0,0,0.45)]',
+                          )}
+                          style={
+                            isMobile && routeConversationId
+                              ? { bottom: `${keyboardInset}px` }
+                              : undefined
+                          }
                         >
                             <input
                               ref={imageFileInputRef}
@@ -3223,13 +3417,18 @@ const Chat = () => {
                                   variant="outline"
                                   size="icon"
                                   disabled={sendingMessage}
+                                  className="pointer-events-auto"
                                   title="Ações rápidas"
                                   aria-label="Ações rápidas"
                                 >
                                   <Plus className="h-4 w-4" />
                                 </Button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent side="top" align="start" className="w-56">
+                              <DropdownMenuContent
+                                side="top"
+                                align="start"
+                                className="z-[80] w-56"
+                              >
                                 <DropdownMenuItem
                                   disabled={sendingMessage}
                                   onSelect={(ev) => {
@@ -3262,11 +3461,22 @@ const Chat = () => {
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
-                            <Input
+                            <Textarea
+                              ref={composerTextareaRef}
+                              rows={1}
                               placeholder="Mensagem ou legenda da imagem..."
                               value={newMessage}
                               onChange={(event) => setNewMessage(event.target.value)}
-                              className="min-h-10 flex-1 border-border bg-background shadow-sm focus-visible:ring-primary/25"
+                              onKeyDown={(e) => {
+                                if (!isMobile) return;
+                                if (e.key !== 'Enter' || e.shiftKey) return;
+                                e.preventDefault();
+                                void handleSendMessage(e as unknown as React.FormEvent<HTMLFormElement>);
+                              }}
+                              enterKeyHint="send"
+                              autoComplete="off"
+                              autoCorrect="off"
+                              className="min-h-11 max-h-[min(40dvh,9.5rem)] flex-1 resize-none overflow-y-auto border-border bg-background py-3 text-[15px] leading-snug shadow-sm focus-visible:ring-primary/25 md:min-h-10 md:max-h-[120px] md:py-2.5 md:text-sm"
                             />
                             <Button 
                               type="submit" 

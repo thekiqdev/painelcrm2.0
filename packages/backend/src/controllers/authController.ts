@@ -9,6 +9,10 @@ import { isPhase2TrialCrmGateEnabled } from '../config/checkoutTrialFeatureFlags
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
 import { checkTenantUsersLimitForAddOne } from '../services/tenantLimitService.js';
 import { ensureWhatsAppTemplateDefaults } from '../services/whatsappTemplateDefaultsService.js';
+import {
+  schedulePublishPlatformAccountCreated,
+  schedulePublishPlatformTrialStarted,
+} from '../services/platformNotifications/platformBusinessNotifications.js';
 import { z } from 'zod';
 import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/userIdentity.js';
 
@@ -170,6 +174,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       );
     }
     let registeredTenantId: string | null = null;
+    let registerHadTrial = false;
     if (planRow.rows.length > 0) {
       const planId = planRow.rows[0].id;
       const planDetail = await client.query(
@@ -182,6 +187,7 @@ export async function register(req: Request, res: Response): Promise<void> {
         isFree && freeDays != null && freeDays >= 1
           ? `now() + (${Number(freeDays)} || ' days')::interval`
           : null;
+      registerHadTrial = Boolean(trialEndsAt);
       let baseSlug = inferredCompanyName
         .toLowerCase()
         .normalize('NFD')
@@ -235,6 +241,10 @@ export async function register(req: Request, res: Response): Promise<void> {
       ensureWhatsAppTemplateDefaults(registeredTenantId).catch((err) =>
         console.error('[auth] ensureWhatsAppTemplateDefaults', err),
       );
+      schedulePublishPlatformAccountCreated(registeredTenantId);
+      if (registerHadTrial) {
+        schedulePublishPlatformTrialStarted(registeredTenantId);
+      }
     }
 
     const token = generateToken({

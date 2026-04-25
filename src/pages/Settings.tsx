@@ -11,7 +11,6 @@ import { ClientGroupsSection } from "@/components/settings/ClientGroupsSection";
 import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
 import { ChatTemplatesSettingsSection } from "@/components/settings/ChatTemplatesSettingsSection";
 import { DomainSection } from "@/components/settings/DomainSection";
-import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
 import { UserManagementSection } from "@/components/settings/UserManagementSection";
 import { TeamsSection } from "@/components/settings/TeamsSection";
 import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesSection";
@@ -48,8 +47,6 @@ const Settings = () => {
       return <LeadsSection handleSave={handleSave} />;
     case "clientGroups":
       return <ClientGroupsSection />;
-    case "collaborators":
-      return <CollaboratorsSection />;
     case "whatsapp":
       return <WhatsAppSection />;
     case "chatTemplates":

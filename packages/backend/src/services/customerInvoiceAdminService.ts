@@ -4,6 +4,8 @@
 import { pool } from '../utils/db.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import { getInvoiceById } from './customerBillingService.js';
+import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
+import { hasInvoicePaymentAttemptsTable } from './customerInvoicePaymentAttemptsService.js';
 import {
   countCustomerInvoiceItems,
   replaceManualInvoiceLineItems,
@@ -17,6 +19,8 @@ import { resolveCrmGatewayForTenantInvoice } from './invoicePaymentAttemptReuseS
 const CANCELLABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
 const EDITABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
 const DELETABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
+/** Faturas de assinatura já encerradas no fluxo (sem cobrança ativa) — podem ser removidas do CRM a pedido do utilizador. */
+const SUBSCRIPTION_INVOICE_PURGEABLE_STATUSES = new Set(['cancelled', 'failed']);
 
 export interface PatchCustomerInvoiceBody {
   description?: string | null;
@@ -234,9 +238,13 @@ export async function deleteCustomerInvoiceWithGateway(
     throw new Error('Fatura não encontrada');
   }
   if (inv.origin === 'subscription') {
-    throw new Error(
-      'Faturas geradas pela assinatura recorrente não podem ser excluídas. Cancele a cobrança ou use cancelamento.'
-    );
+    if (!SUBSCRIPTION_INVOICE_PURGEABLE_STATUSES.has(inv.status)) {
+      throw new Error(
+        'Faturas de assinatura só podem ser excluídas quando estão canceladas ou falhadas (cobrança já encerrada). Para faturas ativas, use cancelar fatura.'
+      );
+    }
+    await deleteCustomerInvoiceChildrenAndItemsThenRow(tenantId, invoiceId);
+    return;
   }
   if (!DELETABLE_STATUSES.has(inv.status)) {
     throw new Error('Só é possível excluir fatura pendente ou em cobrança');
@@ -248,4 +256,57 @@ export async function deleteCustomerInvoiceWithGateway(
     }
   }
   await pool.query(`DELETE FROM customer_invoices WHERE id = $1 AND tenant_id = $2`, [invoiceId, tenantId]);
+}
+
+function isMissingSubscriptionCyclesTable(e: unknown): boolean {
+  const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
+  const msg = e instanceof Error ? e.message : String(e);
+  return (
+    code === '42P01' ||
+    (/subscription_cycles/i.test(msg) && /does not exist/i.test(msg))
+  );
+}
+
+async function detachSubscriptionCyclesInvoiceRef(tenantId: string, invoiceId: string): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE subscription_cycles SET invoice_id = NULL WHERE tenant_id = $1 AND invoice_id = $2::uuid`,
+      [tenantId, invoiceId]
+    );
+  } catch (e: unknown) {
+    if (isMissingSubscriptionCyclesTable(e)) return;
+    throw e;
+  }
+}
+
+async function deletePaymentAttemptsForInvoice(invoiceId: string): Promise<void> {
+  if (!(await hasInvoicePaymentAttemptsTable())) return;
+  await pool.query(`DELETE FROM customer_invoice_payment_attempts WHERE invoice_id = $1`, [invoiceId]);
+}
+
+/** Exclusão física de uma fatura (itens, tentativas, desvincular ciclos) — sem chamada ao gateway. */
+async function purgeOneCustomerInvoiceRow(tenantId: string, invoiceId: string): Promise<void> {
+  await detachSubscriptionCyclesInvoiceRef(tenantId, invoiceId);
+  await deletePaymentAttemptsForInvoice(invoiceId);
+  await pool.query(`DELETE FROM customer_invoice_items WHERE invoice_id = $1`, [invoiceId]);
+  await pool.query(`DELETE FROM customer_invoices WHERE id = $1 AND tenant_id = $2`, [invoiceId, tenantId]);
+}
+
+/**
+ * Remove faturas filhas (E2) e, por fim, a principal — evita violação de FK.
+ */
+async function deleteCustomerInvoiceChildrenAndItemsThenRow(tenantId: string, invoiceId: string): Promise<void> {
+  const schema = await getCustomerInvoiceSchema();
+  const childIds: string[] = [];
+  if (schema.hasParentInvoiceColumns) {
+    const ch = await pool.query<{ id: string }>(
+      `SELECT id::text FROM customer_invoices WHERE tenant_id = $1 AND parent_invoice_id = $2`,
+      [tenantId, invoiceId]
+    );
+    childIds.push(...ch.rows.map((r) => r.id));
+  }
+  for (const cid of childIds) {
+    await purgeOneCustomerInvoiceRow(tenantId, cid);
+  }
+  await purgeOneCustomerInvoiceRow(tenantId, invoiceId);
 }

@@ -34,3 +34,17 @@ export function shouldAlertNoInvoiceCycle(): boolean {
 export function isBillingTimeWindowVerbose(): boolean {
   return process.env.BILLING_TIME_WINDOW_VERBOSE === 'true';
 }
+
+/**
+ * Jobs em `processing` com `locked_at` mais antigo que este limite são repostos em `pending`
+ * no início de cada batch do worker (recuperação pós-crash / processo morto).
+ * Default 20 min; desligar: `BILLING_WORKER_STALE_PROCESSING_RECLAIM_MINUTES=0`.
+ */
+export function getBillingStaleProcessingReclaimMinutes(): number {
+  const raw = process.env.BILLING_WORKER_STALE_PROCESSING_RECLAIM_MINUTES;
+  if (raw === '0') return 0;
+  if (raw == null || raw === '') return 20;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 20;
+  return Math.min(n, 24 * 60);
+}

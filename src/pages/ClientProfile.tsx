@@ -2103,10 +2103,31 @@ const ClientProfile = () => {
                   {activeTab === "settings" && "Configurações"}
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground text-center py-8">
-                  Esta funcionalidade será implementada em breve.
-                </p>
+              <CardContent className="space-y-4 py-6 text-center text-sm text-muted-foreground">
+                {activeTab === "calendar" && (
+                  <>
+                    <p>Use as tarefas para acompanhar prazos e compromissos da equipa.</p>
+                    <Button asChild variant="secondary">
+                      <Link to="/tasks">Abrir tarefas</Link>
+                    </Button>
+                  </>
+                )}
+                {activeTab === "finance" && (
+                  <>
+                    <p>O módulo financeiro unificado está disponível no menu principal.</p>
+                    <Button asChild variant="secondary">
+                      <Link to="/finance">Abrir financeiro</Link>
+                    </Button>
+                  </>
+                )}
+                {activeTab === "settings" && (
+                  <>
+                    <p>Preferências da organização, integrações e utilizadores.</p>
+                    <Button asChild variant="secondary">
+                      <Link to="/settings">Abrir configurações</Link>
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           )}

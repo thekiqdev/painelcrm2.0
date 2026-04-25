@@ -37,4 +37,36 @@ export function decodeToken(token: string): JWTPayload | null {
   }
 }
 
+const PASSWORD_RESET_PURPOSE = 'password_reset_complete' as const;
+
+export type PasswordResetCompletionPayload = JWTPayload & { purpose: typeof PASSWORD_RESET_PURPOSE };
+
+/** Token curto (15 min) emitido após validar o código WhatsApp; permite apenas POST /password-reset/complete. */
+export function generatePasswordResetCompletionToken(userId: string, email: string): string {
+  return jwt.sign(
+    { userId, email, purpose: PASSWORD_RESET_PURPOSE },
+    JWT_SECRET,
+    { expiresIn: '15m' } as jwt.SignOptions,
+  );
+}
+
+export function verifyPasswordResetCompletionToken(token: string): PasswordResetCompletionPayload {
+  const decoded = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & {
+    userId?: string;
+    email?: string;
+    purpose?: string;
+  };
+  if (
+    decoded.purpose !== PASSWORD_RESET_PURPOSE ||
+    typeof decoded.userId !== 'string' ||
+    typeof decoded.email !== 'string'
+  ) {
+    throw new Error('Invalid or expired token');
+  }
+  return {
+    userId: decoded.userId,
+    email: decoded.email,
+    purpose: PASSWORD_RESET_PURPOSE,
+  };
+}
 

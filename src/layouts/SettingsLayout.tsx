@@ -17,7 +17,6 @@ export type SettingSection =
   | "preferences"
   | "leadsConfig"
   | "clientGroups"
-  | "collaborators"
   | "whatsapp"
   | "chatTemplates"
   | "domain"
@@ -42,7 +41,6 @@ const SECTION_QUERY_VALUES: SettingSection[] = [
   "preferences",
   "leadsConfig",
   "clientGroups",
-  "collaborators",
   "whatsapp",
   "chatTemplates",
   "domain",
@@ -73,23 +71,29 @@ export default function SettingsLayout() {
   const handleSelect = useCallback(
     (section: SettingSection) => {
       setActiveSection(section);
-      if (section !== "paymentGateway" && location.pathname !== "/settings") {
-        navigate("/settings");
+      if (section === "paymentGateway") {
+        navigate("/settings/payments");
+        return;
       }
+      navigate(`/settings?section=${encodeURIComponent(section)}`, { replace: true });
     },
-    [location.pathname, navigate]
+    [navigate]
   );
 
   return (
     <SettingsLayoutContext.Provider value={{ activeSection, setActiveSection: handleSelect }}>
-      <div className="container mx-auto py-6">
-        <h1 className="mb-6 text-2xl font-bold text-foreground">Configurações</h1>
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-3">
-            <SettingsMenu activeSection={activeSection} onSelect={handleSelect} />
+      <div className="container mx-auto px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 md:px-4 md:py-6">
+        <h1 className="mb-4 text-xl font-bold text-foreground md:mb-6 md:text-2xl">Configurações</h1>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-12 md:gap-6">
+          <div className="min-w-0 md:col-span-3">
+            <div className="max-md:max-h-[min(56vh,28rem)] max-md:overflow-y-auto max-md:rounded-xl max-md:border max-md:border-border max-md:bg-card max-md:shadow-sm md:max-h-none md:overflow-visible md:rounded-none md:border-0 md:bg-transparent md:shadow-none">
+              <SettingsMenu activeSection={activeSection} onSelect={handleSelect} />
+            </div>
           </div>
-          <div className="col-span-9">
-            <Outlet />
+          <div className="min-w-0 md:col-span-9">
+            <div className="max-md:rounded-xl max-md:border max-md:border-border max-md:bg-card/80 max-md:p-3 md:rounded-none md:border-0 md:bg-transparent md:p-0">
+              <Outlet />
+            </div>
           </div>
         </div>
       </div>

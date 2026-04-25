@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
@@ -55,39 +64,82 @@ import {
 import type { Contract, ContractStatus, ContractFilters } from "@/types/contracts";
 import { getContractDocumentHtml } from "@/utils/contractDocument";
 import { canDeleteContractStatus } from "@/utils/contractStatusUi";
+import { applyUrlPatch } from "@/lib/listFiltersUrl";
+
+const CONTRACT_STATUS_URL = new Set<ContractStatus | "all">([
+  "all",
+  "DRAFT",
+  "PENDING_SIGNATURE",
+  "PARTIALLY_SIGNED",
+  "ACTIVE",
+  "INACTIVE",
+  "EXPIRED",
+  "CANCELLED",
+]);
+
+function isoDayStart(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso);
+  return m ? m[1] : null;
+}
+
+function parseFiltersFromSearchParams(sp: URLSearchParams): ContractFilters {
+  const st = sp.get("status") ?? "all";
+  const status =
+    st && CONTRACT_STATUS_URL.has(st as ContractStatus | "all") ? (st as ContractStatus | "all") : "all";
+  const dateType = sp.get("dtype") === "validity" ? "validity" : "created";
+  const from = sp.get("from");
+  const to = sp.get("to");
+  const startDate =
+    from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? new Date(`${from}T12:00:00`).toISOString() : null;
+  const endDate = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? new Date(`${to}T12:00:00`).toISOString() : null;
+  return {
+    status: status === "all" ? "all" : (status as ContractStatus),
+    dateType,
+    startDate,
+    endDate,
+    clientId: null,
+    responsibleId: null,
+    tags: [],
+    search: sp.get("q") ?? "",
+  };
+}
+
+function parseSortFromSearchParams(sp: URLSearchParams): {
+  sortField: "updated_at" | "title" | "contract_number";
+  sortDirection: "asc" | "desc";
+} {
+  const sf = sp.get("sf");
+  const sortField =
+    sf === "title" || sf === "contract_number" || sf === "updated_at" ? sf : "updated_at";
+  const sd = sp.get("sd") === "asc" ? "asc" : "desc";
+  return { sortField, sortDirection: sd };
+}
 
 const Contracts = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { canDeleteRecord } = useModulePermissions();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [filters, setFilters] = useState<ContractFilters>({
-    status: 'all',
-    dateType: 'created',
-    startDate: null,
-    endDate: null,
-    clientId: null,
-    responsibleId: null,
-    tags: [],
-    search: '',
-  });
-  const [sortField, setSortField] = useState<'updated_at' | 'title' | 'contract_number'>('updated_at');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [filters, setFilters] = useState<ContractFilters>(() => parseFiltersFromSearchParams(searchParams));
+  const [sortField, setSortField] = useState<"updated_at" | "title" | "contract_number">(
+    () => parseSortFromSearchParams(searchParams).sortField,
+  );
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">(
+    () => parseSortFromSearchParams(searchParams).sortDirection,
+  );
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      loadContracts();
-    }
-  }, [user]);
-
-  const loadContracts = async () => {
+  const loadContracts = useCallback(async () => {
+    if (!user) return;
     try {
       setLoading(true);
-      
+
       const data = await contractsService.getContracts({
-        status: filters.status !== 'all' ? filters.status : undefined,
+        status: filters.status !== "all" ? filters.status : undefined,
         clientId: filters.clientId || undefined,
         responsibleId: filters.responsibleId || undefined,
         startDate: filters.startDate || undefined,
@@ -99,12 +151,16 @@ const Contracts = () => {
 
       setContracts(data);
     } catch (error) {
-      console.error('Error loading contracts:', error);
-      toast.error('Erro ao carregar contratos');
+      console.error("Error loading contracts:", error);
+      toast.error("Erro ao carregar contratos");
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, filters, sortField, sortDirection]);
+
+  useEffect(() => {
+    void loadContracts();
+  }, [loadContracts]);
 
   const handleBulkAction = async (action: 'activate' | 'inactivate' | 'cancel' | 'duplicate') => {
     if (selectedIds.length === 0) {
@@ -154,17 +210,42 @@ const Contracts = () => {
 
   const getStatusBadge = (status: ContractStatus) => {
     const variants: Record<ContractStatus, { color: string; label: string }> = {
-      DRAFT: { color: 'bg-gray-500', label: 'Rascunho' },
-      PENDING_SIGNATURE: { color: 'bg-yellow-500', label: 'Pendente' },
-      PARTIALLY_SIGNED: { color: 'bg-blue-500', label: 'Parcial' },
-      ACTIVE: { color: 'bg-green-500', label: 'Ativo' },
-      INACTIVE: { color: 'bg-gray-400', label: 'Inativo' },
-      EXPIRED: { color: 'bg-red-500', label: 'Expirado' },
-      CANCELLED: { color: 'bg-red-600', label: 'Cancelado' },
+      DRAFT: {
+        color: "border-gray-300/70 bg-gray-500/10 text-gray-800 dark:border-gray-700/60 dark:bg-gray-900/40 dark:text-gray-100",
+        label: "Rascunho",
+      },
+      PENDING_SIGNATURE: {
+        color: "border-amber-400/70 bg-amber-500/15 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100",
+        label: "Pendente",
+      },
+      PARTIALLY_SIGNED: {
+        color: "border-blue-400/70 bg-blue-500/15 text-blue-900 dark:border-blue-700/60 dark:bg-blue-950/40 dark:text-blue-100",
+        label: "Parcial",
+      },
+      ACTIVE: {
+        color: "border-emerald-400/70 bg-emerald-500/15 text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-100",
+        label: "Ativo",
+      },
+      INACTIVE: {
+        color: "border-zinc-300/70 bg-zinc-500/10 text-zinc-800 dark:border-zinc-700/60 dark:bg-zinc-900/40 dark:text-zinc-100",
+        label: "Inativo",
+      },
+      EXPIRED: {
+        color: "border-rose-400/70 bg-rose-500/15 text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-100",
+        label: "Expirado",
+      },
+      CANCELLED: {
+        color: "border-rose-500/70 bg-rose-500/20 text-rose-900 dark:border-rose-700/60 dark:bg-rose-950/45 dark:text-rose-100",
+        label: "Cancelado",
+      },
     };
 
     const { color, label } = variants[status];
-    return <Badge className={color}>{label}</Badge>;
+    return (
+      <Badge variant="outline" className={color}>
+        {label}
+      </Badge>
+    );
   };
 
   const handleSort = (field: typeof sortField) => {
@@ -194,8 +275,39 @@ const Contracts = () => {
   };
 
   useEffect(() => {
-    if (user) loadContracts();
-  }, [sortField, sortDirection]);
+    const next = parseFiltersFromSearchParams(searchParams);
+    const { sortField: sf, sortDirection: sd } = parseSortFromSearchParams(searchParams);
+    setFilters((prev) => {
+      const same =
+        prev.status === next.status &&
+        prev.dateType === next.dateType &&
+        isoDayStart(prev.startDate) === isoDayStart(next.startDate) &&
+        isoDayStart(prev.endDate) === isoDayStart(next.endDate) &&
+        prev.search.trim() === next.search.trim() &&
+        prev.clientId === next.clientId &&
+        prev.responsibleId === next.responsibleId;
+      return same ? prev : next;
+    });
+    setSortField((prev) => (prev !== sf ? sf : prev));
+    setSortDirection((prev) => (prev !== sd ? sd : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    setSearchParams(
+      (prev) =>
+        applyUrlPatch(prev, {
+          q: filters.search.trim() || null,
+          status: filters.status !== "all" ? filters.status : null,
+          dtype: filters.dateType !== "created" ? filters.dateType : null,
+          from: isoDayStart(filters.startDate),
+          to: isoDayStart(filters.endDate),
+          sf: sortField !== "updated_at" ? sortField : null,
+          sd: sortDirection !== "desc" ? sortDirection : null,
+        }),
+      { replace: true },
+    );
+  }, [filters, sortField, sortDirection, setSearchParams]);
 
   const toggleSelectAll = () => {
     if (selectedIds.length === contracts.length) {
@@ -205,12 +317,127 @@ const Contracts = () => {
     }
   };
 
+  const filtersDirty =
+    filters.status !== "all" ||
+    filters.startDate != null ||
+    filters.endDate != null ||
+    filters.search.trim() !== "";
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Contratos</h1>
-        <div className="flex gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-2xl font-bold">Contratos</h1>
+          <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
+            <SheetTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="gap-1 md:hidden">
+                <Filter className="h-4 w-4" />
+                Filtros
+                {filtersDirty ? <span className="h-2 w-2 rounded-full bg-primary" aria-hidden /> : null}
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto rounded-t-2xl pb-[max(1.25rem,env(safe-area-inset-bottom))] md:hidden">
+              <SheetHeader className="text-left">
+                <SheetTitle>Filtros</SheetTitle>
+                <SheetDescription>Status, período e depois aplicar à lista.</SheetDescription>
+              </SheetHeader>
+              <div className="mt-4 grid grid-cols-1 gap-4 px-1 pb-4">
+                <Select
+                  value={filters.status}
+                  onValueChange={(value) => setFilters({ ...filters, status: value as ContractStatus | "all" })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="DRAFT">Rascunho</SelectItem>
+                    <SelectItem value="PENDING_SIGNATURE">Pendente</SelectItem>
+                    <SelectItem value="PARTIALLY_SIGNED">Parcial</SelectItem>
+                    <SelectItem value="ACTIVE">Ativo</SelectItem>
+                    <SelectItem value="INACTIVE">Inativo</SelectItem>
+                    <SelectItem value="EXPIRED">Expirado</SelectItem>
+                    <SelectItem value="CANCELLED">Cancelado</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={filters.dateType}
+                  onValueChange={(value) => setFilters({ ...filters, dateType: value as "created" | "validity" })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="created">Data de Criação</SelectItem>
+                    <SelectItem value="validity">Período de Vigência</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="justify-start">
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {filters.startDate ? format(new Date(filters.startDate), "P", { locale: ptBR }) : "Data Início"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={filters.startDate ? new Date(filters.startDate) : undefined}
+                      onSelect={(date) => setFilters({ ...filters, startDate: date ? date.toISOString() : null })}
+                    />
+                  </PopoverContent>
+                </Popover>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="justify-start">
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {filters.endDate ? format(new Date(filters.endDate), "P", { locale: ptBR }) : "Data Fim"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={filters.endDate ? new Date(filters.endDate) : undefined}
+                      onSelect={(date) => setFilters({ ...filters, endDate: date ? date.toISOString() : null })}
+                    />
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setFilters({
+                      status: "all",
+                      dateType: "created",
+                      startDate: null,
+                      endDate: null,
+                      clientId: null,
+                      responsibleId: null,
+                      tags: [],
+                      search: "",
+                    })
+                  }
+                >
+                  Limpar filtros
+                </Button>
+                <SheetClose asChild>
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={() => {
+                      void loadContracts();
+                    }}
+                  >
+                    Aplicar e fechar
+                  </Button>
+                </SheetClose>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => navigate("/contracts/templates")}>
             <FileText className="mr-2 h-4 w-4" />
             Modelos
@@ -222,8 +449,8 @@ const Contracts = () => {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-card rounded-lg border p-4 space-y-4">
+      {/* Filters — desktop */}
+      <div className="hidden space-y-4 rounded-lg border bg-card p-4 md:block">
         <div className="flex items-center gap-2 mb-2">
           <Filter className="h-4 w-4" />
           <span className="font-medium">Filtros</span>
@@ -319,8 +546,8 @@ const Contracts = () => {
       </div>
 
       {/* Search and Bulk Actions */}
-      <div className="flex justify-between items-center gap-4">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+        <div className="relative w-full md:max-w-md md:flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por título, número ou cliente..."
@@ -332,7 +559,7 @@ const Contracts = () => {
         </div>
 
         {selectedIds.length > 0 && (
-          <div className="flex gap-2">
+          <div className="hidden flex-wrap gap-2 md:flex">
             <Button variant="outline" size="sm" onClick={() => handleBulkAction('activate')}>
               <Play className="mr-2 h-4 w-4" />
               Ativar ({selectedIds.length})
@@ -353,8 +580,8 @@ const Contracts = () => {
         )}
       </div>
 
-      {/* Table */}
-      <div className="bg-card rounded-lg border">
+      {/* Table — desktop */}
+      <div className="hidden rounded-lg border bg-card md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -518,6 +745,116 @@ const Contracts = () => {
             )}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="space-y-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
+        {loading ? (
+          <div className="flex min-h-[11rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
+            <FileText className="h-7 w-7 text-muted-foreground/80" aria-hidden />
+            <p className="text-sm font-medium text-foreground">Carregando contratos</p>
+            <p className="text-xs text-muted-foreground">Aguarde um instante.</p>
+          </div>
+        ) : contracts.length === 0 ? (
+          <div className="flex min-h-[11rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
+            <FileText className="h-7 w-7 text-muted-foreground/80" aria-hidden />
+            <p className="text-sm font-medium text-foreground">Nenhum contrato encontrado</p>
+            <p className="text-xs text-muted-foreground">Revise os filtros ou crie um novo contrato.</p>
+          </div>
+        ) : (
+          contracts.map((contract) => (
+            <div
+              key={`m-${contract.id}`}
+              className="min-h-[8.25rem] rounded-2xl border border-border bg-card p-4 shadow-sm"
+            >
+              <button
+                type="button"
+                onClick={() => navigate(`/contracts/${contract.id}`)}
+                className="w-full text-left"
+              >
+                <p className="font-mono text-xs text-muted-foreground">{contract.contract_number}</p>
+                <p className="mt-1 font-semibold leading-snug">{contract.title}</p>
+                <p className="mt-1 truncate text-sm text-muted-foreground">
+                  {contract.client_name || "—"}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">{getStatusBadge(contract.status)}</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <span>Início {contract.start_date ? format(new Date(contract.start_date), "dd/MM/yyyy") : "—"}</span>
+                  <span>Fim {contract.end_date ? format(new Date(contract.end_date), "dd/MM/yyyy") : "—"}</span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Atual. {format(new Date(contract.updated_at), "dd/MM/yyyy HH:mm")}
+                </p>
+              </button>
+              <div className="mt-3 flex justify-end border-t border-border/60 pt-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 gap-1 px-3">
+                      Ações
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => navigate(`/contracts/${contract.id}`)}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Ver / editar
+                    </DropdownMenuItem>
+                    {contract.status === "DRAFT" && (
+                      <DropdownMenuItem onClick={() => navigate(`/contracts/${contract.id}/edit`)}>
+                        <Send className="mr-2 h-4 w-4" />
+                        Enviar assinatura
+                      </DropdownMenuItem>
+                    )}
+                    {String(contract.content_snapshot_html || "").trim() && (
+                      <DropdownMenuItem onClick={() => void contractsService.downloadContractPdf(contract.id)}>
+                        <Download className="mr-2 h-4 w-4" />
+                        PDF
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
+                      onClick={async () => {
+                        try {
+                          const nc = await contractsService.createContract({
+                            title: `${contract.title} (Cópia)`,
+                            client_id: contract.client_id || undefined,
+                            responsible_id: contract.responsible_id || undefined,
+                            template_id: contract.template_id || undefined,
+                            status: "DRAFT",
+                            content: contract.content || undefined,
+                            content_html: getContractDocumentHtml(contract) || undefined,
+                            tags: contract.tags,
+                            variables: contract.variables,
+                          });
+                          toast.success("Contrato duplicado");
+                          navigate(`/contracts/${nc.id}`, {
+                            state: nc.public_view?.token
+                              ? { publicView: { token: nc.public_view.token } }
+                              : undefined,
+                          });
+                          loadContracts();
+                        } catch (e) {
+                          console.error(e);
+                          toast.error("Erro ao duplicar contrato");
+                        }
+                      }}
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      Duplicar
+                    </DropdownMenuItem>
+                    {canDeleteContractInUi(contract) && (
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => void handleDeleteContract(contract)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Excluir
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

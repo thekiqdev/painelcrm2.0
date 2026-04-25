@@ -6,6 +6,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
 import AuthLayout from "./layouts/AuthLayout";
 import AuthWhatsApp from "./pages/AuthWhatsApp";
+const ForgotPasswordWhatsapp = lazy(() => import("./pages/ForgotPasswordWhatsapp"));
 import Register from "./pages/Register";
 import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
@@ -43,6 +44,8 @@ const ContractDetails = lazy(() => import("./pages/ContractDetails"));
 const CustomerInvoices = lazy(() => import("./pages/CustomerInvoices"));
 const CustomerInvoiceNew = lazy(() => import("./pages/CustomerInvoiceNew"));
 const CustomerInvoiceDetail = lazy(() => import("./pages/CustomerInvoiceDetail"));
+const SubscriptionsList = lazy(() => import("./pages/SubscriptionsList"));
+const SubscriptionDetail = lazy(() => import("./pages/SubscriptionDetail"));
 const CustomerInvoicePay = lazy(() => import("./pages/CustomerInvoicePay"));
 const PublicContractView = lazy(() => import("./pages/PublicContractView"));
 const PublicContractSign = lazy(() => import("./pages/PublicContractSign"));
@@ -50,6 +53,24 @@ const PublicProposalView = lazy(() => import("./pages/PublicProposalView"));
 const CustomerCharges = lazy(() => import("./pages/CustomerCharges"));
 const CustomerChargeDetail = lazy(() => import("./pages/CustomerChargeDetail"));
 const Finance = lazy(() => import("./pages/Finance"));
+const FinanceLayout = lazy(() => import("./pages/finance/FinanceLayout"));
+const FinanceSummaryPage = lazy(() => import("./pages/finance/FinanceSummaryPage"));
+const FinanceAccountsPage = lazy(() => import("./pages/finance/FinanceAccountsPage"));
+const FinanceAccountDetailPage = lazy(() => import("./pages/finance/FinanceAccountDetailPage"));
+const FinanceIncomesPage = lazy(() => import("./pages/finance/FinanceIncomesPage"));
+const FinanceExpensesPage = lazy(() => import("./pages/finance/FinanceExpensesPage"));
+const FinancePlaceholderPage = lazy(() => import("./pages/finance/FinancePlaceholderPage"));
+const FinancialOverviewPage = lazy(() => import("./pages/finance/FinancialOverviewPage"));
+const FinancialUnifiedAccountsPage = lazy(() => import("./pages/finance/FinancialUnifiedAccountsPage"));
+const FinancialUnifiedAccountDetailPage = lazy(() => import("./pages/finance/FinancialUnifiedAccountDetailPage"));
+const FinancialUnifiedTransactionsPage = lazy(() => import("./pages/finance/FinancialUnifiedTransactionsPage"));
+const FinancialUnifiedExpensesPage = lazy(() => import("./pages/finance/FinancialUnifiedExpensesPage"));
+const FinancialCategoriesPage = lazy(() => import("./pages/finance/FinancialCategoriesPage"));
+const FinancialRecurringExpensesPage = lazy(() => import("./pages/finance/FinancialRecurringExpensesPage"));
+const FinanceCreditCardsPage = lazy(() => import("./pages/finance/FinanceCreditCardsPage"));
+const FinanceCreditCardDetailPage = lazy(() => import("./pages/finance/FinanceCreditCardDetailPage"));
+const FinanceCreditCardStatementPage = lazy(() => import("./pages/finance/FinanceCreditCardStatementPage"));
+const FinancialReportsPage = lazy(() => import("./pages/finance/FinancialReportsPage"));
 const Settings = lazy(() => import("./pages/Settings"));
 const PaymentsPanelPage = lazy(() => import("./pages/settings/PaymentsPanelPage"));
 const GatewayConfigPage = lazy(() => import("./pages/settings/GatewayConfigPage"));
@@ -86,6 +107,11 @@ const SuperAdminReports = lazy(() => import("./pages/superadmin/SuperAdminReport
 const SuperAdminUsers = lazy(() => import("./pages/superadmin/SuperAdminUsers"));
 const SuperAdminNotifications = lazy(() => import("./pages/superadmin/SuperAdminNotifications"));
 const SuperAdminPagamentos = lazy(() => import("./pages/superadmin/SuperAdminPagamentos"));
+const SuperAdminNotificationsEngineSettings = lazy(() => import("./pages/superadmin/SuperAdminNotificationsEngineSettings"));
+const SuperAdminPlatformNotifications = lazy(() => import("./pages/superadmin/SuperAdminPlatformNotifications"));
+const SuperAdminPlatformBillings = lazy(() => import("./pages/superadmin/SuperAdminPlatformBillings"));
+const PublicSaasBillingPay = lazy(() => import("./pages/PublicSaasBillingPay"));
+const SuperAdminSubscriptionCyclesSettings = lazy(() => import("./pages/superadmin/SuperAdminSubscriptionCyclesSettings"));
 
 const MeuPlano = lazy(() => import("./pages/MeuPlano"));
 const InternalBillingCheckout = lazy(() => import("./pages/InternalBillingCheckout"));
@@ -143,9 +169,20 @@ const App = () => (
               </AuthGuard>
             } />
             <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
+            <Route
+              path="/recuperar-senha"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <ForgotPasswordWhatsapp />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
             <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
             <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
             <Route path="/pay/:token" element={<Suspense fallback={<LoadingFallback />}><CustomerInvoicePay /></Suspense>} />
+            <Route path="/saas-pay/:token" element={<Suspense fallback={<LoadingFallback />}><PublicSaasBillingPay /></Suspense>} />
             <Route path="/contract-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractView /></Suspense>} />
             <Route path="/proposal-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicProposalView /></Suspense>} />
             <Route path="/contract-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractSign /></Suspense>} />
@@ -502,6 +539,24 @@ const App = () => (
                   </AppLayout>
               </AuthGuard>
             } />
+            <Route path="/crm-subscriptions" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SubscriptionsList />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/crm-subscriptions/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SubscriptionDetail />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
             <Route path="/customer-charges" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
@@ -524,16 +579,44 @@ const App = () => (
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
-                      <Finance />
+                      <FinanceLayout />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>
-            } />
+            }>
+              <Route index element={<FinancialOverviewPage />} />
+              <Route path="accounts/:accountId" element={<FinancialUnifiedAccountDetailPage />} />
+              <Route path="accounts" element={<FinancialUnifiedAccountsPage />} />
+              <Route path="transactions" element={<FinancialUnifiedTransactionsPage />} />
+              <Route path="expenses" element={<FinancialUnifiedExpensesPage />} />
+              <Route path="categories" element={<FinancialCategoriesPage />} />
+              <Route path="recurring-expenses" element={<FinancialRecurringExpensesPage />} />
+              <Route path="resumo" element={<FinanceSummaryPage />} />
+              <Route path="contas" element={<FinanceAccountsPage />} />
+              <Route path="contas/:accountId" element={<FinanceAccountDetailPage />} />
+              <Route path="entradas" element={<FinanceIncomesPage />} />
+              <Route path="despesas" element={<FinanceExpensesPage />} />
+              <Route path="credit-cards" element={<FinanceCreditCardsPage />} />
+              <Route path="credit-cards/:cardId" element={<FinanceCreditCardDetailPage />} />
+              <Route path="credit-cards/:cardId/faturas/:statementId" element={<FinanceCreditCardStatementPage />} />
+              <Route path="cartoes" element={<Navigate to="/finance/credit-cards" replace />} />
+              <Route path="relatorios" element={<FinancialReportsPage />} />
+              <Route path="notas-internas" element={<Finance />} />
+            </Route>
             <Route path="/chat/kanbam" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <ChatKanbanPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/chat/:conversationId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Chat />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>
@@ -633,6 +716,10 @@ const App = () => (
                 <Route path="users" element={<Suspense fallback={<LoadingFallback />}><SuperAdminUsers /></Suspense>} />
                 <Route path="notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotifications /></Suspense>} />
                 <Route path="pagamentos" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPagamentos /></Suspense>} />
+                <Route path="notifications-engine" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotificationsEngineSettings /></Suspense>} />
+                <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
+                <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
+                <Route path="platform-billings" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformBillings /></Suspense>} />
               </Route>
             </Route>
             

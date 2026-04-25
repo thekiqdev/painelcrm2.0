@@ -13,6 +13,10 @@ import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/u
 import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
 import { getPermissionsForRole } from '../services/rolePermissionsService.js';
 import type { AppRole } from '../services/rolePermissionsService.js';
+import {
+  schedulePublishPlatformAccountCreated,
+  schedulePublishPlatformTrialStarted,
+} from '../services/platformNotifications/platformBusinessNotifications.js';
 
 const checkAdminSchema = z.object({
   admin_email: z.string().email(),
@@ -314,6 +318,10 @@ export async function registerOrganization(req: Request, res: Response): Promise
     transactionStarted = false;
 
     setImmediate(() => notifySuperAdminsNewTenant(companyName, tenantId).catch(() => {}));
+    schedulePublishPlatformAccountCreated(tenantId);
+    if (isFree && freeDays != null && freeDays >= 1) {
+      schedulePublishPlatformTrialStarted(tenantId);
+    }
 
     const token = generateToken({
       userId: user.id,

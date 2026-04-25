@@ -17,6 +17,7 @@ import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ArrowLeft, FileText } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 function formatAmount(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -74,26 +75,59 @@ const CustomerChargeDetail = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
+      <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+        <Button variant="ghost" size="icon" className="shrink-0" asChild>
           <Link to="/customer-charges">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
-        <h1 className="text-2xl font-bold">Cobrança</h1>
-        <Badge variant="secondary">{chargeStatusLabel}</Badge>
+        <h1 className="text-xl font-bold sm:text-2xl">Cobrança</h1>
+        <Badge
+          className={cn(
+            charge.status === "open" && "border-amber-400/50 bg-amber-500/15 text-amber-900 dark:text-amber-100",
+            charge.status === "partial" && "border-orange-400/50 bg-orange-500/15 text-orange-900 dark:text-orange-100",
+            charge.status === "paid" && "border-emerald-400/50 bg-emerald-500/15 text-emerald-900 dark:text-emerald-100",
+          )}
+          variant="secondary"
+        >
+          {chargeStatusLabel}
+        </Badge>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Resumo</CardTitle>
+      <Card className="overflow-hidden border shadow-sm md:shadow-sm">
+        <CardHeader className="border-b bg-muted/30 pb-3 md:bg-transparent">
+          <CardTitle className="text-base md:text-lg">Resumo</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
-          <p><span className="font-medium">Descrição:</span> {charge.description || "—"}</p>
-          <p><span className="font-medium">Total:</span> {formatAmount(charge.total_cents)}</p>
-          <p><span className="font-medium">Pago:</span> {formatAmount(charge.paid_cents)}</p>
-          <p><span className="font-medium">Faturas:</span> {charge.invoice_count}</p>
-          <p><span className="font-medium">Criado em:</span> {format(new Date(charge.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}</p>
+        <CardContent className="space-y-4 p-4 md:space-y-2 md:p-6">
+          <div className="flex flex-col gap-2 md:hidden">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total da cobrança</p>
+            <p className="text-3xl font-bold tabular-nums tracking-tight">{formatAmount(charge.total_cents)}</p>
+            <p className="text-sm text-muted-foreground">
+              Pago {formatAmount(charge.paid_cents)} · {charge.invoice_count} fatura(s)
+            </p>
+            <p className="border-t pt-3 text-sm leading-relaxed text-foreground/90">
+              <span className="font-medium text-muted-foreground">Descrição: </span>
+              {charge.description || "—"}
+            </p>
+          </div>
+          <div className="hidden md:block space-y-2">
+            <p>
+              <span className="font-medium">Descrição:</span> {charge.description || "—"}
+            </p>
+            <p>
+              <span className="font-medium">Total:</span> {formatAmount(charge.total_cents)}
+            </p>
+            <p>
+              <span className="font-medium">Pago:</span> {formatAmount(charge.paid_cents)}
+            </p>
+            <p>
+              <span className="font-medium">Faturas:</span> {charge.invoice_count}
+            </p>
+          </div>
+          <p className="text-xs text-muted-foreground md:text-sm">
+            <span className="font-medium">Criado em:</span>{" "}
+            {format(new Date(charge.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+          </p>
         </CardContent>
       </Card>
 
@@ -107,42 +141,73 @@ const CustomerChargeDetail = () => {
               Nenhuma fatura vinculada. Ao criar uma nova fatura, selecione esta cobrança em &quot;Vincular à cobrança&quot;.
             </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nº</TableHead>
-                  <TableHead>Valor</TableHead>
-                  <TableHead>Vencimento</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Pago em</TableHead>
-                  <TableHead className="w-24">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nº</TableHead>
+                      <TableHead>Valor</TableHead>
+                      <TableHead>Vencimento</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Pago em</TableHead>
+                      <TableHead className="w-24">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {charge.invoices.map((inv) => (
+                      <TableRow key={inv.id}>
+                        <TableCell className="font-mono text-sm">
+                          {inv.invoice_number ?? inv.id.slice(0, 8)}
+                        </TableCell>
+                        <TableCell>{formatAmount(inv.amount_cents)}</TableCell>
+                        <TableCell>{format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
+                        <TableCell><StatusBadge status={inv.status} /></TableCell>
+                        <TableCell>
+                          {inv.paid_at
+                            ? format(new Date(inv.paid_at), "dd/MM/yyyy", { locale: ptBR })
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link to={`/customer-invoices/${inv.id}`}>
+                              <FileText className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="space-y-3 md:hidden">
                 {charge.invoices.map((inv) => (
-                  <TableRow key={inv.id}>
-                    <TableCell className="font-mono text-sm">
-                      {inv.invoice_number ?? inv.id.slice(0, 8)}
-                    </TableCell>
-                    <TableCell>{formatAmount(inv.amount_cents)}</TableCell>
-                    <TableCell>{format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
-                    <TableCell><StatusBadge status={inv.status} /></TableCell>
-                    <TableCell>
-                      {inv.paid_at
-                        ? format(new Date(inv.paid_at), "dd/MM/yyyy", { locale: ptBR })
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="sm" asChild>
-                        <Link to={`/customer-invoices/${inv.id}`}>
-                          <FileText className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                  <Link
+                    key={inv.id}
+                    to={`/customer-invoices/${inv.id}`}
+                    className={cn(
+                      "block rounded-2xl border border-border bg-card p-4 shadow-sm transition-colors",
+                      "active:bg-muted/60",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-mono text-sm font-medium">{inv.invoice_number ?? inv.id.slice(0, 8)}</p>
+                      <StatusBadge status={inv.status} />
+                    </div>
+                    <p className="mt-2 text-2xl font-bold tabular-nums">{formatAmount(inv.amount_cents)}</p>
+                    <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                      <span>Venc. {format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}</span>
+                      <span>
+                        {inv.paid_at
+                          ? `Pago ${format(new Date(inv.paid_at), "dd/MM/yyyy", { locale: ptBR })}`
+                          : "Em aberto"}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-right text-xs font-medium text-primary">Ver fatura →</p>
+                  </Link>
                 ))}
-              </TableBody>
-            </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

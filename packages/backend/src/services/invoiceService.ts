@@ -3,8 +3,9 @@
  * Geração de invoice_number; usado pelo webhook e pelo fluxo de compra.
  * Fase 4: apenas colunas genéricas gateway_reference_id, gateway_metadata, gateway_status.
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { pool } from '../utils/db.js';
+import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { billingLog } from './billingLogger.js';
 import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
 
@@ -49,6 +50,8 @@ export interface TenantBillingRow {
   billing_reason: string | null;
   created_at: string;
   updated_at: string;
+  /** Token opaco para /saas-pay/:token (link público da mesma cobrança). */
+  platform_public_pay_token?: string | null;
 }
 
 export interface CreateInvoiceInput {
@@ -83,7 +86,10 @@ function generateInvoiceNumber(tenantId: string): string {
  * Cria registro em tenant_billing. Inclui subscription_id, period_start/end e snapshot do plano quando recorrência.
  */
 export async function createInvoice(data: CreateInvoiceInput): Promise<TenantBillingRow> {
-  const dueDate = typeof data.due_date === 'string' ? data.due_date : data.due_date.toISOString().slice(0, 10);
+  const dueDate = yyyyMmDdFromDbDateValue(typeof data.due_date === 'string' ? data.due_date : data.due_date);
+  if (!dueDate) {
+    throw new Error('Invalid due_date');
+  }
   const invoiceNumber = generateInvoiceNumber(data.tenant_id);
 
   const result = await pool.query<TenantBillingRow>(
@@ -93,11 +99,11 @@ export async function createInvoice(data: CreateInvoiceInput): Promise<TenantBil
       users_count, source, billing_reason, subscription_id, period_start, period_end,
       plan_name_snapshot, plan_price_snapshot
     ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-    RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
+    RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date::text AS due_date, status, paid_at,
       invoice_number, gateway, payment_method,
       gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
       period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
-      users_count, source, billing_reason, created_at, updated_at`,
+      users_count, source, billing_reason, created_at, updated_at, platform_public_pay_token`,
     [
       data.tenant_id,
       data.plan_id,
@@ -162,7 +168,7 @@ export async function getInvoiceByGatewayReferenceId(
   referenceId: string
 ): Promise<TenantBillingRow | null> {
   const result = await pool.query<TenantBillingRow>(
-    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
+    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date::text AS due_date, status, paid_at,
        invoice_number, gateway, payment_method,
        gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
@@ -243,13 +249,81 @@ export async function updateInvoiceStatus(
  */
 export async function getInvoiceById(billingId: string): Promise<TenantBillingRow | null> {
   const result = await pool.query<TenantBillingRow>(
-    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
+    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date::text AS due_date, status, paid_at,
        invoice_number, gateway, payment_method,
        gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
-       users_count, source, billing_reason, created_at, updated_at
+       users_count, source, billing_reason, created_at, updated_at, platform_public_pay_token
      FROM tenant_billing WHERE id = $1`,
     [billingId]
+  );
+  return result.rows[0] ?? null;
+}
+
+const PLATFORM_PUBLIC_PAY_TOKEN_BYTES = 32;
+
+export function isValidPlatformPublicPayTokenFormat(raw: string | undefined | null): boolean {
+  if (raw == null || typeof raw !== 'string') return false;
+  const s = raw.trim();
+  return /^[a-f0-9]{64}$/i.test(s);
+}
+
+/** Garante token opaco único (64 hex) para link público /saas-pay/:token. */
+export async function ensureTenantBillingPublicPayToken(billingId: string): Promise<string> {
+  const billing = await getInvoiceById(billingId);
+  if (!billing) {
+    throw new Error(`Billing not found: ${billingId}`);
+  }
+  const existing = billing.platform_public_pay_token?.trim();
+  if (existing && isValidPlatformPublicPayTokenFormat(existing)) {
+    return existing;
+  }
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const token = randomBytes(PLATFORM_PUBLIC_PAY_TOKEN_BYTES).toString('hex');
+    try {
+      const up = await pool.query<{ t: string }>(
+        `UPDATE tenant_billing
+         SET platform_public_pay_token = $1, updated_at = now()
+         WHERE id = $2
+           AND (platform_public_pay_token IS NULL OR trim(platform_public_pay_token) = '')
+         RETURNING platform_public_pay_token AS t`,
+        [token, billingId],
+      );
+      if (up.rows[0]?.t) {
+        return up.rows[0].t;
+      }
+      const again = await getInvoiceById(billingId);
+      const t2 = again?.platform_public_pay_token?.trim();
+      if (t2 && isValidPlatformPublicPayTokenFormat(t2)) {
+        return t2;
+      }
+    } catch (e: unknown) {
+      const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
+      if (code === '23505') {
+        const again = await getInvoiceById(billingId);
+        const t2 = again?.platform_public_pay_token?.trim();
+        if (t2 && isValidPlatformPublicPayTokenFormat(t2)) return t2;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error('Could not allocate platform_public_pay_token');
+}
+
+export async function getInvoiceByPlatformPublicPayToken(tokenRaw: string): Promise<TenantBillingRow | null> {
+  const token = tokenRaw?.trim();
+  if (!token || !isValidPlatformPublicPayTokenFormat(token)) {
+    return null;
+  }
+  const result = await pool.query<TenantBillingRow>(
+    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date::text AS due_date, status, paid_at,
+       invoice_number, gateway, payment_method,
+       gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
+       period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
+       users_count, source, billing_reason, created_at, updated_at, platform_public_pay_token
+     FROM tenant_billing WHERE platform_public_pay_token = $1 LIMIT 1`,
+    [token],
   );
   return result.rows[0] ?? null;
 }
@@ -288,7 +362,7 @@ export async function findInvoiceBySubscriptionAndPeriod(
   periodStart: string
 ): Promise<TenantBillingRow | null> {
   const result = await pool.query<TenantBillingRow>(
-    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
+    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date::text AS due_date, status, paid_at,
        invoice_number, gateway, payment_method,
        gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
@@ -345,7 +419,7 @@ export async function findReusableSaasPlanCheckoutInvoice(params: {
 }): Promise<TenantBillingRow | null> {
   const reasonNorm = params.billingReason ?? 'plan_purchase';
   const result = await pool.query<TenantBillingRow>(
-    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, paid_at,
+    `SELECT id, tenant_id, plan_id, billing_interval, amount_cents, due_date::text AS due_date, status, paid_at,
        invoice_number, gateway, payment_method,
        gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,

@@ -30,7 +30,7 @@ export const getInvoices = async (req: Request, res: Response) => {
       return res.json([]);
     }
 
-    const { status, client_id, project_id } = req.query;
+    const { status, client_id, project_id, issue_from, issue_to } = req.query;
 
     let query = `
       SELECT i.id, i.client_id, i.project_id, i.invoice_number, i.issue_date, i.due_date,
@@ -41,6 +41,17 @@ export const getInvoices = async (req: Request, res: Response) => {
     `;
     const params: any[] = [tenantId];
     let paramCount = 2;
+
+    if (typeof issue_from === 'string' && issue_from.trim()) {
+      query += ` AND i.issue_date >= $${paramCount}::date`;
+      params.push(issue_from.trim());
+      paramCount++;
+    }
+    if (typeof issue_to === 'string' && issue_to.trim()) {
+      query += ` AND i.issue_date <= $${paramCount}::date`;
+      params.push(issue_to.trim());
+      paramCount++;
+    }
 
     if (status) {
       query += ` AND i.status = $${paramCount}`;

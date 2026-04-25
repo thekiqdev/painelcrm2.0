@@ -25,7 +25,7 @@ export interface PendingInvoiceRow {
  */
 export async function getPendingInvoicesWithoutPaymentId(): Promise<PendingInvoiceRow[]> {
   const r = await pool.query<PendingInvoiceRow>(
-    `SELECT id, tenant_id, amount_cents, due_date, idempotency_key, invoice_number, payment_method, gateway
+    `SELECT id, tenant_id, amount_cents, due_date::text AS due_date, idempotency_key, invoice_number, payment_method, gateway
      FROM tenant_billing
      WHERE status = 'pending'
        AND gateway_reference_id IS NULL

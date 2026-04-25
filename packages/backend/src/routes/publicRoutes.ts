@@ -23,6 +23,12 @@ import {
   postPublicProposalReject,
 } from '../controllers/publicProposalViewController.js';
 import { getPublicCatalogMediaRaw } from '../controllers/publicCatalogMediaController.js';
+import {
+  getPublicSaasBillingSummary,
+  postPublicSaasBillingPreparePayment,
+  getPublicSaasBillingStatus,
+  postPublicSaasBillingPayWithCard,
+} from '../controllers/publicSaasBillingController.js';
 
 const router = Router();
 
@@ -131,6 +137,34 @@ router.post(
   '/customer-invoices/pay/:token/pay-with-card',
   payWithCardLimiter,
   postPayWithCardByToken
+);
+
+const saasPublicReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SAAS_BILLING_READ_MAX || '180', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => `${req.ip || ''}:${(req.params as { token?: string }).token || ''}`,
+});
+
+const saasPublicWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SAAS_BILLING_WRITE_MAX || '30', 10),
+  message: { ok: false, error: 'Muitas tentativas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip || ''}:${(req.params as { token?: string }).token || ''}`,
+});
+
+router.get('/saas-billing/:token', saasPublicReadLimiter, getPublicSaasBillingSummary);
+router.post('/saas-billing/:token/prepare-payment', saasPublicWriteLimiter, postPublicSaasBillingPreparePayment);
+router.get('/saas-billing/:token/status', saasPublicReadLimiter, getPublicSaasBillingStatus);
+router.post(
+  '/saas-billing/:token/pay-with-card',
+  payWithCardLimiter,
+  postPublicSaasBillingPayWithCard,
 );
 
 export default router;

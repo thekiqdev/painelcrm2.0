@@ -3,16 +3,33 @@
  */
 import { pool } from '../utils/db.js';
 import { getInvoiceById } from './customerBillingService.js';
-import { BILLING_RECURRING_JOB_OUTCOME } from './recurringBillingJobService.js';
+import {
+  BILLING_RECURRING_JOB_OUTCOME,
+  BILLING_JOBS_WHERE_SUB_TENANT_SAME_LOGICAL_CYCLE,
+  describeRenewalEnqueueForSubscriptionId,
+  normalizeBillingCycleKeyYmd,
+  renewalEnqueueBlockReasonMessagePt,
+  type TryEnqueueRenewalReason,
+} from './recurringBillingJobService.js';
+import {
+  clampRecurringInvoiceGenerateDaysBeforeDue,
+  computeRecurringInvoiceGenerationDateYmd,
+} from '../utils/billingGenerationDate.js';
+import type { BillingWindowReason } from './billingTimeWindowObservability.js';
 import { billingRecurringJobsHasCompletionColumns } from './billingRecurringJobsOpsService.js';
+import { isSubscriptionCyclesReadEnabled } from './subscriptionCyclesReadFlagService.js';
+import {
+  findSubscriptionCycleForInvoice,
+  listSubscriptionCyclesBySubscriptionId,
+} from './subscriptionCyclesQueryService.js';
+import {
+  derivePresentationFromMatchedCycle,
+  toSubscriptionCycleInsightRow,
+} from './subscriptionCyclesInsightPresentation.js';
 
-export type RecurrenceVisualTag =
-  | 'not_recurring'
-  | 'scheduled'
-  | 'processed'
-  | 'no_new_invoice'
-  | 'failed'
-  | 'cancelled';
+export type { RecurrenceVisualTag } from './recurrenceInsightVisualTag.js';
+import type { RecurrenceVisualTag } from './recurrenceInsightVisualTag.js';
+import type { SubscriptionCycleInsightRow } from './subscriptionCyclesInsightPresentation.js';
 
 export interface CustomerInvoiceRecurrenceInsight {
   is_recurring: boolean;
@@ -31,7 +48,18 @@ export interface CustomerInvoiceRecurrenceInsight {
     current_period_end: string | null;
     type: string;
   } | null;
-  /** Próxima data de cobrança prevista (assinatura). */
+  /**
+   * Datas desta fatura (snapshot no registro); não mudam quando `subscriptions.next_billing_date` é alterado.
+   */
+  this_invoice: {
+    period_start: string | null;
+    period_end: string | null;
+    due_date: string | null;
+  };
+  /**
+   * Espelho de `subscription.next_billing_date` — próximo ciclo **global** da assinatura (não é “próxima cobrança desta fatura”).
+   * @deprecated Preferir `subscription.next_billing_date` na UI; mantido para compatibilidade.
+   */
   next_charge_date: string | null;
   periodicity_label_pt: string | null;
   last_processing_at: string | null;
@@ -61,6 +89,36 @@ export interface CustomerInvoiceRecurrenceInsight {
     completion_detail_parsed: Record<string, unknown> | null;
     result_invoice_id: string | null;
   } | null;
+  /**
+   * Estado de enfileiramento para o ciclo atual (`subscription.next_billing_date` = cycle_key).
+   * Calculado no backend (mesma lógica que PATCH / scheduler / worker pós-mismatch).
+   */
+  renewal_enqueue_status: {
+    current_cycle_key: string;
+    pending_jobs_for_current_cycle: number;
+    why_no_job_for_cycle: {
+      code: TryEnqueueRenewalReason | 'eligible_no_row_yet';
+      message_pt: string;
+      window_reason: BillingWindowReason | null;
+      predicted_insert: string | null;
+    } | null;
+  } | null;
+  /** Preferências do tenant para pré-visualizar geração vs vencimento do ciclo. */
+  tenant_recurring_generation?: {
+    days_before_due: number;
+    cycle_due_ymd: string;
+    generation_date_ymd: string;
+    recurring_generate_time_local: string | null;
+    timezone: string | null;
+  } | null;
+  /**
+   * Só quando a flag global `subscription_cycles_read` está ativa (superadmin_settings).
+   * Lista ciclos reais; badge/resumo podem ser derivados do `matched_cycle` quando existir.
+   */
+  subscription_cycles_insight?: {
+    matched_cycle: SubscriptionCycleInsightRow | null;
+    recent_cycles: SubscriptionCycleInsightRow[];
+  };
 }
 
 function billingIntervalLabelPt(interval: string): string {
@@ -81,6 +139,20 @@ function parseDetailJson(raw: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function ymdOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function thisInvoiceSnapshotFromInvoiceRow(inv: NonNullable<Awaited<ReturnType<typeof getInvoiceById>>>): CustomerInvoiceRecurrenceInsight['this_invoice'] {
+  return {
+    period_start: ymdOrNull(inv.period_start),
+    period_end: ymdOrNull(inv.period_end),
+    due_date: ymdOrNull(inv.due_date),
+  };
 }
 
 function problemHintFromDetail(parsed: Record<string, unknown> | null, outcome: string | null): string | null {
@@ -122,6 +194,7 @@ export async function getCustomerInvoiceRecurrenceInsight(
       status_badge_pt: 'Não recorrente',
       is_queued: false,
       subscription: null,
+      this_invoice: thisInvoiceSnapshotFromInvoiceRow(invoice),
       next_charge_date: null,
       periodicity_label_pt: null,
       last_processing_at: null,
@@ -131,6 +204,8 @@ export async function getCustomerInvoiceRecurrenceInsight(
       latest_job: null,
       last_generated_invoice_id: null,
       operational: null,
+      renewal_enqueue_status: null,
+      tenant_recurring_generation: null,
     };
   }
 
@@ -159,6 +234,7 @@ export async function getCustomerInvoiceRecurrenceInsight(
       status_badge_pt: 'Cancelada',
       is_queued: false,
       subscription: null,
+      this_invoice: thisInvoiceSnapshotFromInvoiceRow(invoice),
       next_charge_date: null,
       periodicity_label_pt: null,
       last_processing_at: null,
@@ -175,17 +251,52 @@ export async function getCustomerInvoiceRecurrenceInsight(
         completion_detail_parsed: null,
         result_invoice_id: null,
       },
+      renewal_enqueue_status: null,
+      tenant_recurring_generation: null,
     };
   }
 
   const hasOc = await billingRecurringJobsHasCompletionColumns();
 
-  const pendingR = await pool.query<{ c: string }>(
-    `SELECT COUNT(*)::text AS c FROM billing_recurring_jobs
-     WHERE subscription_id = $1 AND tenant_id = $2 AND status IN ('pending', 'processing')`,
-    [sub.id, tenantId]
-  );
+  const [pendingR, tenantPrefsR] = await Promise.all([
+    pool.query<{ c: string }>(
+      `SELECT COUNT(*)::text AS c FROM billing_recurring_jobs
+       WHERE subscription_id = $1 AND tenant_id = $2 AND status IN ('pending', 'processing')`,
+      [sub.id, tenantId]
+    ),
+    pool.query<{
+      recurring_invoice_generate_days_before_due: number;
+      recurring_generate_time_local: string | null;
+      timezone: string | null;
+    }>(
+      `SELECT COALESCE(recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due,
+              recurring_generate_time_local::text,
+              timezone::text
+       FROM tenants WHERE id = $1 LIMIT 1`,
+      [tenantId]
+    ),
+  ]);
   const pending_jobs_count = parseInt(pendingR.rows[0]?.c ?? '0', 10);
+  const tenantPrefRow = tenantPrefsR.rows[0] ?? null;
+  const cycleDueYmd =
+    normalizeBillingCycleKeyYmd(sub.next_billing_date) || String(sub.next_billing_date ?? '').trim().slice(0, 10);
+  const daysBefore = clampRecurringInvoiceGenerateDaysBeforeDue(
+    tenantPrefRow?.recurring_invoice_generate_days_before_due ?? 0
+  );
+  const genTime =
+    tenantPrefRow?.recurring_generate_time_local != null
+      ? String(tenantPrefRow.recurring_generate_time_local).trim().slice(0, 5)
+      : null;
+  const tenant_recurring_generation: CustomerInvoiceRecurrenceInsight['tenant_recurring_generation'] =
+    cycleDueYmd.length === 10
+      ? {
+          days_before_due: daysBefore,
+          cycle_due_ymd: cycleDueYmd,
+          generation_date_ymd: computeRecurringInvoiceGenerationDateYmd(cycleDueYmd, daysBefore),
+          recurring_generate_time_local: genTime && /^\d{2}:\d{2}$/.test(genTime) ? genTime : null,
+          timezone: tenantPrefRow?.timezone?.trim() || null,
+        }
+      : null;
 
   const latestSelect = hasOc
     ? `SELECT id::text, status, cycle_key, scheduled_at::text, updated_at::text,
@@ -212,6 +323,47 @@ export async function getCustomerInvoiceRecurrenceInsight(
     [sub.id, tenantId]
   );
   const latest = latestR.rows[0] ?? null;
+
+  const insightCycleCanonical =
+    normalizeBillingCycleKeyYmd(sub.next_billing_date) || sub.next_billing_date;
+  const pendingCycleR = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c FROM billing_recurring_jobs
+     WHERE ${BILLING_JOBS_WHERE_SUB_TENANT_SAME_LOGICAL_CYCLE}
+       AND status IN ('pending', 'processing')`,
+    [sub.id, tenantId, insightCycleCanonical]
+  );
+  const pending_jobs_for_current_cycle = parseInt(pendingCycleR.rows[0]?.c ?? '0', 10);
+
+  let renewal_enqueue_status: CustomerInvoiceRecurrenceInsight['renewal_enqueue_status'] = null;
+  if (sub.status === 'active' && (sub.type === 'customer' || sub.type === 'saas')) {
+    const desc = await describeRenewalEnqueueForSubscriptionId(sub.id);
+    let why_no_job_for_cycle: NonNullable<
+      NonNullable<CustomerInvoiceRecurrenceInsight['renewal_enqueue_status']>['why_no_job_for_cycle']
+    > | null = null;
+    if (pending_jobs_for_current_cycle === 0) {
+      if (desc.block_reason) {
+        why_no_job_for_cycle = {
+          code: desc.block_reason,
+          message_pt: renewalEnqueueBlockReasonMessagePt(desc.block_reason),
+          window_reason: desc.window_eligible ? null : desc.window_diagnostic?.reason ?? null,
+          predicted_insert: desc.predicted_insert,
+        };
+      } else {
+        why_no_job_for_cycle = {
+          code: 'eligible_no_row_yet',
+          message_pt:
+            'Pela regra atual (CURRENT_DATE + janela local Fase 2), o ciclo pode ser enfileirado, mas não há job pendente para este cycle_key. Aguarde o próximo tick do scheduler ou confirme billing:scheduler / billing:worker.',
+          window_reason: desc.window_diagnostic?.reason ?? null,
+          predicted_insert: desc.predicted_insert,
+        };
+      }
+    }
+    renewal_enqueue_status = {
+      current_cycle_key: insightCycleCanonical,
+      pending_jobs_for_current_cycle,
+      why_no_job_for_cycle,
+    };
+  }
 
   const parsedDetail = parseDetailJson(latest?.completion_detail ?? null);
 
@@ -255,9 +407,18 @@ export async function getCustomerInvoiceRecurrenceInsight(
       last_result_summary_pt = 'Último job concluído; verifique detalhes operacionais se necessário.';
     }
   } else if (latest?.status === 'cancelled') {
-    visual_tag = 'cancelled';
-    status_badge_pt = 'Cancelada';
-    last_result_summary_pt = 'O último job foi cancelado (assinatura ou data inelegível).';
+    const mismatch = latest.completion_outcome === BILLING_RECURRING_JOB_OUTCOME.CANCELLED_JOB_CYCLE_MISMATCH;
+    if (mismatch && pending_jobs_for_current_cycle === 0 && !subscriptionEffectivelyCancelled(sub)) {
+      visual_tag = 'stale_after_reschedule';
+      status_badge_pt = 'Reagendamento — sem fila no ciclo';
+      last_result_summary_pt =
+        'O último job foi cancelado porque o ciclo enfileirado não coincidia com a data atual da assinatura (reagendamento). Não há job pendente para o ciclo atual.';
+      problem_hint_pt = renewal_enqueue_status?.why_no_job_for_cycle?.message_pt ?? problem_hint_pt;
+    } else {
+      visual_tag = 'cancelled';
+      status_badge_pt = 'Cancelada';
+      last_result_summary_pt = 'O último job foi cancelado (assinatura ou data inelegível).';
+    }
   } else if (!latest) {
     visual_tag = 'scheduled';
     status_badge_pt = 'Agendada';
@@ -278,7 +439,13 @@ export async function getCustomerInvoiceRecurrenceInsight(
     }
   }
 
-  if (!subscriptionEffectivelyCancelled(sub) && sub.status === 'active' && !latest && pending_jobs_count === 0) {
+  if (
+    !subscriptionEffectivelyCancelled(sub) &&
+    sub.status === 'active' &&
+    !latest &&
+    pending_jobs_count === 0 &&
+    visual_tag !== 'stale_after_reschedule'
+  ) {
     const dbTodayR = await pool.query<{ d: string }>(`SELECT CURRENT_DATE::text AS d`);
     const dbToday = (dbTodayR.rows[0]?.d ?? '').trim().slice(0, 10);
     const nextY = (sub.next_billing_date ?? '').slice(0, 10);
@@ -290,6 +457,56 @@ export async function getCustomerInvoiceRecurrenceInsight(
   }
 
   const is_queued = pending_jobs_count > 0 || latest?.status === 'pending' || latest?.status === 'processing';
+
+  let last_processing_at_out: string | null = latest?.updated_at ?? null;
+  let last_generated_invoice_id_out: string | null = latest?.result_invoice_id ?? null;
+
+  let subscription_cycles_insight: CustomerInvoiceRecurrenceInsight['subscription_cycles_insight'] = undefined;
+  const cyclesReadEnabled = await isSubscriptionCyclesReadEnabled();
+  if (cyclesReadEnabled) {
+    const periodRaw = invoice.period_start != null && String(invoice.period_start).trim()
+      ? String(invoice.period_start).trim().slice(0, 10)
+      : null;
+    const periodSlice = periodRaw && /^\d{4}-\d{2}-\d{2}$/.test(periodRaw) ? periodRaw : null;
+    const [matchedRow, recentRows] = await Promise.all([
+      findSubscriptionCycleForInvoice(tenantId, sub.id, invoiceId, periodSlice),
+      listSubscriptionCyclesBySubscriptionId(tenantId, sub.id, 24),
+    ]);
+    subscription_cycles_insight = {
+      matched_cycle: matchedRow ? toSubscriptionCycleInsightRow(matchedRow) : null,
+      recent_cycles: recentRows.map(toSubscriptionCycleInsightRow),
+    };
+
+    if (matchedRow && !subscriptionEffectivelyCancelled(sub) && visual_tag !== 'stale_after_reschedule') {
+      const derived = derivePresentationFromMatchedCycle(matchedRow);
+      visual_tag = derived.visual_tag;
+      status_badge_pt = derived.status_badge_pt;
+      last_result_summary_pt = derived.last_result_summary_pt;
+      if (derived.problem_hint_pt) {
+        problem_hint_pt = problem_hint_pt ? `${problem_hint_pt} · ${derived.problem_hint_pt}` : derived.problem_hint_pt;
+      }
+      if (matchedRow.processed_at) {
+        last_processing_at_out = matchedRow.processed_at;
+      }
+      if (matchedRow.invoice_id) {
+        last_generated_invoice_id_out = matchedRow.invoice_id;
+      }
+
+      if (latest?.status === 'failed') {
+        visual_tag = 'failed';
+        status_badge_pt = 'Falhou';
+        last_result_summary_pt = 'O último processamento automático falhou após várias tentativas.';
+        problem_hint_pt = latest.error_message?.slice(0, 500) ?? problem_hint_pt;
+      } else if (latest?.status === 'pending' || latest?.status === 'processing') {
+        visual_tag = 'scheduled';
+        status_badge_pt = 'Agendada';
+        last_result_summary_pt =
+          latest.status === 'processing'
+            ? 'Processamento em curso neste momento.'
+            : 'Cobrança na fila — será processada em breve pelo worker.';
+      }
+    }
+  }
 
   const operational =
     invoice.subscription_id != null
@@ -309,14 +526,18 @@ export async function getCustomerInvoiceRecurrenceInsight(
     status_badge_pt,
     is_queued,
     subscription: sub,
+    this_invoice: thisInvoiceSnapshotFromInvoiceRow(invoice),
     next_charge_date: sub.next_billing_date ?? null,
     periodicity_label_pt: billingIntervalLabelPt(sub.billing_interval || 'monthly'),
-    last_processing_at: latest?.updated_at ?? null,
+    last_processing_at: last_processing_at_out,
     last_result_summary_pt,
     problem_hint_pt,
     pending_jobs_count,
     latest_job: latest,
-    last_generated_invoice_id: latest?.result_invoice_id ?? null,
+    last_generated_invoice_id: last_generated_invoice_id_out,
     operational,
+    renewal_enqueue_status,
+    tenant_recurring_generation,
+    ...(subscription_cycles_insight != null ? { subscription_cycles_insight } : {}),
   };
 }

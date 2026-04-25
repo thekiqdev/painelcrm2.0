@@ -12,7 +12,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { customerInvoicesService } from "@/services/customerInvoices";
 import { customerChargesService } from "@/services/customerCharges";
@@ -44,6 +46,8 @@ import {
   Package,
   Briefcase,
   Search,
+  FileText,
+  Repeat2,
 } from "lucide-react";
 import { parseBrl, formatBrlDisplay, sanitizeNumericFieldInput } from "@/lib/brlCurrencyInput";
 import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
@@ -53,6 +57,12 @@ import {
   type InvoicePaymentMethodUi,
 } from "@/lib/crmGatewayPaymentMethods";
 import { INVOICE_ACTIONABLE } from "@/lib/customerInvoiceActions";
+import {
+  addCalendarDaysToIsoYmd,
+  clampRecurringGenerateDaysBeforeDue,
+  computeRecurringGenerationDateYmd,
+} from "@/lib/recurringGenerationPreview";
+import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -166,6 +176,9 @@ type CustomerInvoiceNewProps = {
   onCreated?: (invoiceId: string) => void;
 };
 
+/** Cobrança única (sem assinatura) vs. assinatura com primeira fatura e renovações automáticas. */
+type CreationKind = "one_off" | "subscription";
+
 const CustomerInvoiceNew = ({
   embedded = false,
   initialClientId = null,
@@ -181,7 +194,7 @@ const CustomerInvoiceNew = ({
   const queryClientId = searchParams.get("client_id");
   const prefillClientId = (initialClientId ?? queryClientId ?? "").trim();
   const forcedEmbeddedClientId = embedded ? prefillClientId : "";
-  const [step, setStep] = useState<"client" | "form">(() => (isEditMode ? "form" : "client"));
+  const [step, setStep] = useState<"client" | "billing_type" | "form">(() => (isEditMode ? "form" : "client"));
   const [form, setForm] = useState<CreateCustomerInvoiceBody & { amount?: string }>({
     client_id: "",
     due_date: "",
@@ -200,8 +213,10 @@ const CustomerInvoiceNew = ({
   const [loadingClients, setLoadingClients] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
-  const [recurring, setRecurring] = useState(false);
+  const [creationKind, setCreationKind] = useState<CreationKind | null>(null);
   const [billingInterval, setBillingInterval] = useState<"monthly" | "quarterly" | "semi_annual" | "yearly">("monthly");
+  const [subscriptionCyclesUnlimited, setSubscriptionCyclesUnlimited] = useState(true);
+  const [subscriptionMaxCycles, setSubscriptionMaxCycles] = useState("12");
   const [invoiceByLink, setInvoiceByLink] = useState(false);
   const [charges, setCharges] = useState<CustomerChargeWithSummary[]>([]);
   const [loadingCharges, setLoadingCharges] = useState(false);
@@ -224,6 +239,8 @@ const CustomerInvoiceNew = ({
   /** null até carregar; invoice = cobrança atual; renewal = só próxima data (fatura paga). */
   const [editFlow, setEditFlow] = useState<"invoice" | "renewal" | null>(null);
   const [nextRenewalDate, setNextRenewalDate] = useState("");
+  /** Antecipação da conta (dias); usada para converter geração → `next_billing_date` (vencimento do ciclo). */
+  const [renewalDaysBefore, setRenewalDaysBefore] = useState(0);
   const [renewalSaving, setRenewalSaving] = useState(false);
   const [editingSubscriptionInvoice, setEditingSubscriptionInvoice] = useState(false);
   const editInitialObservationsRef = useRef("");
@@ -269,11 +286,17 @@ const CustomerInvoiceNew = ({
           }
           const insight = await customerInvoicesService.getRecurrenceInsight(editInvoiceId);
           if (cancelled) return;
-          const nb =
+          const cycleDueYmd =
             insight.subscription?.next_billing_date?.slice(0, 10) ||
             (insight.next_charge_date ? insight.next_charge_date.slice(0, 10) : "") ||
             "";
-          setNextRenewalDate(nb);
+          const trg = insight.tenant_recurring_generation;
+          const daysBefore = clampRecurringGenerateDaysBeforeDue(trg?.days_before_due ?? 0);
+          setRenewalDaysBefore(daysBefore);
+          const genYmd =
+            trg?.generation_date_ymd?.slice(0, 10) ||
+            (cycleDueYmd.length === 10 ? computeRecurringGenerationDateYmd(cycleDueYmd, daysBefore) : cycleDueYmd);
+          setNextRenewalDate(genYmd);
           setEditFlow("renewal");
           setEditingSubscriptionInvoice(false);
           setEditReady(true);
@@ -303,7 +326,6 @@ const CustomerInvoiceNew = ({
           amount: "",
           charge_id: inv.charge_id ?? null,
         });
-        setRecurring(false);
         const meta = inv.gateway_metadata as { allowed_payment_methods?: InvoicePaymentMethod[] } | null;
         if (Array.isArray(meta?.allowed_payment_methods) && meta.allowed_payment_methods.length > 0) {
           setAllowedPaymentMethods(meta.allowed_payment_methods);
@@ -464,8 +486,31 @@ const CustomerInvoiceNew = ({
       if (f.client_id === prefillClientId) return f;
       return { ...f, client_id: prefillClientId };
     });
-    setStep("form");
-  }, [prefillClientId, isEditMode]);
+    if (embedded) {
+      setCreationKind("one_off");
+      setStep("form");
+    } else {
+      setCreationKind(null);
+      setStep("billing_type");
+    }
+  }, [prefillClientId, isEditMode, embedded]);
+
+  useEffect(() => {
+    if (embedded && !isEditMode) {
+      setCreationKind((k) => k ?? "one_off");
+    }
+  }, [embedded, isEditMode]);
+
+  useEffect(() => {
+    if (creationKind !== "subscription") return;
+    setLines((prev) =>
+      prev.map((l) => ({
+        ...l,
+        is_recurring: true,
+        recurring_interval: billingInterval,
+      }))
+    );
+  }, [billingInterval, creationKind]);
 
   useEffect(() => {
     setChargeQuery("");
@@ -483,7 +528,17 @@ const CustomerInvoiceNew = ({
   const validLines = lines.filter((l) => parseBrl(l.quantity) > 0 && parseBrl(l.unit_price) >= 0);
   const useSingleAmount = form.amount != null && form.amount.trim() !== "" && parseBrl(form.amount) > 0;
 
-  const handleAddLine = () => setLines((prev) => [...prev, defaultLine()]);
+  const handleAddLine = () =>
+    setLines((prev) => [
+      ...prev,
+      {
+        ...defaultLine(),
+        id: crypto.randomUUID(),
+        ...(creationKind === "subscription"
+          ? { is_recurring: true, recurring_interval: billingInterval }
+          : {}),
+      },
+    ]);
 
   const handleRemoveLine = (id: string) => {
     setLines((prev) => prev.filter((l) => l.id !== id));
@@ -511,30 +566,36 @@ const CustomerInvoiceNew = ({
       .slice(0, 80);
   }, [products, invoicePickerOpen, invoicePickerQuery]);
 
-  const appendLineFromCatalog = useCallback((p: Product) => {
-    const unit =
-      resolvePublicCatalogUnitPrice({
-        price: p.price ?? null,
-        discount_price: p.discount_price ?? null,
-      }) ?? 0;
-    const desc =
-      [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
-    setLines((prev) => [
-      ...prev,
-      {
-        ...defaultLine(),
-        id: crypto.randomUUID(),
-        product_id: p.id,
-        description: desc.slice(0, 2000),
-        quantity: "1",
-        unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
-        discount: "0",
-        discount_kind: "fixed",
-      },
-    ]);
-    setInvoicePickerOpen(null);
-    setInvoicePickerQuery("");
-  }, []);
+  const appendLineFromCatalog = useCallback(
+    (p: Product) => {
+      const unit =
+        resolvePublicCatalogUnitPrice({
+          price: p.price ?? null,
+          discount_price: p.discount_price ?? null,
+        }) ?? 0;
+      const desc =
+        [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
+      setLines((prev) => [
+        ...prev,
+        {
+          ...defaultLine(),
+          id: crypto.randomUUID(),
+          product_id: p.id,
+          description: desc.slice(0, 2000),
+          quantity: "1",
+          unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
+          discount: "0",
+          discount_kind: "fixed",
+          ...(creationKind === "subscription"
+            ? { is_recurring: true, recurring_interval: billingInterval }
+            : {}),
+        },
+      ]);
+      setInvoicePickerOpen(null);
+      setInvoicePickerQuery("");
+    },
+    [creationKind, billingInterval]
+  );
   const handleLineChange = (
     id: string,
     field: "description" | "quantity" | "unit_price" | "discount",
@@ -548,13 +609,14 @@ const CustomerInvoiceNew = ({
   const handleRenewalSave = async () => {
     if (!editInvoiceId) return;
     if (!isCompleteYmdString(nextRenewalDate)) {
-      toast.error("Informe a próxima data de cobrança (aaaa-mm-dd)");
+      toast.error("Informe o primeiro dia de geração (aaaa-mm-dd)");
       return;
     }
     try {
       setRenewalSaving(true);
+      const cycleDueYmd = addCalendarDaysToIsoYmd(nextRenewalDate.trim(), renewalDaysBefore);
       const patchResult = await customerInvoicesService.updateRecurrenceNextBilling(editInvoiceId, {
-        next_billing_date: nextRenewalDate.trim(),
+        next_billing_date: cycleDueYmd,
       });
       const enq = patchResult.enqueue_after_patch;
       const base = "Próxima cobrança gravada na assinatura; jobs pendentes obsoletos foram cancelados quando existiam.";
@@ -565,11 +627,16 @@ const CustomerInvoiceNew = ({
             : `${base} Job de recorrência criado na fila — o worker processará dentro da janela habitual.`
         );
       } else {
+        const f = enq as Extract<typeof enq, { ok: false }>;
         const reasonCopy: Partial<Record<RecurrenceNextBillingEnqueueReason, string>> = {
           next_billing_after_db_today:
             "A data do ciclo ainda está à frente do calendário do servidor de base de dados; o scheduler enfileirará quando o dia for atingido.",
+          future_local_date:
+            "No fuso do tenant o dia do ciclo ainda é futuro (Fase 2); o scheduler enfileirará quando a data local coincidir.",
+          too_early_local_time:
+            "Mesmo dia local, mas ainda antes da hora mínima de geração configurada (Fase 2); o scheduler enfileirará depois.",
           outside_local_window:
-            "Fora da janela horária local do tenant; o scheduler enfileirará quando a hora mínima configurada for atingida.",
+            "Fora da janela horária local do tenant; o scheduler enfileirará quando a janela Fase 2 permitir.",
           active_job_exists: "Já existe job pendente ou em processamento para este ciclo — não foi criada duplicidade.",
           completed_cycle_guard:
             "Já existe um job concluído para este mesmo ciclo; não foi criada duplicidade (idempotência).",
@@ -578,11 +645,14 @@ const CustomerInvoiceNew = ({
           subscription_not_found: "Estado inesperado ao enfileirar.",
           internal_enqueue_error: "Erro interno ao tentar enfileirar.",
         };
+        const win =
+          f.reason !== "internal_enqueue_error" && f.window_reason
+            ? ` Detalhe janela: ${f.window_reason}.`
+            : "";
         const detail =
-          enq.reason === "internal_enqueue_error" && "error" in enq && enq.error
-            ? `${reasonCopy.internal_enqueue_error} ${enq.error}`
-            : reasonCopy[enq.reason] ??
-              "Não foi possível enfileirar neste momento; o scheduler continuará a tentar nas próximas execuções.";
+          f.reason === "internal_enqueue_error" && f.error
+            ? `${reasonCopy.internal_enqueue_error} ${f.error}`
+            : `${reasonCopy[f.reason] ?? "Não foi possível enfileirar neste momento; o scheduler continuará a tentar nas próximas execuções."}${win}`;
         toast.success(`${base} ${detail}`);
       }
       navigate(`/customer-invoices/${editInvoiceId}`);
@@ -658,6 +728,7 @@ const CustomerInvoiceNew = ({
     }
 
     const isInvoiceByLink = embedded ? false : invoiceByLink;
+    const wantsSubscription = creationKind === "subscription";
     const resolvedClientId = (forcedEmbeddedClientId || form.client_id || "").trim();
     if (!form.due_date) {
       toast.error("Preencha a data de vencimento");
@@ -704,22 +775,36 @@ const CustomerInvoiceNew = ({
           unit_price_cents: Math.round(parseBrl(l.unit_price) * 100),
           discount_cents: lineDiscountCents(l),
           ...(l.product_id ? { product_id: l.product_id } : {}),
-          is_recurring: l.is_recurring,
-          recurring_interval: l.is_recurring ? l.recurring_interval : null,
+          is_recurring: wantsSubscription ? true : l.is_recurring,
+          recurring_interval: wantsSubscription ? billingInterval : l.is_recurring ? l.recurring_interval : null,
           scheduled_due_date: l.scheduled_due_date.trim() || null,
         }));
       } else {
         body.amount_cents = amountCents;
       }
-      if (recurring && !isInvoiceByLink) {
+      if (wantsSubscription) {
         body.recurring = true;
         body.billing_interval = billingInterval;
+        body.cycles_unlimited = subscriptionCyclesUnlimited;
+        if (!subscriptionCyclesUnlimited) {
+          const n = Math.trunc(Number(subscriptionMaxCycles));
+          if (!Number.isFinite(n) || n < 1) {
+            toast.error("Indique a quantidade de ciclos (inteiro maior que zero) ou active «Ciclos ilimitados»");
+            setCreateLoading(false);
+            return;
+          }
+          body.max_cycles = n;
+        } else {
+          body.max_cycles = null;
+        }
       }
       if (form.charge_id) body.charge_id = form.charge_id;
       const result = await customerInvoicesService.create(body);
       toast.success(
         result.subscription_id
-          ? "Fatura e assinatura criadas. As próximas faturas serão geradas automaticamente."
+          ? isInvoiceByLink
+            ? "Assinatura criada por link com a primeira fatura. Compartilhe o link para o cliente concluir os dados e pagar."
+            : "Assinatura criada com a primeira fatura. As próximas cobranças serão geradas automaticamente."
           : isInvoiceByLink
             ? "Fatura por link criada. Compartilhe o link de pagamento para o cliente preencher os dados e pagar."
             : "Fatura criada com sucesso"
@@ -774,7 +859,7 @@ const CustomerInvoiceNew = ({
           <h1 className="text-2xl font-bold">
             {isEditMode
               ? editFlow === "renewal"
-                ? "Alterar próxima renovação"
+                ? "Alterar próxima renovação (assinatura)"
                 : "Editar fatura"
               : "Nova fatura"}
           </h1>
@@ -795,8 +880,10 @@ const CustomerInvoiceNew = ({
             <Alert className="border-primary/40 bg-primary/5">
               <AlertTriangle className="h-4 w-4 text-primary" />
               <AlertDescription className="text-sm">
-                O valor guardado é <code className="text-xs font-mono">subscriptions.next_billing_date</code> (próxima
-                geração automática). Ao gravar, usa-se o endpoint de recorrência; a fatura atual não é o alvo da alteração.
+                O valor guardado na assinatura é <code className="text-xs font-mono">subscriptions.next_billing_date</code>{" "}
+                (vencimento do ciclo). A data que escolhe abaixo é o{" "}
+                <span className="font-medium text-foreground">primeiro dia de geração</span>; ao gravar, o sistema soma{" "}
+                {renewalDaysBefore} dia(s) de antecipação da conta. A fatura atual não é alterada.
               </AlertDescription>
             </Alert>
             <CardDescription className="text-xs text-muted-foreground -mt-2">
@@ -804,7 +891,7 @@ const CustomerInvoiceNew = ({
               janela horária local do tenant), o backend pode enfileirar o job de imediato.
             </CardDescription>
             <div>
-              <Label htmlFor="next_renewal_date">Data da próxima cobrança (assinatura)</Label>
+              <Label htmlFor="next_renewal_date">Primeiro dia de geração</Label>
               <Input
                 id="next_renewal_date"
                 type="date"
@@ -812,6 +899,14 @@ const CustomerInvoiceNew = ({
                 value={nextRenewalDate}
                 onChange={(e) => setNextRenewalDate(e.target.value)}
               />
+              {nextRenewalDate.match(/^\d{4}-\d{2}-\d{2}$/) ? (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Vencimento do ciclo após gravar:{" "}
+                  <span className="font-medium text-foreground">
+                    {formatInvoiceDueDatePtBr(addCalendarDaysToIsoYmd(nextRenewalDate, renewalDaysBefore))}
+                  </span>
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={() => navigate(`/customer-invoices/${editInvoiceId}`)}>
@@ -852,7 +947,7 @@ const CustomerInvoiceNew = ({
           </CardHeader>
           <CardContent className="space-y-6">
             {!embedded && (
-              <div className="rounded-xl border-2 border-primary/45 bg-primary/5 dark:bg-primary/10 p-4 space-y-2 shadow-sm">
+              <div className="rounded-xl border-2 border-primary/45 bg-primary/5 dark:bg-primary/10 p-4 space-y-3 shadow-sm">
               <div className="flex items-center gap-2 text-sm font-semibold text-primary">
                 <Link2 className="h-4 w-4 shrink-0" aria-hidden />
                 Fatura por link
@@ -873,6 +968,12 @@ const CustomerInvoiceNew = ({
                   Usar fatura por link (sem selecionar cliente aqui)
                 </Label>
               </div>
+              {invoiceByLink && (
+                <p className="text-sm text-muted-foreground leading-relaxed border-t border-primary/15 pt-3">
+                  Você pode criar uma cobrança sem selecionar o cliente agora. O cliente poderá acessar o link e concluir
+                  os dados necessários para pagamento.
+                </p>
+              )}
               </div>
             )}
             {!invoiceByLink && (
@@ -914,7 +1015,14 @@ const CustomerInvoiceNew = ({
                 >
                   Cancelar
                 </Button>
-                <Button type="button" onClick={() => setStep("form")}>
+                <Button
+                  type="button"
+                  disabled={crmGatewayActive === false}
+                  onClick={() => {
+                    setCreationKind(null);
+                    setStep("billing_type");
+                  }}
+                >
                   Continuar
                 </Button>
               </div>
@@ -992,7 +1100,7 @@ const CustomerInvoiceNew = ({
                   <Button
                     type="button"
                     disabled={!invoiceByLink && crmGatewayActive === false}
-                    onClick={() => setStep("form")}
+                    onClick={() => setStep("billing_type")}
                   >
                     Continuar
                   </Button>
@@ -1001,13 +1109,115 @@ const CustomerInvoiceNew = ({
             )}
           </CardContent>
         </Card>
+      ) : step === "billing_type" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Tipo de cobrança</CardTitle>
+            <CardDescription>
+              {invoiceByLink ? (
+                <>
+                  Cobrança por link — sem cliente selecionado neste momento. Escolha entre fatura única ou assinatura
+                  recorrente; em seguida preencha os dados da cobrança.
+                </>
+              ) : (
+                <>
+                  Cliente:{" "}
+                  <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>. Escolha o que
+                  deseja criar.
+                </>
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCreationKind("one_off");
+                  setStep("form");
+                }}
+                className="text-left rounded-xl border-2 border-border bg-card p-6 shadow-sm transition-colors hover:border-primary/50 hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-muted text-foreground mb-3">
+                  <FileText className="h-5 w-5 shrink-0" aria-hidden />
+                </div>
+                <h3 className="font-semibold text-lg text-foreground">Fatura</h3>
+                <p className="text-sm font-medium text-muted-foreground mt-1">Fatura única</p>
+                <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
+                  {invoiceByLink
+                    ? "Crie uma cobrança avulsa por link."
+                    : "Crie uma cobrança única para este cliente. Não cria assinatura nem geração automática de novas faturas."}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreationKind("subscription");
+                  setStep("form");
+                }}
+                className="text-left rounded-xl border-2 border-primary/35 bg-primary/[0.06] p-6 shadow-sm transition-colors hover:border-primary/60 hover:bg-primary/[0.09] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/15 text-primary mb-3">
+                  <Repeat2 className="h-5 w-5 shrink-0" aria-hidden />
+                </div>
+                <h3 className="font-semibold text-lg text-foreground">Assinatura</h3>
+                <p className="text-sm font-medium text-muted-foreground mt-1">Assinatura recorrente</p>
+                <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
+                  {invoiceByLink
+                    ? "Crie uma cobrança recorrente por link, com geração automática das próximas faturas."
+                    : "Crie uma cobrança recorrente com geração automática de faturas. A primeira fatura e o link de pagamento são criados neste passo."}
+                </p>
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => setStep("client")}>
+                Voltar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle>Dados da cobrança</CardTitle>
-            <CardDescription>
-              {invoiceByLink ? "Fatura por link (sem cliente)" : <>Cliente: <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong></>}
-            </CardDescription>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>Dados da cobrança</CardTitle>
+                <CardDescription>
+                  {invoiceByLink ? (
+                    <>
+                      Cobrança por link — o cliente poderá concluir os dados no link público. Tipo:{" "}
+                      <strong>{creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}</strong>.
+                    </>
+                  ) : (
+                    <>
+                      Cliente:{" "}
+                      <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>
+                    </>
+                  )}
+                </CardDescription>
+              </div>
+              {!isEditMode && creationKind && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={creationKind === "subscription" ? "default" : "secondary"} className="text-sm">
+                    {creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}
+                  </Badge>
+                  {!embedded && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-muted-foreground"
+                      onClick={() => {
+                        setStep("billing_type");
+                        setCreationKind(null);
+                      }}
+                    >
+                      Alterar tipo
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-6">
@@ -1074,6 +1284,81 @@ const CustomerInvoiceNew = ({
                   </SelectContent>
                 </Select>
               </div>
+              )}
+              {!isEditMode && creationKind === "subscription" && (
+                <div className="rounded-lg border border-primary/25 bg-primary/[0.04] p-4 space-y-4">
+                  <h3 className="text-sm font-semibold text-foreground">Dados da assinatura</h3>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <Label htmlFor="billing_interval_sub">Periodicidade</Label>
+                      <Select
+                        value={billingInterval}
+                        onValueChange={(v) => setBillingInterval(v as typeof billingInterval)}
+                      >
+                        <SelectTrigger id="billing_interval_sub" className="mt-1 max-w-[240px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="monthly">Mensal</SelectItem>
+                          <SelectItem value="quarterly">Trimestral</SelectItem>
+                          <SelectItem value="semi_annual">Semestral</SelectItem>
+                          <SelectItem value="yearly">Anual</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="sm:col-span-2 space-y-2 text-sm text-muted-foreground">
+                      <p>
+                        O <strong className="text-foreground">vencimento</strong> abaixo refere-se apenas a esta primeira
+                        cobrança. A <strong className="text-foreground">próxima cobrança automática</strong> é agendada pelo
+                        sistema após o fim do período, conforme a periodicidade — não confunda as duas datas.
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-2 sm:col-span-2">
+                      <Checkbox id="first_invoice_now" checked disabled />
+                      <Label htmlFor="first_invoice_now" className="text-sm font-normal leading-snug cursor-default">
+                        Gerar a primeira fatura e a cobrança no pagamento agora (sempre ativo neste fluxo).
+                      </Label>
+                    </div>
+                    <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/60 bg-background/80 px-3 py-2">
+                      <Label htmlFor="sub_cycles_unlimited" className="text-sm font-normal cursor-pointer">
+                        Ciclos ilimitados
+                      </Label>
+                      <Switch
+                        id="sub_cycles_unlimited"
+                        checked={subscriptionCyclesUnlimited}
+                        onCheckedChange={setSubscriptionCyclesUnlimited}
+                      />
+                    </div>
+                    {!subscriptionCyclesUnlimited && (
+                      <div className="sm:col-span-2 max-w-[220px]">
+                        <Label htmlFor="sub_max_cycles">Quantidade de ciclos</Label>
+                        <Input
+                          id="sub_max_cycles"
+                          type="number"
+                          min={1}
+                          className="mt-1"
+                          value={subscriptionMaxCycles}
+                          onChange={(e) => setSubscriptionMaxCycles(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Total de cobranças previstas (inclui a primeira fatura deste passo).
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground sm:col-span-2">
+                      Geração antecipada: quando existir configuração no tenant, o sistema aplica automaticamente nas
+                      próximas emissões.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {!isEditMode && creationKind === "subscription" && (
+                <Alert className="border-border bg-muted/40">
+                  <AlertDescription className="text-sm">
+                    Os itens desta fatura definem a base de valores e descrições para as renovações automáticas, alinhadas
+                    à periodicidade escolhida.
+                  </AlertDescription>
+                </Alert>
               )}
               <div>
                 <Label className="mb-2 block">Itens da fatura</Label>
@@ -1361,6 +1646,7 @@ const CustomerInvoiceNew = ({
                                   <Checkbox
                                     id={`line_is_recurring_${line.id}`}
                                     checked={line.is_recurring}
+                                    disabled={creationKind === "subscription"}
                                     onCheckedChange={(v) =>
                                       setLines((prev) =>
                                         prev.map((l) =>
@@ -1389,7 +1675,7 @@ const CustomerInvoiceNew = ({
                                         )
                                       )
                                     }
-                                    disabled={!line.is_recurring}
+                                    disabled={!line.is_recurring || creationKind === "subscription"}
                                   >
                                     <SelectTrigger className="h-8 mt-1">
                                       <SelectValue />
@@ -1460,7 +1746,11 @@ const CustomerInvoiceNew = ({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <Label htmlFor="due_date">Data de vencimento *</Label>
+                  <Label htmlFor="due_date">
+                    {!isEditMode && creationKind === "subscription"
+                      ? "Vencimento da primeira cobrança *"
+                      : "Data de vencimento *"}
+                  </Label>
                   <Input
                     id="due_date"
                     type="date"
@@ -1558,39 +1848,6 @@ const CustomerInvoiceNew = ({
                   )}
                 </div>
               </div>
-                <div className="flex flex-col gap-2">
-                {!invoiceByLink && !isEditMode && (
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="recurring"
-                    checked={recurring}
-                    onCheckedChange={(v) => setRecurring(v === true)}
-                  />
-                  <Label htmlFor="recurring" className="font-normal cursor-pointer">
-                    Fatura recorrente (próximas cobranças geradas automaticamente)
-                  </Label>
-                </div>
-                )}
-                {recurring && !invoiceByLink && !isEditMode && (
-                  <div className="pl-6">
-                    <Label htmlFor="billing_interval" className="text-muted-foreground text-sm">Periodicidade</Label>
-                    <Select
-                      value={billingInterval}
-                      onValueChange={(v) => setBillingInterval(v as typeof billingInterval)}
-                    >
-                      <SelectTrigger id="billing_interval" className="mt-1 max-w-[200px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="monthly">Mensal</SelectItem>
-                        <SelectItem value="quarterly">Trimestral</SelectItem>
-                        <SelectItem value="semi_annual">Semestral</SelectItem>
-                        <SelectItem value="yearly">Anual</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </div>
               <div>
                 <Label htmlFor="description">Observações (opcional)</Label>
                 <Textarea
@@ -1604,7 +1861,18 @@ const CustomerInvoiceNew = ({
               </div>
               <div className="flex gap-2 pt-2">
                 {!isEditMode && (
-                  <Button type="button" variant="outline" onClick={() => setStep("client")}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (embedded) {
+                        onBack?.();
+                        return;
+                      }
+                      setStep("billing_type");
+                      setCreationKind(null);
+                    }}
+                  >
                     Voltar
                   </Button>
                 )}
@@ -1615,7 +1883,9 @@ const CustomerInvoiceNew = ({
                       : "Criando..."
                     : isEditMode
                       ? "Salvar alterações"
-                      : "Criar fatura"}
+                      : creationKind === "subscription"
+                        ? "Criar assinatura e primeira fatura"
+                        : "Criar fatura"}
                 </Button>
               </div>
             </form>

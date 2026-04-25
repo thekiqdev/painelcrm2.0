@@ -6,6 +6,10 @@ import { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
 import { getBillingSettings, updateBillingSettings } from '../services/billingSettingsService.js';
 import {
+  getSubscriptionCyclesSuperadminSettings,
+  updateSubscriptionCyclesSuperadminSettings,
+} from '../services/subscriptionCyclesSuperadminSettingsService.js';
+import {
   getBillingRecurringJobsStatusSummary,
   listBillingRecurringJobsForOps,
 } from '../services/billingRecurringJobsOpsService.js';
@@ -127,5 +131,37 @@ export async function putBillingSettingsHandler(req: AuthRequest, res: Response)
   } catch (e: any) {
     console.error('[putBillingSettings]', e);
     res.status(500).json({ error: e.message || 'Erro ao salvar configurações' });
+  }
+}
+
+const subscriptionCyclesFlagsSchema = z.object({
+  subscription_cycles_read: z.boolean(),
+  subscription_cycles_write: z.boolean(),
+});
+
+/** GET /api/superadmin/billing/subscription-cycles-flags */
+export async function getSubscriptionCyclesFlagsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const settings = await getSubscriptionCyclesSuperadminSettings();
+    res.json(settings);
+  } catch (e: any) {
+    console.error('[getSubscriptionCyclesFlags]', e);
+    res.status(500).json({ error: e.message || 'Erro ao carregar flags de ciclos' });
+  }
+}
+
+/** PUT /api/superadmin/billing/subscription-cycles-flags */
+export async function putSubscriptionCyclesFlagsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const parsed = subscriptionCyclesFlagsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const settings = await updateSubscriptionCyclesSuperadminSettings(parsed.data);
+    res.json(settings);
+  } catch (e: any) {
+    console.error('[putSubscriptionCyclesFlags]', e);
+    res.status(500).json({ error: e.message || 'Erro ao salvar flags de ciclos' });
   }
 }

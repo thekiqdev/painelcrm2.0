@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   listCustomerInvoices,
+  getCustomerInvoicesSummaryHandler,
   getCustomerInvoiceById,
   getCustomerInvoiceRecurrenceInsightHandler,
   getCustomerInvoiceRecurrenceHistory,
@@ -17,6 +18,7 @@ const router = Router();
 router.use(...tenantAuthCrm);
 
 router.get('/', listCustomerInvoices);
+router.get('/summary', getCustomerInvoicesSummaryHandler);
 router.get('/gateway-status', getCustomerInvoicesGatewayStatus);
 router.get('/preconditions', getCustomerInvoicePreconditions);
 router.get('/:id/recurrence-insight', getCustomerInvoiceRecurrenceInsightHandler);

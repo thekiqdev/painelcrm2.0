@@ -33,6 +33,8 @@ export interface CustomerInvoice {
   charge_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Lista (GET /customer-invoices): próxima cobrança da assinatura quando houver JOIN. */
+  subscription_next_billing_date?: string | null;
   items?: CustomerInvoiceItem[];
   gateway_metadata?: Record<string, unknown> | null;
   gateway_status?: string | null;
@@ -62,6 +64,8 @@ export interface CreateCustomerInvoiceBody {
   items?: CreateCustomerInvoiceItemBody[];
   recurring?: boolean;
   billing_interval?: BillingIntervalRecurring;
+  cycles_unlimited?: boolean;
+  max_cycles?: number | null;
   /**
    * Fase 3 — Seleção de gateway (C1).
    * Quando omitido, mantém comportamento anterior (gateway ativo implícito).
@@ -113,7 +117,21 @@ export type RecurrenceVisualTag =
   | 'processed'
   | 'no_new_invoice'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'stale_after_reschedule';
+
+/** Motivos alinhados ao backend (`TryEnqueueRenewalReason` + casos de insight). */
+export type RenewalEnqueueBlockReasonCode =
+  | 'subscription_not_found'
+  | 'subscription_not_active'
+  | 'subscription_type_unsupported'
+  | 'next_billing_after_db_today'
+  | 'future_local_date'
+  | 'too_early_local_time'
+  | 'outside_local_window'
+  | 'active_job_exists'
+  | 'completed_cycle_guard'
+  | 'eligible_no_row_yet';
 
 /** GET /api/customer-invoices/:id/recurrence-insight */
 export interface CustomerInvoiceRecurrenceInsight {
@@ -131,6 +149,13 @@ export interface CustomerInvoiceRecurrenceInsight {
     current_period_end: string | null;
     type: string;
   } | null;
+  /** Datas gravadas nesta fatura; estáveis quando a assinatura muda. */
+  this_invoice?: {
+    period_start: string | null;
+    period_end: string | null;
+    due_date: string | null;
+  };
+  /** Igual a `subscription.next_billing_date` quando houver assinatura (próximo ciclo global). */
   next_charge_date: string | null;
   periodicity_label_pt: string | null;
   last_processing_at: string | null;
@@ -156,6 +181,51 @@ export interface CustomerInvoiceRecurrenceInsight {
     completion_detail_parsed: Record<string, unknown> | null;
     result_invoice_id: string | null;
   } | null;
+  renewal_enqueue_status: {
+    current_cycle_key: string;
+    pending_jobs_for_current_cycle: number;
+    why_no_job_for_cycle: {
+      code: RenewalEnqueueBlockReasonCode;
+      message_pt: string;
+      window_reason: string | null;
+      predicted_insert: string | null;
+    } | null;
+  } | null;
+  /** Pré-visualização: vencimento do ciclo vs primeiro dia de geração (preferências do tenant). */
+  tenant_recurring_generation?: {
+    days_before_due: number;
+    cycle_due_ymd: string;
+    generation_date_ymd: string;
+    recurring_generate_time_local: string | null;
+    timezone: string | null;
+  } | null;
+  /** Só quando `subscription_cycles_read=true` no superadmin_settings (Etapa 2). */
+  subscription_cycles_insight?: {
+    matched_cycle: {
+      id: string;
+      cycle_date: string;
+      period_start: string;
+      period_end: string;
+      status: string;
+      invoice_id: string | null;
+      job_id: string | null;
+      processed_at: string | null;
+      skipped_reason: string | null;
+      status_label_pt: string;
+    } | null;
+    recent_cycles: Array<{
+      id: string;
+      cycle_date: string;
+      period_start: string;
+      period_end: string;
+      status: string;
+      invoice_id: string | null;
+      job_id: string | null;
+      processed_at: string | null;
+      skipped_reason: string | null;
+      status_label_pt: string;
+    }>;
+  };
 }
 
 export interface UpdateCustomerInvoiceBody {
@@ -175,6 +245,8 @@ export type RecurrenceNextBillingEnqueueReason =
   | 'subscription_not_active'
   | 'subscription_type_unsupported'
   | 'next_billing_after_db_today'
+  | 'future_local_date'
+  | 'too_early_local_time'
   | 'outside_local_window'
   | 'active_job_exists'
   | 'completed_cycle_guard'
@@ -193,7 +265,13 @@ export interface CustomerInvoiceRecurrenceNextBillingResult {
   /** Tentativa imediata de criar/reativar job (alinhada ao scheduler + Fase 2). */
   enqueue_after_patch:
     | { ok: true; mode: 'inserted' | 'reactivated' }
-    | { ok: false; reason: RecurrenceNextBillingEnqueueReason; error?: string };
+    | {
+        ok: false;
+        reason: RecurrenceNextBillingEnqueueReason;
+        /** Presente quando `reason` é bloqueio de janela Fase 2 (backend). */
+        window_reason?: string;
+        error?: string;
+      };
 }
 
 export interface CreateCustomerInvoiceResult {
@@ -210,8 +288,22 @@ export interface CreateCustomerInvoiceResult {
 export interface ListCustomerInvoicesParams {
   client_id?: string | null;
   status?: string | null;
+  /** Vários estados (query `status_in` no backend). */
+  status_in?: string[] | null;
   limit?: number;
   offset?: number;
+}
+
+/** GET /api/customer-invoices/summary */
+export interface CustomerInvoicesSummary {
+  paid_count: number;
+  paid_amount_cents: number;
+  pending_count: number;
+  pending_amount_cents: number;
+  overdue_count: number;
+  overdue_amount_cents: number;
+  total_count: number;
+  total_amount_cents: number;
 }
 
 /** Resposta do GET /api/customer-invoices/gateway-status (Fase 1 + métodos do gateway). */
@@ -235,7 +327,11 @@ export const customerInvoicesService = {
   async list(params: ListCustomerInvoicesParams = {}): Promise<CustomerInvoice[]> {
     const search = new URLSearchParams();
     if (params.client_id) search.set('client_id', params.client_id);
-    if (params.status) search.set('status', params.status);
+    if (params.status_in && params.status_in.length > 0) {
+      search.set('status_in', params.status_in.join(','));
+    } else if (params.status) {
+      search.set('status', params.status);
+    }
     if (params.limit != null) search.set('limit', String(params.limit));
     if (params.offset != null) search.set('offset', String(params.offset));
     const query = search.toString();
@@ -243,6 +339,13 @@ export const customerInvoicesService = {
     const response = await apiClient.get<CustomerInvoice[]>(url);
     if (response.error) throw new Error(response.error);
     return response.data ?? [];
+  },
+
+  async getSummary(): Promise<CustomerInvoicesSummary> {
+    const response = await apiClient.get<CustomerInvoicesSummary>(`${BASE}/summary`);
+    if (response.error) throw new Error(response.error);
+    if (!response.data || typeof response.data !== 'object') throw new Error('Resposta inválida ao carregar resumo');
+    return response.data;
   },
 
   async getById(id: string): Promise<CustomerInvoice | null> {

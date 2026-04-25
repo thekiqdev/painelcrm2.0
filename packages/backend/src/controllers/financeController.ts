@@ -23,13 +23,26 @@ export async function getBillingReceipts(req: AuthRequest, res: Response): Promi
       return;
     }
 
+    const { from, to } = req.query;
+    const params: unknown[] = [tenantId];
+    let dateClause = '';
+    if (typeof from === 'string' && from.trim()) {
+      params.push(from.trim());
+      dateClause += ` AND (paid_at::date) >= $${params.length}::date`;
+    }
+    if (typeof to === 'string' && to.trim()) {
+      params.push(to.trim());
+      dateClause += ` AND (paid_at::date) <= $${params.length}::date`;
+    }
+
     const r = await pool.query<BillingReceiptRow>(
       `SELECT id, amount_cents, paid_at, invoice_number, client_id
        FROM customer_invoices
        WHERE tenant_id = $1 AND status = 'paid' AND paid_at IS NOT NULL
+       ${dateClause}
        ORDER BY paid_at DESC
        LIMIT 1000`,
-      [tenantId]
+      params
     );
 
     res.json(

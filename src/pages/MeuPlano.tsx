@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiClient } from '@/integrations/api/client';
+import { formatDateYmdOrInstantPtBr } from '@/lib/formatInvoiceDates';
 import { toast } from '@/components/ui/sonner';
 import {
   Check,
@@ -214,15 +215,7 @@ function formatPrice(cents: number): string {
 }
 
 function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-  } catch {
-    return iso;
-  }
+  return formatDateYmdOrInstantPtBr(iso);
 }
 
 function trialEndedUnpaid(data: MyPlanResponse): boolean {

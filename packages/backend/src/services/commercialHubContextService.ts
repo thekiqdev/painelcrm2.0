@@ -3,6 +3,7 @@
  * Não cria cobrança nem duplica regras do checkout / subscriptionService.
  */
 import { pool } from '../utils/db.js';
+import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 
 const OPEN_BILLING_STATUSES = [
   'pending',
@@ -37,14 +38,7 @@ type BillingRow = {
 };
 
 function mapRow(row: BillingRow, isActivated: boolean): PendingBillingPublic {
-  const due = row.due_date;
-  let dueStr: string | null = null;
-  if (due != null) {
-    const d = due instanceof Date ? due : new Date(due);
-    if (!Number.isNaN(d.getTime())) {
-      dueStr = d.toISOString().slice(0, 10);
-    }
-  }
+  const dueStr = yyyyMmDdFromDbDateValue(row.due_date as string | Date | null) || null;
   const pm = row.payment_method;
   const methodOk =
     pm === 'PIX' || pm === 'BOLETO' || pm === 'CREDIT_CARD' ? pm : null;
@@ -90,7 +84,7 @@ export async function getOpenTenantBillingSummary(
 
   const fetchOpenById = async (id: string): Promise<BillingRow | null> => {
     const r = await pool.query<BillingRow>(
-      `SELECT id, status, amount_cents, due_date, payment_method, gateway, gateway_reference_id, invoice_number
+      `SELECT id, status, amount_cents, due_date::text AS due_date, payment_method, gateway, gateway_reference_id, invoice_number
        FROM tenant_billing
        WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
@@ -107,7 +101,7 @@ export async function getOpenTenantBillingSummary(
 
   /** Preferir cobranças de plano/upgrade/renovação ao último seat_addon; evita “Meu plano” apontar só para assentos. */
   const latest = await pool.query<BillingRow>(
-    `SELECT id, status, amount_cents, due_date, payment_method, gateway, gateway_reference_id, invoice_number
+    `SELECT id, status, amount_cents, due_date::text AS due_date, payment_method, gateway, gateway_reference_id, invoice_number
      FROM tenant_billing
      WHERE tenant_id = $1
        AND status IN ('pending', 'waiting_payment', 'processing', 'overdue')

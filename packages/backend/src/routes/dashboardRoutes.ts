@@ -8,6 +8,7 @@ router.use(...tenantAuthCrm);
 // Endpoints do Dashboard
 router.get('/stats', dashboardController.getDashboardStats);
 router.get('/kpis', dashboardController.getKPIs);
+router.get('/overview', dashboardController.getExecutiveOverview);
 router.get('/charts/sales', dashboardController.getSalesChart);
 router.get('/charts/leads', dashboardController.getLeadsChart);
 router.get('/funnel', dashboardController.getFunnelData);

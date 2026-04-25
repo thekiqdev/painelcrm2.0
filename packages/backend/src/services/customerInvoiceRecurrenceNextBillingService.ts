@@ -12,6 +12,7 @@ import {
   tryEnqueueRenewalJobForSubscriptionId,
   type TryEnqueueRenewalJobForSubscriptionResult,
 } from './recurringBillingJobService.js';
+import { subscriptionCyclesOnJobCancelled } from './subscriptionCyclesDualWriteService.js';
 
 const NEXT_BILLING_YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -67,7 +68,9 @@ export async function patchCustomerSubscriptionNextBillingFromPaidInvoice(params
 
   await pool.query(
     `UPDATE subscriptions
-     SET next_billing_date = $1::date, updated_at = now()
+     SET next_billing_date = $1::date,
+         billing_anchor_day = EXTRACT(DAY FROM $1::date)::int,
+         updated_at = now()
      WHERE id = $2 AND tenant_id = $3`,
     [nextYmd, sub.id, tenantId]
   );
@@ -100,6 +103,12 @@ export async function patchCustomerSubscriptionNextBillingFromPaidInvoice(params
       : enqueue_after_patch.reason === 'internal_enqueue_error'
         ? enqueue_after_patch.error
         : enqueue_after_patch.reason,
+    enqueue_after_patch_window_reason:
+      !enqueue_after_patch.ok &&
+      enqueue_after_patch.reason !== 'internal_enqueue_error' &&
+      'window_reason' in enqueue_after_patch
+        ? enqueue_after_patch.window_reason
+        : undefined,
     actor_user_id: actorUserId ?? undefined,
   });
 
@@ -121,29 +130,91 @@ export async function patchCustomerSubscriptionNextBillingFromPaidInvoice(params
   };
 }
 
-async function cancelPendingRenewalJobsForSubscription(subscriptionId: string): Promise<number> {
+export type CancelPendingRenewalJobsOptions = {
+  completion_outcome?: string;
+  detail?: Record<string, unknown>;
+};
+
+/**
+ * Cancela jobs pendentes de renovação para a assinatura (reagendamento ou cancelamento no CRM).
+ */
+export async function cancelPendingRenewalJobsForSubscription(
+  subscriptionId: string,
+  options?: CancelPendingRenewalJobsOptions
+): Promise<number> {
   const has = await billingRecurringJobsHasCompletionColumns();
-  const detail = JSON.stringify({
-    reason: 'next_billing_date_updated_via_crm',
-    subscription_id: subscriptionId,
-  });
+  const completion_outcome =
+    options?.completion_outcome ?? BILLING_RECURRING_JOB_OUTCOME.CANCELLED_MANUAL_NEXT_BILLING_RESCHEDULE;
+  const detail = JSON.stringify(
+    options?.detail ?? { reason: 'next_billing_date_updated_via_crm', subscription_id: subscriptionId }
+  );
   if (has) {
-    const r = await pool.query(
+    const r = await pool.query<{ id: string; tenant_id: string; cycle_key: string }>(
       `UPDATE billing_recurring_jobs
        SET status = 'cancelled',
            completion_outcome = $2,
            completion_detail = $3,
            updated_at = now()
-       WHERE subscription_id = $1 AND status = 'pending'`,
-      [subscriptionId, BILLING_RECURRING_JOB_OUTCOME.CANCELLED_MANUAL_NEXT_BILLING_RESCHEDULE, detail]
+       WHERE subscription_id = $1 AND status = 'pending'
+       RETURNING id::text, tenant_id::text, cycle_key`,
+      [subscriptionId, completion_outcome, detail]
     );
+    for (const row of r.rows) {
+      await subscriptionCyclesOnJobCancelled(pool, {
+        jobId: row.id,
+        subscriptionId,
+        tenantId: row.tenant_id,
+        cycleKey: row.cycle_key,
+        outcome: BILLING_RECURRING_JOB_OUTCOME.CANCELLED_MANUAL_NEXT_BILLING_RESCHEDULE,
+      });
+    }
     return r.rowCount ?? 0;
   }
-  const r = await pool.query(
+  const r = await pool.query<{ id: string; tenant_id: string; cycle_key: string }>(
     `UPDATE billing_recurring_jobs
      SET status = 'cancelled', updated_at = now()
-     WHERE subscription_id = $1 AND status = 'pending'`,
+     WHERE subscription_id = $1 AND status = 'pending'
+     RETURNING id::text, tenant_id::text, cycle_key`,
     [subscriptionId]
   );
+  for (const row of r.rows) {
+    await subscriptionCyclesOnJobCancelled(pool, {
+      jobId: row.id,
+      subscriptionId,
+      tenantId: row.tenant_id,
+      cycleKey: row.cycle_key,
+      outcome: BILLING_RECURRING_JOB_OUTCOME.CANCELLED_MANUAL_NEXT_BILLING_RESCHEDULE,
+    });
+  }
   return r.rowCount ?? 0;
+}
+
+/**
+ * Mesma regra que PATCH por fatura paga, usando a última fatura paga da assinatura (CRM).
+ */
+export async function patchCustomerSubscriptionNextBillingFromSubscriptionId(params: {
+  tenantId: string;
+  subscriptionId: string;
+  nextBillingDateYmd: string;
+  actorUserId?: string | null;
+}): Promise<PatchNextBillingFromInvoiceResult> {
+  const r = await pool.query<{ id: string }>(
+    `SELECT id::text FROM customer_invoices
+     WHERE tenant_id = $1 AND subscription_id = $2 AND origin = 'subscription' AND status = 'paid'
+     ORDER BY paid_at DESC NULLS LAST, created_at DESC
+     LIMIT 1`,
+    [params.tenantId, params.subscriptionId]
+  );
+  const invoiceId = r.rows[0]?.id;
+  if (!invoiceId) {
+    throw new Error(
+      'Nenhuma fatura paga nesta assinatura. Reagendar só é possível após pelo menos um pagamento — use o detalhe da fatura paga ou aguarde o primeiro pagamento.'
+    );
+  }
+  return patchCustomerSubscriptionNextBillingFromPaidInvoice({
+    tenantId: params.tenantId,
+    invoiceId,
+    nextBillingDateYmd: params.nextBillingDateYmd,
+    actorUserId: params.actorUserId,
+  });
 }

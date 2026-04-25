@@ -77,6 +77,12 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
     );
     if (internalStatus === 'paid') {
       await activatePlanFromBilling(entityId);
+      if (currentStatus !== 'paid') {
+        const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
+          '../../../services/platformNotifications/platformBusinessNotifications.js'
+        );
+        schedulePublishPlatformBillingPaymentConfirmed(entityId);
+      }
     }
     return {
       previous_status: currentStatus,

@@ -31,6 +31,10 @@ import {
 } from '../services/trialSignupGuardService.js';
 import { generateToken } from '../utils/jwt.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
+import {
+  schedulePublishPlatformAccountCreated,
+  schedulePublishPlatformTrialStarted,
+} from '../services/platformNotifications/platformBusinessNotifications.js';
 import { effectiveCheckoutTrialDays } from '../utils/checkoutTrialPlan.js';
 import { getMyTenantAndPrimary } from './myTenantPlanController.js';
 
@@ -425,6 +429,12 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
     } catch (e) {
       console.warn('[plan-purchase] ensureTenantBillingInlinePayToken', e);
     }
+    if (isNewTenant) {
+      const u = await pool.query('SELECT 1 FROM users WHERE tenant_id = $1 LIMIT 1', [tenantId]);
+      if (u.rows.length > 0) {
+        schedulePublishPlatformAccountCreated(tenantId);
+      }
+    }
     res.status(201).json(response);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -800,6 +810,8 @@ export async function postCompleteSignupTrial(req: AuthRequest, res: Response): 
     await client.query('COMMIT');
 
     setImmediate(() => notifySuperAdminsNewTenant(name, tenantId).catch(() => {}));
+    schedulePublishPlatformAccountCreated(tenantId);
+    schedulePublishPlatformTrialStarted(tenantId);
 
     const token = generateToken({ userId, email });
 

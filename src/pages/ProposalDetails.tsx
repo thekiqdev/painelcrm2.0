@@ -3,7 +3,19 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { FileText, ArrowLeft, Check, X, Send, Receipt, ExternalLink, Loader2, Link2, Copy } from "lucide-react";
+import {
+  FileText,
+  ArrowLeft,
+  Check,
+  X,
+  Send,
+  Receipt,
+  ExternalLink,
+  Loader2,
+  Link2,
+  Copy,
+  MoreHorizontal,
+} from "lucide-react";
 import { RichTextEditor } from "@/components/shared/RichTextEditor";
 import { isProposalDescriptionHtml, sanitizeProposalHtml } from "@/utils/proposalRichText";
 import {
@@ -40,6 +52,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 function resolveProposalPublicUrl(proposal: Proposal, lastPublicUrl: string | null): string | null {
   const path = proposal.public_link_path?.trim();
@@ -461,88 +481,185 @@ const ProposalDetails = () => {
 
   const itemsSubtotal = proposal.items.reduce((s, it) => s + (Number(it.total) || 0), 0);
 
+  const primaryAction =
+    canConvertToInvoice ? (
+      <Button className="w-full sm:w-auto" onClick={() => setConvertOpen(true)}>
+        <Receipt className="mr-2 h-4 w-4" />
+        Gerar fatura
+      </Button>
+    ) : canChangeStatus ? (
+      <Button className="w-full sm:w-auto" onClick={() => setIsAcceptDialogOpen(true)}>
+        <Check className="mr-2 h-4 w-4" />
+        Aceitar
+      </Button>
+    ) : canEditThis && proposal.status === "draft" ? (
+      <Button className="w-full sm:w-auto" variant="secondary" onClick={() => void handleMarkSent()}>
+        <Send className="mr-2 h-4 w-4" />
+        Marcar enviada
+      </Button>
+    ) : null;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex items-center gap-2 min-w-0">
-          <Button variant="outline" size="icon" onClick={goBack}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex min-w-0 items-start gap-2">
+          <Button variant="outline" size="icon" className="shrink-0" onClick={goBack}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold truncate">{proposal.title}</h1>
-            <p className="text-sm text-muted-foreground truncate">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-bold leading-tight sm:text-2xl">{proposal.title}</h1>
+              <Badge className={cn(statusColors[proposal.status] || "bg-gray-100 text-gray-800", "shrink-0")}>
+                {statusLabels[proposal.status] || proposal.status}
+              </Badge>
+            </div>
+            <p className="mt-1 truncate text-sm text-muted-foreground">
               {proposal.client_id ? clientName : proposal.lead_id ? `Lead: ${clientName}` : clientName}
             </p>
           </div>
         </div>
 
-        <div className="flex gap-2 flex-wrap items-center">
-          <Badge className={statusColors[proposal.status] || "bg-gray-100 text-gray-800"}>
-            {statusLabels[proposal.status] || proposal.status}
-          </Badge>
-          <Button variant="outline" asChild>
-            <Link to="/proposals">
-              <FileText className="mr-2 h-4 w-4" />
-              Lista
-            </Link>
-          </Button>
-          <Button
-            type="button"
-            disabled={!canUsePublicLinkActions}
-            title={
-              publicLinkMeta?.active === false
-                ? "Link público revogado. Gere um novo na aba Faturamento, se disponível."
-                : !effectivePublicUrl
-                  ? "URL do link não disponível. Verifique PROPOSAL_WEBHOOK_SECRET_KEY ou abra a proposta após criar no Kanban na mesma sessão."
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+          <div className="hidden flex-wrap items-center justify-end gap-2 md:flex">
+            <Button variant="outline" asChild size="sm">
+              <Link to="/proposals">
+                <FileText className="mr-2 h-4 w-4" />
+                Lista
+              </Link>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canUsePublicLinkActions}
+              title={
+                publicLinkMeta?.active === false
+                  ? "Link público revogado. Gere um novo na aba Faturamento, se disponível."
+                  : !effectivePublicUrl
+                    ? "URL do link não disponível. Verifique PROPOSAL_WEBHOOK_SECRET_KEY ou abra a proposta após criar no Kanban na mesma sessão."
+                    : undefined
+              }
+              onClick={() => openPublicProposalPage()}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Abrir proposta
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!canUsePublicLinkActions}
+              title={
+                !canUsePublicLinkActions
+                  ? publicLinkMeta?.active === false
+                    ? "Link público revogado."
+                    : "URL do link não disponível."
                   : undefined
-            }
-            onClick={() => openPublicProposalPage()}
-          >
-            <ExternalLink className="mr-2 h-4 w-4" />
-            Abrir proposta
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!canUsePublicLinkActions}
-            title={
-              !canUsePublicLinkActions
-                ? publicLinkMeta?.active === false
-                  ? "Link público revogado."
-                  : "URL do link não disponível."
-                : undefined
-            }
-            onClick={() => void copyPublicUrl()}
-          >
-            <Copy className="mr-2 h-4 w-4" />
-            Copiar link
-          </Button>
-          {canEditThis && proposal.status === "draft" && (
-            <Button variant="secondary" onClick={() => void handleMarkSent()}>
-              <Send className="mr-2 h-4 w-4" />
-              Marcar enviada
+              }
+              onClick={() => void copyPublicUrl()}
+            >
+              <Copy className="mr-2 h-4 w-4" />
+              Copiar link
             </Button>
-          )}
-          {canChangeStatus && (
-            <>
-              <Button variant="destructive" onClick={() => setIsRejectDialogOpen(true)}>
-                <X className="mr-2 h-4 w-4" />
-                Recusar
+            {canEditThis && proposal.status === "draft" && (
+              <Button variant="secondary" size="sm" onClick={() => void handleMarkSent()}>
+                <Send className="mr-2 h-4 w-4" />
+                Marcar enviada
               </Button>
-              <Button onClick={() => setIsAcceptDialogOpen(true)}>
-                <Check className="mr-2 h-4 w-4" />
-                Aceitar
+            )}
+            {canChangeStatus && (
+              <>
+                <Button variant="destructive" size="sm" onClick={() => setIsRejectDialogOpen(true)}>
+                  <X className="mr-2 h-4 w-4" />
+                  Recusar
+                </Button>
+                <Button size="sm" onClick={() => setIsAcceptDialogOpen(true)}>
+                  <Check className="mr-2 h-4 w-4" />
+                  Aceitar
+                </Button>
+              </>
+            )}
+            {canConvertToInvoice && (
+              <Button size="sm" onClick={() => setConvertOpen(true)}>
+                <Receipt className="mr-2 h-4 w-4" />
+                Gerar fatura
               </Button>
-            </>
-          )}
-          {canConvertToInvoice && (
-            <Button onClick={() => setConvertOpen(true)}>
-              <Receipt className="mr-2 h-4 w-4" />
-              Gerar fatura
-            </Button>
-          )}
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 md:hidden">
+            {primaryAction}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="icon" aria-label="Mais ações">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem asChild>
+                  <Link to="/proposals">
+                    <FileText className="mr-2 h-4 w-4" />
+                    Voltar à lista
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!canUsePublicLinkActions}
+                  onClick={() => openPublicProposalPage()}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Abrir proposta
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled={!canUsePublicLinkActions} onClick={() => void copyPublicUrl()}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  Copiar link
+                </DropdownMenuItem>
+                {canEditThis && proposal.status === "draft" && (
+                  <DropdownMenuItem onClick={() => void handleMarkSent()}>
+                    <Send className="mr-2 h-4 w-4" />
+                    Marcar enviada
+                  </DropdownMenuItem>
+                )}
+                {canChangeStatus && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setIsRejectDialogOpen(true)} className="text-destructive">
+                      <X className="mr-2 h-4 w-4" />
+                      Recusar
+                    </DropdownMenuItem>
+                    {!canConvertToInvoice && (
+                      <DropdownMenuItem onClick={() => setIsAcceptDialogOpen(true)}>
+                        <Check className="mr-2 h-4 w-4" />
+                        Aceitar
+                      </DropdownMenuItem>
+                    )}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </div>
+
+      <Card className="border bg-muted/20 md:hidden">
+        <CardContent className="space-y-3 p-4 text-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-muted-foreground">Valor</span>
+            <span className="text-xl font-bold tabular-nums">{formatCurrency(proposal.amount)}</span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2 text-muted-foreground">
+            <span>Validade</span>
+            <span className="font-medium text-foreground">
+              {proposal.valid_until ? formatDateOnlyPtBr(proposal.valid_until) : "—"}
+            </span>
+          </div>
+          {proposal.sent_date ? (
+            <div className="flex flex-wrap justify-between gap-2 text-muted-foreground">
+              <span>Enviada</span>
+              <span className="font-medium text-foreground">{formatDateOnlyPtBr(proposal.sent_date)}</span>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {proposal.status === "accepted" && !isInvoiced && (
         <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
@@ -552,11 +669,19 @@ const ProposalDetails = () => {
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="flex flex-wrap h-auto gap-1">
-          <TabsTrigger value="resumo">Resumo</TabsTrigger>
-          <TabsTrigger value="itens">Itens e valores</TabsTrigger>
-          <TabsTrigger value="faturamento">Faturamento</TabsTrigger>
-          <TabsTrigger value="historico">Histórico</TabsTrigger>
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 sm:flex sm:flex-wrap sm:justify-start">
+          <TabsTrigger value="resumo" className="text-xs sm:text-sm">
+            Resumo
+          </TabsTrigger>
+          <TabsTrigger value="itens" className="text-xs sm:text-sm">
+            Itens
+          </TabsTrigger>
+          <TabsTrigger value="faturamento" className="text-xs sm:text-sm">
+            Faturamento
+          </TabsTrigger>
+          <TabsTrigger value="historico" className="text-xs sm:text-sm">
+            Histórico
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="resumo" className="mt-4">
@@ -681,7 +806,8 @@ const ProposalDetails = () => {
                 </div>
               )}
               {!canEditProposalItems && (
-                <div className="rounded-md border overflow-x-auto">
+                <>
+                <div className="hidden rounded-md border overflow-x-auto md:block">
                   <div className="min-w-[640px]">
                     <div className="grid grid-cols-12 bg-muted px-4 py-2 text-xs sm:text-sm font-medium gap-2">
                       <div className="col-span-4">Descrição</div>
@@ -714,6 +840,31 @@ const ProposalDetails = () => {
                     </div>
                   </div>
                 </div>
+                <div className="space-y-2 md:hidden">
+                  {proposal.items.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Nenhum item cadastrado — o total vem do valor único da proposta.
+                    </p>
+                  ) : (
+                    proposal.items.map((item, index) => (
+                      <div key={String(item.id ?? index)} className="rounded-lg border bg-card p-3 text-sm shadow-sm">
+                        <p className="font-medium leading-snug">{item.description}</p>
+                        <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                          <span>Qtd {item.quantity}</span>
+                          <span>Unit. {formatCurrency(item.unitPrice)}</span>
+                        </div>
+                        <p className="mt-2 text-right text-base font-semibold tabular-nums">
+                          {formatCurrency(item.total)}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                  <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-sm font-medium">
+                    <span>Total</span>
+                    <span className="tabular-nums">{formatCurrency(proposal.amount)}</span>
+                  </div>
+                </div>
+                </>
               )}
             </CardContent>
           </Card>

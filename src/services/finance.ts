@@ -47,11 +47,19 @@ export interface BillingReceipt {
 
 export const financeService = {
   // Invoices
-  async getInvoices(filters?: { status?: string; client_id?: string; project_id?: string }): Promise<Invoice[]> {
+  async getInvoices(filters?: {
+    status?: string;
+    client_id?: string;
+    project_id?: string;
+    issue_from?: string;
+    issue_to?: string;
+  }): Promise<Invoice[]> {
     const params = new URLSearchParams();
     if (filters?.status) params.append('status', filters.status);
     if (filters?.client_id) params.append('client_id', filters.client_id);
     if (filters?.project_id) params.append('project_id', filters.project_id);
+    if (filters?.issue_from) params.append('issue_from', filters.issue_from);
+    if (filters?.issue_to) params.append('issue_to', filters.issue_to);
     
     const query = params.toString();
     const response = await apiClient.get<Invoice[]>(`/api/invoices${query ? `?${query}` : ''}`);
@@ -163,8 +171,12 @@ export const financeService = {
   },
 
   /** Receitas de cobrança (customer_invoices pagas) para o relatório financeiro. */
-  async getBillingReceipts(): Promise<BillingReceipt[]> {
-    const response = await apiClient.get<BillingReceipt[]>('/api/finance/billing-receipts');
+  async getBillingReceipts(filters?: { from?: string; to?: string }): Promise<BillingReceipt[]> {
+    const params = new URLSearchParams();
+    if (filters?.from) params.append('from', filters.from);
+    if (filters?.to) params.append('to', filters.to);
+    const q = params.toString();
+    const response = await apiClient.get<BillingReceipt[]>(`/api/finance/billing-receipts${q ? `?${q}` : ''}`);
     if (response.error) throw new Error(response.error);
     return response.data ?? [];
   },

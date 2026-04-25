@@ -22,6 +22,8 @@ const putBodySchema = z
     recurring_generate_time_local: hhMmSchema,
     invoice_notify_same_as_generation: z.boolean(),
     invoice_notify_time_local: hhMmSchema.nullable().optional(),
+    /** Omisso no corpo mantém 0 (compatível com clientes antigos). */
+    recurring_invoice_generate_days_before_due: z.coerce.number().int().min(0).max(60).optional().default(0),
   })
   .superRefine((d, ctx) => {
     if (d.timezone && !isValidIanaTimezone(d.timezone)) {
@@ -61,17 +63,23 @@ export async function getMyTenantBillingPreferences(req: AuthRequest, res: Respo
           ? row.invoice_notify_same_as_generation
           : null,
       invoice_notify_time_local: normalizeTimeToHhMm(row.invoice_notify_time_local) ?? null,
+      recurring_invoice_generate_days_before_due:
+        typeof row.recurring_invoice_generate_days_before_due === 'number'
+          ? row.recurring_invoice_generate_days_before_due
+          : 0,
       defaults: {
         timezone: resolved.timezone_effective,
         recurring_generate_time_local: resolved.recurring_generate_time_local_effective,
         invoice_notify_same_as_generation: resolved.invoice_notify_same_as_generation_effective,
         invoice_notify_time_local: resolved.invoice_notify_time_local_effective,
+        recurring_invoice_generate_days_before_due: resolved.recurring_invoice_generate_days_before_due_effective,
       },
       sources: {
         timezone: resolved.timezone_source,
         recurring_generate_time_local: resolved.recurring_generate_time_source,
         invoice_notify_same_as_generation: resolved.invoice_notify_same_as_generation_source,
         invoice_notify_time_local: resolved.invoice_notify_time_source,
+        recurring_invoice_generate_days_before_due: resolved.recurring_invoice_generate_days_before_due_source,
       },
     });
   } catch (error) {
@@ -101,6 +109,7 @@ export async function putMyTenantBillingPreferences(req: AuthRequest, res: Respo
       invoice_notify_time_local: payload.invoice_notify_same_as_generation
         ? null
         : payload.invoice_notify_time_local ?? null,
+      recurring_invoice_generate_days_before_due: payload.recurring_invoice_generate_days_before_due,
     });
     if (!updated) {
       res.status(404).json({ error: 'Tenant não encontrado' });
@@ -112,11 +121,16 @@ export async function putMyTenantBillingPreferences(req: AuthRequest, res: Respo
       recurring_generate_time_local: normalizeTimeToHhMm(updated.recurring_generate_time_local),
       invoice_notify_same_as_generation: updated.invoice_notify_same_as_generation,
       invoice_notify_time_local: normalizeTimeToHhMm(updated.invoice_notify_time_local),
+      recurring_invoice_generate_days_before_due:
+        typeof updated.recurring_invoice_generate_days_before_due === 'number'
+          ? updated.recurring_invoice_generate_days_before_due
+          : resolved.recurring_invoice_generate_days_before_due_effective,
       effective: {
         timezone: resolved.timezone_effective,
         recurring_generate_time_local: resolved.recurring_generate_time_local_effective,
         invoice_notify_same_as_generation: resolved.invoice_notify_same_as_generation_effective,
         invoice_notify_time_local: resolved.invoice_notify_time_local_effective,
+        recurring_invoice_generate_days_before_due: resolved.recurring_invoice_generate_days_before_due_effective,
       },
       message: 'Preferências de recorrência atualizadas',
     });

@@ -3,6 +3,10 @@
  * Na Fase 2 passa a ser usado para decisões reais no scheduler/worker.
  */
 
+import {
+  clampRecurringInvoiceGenerateDaysBeforeDue,
+  computeRecurringInvoiceGenerationDateYmd,
+} from '../utils/billingGenerationDate.js';
 import { resolveTenantBillingPreferences } from './tenantBillingPreferencesService.js';
 
 export type BillingWindowReason =
@@ -21,7 +25,12 @@ export interface BillingWindowDiagnostic {
   generate_time_source: 'tenant' | 'fallback_default';
   local_now_ymd: string;
   local_now_hhmm: string;
+  /** Data de vencimento do ciclo (= `subscriptions.next_billing_date` canónico). */
   next_billing_date: string;
+  /** Primeiro dia civil local em que o scheduler pode enfileirar (ciclo − N dias). */
+  generation_date_ymd: string;
+  /** Valor efetivo de dias de antecipação (0–60). */
+  recurring_generate_days_before_due: number;
   would_be_eligible_by_window: boolean;
   reason: BillingWindowReason;
   phase: 'window_runtime_phase2';
@@ -57,7 +66,10 @@ export function buildBillingWindowDiagnostic(params: {
   recurringGenerateTimeLocalRaw?: string | null | undefined;
   invoiceNotifySameAsGenerationRaw?: boolean | null | undefined;
   invoiceNotifyTimeLocalRaw?: string | null | undefined;
+  /** Data de vencimento do ciclo (YYYY-MM-DD), igual a `subscriptions.next_billing_date`. */
   nextBillingDate: string;
+  /** Dias antes do vencimento para permitir enfileiramento (tenant). Default 0. */
+  recurringInvoiceGenerateDaysBeforeDue?: number | null;
   now?: Date;
 }): BillingWindowDiagnostic {
   const tzRaw = params.tenantTimezoneRaw?.trim() || null;
@@ -66,6 +78,7 @@ export function buildBillingWindowDiagnostic(params: {
     recurring_generate_time_local: params.recurringGenerateTimeLocalRaw ?? null,
     invoice_notify_same_as_generation: params.invoiceNotifySameAsGenerationRaw ?? null,
     invoice_notify_time_local: params.invoiceNotifyTimeLocalRaw ?? null,
+    recurring_invoice_generate_days_before_due: null,
   });
 
   const local = localNowParts(params.now ?? new Date(), resolved.timezone_effective);
@@ -76,13 +89,22 @@ export function buildBillingWindowDiagnostic(params: {
   const timezone_valid = resolved.timezone_valid;
   const fallback_applied = resolved.timezone_source === 'fallback_default';
 
+  const cycleYmd = params.nextBillingDate.trim().slice(0, 10);
+  const recurring_generate_days_before_due = clampRecurringInvoiceGenerateDaysBeforeDue(
+    params.recurringInvoiceGenerateDaysBeforeDue
+  );
+  const generation_date_ymd = computeRecurringInvoiceGenerationDateYmd(cycleYmd, recurring_generate_days_before_due);
+
   let would_be_eligible_by_window = false;
   let reason: BillingWindowReason;
 
-  if (params.nextBillingDate > local.ymd) {
+  if (local.ymd < generation_date_ymd) {
     reason = 'future_local_date';
     would_be_eligible_by_window = false;
-  } else if (params.nextBillingDate === local.ymd && compareHhMm(local.hhmm, generate_time_local_effective) < 0) {
+  } else if (
+    local.ymd === generation_date_ymd &&
+    compareHhMm(local.hhmm, generate_time_local_effective) < 0
+  ) {
     reason = 'too_early_local_time';
     would_be_eligible_by_window = false;
   } else {
@@ -100,7 +122,9 @@ export function buildBillingWindowDiagnostic(params: {
     generate_time_source,
     local_now_ymd: local.ymd,
     local_now_hhmm: local.hhmm,
-    next_billing_date: params.nextBillingDate,
+    next_billing_date: cycleYmd,
+    generation_date_ymd,
+    recurring_generate_days_before_due,
     would_be_eligible_by_window,
     reason,
     phase: 'window_runtime_phase2',

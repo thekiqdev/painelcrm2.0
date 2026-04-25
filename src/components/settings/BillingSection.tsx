@@ -58,6 +58,7 @@ export const BillingSection: React.FC = () => {
   const [recurringGenerateTimeLocal, setRecurringGenerateTimeLocal] = useState("09:00");
   const [invoiceNotifySameAsGeneration, setInvoiceNotifySameAsGeneration] = useState(true);
   const [invoiceNotifyTimeLocal, setInvoiceNotifyTimeLocal] = useState("09:00");
+  const [recurringInvoiceGenerateDaysBeforeDue, setRecurringInvoiceGenerateDaysBeforeDue] = useState(0);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const timezoneOptions = useMemo(() => {
@@ -86,11 +87,16 @@ export const BillingSection: React.FC = () => {
         data.invoice_notify_time_local ??
         data.defaults?.invoice_notify_time_local ??
         resolvedGenerate;
+      const resolvedDays =
+        typeof data.recurring_invoice_generate_days_before_due === "number"
+          ? data.recurring_invoice_generate_days_before_due
+          : (data.defaults?.recurring_invoice_generate_days_before_due ?? 0);
 
       setTimezone(resolvedTimezone);
       setRecurringGenerateTimeLocal(normalizeHhMm(resolvedGenerate));
       setInvoiceNotifySameAsGeneration(resolvedSame);
       setInvoiceNotifyTimeLocal(normalizeHhMm(resolvedNotify));
+      setRecurringInvoiceGenerateDaysBeforeDue(Math.min(60, Math.max(0, Math.trunc(resolvedDays))));
       setFieldErrors({});
     } finally {
       setLoading(false);
@@ -115,6 +121,10 @@ export const BillingSection: React.FC = () => {
     if (!invoiceNotifySameAsGeneration && !HH_MM_REGEX.test(notify)) {
       nextErrors.invoice_notify_time_local = "Informe o horário de notificação no formato HH:mm.";
     }
+    const days = Math.trunc(Number(recurringInvoiceGenerateDaysBeforeDue));
+    if (!Number.isFinite(days) || days < 0 || days > 60) {
+      nextErrors.recurring_invoice_generate_days_before_due = "Informe um número inteiro entre 0 e 60.";
+    }
 
     setFieldErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -135,6 +145,7 @@ export const BillingSection: React.FC = () => {
         recurring_generate_time_local: normalizeHhMm(recurringGenerateTimeLocal),
         invoice_notify_same_as_generation: invoiceNotifySameAsGeneration,
         invoice_notify_time_local: invoiceNotifySameAsGeneration ? null : normalizeHhMm(invoiceNotifyTimeLocal),
+        recurring_invoice_generate_days_before_due: Math.min(60, Math.max(0, Math.trunc(Number(recurringInvoiceGenerateDaysBeforeDue)))),
       };
       const res = await putMyTenantBillingPreferences(payload);
       if (res.error || !res.data) {
@@ -151,6 +162,11 @@ export const BillingSection: React.FC = () => {
       setInvoiceNotifyTimeLocal(
         normalizeHhMm(saved.invoice_notify_time_local ?? saved.effective?.invoice_notify_time_local ?? payload.recurring_generate_time_local)
       );
+      const savedDays =
+        typeof saved.recurring_invoice_generate_days_before_due === "number"
+          ? saved.recurring_invoice_generate_days_before_due
+          : (saved.effective?.recurring_invoice_generate_days_before_due ?? payload.recurring_invoice_generate_days_before_due);
+      setRecurringInvoiceGenerateDaysBeforeDue(Math.min(60, Math.max(0, Math.trunc(savedDays))));
       setFieldErrors({});
       toast.success("Preferências de recorrência salvas.");
     } finally {
@@ -236,6 +252,32 @@ export const BillingSection: React.FC = () => {
             ) : (
               <p className="text-xs text-muted-foreground">Formato 24h (HH:mm).</p>
             )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="recurring-generate-days-before">Geração antecipada de faturas recorrentes</Label>
+            <p className="text-xs text-muted-foreground">
+              Gerar faturas recorrentes antecipadamente: defina quantos dias antes do vencimento a fatura será
+              enfileirada. O vencimento da fatura continua sendo a data normal da cobrança (o dia do ciclo).
+            </p>
+            <Input
+              id="recurring-generate-days-before"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={60}
+              step={1}
+              value={recurringInvoiceGenerateDaysBeforeDue}
+              onChange={(e) => setRecurringInvoiceGenerateDaysBeforeDue(Number(e.target.value))}
+              disabled={!canSave}
+            />
+            <p className="text-xs text-muted-foreground">
+              Número de dias antes do vencimento (0 a 60). Exemplo: vencimento dia 25 com 5 dias — geração a partir do
+              dia 20 (respeitando o horário acima no primeiro dia elegível), vencimento da fatura continua dia 25.
+            </p>
+            {fieldErrors.recurring_invoice_generate_days_before_due ? (
+              <p className="text-sm text-destructive">{fieldErrors.recurring_invoice_generate_days_before_due}</p>
+            ) : null}
           </div>
 
           <div className="rounded-md border border-border p-4">

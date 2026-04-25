@@ -40,7 +40,7 @@ import {
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { INVOICE_ACTIONABLE } from "@/lib/customerInvoiceActions";
+import { INVOICE_ACTIONABLE, canDeleteCustomerInvoice, isSubscriptionInvoicePurgeable } from "@/lib/customerInvoiceActions";
 import { useAuth } from "@/contexts/AuthContext";
 import { InvoiceRecurrenceBlock } from "@/components/invoices/InvoiceRecurrenceBlock";
 import {
@@ -55,20 +55,6 @@ function formatAmount(cents: number): string {
     style: "currency",
     currency: "BRL",
   }).format(cents / 100);
-}
-
-function formatInvoiceDateTimePtBr(value: string | null | undefined): string {
-  if (!value || typeof value !== "string") return "—";
-  const t = value.trim();
-  if (!t) return "—";
-  // Corrige exibição para timestamps persistidos como meia-noite UTC (origem YYYY-MM-DD do gateway).
-  const midnightUtc = /^(\d{4})-(\d{2})-(\d{2})T00:00:00(?:\.000)?Z$/.exec(t);
-  if (midnightUtc) {
-    return `${midnightUtc[3]}/${midnightUtc[2]}/${midnightUtc[1]} 00:00`;
-  }
-  const d = new Date(t);
-  if (Number.isNaN(d.getTime())) return "—";
-  return format(d, "dd/MM/yyyy HH:mm", { locale: ptBR });
 }
 
 function storedAllowedFromInvoice(inv: CustomerInvoice): InvoicePaymentMethodUi[] | null {
@@ -263,7 +249,8 @@ const CustomerInvoiceDetail = () => {
     : "Sem cliente";
 
   const actionable = INVOICE_ACTIONABLE.has(invoice.status);
-  const canDelete = actionable && invoice.origin !== "subscription";
+  const canDeleteSubscriptionPurge = isSubscriptionInvoicePurgeable(invoice);
+  const canDelete = canDeleteCustomerInvoice(invoice);
 
   return (
     <div className="space-y-6">
@@ -291,10 +278,11 @@ const CustomerInvoiceDetail = () => {
                 variant="secondary"
                 size="sm"
                 type="button"
+                title="Altera a próxima data de cobrança da assinatura. Não muda o vencimento desta fatura nem os períodos já emitidos."
                 onClick={() => id && navigate(`/customer-invoices/${id}/edit?flow=renewal`)}
               >
                 <CalendarClock className="mr-2 h-4 w-4" />
-                Alterar próxima renovação
+                Alterar próxima cobrança
               </Button>
             )}
           {actionable && (
@@ -334,8 +322,18 @@ const CustomerInvoiceDetail = () => {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Excluir fatura?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    A cobrança será removida/cancelada no Asaas e o registro da fatura será apagado aqui. Pedidos ou
-                    vínculos que apontem para esta fatura podem ser atualizados automaticamente.
+                    {canDeleteSubscriptionPurge ? (
+                      <>
+                        Esta cobrança de assinatura já está <strong>cancelada ou falhou</strong>. O registro será
+                        apagado definitivamente neste sistema (histórico local). Isto não reabre a assinatura nem altera
+                        faturas já pagas.
+                      </>
+                    ) : (
+                      <>
+                        A cobrança será removida/cancelada no Asaas e o registro da fatura será apagado aqui. Pedidos ou
+                        vínculos que apontem para esta fatura podem ser atualizados automaticamente.
+                      </>
+                    )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -537,118 +535,148 @@ const CustomerInvoiceDetail = () => {
               error={recurrenceInsightError}
               showOperational={showRecurrenceOperational}
               currentInvoiceId={invoice.id}
+              recurringAmountLabel={formatAmount(invoice.amount_cents)}
+              showChangeNextBilling={
+                invoice.origin === "subscription" && invoice.status === "paid" && Boolean(invoice.subscription_id)
+              }
+              onChangeNextBilling={() => id && navigate(`/customer-invoices/${id}/edit?flow=renewal`)}
             />
+          )}
+          {invoice.subscription_id && (
+            <Card className="border-border/80">
+              <CardHeader className="py-3 pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+                  Esta cobrança
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0 pb-4">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Essas informações pertencem somente a esta cobrança e não mudam quando a próxima cobrança da
+                  assinatura é alterada.
+                </p>
+                <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <dt className="text-muted-foreground text-xs">Período coberto</dt>
+                    <dd className="font-medium">
+                      {invoice.period_start && invoice.period_end
+                        ? `${formatInvoiceDueDatePtBr(invoice.period_start)} – ${formatInvoiceDueDatePtBr(invoice.period_end)}`
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground text-xs">Vencimento desta fatura</dt>
+                    <dd className="font-medium">{formatInvoiceDueDatePtBr(invoice.due_date)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground text-xs">Valor</dt>
+                    <dd className="font-medium">{formatAmount(invoice.amount_cents)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground text-xs">Status</dt>
+                    <dd>
+                      <CustomerInvoiceStatusBadge status={invoice.status} />
+                    </dd>
+                  </div>
+                </dl>
+              </CardContent>
+            </Card>
           )}
           {invoice.subscription_id && (
             <Card className="border-dashed border-primary/30">
               <CardHeader className="py-3 pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Repeat2 className="h-4 w-4 text-primary shrink-0" aria-hidden />
-                  Faturas desta recorrência
+                  Histórico de cobranças
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-0 pb-4">
                 {recurrenceHistory.length > 0 ? (
-                  <>
-                    <p className="text-xs text-muted-foreground">
-                      Histórico agrupado por assinatura (`subscription_id`), ordenado por vencimento mais recente.
-                    </p>
-                    <div className="rounded-md border overflow-x-auto">
-                      <table className="w-full min-w-[860px] text-xs">
-                        <thead className="bg-muted/40 text-muted-foreground">
-                          <tr className="border-b">
-                            <th className="text-left font-medium px-2 py-1.5">Fatura</th>
-                            <th className="text-left font-medium px-2 py-1.5">Período</th>
-                            <th className="text-left font-medium px-2 py-1.5">Vencimento</th>
-                            <th className="text-right font-medium px-2 py-1.5">Valor</th>
-                            <th className="text-left font-medium px-2 py-1.5">Status</th>
-                            <th className="text-left font-medium px-2 py-1.5">Pago em</th>
-                            <th className="text-left font-medium px-2 py-1.5">Criada em</th>
-                            <th className="text-right font-medium px-2 py-1.5">Ações</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {recurrenceHistory.map((h) => {
-                            const isCurrent = h.id === invoice.id;
-                            const paymentUrl =
-                              h.payment_token && typeof window !== "undefined"
-                                ? `${window.location.origin}/pay/${h.payment_token}`
-                                : null;
-                            return (
-                              <tr
-                                key={h.id}
-                                className={`border-b last:border-0 ${
-                                  isCurrent ? "bg-primary/5" : "bg-card"
-                                }`}
-                              >
-                                <td className="px-2 py-1.5">
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="font-medium">
-                                      {h.invoice_number ?? h.id.slice(0, 8)}
+                  <div className="rounded-md border overflow-x-auto">
+                    <table className="w-full min-w-[520px] text-xs">
+                      <thead className="bg-muted/40 text-muted-foreground">
+                        <tr className="border-b">
+                          <th className="text-left font-medium px-2 py-1.5">Fatura</th>
+                          <th className="text-left font-medium px-2 py-1.5">Período</th>
+                          <th className="text-left font-medium px-2 py-1.5">Vencimento</th>
+                          <th className="text-right font-medium px-2 py-1.5">Valor</th>
+                          <th className="text-left font-medium px-2 py-1.5">Status</th>
+                          <th className="text-right font-medium px-2 py-1.5">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recurrenceHistory.map((h) => {
+                          const isCurrent = h.id === invoice.id;
+                          const paymentUrl =
+                            h.payment_token && typeof window !== "undefined"
+                              ? `${window.location.origin}/pay/${h.payment_token}`
+                              : null;
+                          return (
+                            <tr
+                              key={h.id}
+                              className={`border-b last:border-0 ${isCurrent ? "bg-primary/5" : "bg-card"}`}
+                            >
+                              <td className="px-2 py-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-medium tabular-nums">
+                                    {h.invoice_number ?? h.id.slice(0, 8)}
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="inline-flex items-center rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0 text-[10px] font-medium text-primary">
+                                      Atual
                                     </span>
-                                    {isCurrent && (
-                                      <span className="inline-flex items-center rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0 text-[10px] font-medium text-primary">
-                                        Atual
-                                      </span>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="px-2 py-1.5 text-muted-foreground">
-                                  {h.period_start && h.period_end
-                                    ? `${formatInvoiceDueDatePtBr(h.period_start)} - ${formatInvoiceDueDatePtBr(h.period_end)}`
-                                    : "—"}
-                                </td>
-                                <td className="px-2 py-1.5">{formatInvoiceDueDatePtBr(h.due_date)}</td>
-                                <td className="px-2 py-1.5 text-right font-medium">
-                                  {formatAmount(h.amount_cents)}
-                                </td>
-                                <td className="px-2 py-1.5">
-                                  <CustomerInvoiceStatusBadge status={h.status} />
-                                </td>
-                                <td className="px-2 py-1.5 text-muted-foreground">
-                                  {h.paid_at
-                                    ? formatInvoiceDateTimePtBr(h.paid_at)
-                                    : "—"}
-                                </td>
-                                <td className="px-2 py-1.5 text-muted-foreground">
-                                  {formatInvoiceDateTimePtBr(h.created_at)}
-                                </td>
-                                <td className="px-2 py-1.5">
-                                  <div className="flex justify-end items-center gap-1.5">
-                                    {!isCurrent && (
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-7 px-2 text-[11px]"
-                                        onClick={() => navigate(`/customer-invoices/${h.id}`)}
-                                      >
-                                        Abrir
-                                      </Button>
-                                    )}
-                                    {paymentUrl && (
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-7 px-2 text-[11px]"
-                                        onClick={() => window.open(paymentUrl, "_blank", "noopener,noreferrer")}
-                                      >
-                                        Pagar
-                                      </Button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">
+                                {h.period_start && h.period_end
+                                  ? `${formatInvoiceDueDatePtBr(h.period_start)} – ${formatInvoiceDueDatePtBr(h.period_end)}`
+                                  : "—"}
+                              </td>
+                              <td className="px-2 py-1.5 whitespace-nowrap">
+                                {formatInvoiceDueDatePtBr(h.due_date)}
+                              </td>
+                              <td className="px-2 py-1.5 text-right font-medium whitespace-nowrap">
+                                {formatAmount(h.amount_cents)}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <CustomerInvoiceStatusBadge status={h.status} />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <div className="flex justify-end items-center gap-1 flex-wrap">
+                                  {!isCurrent && (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 px-2 text-[11px]"
+                                      onClick={() => navigate(`/customer-invoices/${h.id}`)}
+                                    >
+                                      Abrir
+                                    </Button>
+                                  )}
+                                  {paymentUrl && (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 px-2 text-[11px]"
+                                      onClick={() => window.open(paymentUrl, "_blank", "noopener,noreferrer")}
+                                    >
+                                      Pagar
+                                    </Button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    Esta recorrência ainda não gerou faturas no histórico.
+                    Ainda não há outras cobranças registadas nesta assinatura.
                   </p>
                 )}
               </CardContent>

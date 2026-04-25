@@ -24,6 +24,11 @@ import {
   type CreateInvoiceInput,
   type TenantBillingRow,
 } from './invoiceService.js';
+import {
+  schedulePublishPlatformBillingChargeCreated,
+  schedulePublishPlatformPlanActivated,
+  schedulePublishPlatformTrialEnded,
+} from './platformNotifications/platformBusinessNotifications.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
 import type { PaymentGateway, PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
@@ -41,7 +46,10 @@ import {
 } from '../config/checkoutTrialFeatureFlags.js';
 import { isAttemptChargeStillUsable } from './invoicePaymentAttemptReuseService.js';
 import { hasTenantBillingPaymentAttemptsTable } from './tenantBillingPaymentAttemptsService.js';
-import { ensureSaasPlanCheckoutPaymentAttemptForSwitch } from './saasPlanCheckoutPaymentAttemptService.js';
+import {
+  clampDueDateIso10MinTodayForGateway,
+  ensureSaasPlanCheckoutPaymentAttemptForSwitch,
+} from './saasPlanCheckoutPaymentAttemptService.js';
 
 /** Erro do gateway/Asaas relacionado a documento — tratado no plan-purchase como 400 + field cpf_cnpj. */
 export const ASAAS_CPF_CNPJ_USER_MESSAGE =
@@ -78,25 +86,13 @@ function mapAsaasChargeError(err: unknown): Error {
  * fallback UTC +7 dias se ausente ou inválido (evita Asaas `invalid_dueDate`).
  */
 export function resolveTenantBillingDueDateIso10(billingRow: TenantBillingRow): string {
-  const tryYmd = (raw: unknown): string | null => {
-    if (raw == null || raw === '') return null;
-    if (typeof raw === 'string') {
-      const s = raw.trim().slice(0, 10);
-      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
-    }
-    if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
-      return raw.toISOString().slice(0, 10);
-    }
-    return null;
-  };
-
-  const fromDue = tryYmd(billingRow.due_date);
+  const fromDue = toYmd(billingRow.due_date);
   if (fromDue) return fromDue;
-  const fromEnd = tryYmd(billingRow.period_end);
+  const fromEnd = toYmd(billingRow.period_end);
   if (fromEnd) return fromEnd;
   const d = new Date();
-  d.setUTCDate(d.getUTCDate() + 7);
-  return d.toISOString().slice(0, 10);
+  d.setDate(d.getDate() + 7);
+  return toYmd(d) ?? '';
 }
 
 /**
@@ -530,6 +526,8 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
     usersCount,
     billingId,
   });
+
+  schedulePublishPlatformPlanActivated({ tenantId, billingId });
 }
 
 export interface SubscribePlanResult {
@@ -855,7 +853,7 @@ export async function subscribePlan(
 
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 7);
-  const dueDateStr = dueDate.toISOString().slice(0, 10);
+  const dueDateStr = toYmd(dueDate) ?? '';
 
   const config = await getActiveConfig('saas');
   const gatewayKey = config?.gateway_key ?? 'asaas';
@@ -879,6 +877,7 @@ export async function subscribePlan(
 
   if (!gateway) {
     const billing = await createInvoice(invoiceData);
+    schedulePublishPlatformBillingChargeCreated(billing.id);
     return { billing };
   }
 
@@ -929,6 +928,7 @@ export async function subscribePlan(
         dueDateStr,
         invoiceNumber: billing.invoice_number ?? '',
       });
+      schedulePublishPlatformBillingChargeCreated(ensured.billing.id);
       return { billing: ensured.billing, paymentUrls: ensured.paymentUrls };
     }
 
@@ -940,8 +940,10 @@ export async function subscribePlan(
     );
     if (sameMethodReuse) {
       const refreshed = await getInvoiceById(billing.id);
+      const outBilling = refreshed ?? sameMethodReuse.billing;
+      schedulePublishPlatformBillingChargeCreated(outBilling.id);
       return {
-        billing: refreshed ?? sameMethodReuse.billing,
+        billing: outBilling,
         paymentUrls: sameMethodReuse.paymentUrls,
       };
     }
@@ -967,7 +969,7 @@ export async function subscribePlan(
     const chargePayload = {
       customerId,
       amountCents,
-      dueDate: dueDateStr,
+      dueDate: clampDueDateIso10MinTodayForGateway(dueDateStr),
       paymentMethod,
       description: billing.invoice_number,
       idempotencyKey: idempotencyKeyForCharge,
@@ -1000,8 +1002,10 @@ export async function subscribePlan(
     });
 
     const updatedBilling = await getInvoiceById(billing.id);
+    const finalBilling = updatedBilling ?? billing;
+    schedulePublishPlatformBillingChargeCreated(finalBilling.id);
     return {
-      billing: updatedBilling ?? billing,
+      billing: finalBilling,
       paymentUrls: {
         invoiceUrl: chargeResult.invoiceUrl,
         bankSlipUrl: chargeResult.bankSlipUrl,
@@ -1045,7 +1049,7 @@ export async function subscribeSeatAddon(params: {
 
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 7);
-  const dueDateStr = dueDate.toISOString().slice(0, 10);
+  const dueDateStr = toYmd(dueDate) ?? '';
 
   const config = await getActiveConfig('saas');
   const gatewayKey = config?.gateway_key ?? 'asaas';
@@ -1097,6 +1101,7 @@ export async function subscribeSeatAddon(params: {
 
   const gateway = await getActiveGateway({ billingType: 'saas', tenantId });
   if (!gateway) {
+    schedulePublishPlatformBillingChargeCreated(billing.id);
     return { billing };
   }
 
@@ -1116,6 +1121,7 @@ export async function subscribeSeatAddon(params: {
         dueDateStr,
         invoiceNumber: billing.invoice_number ?? '',
       });
+      schedulePublishPlatformBillingChargeCreated(ensured.billing.id);
       return { billing: ensured.billing, paymentUrls: ensured.paymentUrls };
     }
 
@@ -1127,8 +1133,10 @@ export async function subscribeSeatAddon(params: {
     );
     if (sameMethodReuse) {
       const refreshed = await getInvoiceById(billing.id);
+      const outBilling = refreshed ?? sameMethodReuse.billing;
+      schedulePublishPlatformBillingChargeCreated(outBilling.id);
       return {
-        billing: refreshed ?? sameMethodReuse.billing,
+        billing: outBilling,
         paymentUrls: sameMethodReuse.paymentUrls,
       };
     }
@@ -1153,7 +1161,7 @@ export async function subscribeSeatAddon(params: {
     const chargeResult = await gateway.createCharge({
       customerId,
       amountCents,
-      dueDate: dueDateStr,
+      dueDate: clampDueDateIso10MinTodayForGateway(dueDateStr),
       paymentMethod,
       description: billing.invoice_number ?? 'Assentos adicionais',
       idempotencyKey: idempotencyKeyForCharge,
@@ -1178,8 +1186,10 @@ export async function subscribeSeatAddon(params: {
     });
 
     const updatedBilling = await getInvoiceById(billing.id);
+    const finalBilling = updatedBilling ?? billing;
+    schedulePublishPlatformBillingChargeCreated(finalBilling.id);
     return {
-      billing: updatedBilling ?? billing,
+      billing: finalBilling,
       paymentUrls: {
         invoiceUrl: chargeResult.invoiceUrl,
         bankSlipUrl: chargeResult.bankSlipUrl,
@@ -1262,5 +1272,8 @@ export async function expireTrialsPastDue(): Promise<{ suspended: number }> {
        AND status IN ('trial', 'payment_pending')
      RETURNING id`
   );
+  for (const row of r.rows) {
+    schedulePublishPlatformTrialEnded(row.id);
+  }
   return { suspended: r.rowCount ?? r.rows.length };
 }

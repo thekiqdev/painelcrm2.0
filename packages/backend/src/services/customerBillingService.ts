@@ -158,8 +158,22 @@ export interface CreateManualInvoiceResult {
 export interface ListCustomerInvoicesFilters {
   client_id?: string | null;
   status?: string | null;
+  /** Vários estados (ex.: pendente + aguardando pagamento). Tem precedência sobre `status`. */
+  status_in?: string[] | null;
   limit?: number;
   offset?: number;
+}
+
+/** Totais do tenant para cards de resumo (exclui faturas filhas E2 para não duplicar valores). */
+export interface CustomerInvoicesSummary {
+  paid_count: number;
+  paid_amount_cents: number;
+  pending_count: number;
+  pending_amount_cents: number;
+  overdue_count: number;
+  overdue_amount_cents: number;
+  total_count: number;
+  total_amount_cents: number;
 }
 
 /** Histórico mínimo da recorrência (D1): faturas irmãs por subscription_id. */
@@ -481,7 +495,8 @@ export async function createManualInvoice(
 export async function createRecurringManualInvoice(
   tenantId: string,
   body: {
-    client_id: string;
+    /** Null = fatura por link; o cliente é associado ao completar o link (`completePaymentByToken`). */
+    client_id: string | null;
     amount_cents?: number;
     due_date: string;
     description?: string | null;
@@ -491,6 +506,8 @@ export async function createRecurringManualInvoice(
     gateway_key?: string | null;
     billing_interval: BillingInterval;
     items?: CreateManualCustomerInvoiceItemInput[];
+    cycles_unlimited?: boolean;
+    max_cycles?: number | null;
   }
 ): Promise<CreateManualInvoiceResult> {
   const hasItems = body.items && body.items.length > 0;
@@ -508,7 +525,7 @@ export async function createRecurringManualInvoice(
   const subscription = await createSubscription({
     type: 'customer',
     tenant_id: tenantId,
-    customer_id: body.client_id,
+    customer_id: body.client_id ?? null,
     plan_id: null,
     amount_cents: amountCents,
     billing_interval: body.billing_interval,
@@ -518,10 +535,12 @@ export async function createRecurringManualInvoice(
     billing_anchor_day: anchorDay,
     default_payment_method: body.payment_method ?? null,
     created_by: 'crm_ui',
+    cycles_unlimited: body.cycles_unlimited,
+    max_cycles: body.max_cycles ?? null,
   });
 
   const result = await createManualInvoice(tenantId, {
-    client_id: body.client_id,
+    client_id: body.client_id ?? null,
     amount_cents: amountCents,
     due_date: body.due_date,
     description: body.description ?? null,
@@ -649,6 +668,21 @@ export async function completePaymentByToken(
       throw new Error('Erro ao criar cliente');
     }
     await updateCustomerInvoiceClientId(invoiceId, client.id);
+  }
+
+  /** Assinatura criada por link nasce com `customer_id` NULL até o cliente existir no CRM. */
+  const subLink = await pool.query<{ subscription_id: string | null }>(
+    `SELECT subscription_id FROM customer_invoices WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+    [invoiceId, tenantId]
+  );
+  const subscriptionIdFromInvoice = subLink.rows[0]?.subscription_id ?? null;
+  if (subscriptionIdFromInvoice && client) {
+    await pool.query(
+      `UPDATE subscriptions
+       SET customer_id = $1, updated_at = now()
+       WHERE id = $2 AND tenant_id = $3 AND customer_id IS NULL`,
+      [client.id, subscriptionIdFromInvoice, tenantId]
+    );
   }
 
   const config = await getActiveConfig('crm', tenantId);
@@ -1372,6 +1406,10 @@ async function executeTenantBillingPayWithCard(
 
   if (internalStatus === 'paid') {
     await activatePlanFromBilling(billingId);
+    const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
+      './platformNotifications/platformBusinessNotifications.js'
+    );
+    schedulePublishPlatformBillingPaymentConfirmed(billingId);
     if (attempt) {
       const { supersedeOtherPendingTenantBillingAttemptsAfterPaid } = await import(
         './billingGatewayChargeService.js'
@@ -1422,7 +1460,7 @@ export async function listInvoices(
   );
   const offset = Math.max(0, filters.offset ?? 0);
 
-  const params: (string | number)[] = [tenantId];
+  const params: unknown[] = [tenantId];
   let paramIndex = 1;
   const conditions: string[] = ['ci.tenant_id = $1'];
 
@@ -1431,7 +1469,11 @@ export async function listInvoices(
     conditions.push(`ci.client_id = $${paramIndex}`);
     params.push(filters.client_id);
   }
-  if (filters.status) {
+  if (filters.status_in && filters.status_in.length > 0) {
+    paramIndex++;
+    conditions.push(`ci.status = ANY($${paramIndex}::text[])`);
+    params.push(filters.status_in);
+  } else if (filters.status) {
     paramIndex++;
     conditions.push(`ci.status = $${paramIndex}`);
     params.push(filters.status);
@@ -1443,14 +1485,60 @@ export async function listInvoices(
 
   const schema = await getCustomerInvoiceSchema();
   const r = await pool.query<CustomerInvoiceRow>(
-    `SELECT ${schema.selectListFromCi}
+    `SELECT ${schema.selectListFromCi},
+            s.next_billing_date::text AS subscription_next_billing_date
      FROM customer_invoices ci
+     LEFT JOIN subscriptions s ON s.id = ci.subscription_id AND s.tenant_id = ci.tenant_id
      WHERE ${conditions.join(' AND ')}
      ORDER BY ci.created_at DESC
      LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
     params
   );
   return r.rows;
+}
+
+/**
+ * Agregados por estado para o painel de faturas (totais reais do tenant).
+ * Exclui `invoice_type = 'child'` para alinhar totais em R$ às faturas “principais”.
+ */
+export async function getCustomerInvoicesSummary(tenantId: string): Promise<CustomerInvoicesSummary> {
+  const r = await pool.query<{
+    paid_count: string;
+    paid_amount_cents: string;
+    pending_count: string;
+    pending_amount_cents: string;
+    overdue_count: string;
+    overdue_amount_cents: string;
+    total_count: string;
+    total_amount_cents: string;
+  }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE ci.status = 'paid')::text AS paid_count,
+       COALESCE(SUM(ci.amount_cents) FILTER (WHERE ci.status = 'paid'), 0)::text AS paid_amount_cents,
+       COUNT(*) FILTER (WHERE ci.status IN ('pending', 'waiting_payment'))::text AS pending_count,
+       COALESCE(SUM(ci.amount_cents) FILTER (WHERE ci.status IN ('pending', 'waiting_payment')), 0)::text AS pending_amount_cents,
+       COUNT(*) FILTER (WHERE ci.status = 'overdue')::text AS overdue_count,
+       COALESCE(SUM(ci.amount_cents) FILTER (WHERE ci.status = 'overdue'), 0)::text AS overdue_amount_cents,
+       COUNT(*)::text AS total_count,
+       COALESCE(SUM(ci.amount_cents), 0)::text AS total_amount_cents
+     FROM customer_invoices ci
+     WHERE ci.tenant_id = $1
+       AND ci.invoice_type IS DISTINCT FROM 'child'`,
+    [tenantId]
+  );
+  const row = r.rows[0];
+  const n = (s: string | undefined) => parseInt(s ?? '0', 10);
+  const b = (s: string | undefined) => parseInt(s ?? '0', 10);
+  return {
+    paid_count: n(row?.paid_count),
+    paid_amount_cents: b(row?.paid_amount_cents),
+    pending_count: n(row?.pending_count),
+    pending_amount_cents: b(row?.pending_amount_cents),
+    overdue_count: n(row?.overdue_count),
+    overdue_amount_cents: b(row?.overdue_amount_cents),
+    total_count: n(row?.total_count),
+    total_amount_cents: b(row?.total_amount_cents),
+  };
 }
 
 /**

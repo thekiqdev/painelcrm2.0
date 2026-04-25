@@ -694,11 +694,12 @@ const ContractDetails = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button 
-            variant="ghost" 
-            size="icon" 
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
             onClick={() => {
               // Se veio do perfil do cliente, voltar para o perfil
               // Caso contrário, voltar para a listagem geral de contratos
@@ -711,27 +712,33 @@ const ContractDetails = () => {
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <h1 className="text-2xl font-bold">{contract.title}</h1>
+              <h1 className="text-lg font-bold leading-tight sm:text-2xl">{contract.title}</h1>
               {getStatusBadge(contract)}
               {contractAllSigned ? (
-                <Badge variant="secondary" className="font-normal">
+                <Badge variant="secondary" className="hidden font-normal sm:inline-flex">
                   Todas as assinaturas concluídas
                 </Badge>
               ) : null}
             </div>
-            <p className="text-sm text-muted-foreground">
-              Nº {contract.contract_number} • Atualizado em {format(new Date(contract.updated_at), "dd 'de' MMMM 'de' yyyy 'às' HH:mm", { locale: ptBR })}
+            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+              Nº {contract.contract_number} • Atualizado em{" "}
+              {format(new Date(contract.updated_at), "dd 'de' MMMM 'de' yyyy 'às' HH:mm", { locale: ptBR })}
             </p>
+            {contractAllSigned ? (
+              <Badge variant="secondary" className="mt-2 font-normal sm:hidden">
+                Assinaturas OK
+              </Badge>
+            ) : null}
           </div>
         </div>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline">
-              <MoreVertical className="mr-2 h-4 w-4" />
-              Ações
+            <Button variant="outline" size="icon" className="shrink-0 sm:h-10 sm:w-auto sm:px-4" aria-label="Ações">
+              <MoreVertical className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Ações</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -808,25 +815,59 @@ const ContractDetails = () => {
         </DropdownMenu>
       </div>
 
+      <Card className="border bg-muted/20 md:hidden">
+        <CardContent className="grid gap-3 p-4 text-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-muted-foreground">Valor</span>
+            <span className="text-lg font-semibold tabular-nums">
+              {contract.total_value != null
+                ? new Intl.NumberFormat("pt-BR", {
+                    style: "currency",
+                    currency: contract.currency || "BRL",
+                  }).format(Number(contract.total_value))
+                : "—"}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2 text-muted-foreground">
+            <span>Início</span>
+            <span className="font-medium text-foreground">
+              {contract.start_date
+                ? format(new Date(contract.start_date), "dd/MM/yyyy", { locale: ptBR })
+                : "—"}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2 text-muted-foreground">
+            <span>Fim</span>
+            <span className="font-medium text-foreground">
+              {contract.end_date ? format(new Date(contract.end_date), "dd/MM/yyyy", { locale: ptBR }) : "—"}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-between gap-2 text-muted-foreground">
+            <span>Signatários</span>
+            <span className="font-medium text-foreground">{signers.length}</span>
+          </div>
+        </CardContent>
+      </Card>
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="details">
-            <FileText className="mr-2 h-4 w-4" />
+        <TabsList className="flex h-auto w-full flex-col gap-1 p-1 sm:flex-row sm:flex-wrap">
+          <TabsTrigger value="details" className="justify-start text-xs sm:text-sm">
+            <FileText className="mr-2 h-4 w-4 shrink-0" />
             Detalhes
           </TabsTrigger>
-          <TabsTrigger value="signers">
-            <Users className="mr-2 h-4 w-4" />
+          <TabsTrigger value="signers" className="justify-start text-xs sm:text-sm">
+            <Users className="mr-2 h-4 w-4 shrink-0" />
             Assinaturas ({signers.length})
           </TabsTrigger>
-          <TabsTrigger value="links">
-            <Link2 className="mr-2 h-4 w-4" />
+          <TabsTrigger value="links" className="justify-start text-xs sm:text-sm">
+            <Link2 className="mr-2 h-4 w-4 shrink-0" />
             Links
           </TabsTrigger>
-          <TabsTrigger value="timeline">
-            <Clock className="mr-2 h-4 w-4" />
+          <TabsTrigger value="timeline" className="justify-start text-xs sm:text-sm">
+            <Clock className="mr-2 h-4 w-4 shrink-0" />
             Timeline ({events.length})
           </TabsTrigger>
-          <TabsTrigger value="attachments">
+          <TabsTrigger value="attachments" className="justify-start text-xs sm:text-sm">
             <Paperclip className="mr-2 h-4 w-4" />
             Anexos
           </TabsTrigger>

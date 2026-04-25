@@ -1,0 +1,393 @@
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { NavLink } from "react-router-dom";
+import {
+  financialService,
+  type FinancialAccountDto,
+  type FinancialAccountScope,
+  type FinancialAccountType,
+  type FinancialTransactionDto,
+} from "@/services/financial";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { toast } from "@/components/ui/sonner";
+import { Badge } from "@/components/ui/badge";
+import { Landmark, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const TYPE_LABEL: Record<FinancialAccountType, string> = {
+  bank: "Banco",
+  cash: "Caixa",
+  wallet: "Carteira",
+};
+const SCOPE_LABEL: Record<FinancialAccountScope, string> = {
+  business: "Empresarial",
+  personal: "Pessoal",
+};
+
+function formatBrl(n: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
+}
+
+function monthBoundsNow(): { from: string; to: string } {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m0 = d.getMonth();
+  const from = `${y}-${String(m0 + 1).padStart(2, "0")}-01`;
+  const last = new Date(y, m0 + 1, 0).getDate();
+  const to = `${y}-${String(m0 + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+  return { from, to };
+}
+
+const FinancialUnifiedAccountsPage = () => {
+  const [accounts, setAccounts] = useState<FinancialAccountDto[]>([]);
+  const [periodTx, setPeriodTx] = useState<FinancialTransactionDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [name, setName] = useState("");
+  const [type, setType] = useState<FinancialAccountType>("bank");
+  const [scope, setScope] = useState<FinancialAccountScope>("business");
+  const [scopeFilter, setScopeFilter] = useState<"all" | FinancialAccountScope>("all");
+  const [initialCentsInput, setInitialCentsInput] = useState("0");
+  const [initialDate, setInitialDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferSaving, setTransferSaving] = useState(false);
+  const [transferFrom, setTransferFrom] = useState("");
+  const [transferTo, setTransferTo] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferDate, setTransferDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [transferDesc, setTransferDesc] = useState("");
+
+  const { from: monthFrom, to: monthTo } = useMemo(() => monthBoundsNow(), []);
+
+  const statsByAccount = useMemo(() => {
+    const m = new Map<string, { inc: number; exp: number }>();
+    for (const t of periodTx) {
+      if (t.status !== "completed") continue;
+      const cur = m.get(t.account_id) ?? { inc: 0, exp: 0 };
+      if (t.type === "income") cur.inc += t.amount_cents;
+      else cur.exp += t.amount_cents;
+      m.set(t.account_id, cur);
+    }
+    return m;
+  }, [periodTx]);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      financialService.listAccounts({ account_scope: scopeFilter === "all" ? undefined : scopeFilter }),
+      financialService.listTransactions({ from: monthFrom, to: monthTo, status: "completed" }),
+    ])
+      .then(([ac, tx]) => {
+        setAccounts(ac);
+        setPeriodTx(tx);
+      })
+      .catch(() => {
+        toast.error("Erro ao carregar contas");
+        setAccounts([]);
+        setPeriodTx([]);
+      })
+      .finally(() => setLoading(false));
+  }, [monthFrom, monthTo, scopeFilter]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    const cents = Math.round(parseFloat(initialCentsInput.replace(",", ".")) * 100);
+    if (!name.trim()) {
+      toast.error("Indique o nome da conta");
+      return;
+    }
+    if (Number.isNaN(cents)) {
+      toast.error("Saldo inicial inválido");
+      return;
+    }
+    try {
+      setSaving(true);
+      await financialService.createAccount({
+        name: name.trim(),
+        type,
+        account_scope: scope,
+        initial_balance_cents: cents,
+        initial_balance_date: initialDate,
+      });
+      toast.success("Conta criada");
+      setOpen(false);
+      setName("");
+      setScope("business");
+      setInitialCentsInput("0");
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao criar");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTransfer = async () => {
+    const cents = Math.round(parseFloat(transferAmount.replace(",", ".")) * 100);
+    if (!transferFrom || !transferTo) {
+      toast.error("Selecione conta de origem e destino");
+      return;
+    }
+    if (transferFrom === transferTo) {
+      toast.error("Origem e destino devem ser diferentes");
+      return;
+    }
+    if (!Number.isFinite(cents) || cents <= 0) {
+      toast.error("Valor da transferência inválido");
+      return;
+    }
+    try {
+      setTransferSaving(true);
+      await financialService.createTransfer({
+        from_account_id: transferFrom,
+        to_account_id: transferTo,
+        amount_cents: cents,
+        transfer_date: transferDate,
+        description: transferDesc.trim() || null,
+      });
+      toast.success("Transferência registrada");
+      setTransferOpen(false);
+      setTransferAmount("");
+      setTransferDesc("");
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao transferir");
+    } finally {
+      setTransferSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Bancos e contas</h2>
+          <p className="text-sm text-muted-foreground">
+            Onde entra e sai o dinheiro da empresa. Entradas e saídas do mês ({monthFrom.slice(0, 7)}): só movimentos
+            concluídos.
+          </p>
+        </div>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              Nova conta
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Nova conta</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-3 py-2">
+              <div className="grid gap-2">
+                <Label htmlFor="fa-name">Nome</Label>
+                <Input id="fa-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Conta principal" />
+              </div>
+              <div className="grid gap-2">
+                <Label>Tipo</Label>
+                <Select value={type} onValueChange={(v) => setType(v as FinancialAccountType)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(TYPE_LABEL) as FinancialAccountType[]).map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {TYPE_LABEL[k]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label>Tipo da conta</Label>
+                <Select value={scope} onValueChange={(v) => setScope(v as FinancialAccountScope)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="business">Empresarial</SelectItem>
+                    <SelectItem value="personal">Pessoal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="fa-balance">Saldo inicial (R$)</Label>
+                <Input
+                  id="fa-balance"
+                  inputMode="decimal"
+                  value={initialCentsInput}
+                  onChange={(e) => setInitialCentsInput(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="fa-date">Data do saldo inicial</Label>
+                <Input id="fa-date" type="date" value={initialDate} onChange={(e) => setInitialDate(e.target.value)} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleCreate} disabled={saving}>
+                {saving ? "A guardar…" : "Criar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline">Transferir</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Transferir entre contas</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-3 py-2">
+              <div>
+                <Label>Conta de origem</Label>
+                <Select value={transferFrom} onValueChange={setTransferFrom}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Conta de destino</Label>
+                <Select value={transferTo} onValueChange={setTransferTo}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Valor (R$)</Label>
+                <Input value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)} placeholder="0,00" />
+              </div>
+              <div>
+                <Label>Data da transferência</Label>
+                <Input type="date" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>Descrição/observação</Label>
+                <Input value={transferDesc} onChange={(e) => setTransferDesc(e.target.value)} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setTransferOpen(false)}>Cancelar</Button>
+              <Button onClick={handleTransfer} disabled={transferSaving}>
+                {transferSaving ? "Transferindo…" : "Confirmar transferência"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+      <div className="flex justify-end">
+        <div className="w-[220px]">
+          <Label className="text-xs">Filtro tipo da conta</Label>
+          <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v as "all" | FinancialAccountScope)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas</SelectItem>
+              <SelectItem value="business">Empresarial</SelectItem>
+              <SelectItem value="personal">Pessoal</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">A carregar…</p>
+      ) : accounts.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground text-sm">
+            Sem contas ainda. Crie a primeira para começar a registar movimentos.
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {accounts.map((a) => {
+            const st = statsByAccount.get(a.id) ?? { inc: 0, exp: 0 };
+            return (
+              <NavLink key={a.id} to={`/finance/accounts/${a.id}`} className="block group">
+                <Card
+                  className={cn(
+                    "overflow-hidden border transition-shadow h-full",
+                    a.is_active ? "hover:shadow-md group-hover:border-primary/30" : "opacity-70"
+                  )}
+                >
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <Landmark className="h-5 w-5 text-muted-foreground" />
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="text-xs rounded-full bg-muted px-2 py-0.5">{TYPE_LABEL[a.type]}</span>
+                        <span className="text-[10px] rounded-full border px-2 py-0.5">{SCOPE_LABEL[a.account_scope]}</span>
+                        <Badge variant={a.is_active ? "secondary" : "outline"} className="text-[10px]">
+                          {a.is_active ? "Activa" : "Inactiva"}
+                        </Badge>
+                      </div>
+                    </div>
+                    <CardTitle className="text-base font-semibold leading-tight">{a.name}</CardTitle>
+                    <CardDescription>
+                      Saldo actual
+                      <span className="block text-lg font-semibold text-foreground tabular-nums mt-1">
+                        {formatBrl(a.balance)}
+                      </span>
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="text-xs text-muted-foreground pt-0 space-y-1">
+                    <div className="flex justify-between gap-2">
+                      <span>Entradas (mês)</span>
+                      <span className="tabular-nums text-emerald-700 dark:text-emerald-400">
+                        {formatBrl(st.inc / 100)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Saídas (mês)</span>
+                      <span className="tabular-nums text-rose-700 dark:text-rose-400">
+                        {formatBrl(st.exp / 100)}
+                      </span>
+                    </div>
+                    <p className="pt-1 border-t border-border/60">
+                      Saldo inicial em {a.initial_balance_date}: {formatBrl(a.initial_balance_cents / 100)}
+                    </p>
+                  </CardContent>
+                </Card>
+              </NavLink>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default FinancialUnifiedAccountsPage;

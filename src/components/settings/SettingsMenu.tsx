@@ -12,8 +12,7 @@ import {
   PanelLeft, 
   Folder, 
   Tags, 
-  UserCog,
-  Users2, 
+  Users2,
   MessageSquare, 
   Globe,
   FileText,
@@ -32,8 +31,7 @@ type SettingSection =
   | "security" 
   | "preferences" 
   | "leadsConfig" 
-  | "clientGroups" 
-  | "collaborators" 
+  | "clientGroups"
   | "whatsapp"
   | "chatTemplates"
   | "domain"
@@ -67,25 +65,16 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
 
   // Definir itens do menu agrupados por categoria
   const menuItems: MenuItem[] = [
-    // Usuários e Acesso
+    { id: "companyData", label: "Dados da Empresa", icon: <Building className="h-4 w-4" />, category: "Geral" },
+    { id: "billing", label: "Cobrança", icon: <CreditCard className="h-4 w-4" />, category: "Geral" },
     { id: "users", label: "Usuários", icon: <Users className="h-4 w-4" />, category: "Usuários e Acesso" },
     { id: "teams", label: "Equipes", icon: <Users2 className="h-4 w-4" />, category: "Usuários e Acesso" },
     { id: "userManagement", label: "Perfis de acesso", icon: <Shield className="h-4 w-4" />, category: "Usuários e Acesso" },
-    // Categoria Geral
-    { id: "companyData", label: "Dados da Empresa", icon: <Building className="h-4 w-4" />, category: "Geral" },
-    { id: "billing", label: "Cobrança", icon: <CreditCard className="h-4 w-4" />, category: "Geral" },
-    
-    // Categoria Preferências
     { id: "notifications", label: "Notificações", icon: <Bell className="h-4 w-4" />, category: "Preferências" },
     { id: "security", label: "Segurança", icon: <Settings className="h-4 w-4" />, category: "Preferências" },
     { id: "preferences", label: "Aparência", icon: <PanelLeft className="h-4 w-4" />, category: "Preferências" },
-    
-    // Categoria CRM
     { id: "leadsConfig", label: "Configuração de Leads", icon: <Folder className="h-4 w-4" />, category: "CRM" },
     { id: "clientGroups", label: "Grupos de Clientes", icon: <Tags className="h-4 w-4" />, category: "CRM" },
-    { id: "collaborators", label: "Colaboradores", icon: <Users2 className="h-4 w-4" />, category: "CRM" },
-    
-    // Categoria Integrações (subcategorias no menu lateral)
     {
       id: "whatsapp",
       label: "WhatsApp",
@@ -134,7 +123,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
   }, {});
 
   // Ordem das categorias
-  const categoryOrder = ["Usuários e Acesso", "Geral", "Preferências", "CRM", "Integrações", "Outros"];
+  const categoryOrder = ["Geral", "Usuários e Acesso", "Preferências", "CRM", "Integrações", "Outros"];
 
   const integrationSubOrder = INTEGRATIONS_SUBCATEGORY_ORDER as readonly string[];
 
@@ -146,7 +135,10 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
         <Button
           key={item.id}
           variant={isActive ? "secondary" : "ghost"}
-          className={cn("w-full justify-start", isActive && "bg-secondary")}
+          className={cn(
+            "w-full shrink-0 justify-start max-md:min-h-10 max-md:min-w-[11rem] max-md:text-left",
+            isActive && "bg-secondary",
+          )}
           asChild
         >
           <Link to="/settings/payments">
@@ -160,7 +152,10 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
       <Button
         key={item.id}
         variant={activeSection === item.id ? "secondary" : "ghost"}
-        className={cn("w-full justify-start", activeSection === item.id && "bg-secondary")}
+        className={cn(
+          "w-full shrink-0 justify-start max-md:min-h-10 max-md:min-w-[11rem] max-md:text-left",
+          activeSection === item.id && "bg-secondary",
+        )}
         onClick={() => onSelect(item.id)}
       >
         {item.icon}
@@ -170,8 +165,8 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
   };
 
   return (
-    <div className="h-full w-full rounded-md border border-border bg-card shadow-sm">
-      <div className="p-4">
+    <div className="h-full w-full rounded-md border-0 bg-transparent shadow-none md:rounded-md md:border md:border-border md:bg-card md:shadow-sm">
+      <div className="p-3 md:p-4">
         {categoryOrder.map(category => {
           const items = categorizedItems[category];
           if (!items) return null;

@@ -32,6 +32,19 @@ import {
   type TenantBillingPaymentAttemptRow,
 } from './tenantBillingPaymentAttemptsService.js';
 
+/**
+ * Asaas rejeita `invalid_dueDate` quando o vencimento é anterior ao dia corrente.
+ * Para faturas vencidas ainda em aberto, usar pelo menos a data de hoje (calendário local do servidor)
+ * apenas na criação da cobrança no gateway — não altera `tenant_billing.due_date`.
+ */
+export function clampDueDateIso10MinTodayForGateway(dueIso10: string): string {
+  const s = dueIso10.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return s >= todayStr ? s : todayStr;
+}
+
 function normPm(s: string | null | undefined): string {
   return (s ?? '').trim().toUpperCase();
 }
@@ -300,10 +313,12 @@ export async function ensureSaasPlanCheckoutPaymentAttemptForSwitch(
   const customerId = await gateway.ensureCustomer?.(tenantId);
   if (!customerId) throw new Error('ensureCustomer não retornou customerId');
 
+  const chargeDueDate = clampDueDateIso10MinTodayForGateway(dueDateStr);
+
   const chargeResult = await gateway.createCharge({
     customerId,
     amountCents,
-    dueDate: dueDateStr,
+    dueDate: chargeDueDate,
     paymentMethod: requestedMethod,
     allowedPaymentMethods,
     description: invoiceNumber,

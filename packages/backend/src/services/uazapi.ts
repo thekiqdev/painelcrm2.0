@@ -187,6 +187,15 @@ export class UazapiService {
     });
   }
 
+  /** Botão PIX nativo WhatsApp (código copia e cola EMV ou chave conforme payload). */
+  async sendPixButton(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request('/send/pix-button', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
   /** Imagem, vídeo, documento, áudio etc. — ver OpenAPI `/send/media` */
   async sendMediaMessage(instanceToken: string, payload: Record<string, unknown>) {
     return this.request('/send/media', {

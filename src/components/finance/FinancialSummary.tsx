@@ -56,11 +56,24 @@ interface FinancialData {
   }[];
 }
 
-interface FinancialSummaryProps {
-  data: FinancialData;
+export interface FinancialSummaryBarRow {
+  name: string;
+  income: number;
+  expenses: number;
+  profit: number;
 }
 
-export function FinancialSummary({ data }: FinancialSummaryProps) {
+interface FinancialSummaryProps {
+  data: FinancialData;
+  /** Substitui agregação interna do gráfico de barras (ex.: filtro por ano/mês). */
+  barChartData?: FinancialSummaryBarRow[];
+  /** Texto curto exibido nos cards (ex.: “Abril/2026”). */
+  periodHint?: string;
+  /** Totais para os cards principais; se omitido, calcula a partir de `data`. */
+  cardTotals?: { revenue: number; expenses: number; profit: number };
+}
+
+export function FinancialSummary({ data, barChartData, periodHint, cardTotals }: FinancialSummaryProps) {
   // Process data for charts
   const processMonthlyData = () => {
     const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
@@ -137,16 +150,18 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
   };
   
   // Chart data
-  const monthlyData = processMonthlyData();
+  const monthlyData = barChartData ?? processMonthlyData();
   const categoryData = processCategoryData();
   const statusData = processStatusData();
   
   // Calculate total metrics (receitas = faturas do finance + cobranças pagas)
   const invoicesTotal = data.invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
   const billingReceiptsTotal = (data.billingReceipts ?? []).reduce((sum, r) => sum + r.amount, 0);
-  const totalIncome = invoicesTotal + billingReceiptsTotal;
-  const totalExpenses = data.expenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const totalProfit = totalIncome - totalExpenses;
+  const computedIncome = invoicesTotal + billingReceiptsTotal;
+  const computedExpenses = data.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const totalIncome = cardTotals?.revenue ?? computedIncome;
+  const totalExpenses = cardTotals?.expenses ?? computedExpenses;
+  const totalProfit = cardTotals?.profit ?? (computedIncome - computedExpenses);
   
   // Colors for charts
   const COLORS = ["#8B5CF6", "#0EA5E9", "#F97316", "#DC2626", "#10B981"];
@@ -155,46 +170,53 @@ export function FinancialSummary({ data }: FinancialSummaryProps) {
     <div className="space-y-6">
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
+        <Card className="relative overflow-hidden border-emerald-500/25 bg-gradient-to-br from-emerald-500/[0.07] to-transparent shadow-md">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500/80 to-emerald-400/40" />
           <CardHeader className="pb-2">
-            <CardDescription>Receitas</CardDescription>
-            <CardTitle className="text-2xl text-primary">
+            <CardDescription className="text-emerald-900/80 dark:text-emerald-100/80">Receita total</CardDescription>
+            <CardTitle className="text-2xl sm:text-3xl font-bold tracking-tight text-emerald-700 dark:text-emerald-400 tabular-nums">
               R$ {totalIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {periodHint ? <span className="font-medium text-foreground/80">{periodHint}</span> : null}
+              {periodHint ? ' · ' : null}
               {data.billingReceipts?.length
-                ? `Total de ${data.invoices.length} faturas e ${data.billingReceipts.length} cobranças pagas`
-                : `Total de ${data.invoices.length} faturas`}
+                ? `Notas internas + ${data.billingReceipts.length} cobrança(s) paga(s) + entradas do período`
+                : `Consolidado do período (${data.invoices.length} nota(s) interna(s) no gráfico)`}
             </p>
           </CardContent>
         </Card>
         
-        <Card>
+        <Card className="relative overflow-hidden border-orange-500/25 bg-gradient-to-br from-orange-500/[0.08] to-transparent shadow-md">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-orange-500/80 to-amber-400/40" />
           <CardHeader className="pb-2">
-            <CardDescription>Despesas</CardDescription>
-            <CardTitle className="text-2xl text-orange-500">
+            <CardDescription className="text-orange-950/75 dark:text-orange-100/80">Despesas</CardDescription>
+            <CardTitle className="text-2xl sm:text-3xl font-bold tracking-tight text-orange-600 dark:text-orange-400 tabular-nums">
               R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">
-              Total de {data.expenses.length} despesas
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {periodHint ? <span className="font-medium text-foreground/80">{periodHint}</span> : null}
+              {periodHint ? ' · ' : null}
+              Total de {data.expenses.length} despesa(s) consideradas no período
             </p>
           </CardContent>
         </Card>
         
-        <Card>
+        <Card className="relative overflow-hidden border-crm-primary/25 bg-gradient-to-br from-crm-primary/[0.08] to-transparent shadow-md">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-crm-primary/80 to-sky-400/35" />
           <CardHeader className="pb-2">
-            <CardDescription>Lucro</CardDescription>
-            <CardTitle className={`text-2xl ${totalProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+            <CardDescription className="text-foreground/70">Lucro</CardDescription>
+            <CardTitle className={`text-2xl sm:text-3xl font-bold tracking-tight tabular-nums ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
               R$ {totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground">
-              {totalProfit >= 0 ? 'Resultado positivo' : 'Resultado negativo'}
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {totalProfit >= 0 ? 'Receita maior que despesas no período' : 'Despesas superam a receita no período'}
             </p>
           </CardContent>
         </Card>

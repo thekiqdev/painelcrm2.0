@@ -83,3 +83,101 @@ export async function dispatchWhatsAppText(params: {
     return { ok: false, error: msg.slice(0, 500) };
   }
 }
+
+/**
+ * Envio WhatsApp do motor da PLATAFORMA: usa token da instância já validada
+ * (Super Admin + `chat_instances` designada em superadmin_settings).
+ * Não valida tenant CRM — domínio separado do `dispatchWhatsAppText` dos tenants.
+ */
+export async function dispatchPlatformWhatsAppPixCopyPasteButton(params: {
+  instanceToken: string;
+  phone: string;
+  pixCopyPaste: string;
+  pixDisplayName?: string;
+}): Promise<WhatsAppDispatchResult> {
+  const number = params.phone.replace(/\D/g, '');
+  if (!number) {
+    return { ok: false, error: 'Telefone inválido para botão PIX.' };
+  }
+  const code = params.pixCopyPaste.trim();
+  const name = (params.pixDisplayName ?? 'Pix').trim() || 'Pix';
+  const base: Record<string, unknown> = {
+    number,
+    readchat: false,
+    readmessages: false,
+    delay: 0,
+    track_source: 'painelcrm-platform-notifications-pix',
+    pixName: name,
+  };
+  const isEmv = /^000201[0-9A-Za-z]+$/.test(code) && code.length >= 32;
+  const primary: Record<string, unknown> = isEmv ? { ...base, pixCode: code } : { ...base, pixType: 'EVP', pixKey: code };
+
+  const parseResponse = (messageResponse: {
+    id?: string;
+    messageId?: string;
+    key?: { id?: string };
+  }): WhatsAppDispatchResult => {
+    const providerMessageId =
+      messageResponse?.id ||
+      messageResponse?.messageId ||
+      messageResponse?.key?.id ||
+      randomUUID();
+    return { ok: true, providerMessageId: String(providerMessageId) };
+  };
+
+  try {
+    const messageResponse = (await uazapiService.sendPixButton(params.instanceToken, primary)) as {
+      id?: string;
+      messageId?: string;
+      key?: { id?: string };
+    };
+    return parseResponse(messageResponse);
+  } catch (e: unknown) {
+    if (isEmv) {
+      try {
+        const fallback = { ...base, pixType: 'EVP', pixKey: code };
+        const messageResponse = (await uazapiService.sendPixButton(params.instanceToken, fallback)) as {
+          id?: string;
+          messageId?: string;
+          key?: { id?: string };
+        };
+        return parseResponse(messageResponse);
+      } catch (e2: unknown) {
+        const msg = e2 instanceof Error ? e2.message : String(e2);
+        return { ok: false, error: msg.slice(0, 500) };
+      }
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg.slice(0, 500) };
+  }
+}
+
+export async function dispatchPlatformWhatsAppText(params: {
+  instanceToken: string;
+  phone: string;
+  text: string;
+}): Promise<WhatsAppDispatchResult> {
+  const outboundText = normalizeWhatsAppOutboundPlainText(params.text);
+
+  try {
+    const messageResponse = (await uazapiService.sendTextMessage(params.instanceToken, {
+      number: params.phone,
+      text: outboundText,
+      readchat: false,
+      readmessages: false,
+      delay: 0,
+      track_source: 'painelcrm-platform-notifications',
+    })) as { id?: string; messageId?: string; key?: { id?: string } };
+
+    const providerMessageId =
+      messageResponse?.id ||
+      messageResponse?.messageId ||
+      messageResponse?.key?.id ||
+      randomUUID();
+
+    return { ok: true, providerMessageId: String(providerMessageId) };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg.slice(0, 500) };
+  }
+}

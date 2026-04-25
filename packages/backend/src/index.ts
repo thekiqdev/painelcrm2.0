@@ -41,6 +41,7 @@ import tasksRoutes from './routes/tasksRoutes.js';
 import invoicesRoutes from './routes/invoicesRoutes.js';
 import expensesRoutes from './routes/expensesRoutes.js';
 import financeRoutes from './routes/financeRoutes.js';
+import financialRoutes from './routes/financialRoutes.js';
 import proposalsRoutes from './routes/proposalsRoutes.js';
 import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
@@ -64,6 +65,7 @@ import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
 import billingRoutes from './routes/billingRoutes.js';
 import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
+import crmSubscriptionsRoutes from './routes/crmSubscriptionsRoutes.js';
 import customerChargesRoutes from './routes/customerChargesRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import storeCheckoutRoutes from './routes/storeCheckoutRoutes.js';
@@ -73,11 +75,14 @@ import { pool } from './utils/db.js';
 import { processDueKanbanScheduledMovesBatch } from './services/kanbanScheduledMoveService.js';
 import { processProposalWebhookDeliveriesBatch } from './services/proposalWebhookDeliveryService.js';
 import { processNotificationOutboundRetriesBatch } from './services/notificationsEngine/notificationOutboundRetryWorker.js';
+import { processPlatformNotificationOutboundRetriesBatch } from './services/platformNotifications/platformNotificationOutboundRetryWorker.js';
 import {
   getNotificationsEngineOutboundRetryPollMs,
   getNotificationsEngineInvoiceDigestPollMs,
   isNotificationsEngineInvoiceDigestEnabled,
 } from './config/notificationsEngineEnv.js';
+import { getPlatformNotificationsOutboundRetryPollMs } from './config/platformNotificationsEnv.js';
+import { refreshPlatformNotificationsFlagsFromPool } from './services/platformNotifications/platformNotificationsRuntimeFlags.js';
 import { runInvoiceDigestTickSafe } from './services/notificationsEngine/notificationInvoiceDigestWorker.js';
 import { initializeWebSocket } from './services/websocketService.js';
 import { getCatalogMediaStorageRoot } from './services/catalogMediaUploadService.js';
@@ -247,11 +252,16 @@ const limiter = rateLimit({
     if (process.env.NODE_ENV === 'development') return true;
     const p = req.path || req.originalUrl || '';
     // Não contar rotas de auth no limite geral (têm seu próprio authLimiter)
-    return p.startsWith('/api/auth/') || p.startsWith('auth/') ||
-           p.startsWith('/api/store-checkout') ||
-           p.includes('/public/catalog-media/raw') ||
-           p.includes('/catalog-media/public/') ||
-           p.includes('/test') || p.startsWith('/webhooks/') || p.startsWith('webhooks/');
+    return (
+      p.startsWith('/api/auth/') ||
+      p.startsWith('auth/') ||
+      p.startsWith('/api/store-checkout') ||
+      p.includes('/public/catalog-media/raw') ||
+      p.includes('/catalog-media/public/') ||
+      p.includes('/test') ||
+      p.startsWith('/webhooks/') ||
+      p.startsWith('webhooks/')
+    );
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -270,6 +280,15 @@ app.use('/webhooks/', webhookLimiter);
 // 2. Limite anti brute-force só em login/registro
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PASSWORD_RESET_MAX || '20', 10),
+  message: { ok: false, error: 'Muitas tentativas de recuperação de senha. Aguarde e tente novamente.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
+app.use('/api/auth/password-reset', passwordResetLimiter);
 // 3. Testes (específico)
 app.use('/api/message-templates/:id/test', testLimiter);
 // Checkout público da loja (MVP 1 item): limite dedicado, não contar no limiter geral
@@ -356,6 +375,7 @@ app.use('/api/tasks', tasksRoutes);
 app.use('/api/invoices', invoicesRoutes);
 app.use('/api/expenses', expensesRoutes);
 app.use('/api/finance', financeRoutes);
+app.use('/api/financial', financialRoutes);
 app.use('/api/proposals', proposalsRoutes);
 app.use('/api/proposal-templates', proposalTemplatesRoutes);
 app.use('/api/members', membersRoutes);
@@ -373,6 +393,7 @@ app.get('/api/plans', plansController.listPublicPlans);
 app.use('/api/plan-purchase', planPurchaseRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/customer-invoices', customerInvoicesRoutes);
+app.use('/api/crm-subscriptions', crmSubscriptionsRoutes);
 app.use('/api/customer-charges', customerChargesRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.get(
@@ -448,12 +469,23 @@ httpServer.listen(PORT, '0.0.0.0', () => {
     );
   }, proposalWhPollMs);
 
+  void refreshPlatformNotificationsFlagsFromPool(pool).catch((err) =>
+    console.error('[platform-notifications] refresh flags on startup', err),
+  );
+
   const neRetryPollMs = getNotificationsEngineOutboundRetryPollMs();
   setInterval(() => {
     void processNotificationOutboundRetriesBatch(25).catch((err) =>
       console.error('[notifications-engine/retry] batch error', err),
     );
   }, neRetryPollMs);
+
+  const pnRetryPollMs = getPlatformNotificationsOutboundRetryPollMs();
+  setInterval(() => {
+    void processPlatformNotificationOutboundRetriesBatch(25).catch((err) =>
+      console.error('[platform-notifications/retry] batch error', err),
+    );
+  }, pnRetryPollMs);
 
   if (isNotificationsEngineInvoiceDigestEnabled()) {
     const digestMs = getNotificationsEngineInvoiceDigestPollMs();

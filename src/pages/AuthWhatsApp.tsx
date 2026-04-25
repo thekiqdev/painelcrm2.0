@@ -108,8 +108,8 @@ const AuthWhatsApp = () => {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="password">Senha</Label>
-              <Button variant="link" className="p-0 h-auto text-sm" type="button">
-                Esqueceu sua senha?
+              <Button variant="link" className="p-0 h-auto text-sm" type="button" asChild>
+                <Link to="/recuperar-senha">Esqueceu sua senha?</Link>
               </Button>
             </div>
             <Input

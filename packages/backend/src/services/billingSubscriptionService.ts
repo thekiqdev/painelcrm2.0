@@ -3,9 +3,23 @@
  * Usado após activatePlanFromBilling (criar assinatura saas) e pelo worker (atualizar após renovação).
  */
 import { pool } from '../utils/db.js';
+import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 
 export type SubscriptionType = 'saas' | 'customer';
 export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
+
+type SubscriptionRowDb = Omit<SubscriptionRow, 'cycles_unlimited' | 'max_cycles'> & {
+  cycles_unlimited?: boolean;
+  max_cycles?: number | null;
+};
+
+function mapSubscriptionRow(row: SubscriptionRowDb): SubscriptionRow {
+  return {
+    ...row,
+    cycles_unlimited: row.cycles_unlimited !== false,
+    max_cycles: row.max_cycles != null ? Number(row.max_cycles) : null,
+  };
+}
 
 export interface SubscriptionRow {
   id: string;
@@ -31,6 +45,9 @@ export interface SubscriptionRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Ciclos ilimitados (default true). Se false, `max_cycles` é obrigatório. */
+  cycles_unlimited: boolean;
+  max_cycles: number | null;
 }
 
 export interface CreateSubscriptionInput {
@@ -49,21 +66,30 @@ export interface CreateSubscriptionInput {
   gateway?: string | null;
   created_by?: string | null; // checkout | admin | api | migration
   default_payment_method?: string | null; // PIX | BOLETO | CREDIT_CARD (para type=customer)
+  cycles_unlimited?: boolean;
+  max_cycles?: number | null;
 }
 
 /**
  * Cria assinatura (saas após primeiro pagamento; customer no futuro).
  */
 export async function createSubscription(data: CreateSubscriptionInput): Promise<SubscriptionRow> {
+  const unlimited = data.cycles_unlimited !== false;
+  const maxCycles = unlimited ? null : data.max_cycles ?? null;
+  if (!unlimited && (maxCycles == null || maxCycles < 1)) {
+    throw new Error('max_cycles obrigatório e maior que zero quando cycles_unlimited é false');
+  }
   const r = await pool.query<SubscriptionRow>(
     `INSERT INTO subscriptions (
       type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date,
-      current_period_start, current_period_end, grace_period_days, default_payment_method, users_count, gateway, created_by
-    ) VALUES ($1, $2, $3, $4, $5, 'BRL', $6, 0, $7, 'active', $8, $9, $10, COALESCE($11, 3), $12, $13, $14, $15)
+      current_period_start, current_period_end, grace_period_days, default_payment_method, users_count, gateway, created_by,
+      cycles_unlimited, max_cycles
+    ) VALUES ($1, $2, $3, $4, $5, 'BRL', $6, 0, $7, 'active', $8, $9, $10, COALESCE($11, 3), $12, $13, $14, $15, $16, $17)
     RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
-      cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at`,
+      cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
+      cycles_unlimited, max_cycles`,
     [
       data.type,
       data.tenant_id,
@@ -80,9 +106,11 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
       data.users_count ?? null,
       data.gateway ?? null,
       data.created_by ?? null,
+      unlimited,
+      maxCycles,
     ]
   );
-  return r.rows[0];
+  return mapSubscriptionRow(r.rows[0] as SubscriptionRowDb);
 }
 
 /**
@@ -91,29 +119,25 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
 export async function getActiveSaasSubscriptionByTenant(
   tenantId: string
 ): Promise<SubscriptionRow | null> {
-  const r = await pool.query<SubscriptionRow>(
+  const r = await pool.query<SubscriptionRowDb>(
     `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
        billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
-       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at
+       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
+       cycles_unlimited, max_cycles
      FROM subscriptions
      WHERE type = 'saas' AND tenant_id = $1 AND status = 'active'
      LIMIT 1`,
     [tenantId]
   );
-  return r.rows[0] ?? null;
+  const row = r.rows[0];
+  return row ? mapSubscriptionRow(row) : null;
 }
 
-/** Normaliza DATE/timestamp do PG (string ou Date) para YYYY-MM-DD. */
+/** Normaliza DATE/timestamp do PG (string ou Date) para YYYY-MM-DD (calendário local, não UTC). */
 export function toYmd(value: unknown): string | null {
   if (value == null) return null;
-  if (typeof value === 'string') {
-    const t = value.trim();
-    return t.length >= 10 ? t.slice(0, 10) : null;
-  }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-  return null;
+  const ymd = yyyyMmDdFromDbDateValue(value as string | Date | null);
+  return ymd || null;
 }
 
 /**
@@ -361,21 +385,94 @@ export async function getActiveSaasSubscriptionByTenantAutoRepair(
  * Busca assinatura por id (para o worker).
  */
 export async function getSubscriptionById(subscriptionId: string): Promise<SubscriptionRow | null> {
-  const r = await pool.query<SubscriptionRow>(
-    `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
+  try {
+    const r = await pool.query<SubscriptionRowDb>(
+      `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
+       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
+       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
+       cycles_unlimited, max_cycles
+     FROM subscriptions WHERE id = $1`,
+      [subscriptionId]
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    const nextYmd = toYmd(row.next_billing_date);
+    return {
+      ...mapSubscriptionRow(row),
+      next_billing_date: nextYmd ?? '',
+      current_period_start: toYmd(row.current_period_start),
+      current_period_end: toYmd(row.current_period_end),
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/cycles_unlimited|max_cycles/.test(msg)) throw e;
+    const r = await pool.query<SubscriptionRowDb>(
+      `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
        billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
        cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at
      FROM subscriptions WHERE id = $1`,
-    [subscriptionId]
-  );
-  return r.rows[0] ?? null;
+      [subscriptionId]
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    const nextYmd = toYmd(row.next_billing_date);
+    return {
+      ...mapSubscriptionRow({ ...row, cycles_unlimited: true, max_cycles: null }),
+      next_billing_date: nextYmd ?? '',
+      current_period_start: toYmd(row.current_period_start),
+      current_period_end: toYmd(row.current_period_end),
+    };
+  }
 }
 
 /**
+ * Atualiza configuração de ciclos (assinaturas CRM). Não altera motor de geração.
+ */
+export async function patchSubscriptionCyclesConfig(params: {
+  tenantId: string;
+  subscriptionId: string;
+  cycles_unlimited: boolean;
+  max_cycles: number | null;
+}): Promise<SubscriptionRow | null> {
+  const unlimited = params.cycles_unlimited;
+  const maxCycles = unlimited ? null : params.max_cycles;
+  if (!unlimited && (maxCycles == null || maxCycles < 1)) {
+    throw new Error('max_cycles obrigatório e maior que zero quando cycles_unlimited é false');
+  }
+  const r = await pool.query<SubscriptionRowDb>(
+    `UPDATE subscriptions
+     SET cycles_unlimited = $1, max_cycles = $2, updated_at = now()
+     WHERE id = $3 AND tenant_id = $4 AND type = 'customer'
+     RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
+       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
+       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
+       cycles_unlimited, max_cycles`,
+    [unlimited, maxCycles, params.subscriptionId, params.tenantId]
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  const nextYmd = toYmd(row.next_billing_date);
+  return {
+    ...mapSubscriptionRow(row),
+    next_billing_date: nextYmd ?? '',
+    current_period_start: toYmd(row.current_period_start),
+    current_period_end: toYmd(row.current_period_end),
+  };
+}
+
+/** Cliente mínimo para UPDATE na assinatura (pool com ALS ou client do worker). */
+export type SubscriptionRenewalDb = {
+  query: (text: string, values?: unknown[]) => Promise<import('pg').QueryResult>;
+};
+
+/**
  * Atualiza assinatura após renovação: próximo período, cycle_count, last_job_at.
+ * Exige `tenant_id` no WHERE para RLS e integridade; falha se não atualizar exatamente 1 linha.
  */
 export async function updateSubscriptionAfterRenewal(
+  db: SubscriptionRenewalDb,
   subscriptionId: string,
+  tenantId: string,
   data: {
     next_billing_date: string;
     current_period_start: string;
@@ -383,19 +480,28 @@ export async function updateSubscriptionAfterRenewal(
     billing_cycle_count: number;
   }
 ): Promise<void> {
-  await pool.query(
+  const r = await db.query(
     `UPDATE subscriptions
-     SET next_billing_date = $1, current_period_start = $2, current_period_end = $3,
-         billing_cycle_count = $4, last_job_at = now(), updated_at = now()
-     WHERE id = $5`,
+     SET next_billing_date = $1::date, current_period_start = $2::date, current_period_end = $3::date,
+         billing_cycle_count = $4,
+         billing_anchor_day = EXTRACT(DAY FROM $1::date)::int,
+         last_job_at = now(), updated_at = now()
+     WHERE id = $5 AND tenant_id = $6`,
     [
       data.next_billing_date,
       data.current_period_start,
       data.current_period_end,
       data.billing_cycle_count,
       subscriptionId,
+      tenantId,
     ]
   );
+  const n = r.rowCount ?? 0;
+  if (n !== 1) {
+    throw new Error(
+      `updateSubscriptionAfterRenewal: esperava 1 linha atualizada, obteve ${n} (subscription_id=${subscriptionId} tenant_id=${tenantId})`
+    );
+  }
 }
 
 /**

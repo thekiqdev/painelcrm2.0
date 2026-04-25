@@ -65,10 +65,11 @@ export default function SuperAdminNotificationsEngineSettings() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Motor de notificações</h1>
+        <h1 className="text-2xl font-bold text-foreground">Motor de notificações (CRM / tenants)</h1>
         <p className="text-muted-foreground mt-1">
-          Controlo global da plataforma (persistido na base de dados). As preferências por tenant continuam em
-          Configurações → Notificações de cada conta.
+          Controlo global do motor transacional dos <strong className="text-foreground font-medium">tenants</strong>{' '}
+          (propostas, faturas, etc.). Para eventos <code className="text-xs">platform.*</code>, use{' '}
+          <strong className="text-foreground font-medium">Notificações da plataforma</strong> no menu.
         </p>
       </div>
 

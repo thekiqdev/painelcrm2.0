@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { getFinancialEnterpriseReport } from '../services/financialReportsService.js';
 import {
   buildActivationChecklist,
   setActivationChecklistDismissed,
@@ -129,6 +130,322 @@ export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
   } catch (error) {
     console.error('Error fetching KPIs:', error);
     res.status(500).json({ error: 'Erro ao buscar KPIs' });
+  }
+}
+
+function resolveDashboardRange(q: Record<string, unknown>): { from: string; to: string; preset: string | null } {
+  const preset = typeof q.preset === 'string' ? q.preset.trim() : '';
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m0 = now.getUTCMonth();
+  const d0 = now.getUTCDate();
+
+  if (preset === 'current_month') {
+    const from = `${y}-${String(m0 + 1).padStart(2, '0')}-01`;
+    const last = new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
+    const to = `${y}-${String(m0 + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+    return { from, to, preset };
+  }
+  if (preset === 'last_month') {
+    let yy = y;
+    let mm = m0 - 1;
+    if (mm < 0) {
+      yy -= 1;
+      mm = 11;
+    }
+    const from = `${yy}-${String(mm + 1).padStart(2, '0')}-01`;
+    const last = new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
+    const to = `${yy}-${String(mm + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+    return { from, to, preset };
+  }
+  if (preset === 'ytd' || preset === 'current_year') {
+    const from = `${y}-01-01`;
+    const to = `${y}-${String(m0 + 1).padStart(2, '0')}-${String(d0).padStart(2, '0')}`;
+    return { from, to, preset };
+  }
+
+  const from = typeof q.from === 'string' && q.from.trim() ? q.from.trim() : `${y}-${String(m0 + 1).padStart(2, '0')}-01`;
+  const to =
+    typeof q.to === 'string' && q.to.trim()
+      ? q.to.trim()
+      : `${y}-${String(m0 + 1).padStart(2, '0')}-${String(new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+  return { from, to, preset: preset || null };
+}
+
+function previousPeriod(from: string, to: string): { from: string; to: string } {
+  const [y1, m1, d1] = from.split('-').map((x) => parseInt(x, 10));
+  const [y2, m2, d2] = to.split('-').map((x) => parseInt(x, 10));
+  const a = Date.UTC(y1, m1 - 1, d1);
+  const b = Date.UTC(y2, m2 - 1, d2);
+  const days = Math.floor((b - a) / 86400000) + 1;
+  const prevTo = new Date(a - 86400000);
+  const prevFrom = new Date(prevTo.getTime() - (days - 1) * 86400000);
+  const fmt = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return { from: fmt(prevFrom), to: fmt(prevTo) };
+}
+
+function pct(current: number, previous: number): number {
+  if (!Number.isFinite(previous) || previous <= 0) return 0;
+  return ((current - previous) / previous) * 100;
+}
+
+// GET /api/dashboard/overview
+export async function getExecutiveOverview(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Tenant não identificado' });
+      return;
+    }
+
+    const q = req.query as Record<string, unknown>;
+    const { from, to, preset } = resolveDashboardRange(q);
+    const prev = previousPeriod(from, to);
+
+    const [report, reportPrev] = await Promise.all([
+      getFinancialEnterpriseReport(tenantId, { from, to }),
+      getFinancialEnterpriseReport(tenantId, { from: prev.from, to: prev.to }),
+    ]);
+
+    const [paidSalesCountR, leadsCreatedR, leadsConvertedR, leadsCreatedPrevR, leadsConvertedPrevR] = await Promise.all([
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM customer_invoices ci
+         WHERE ci.tenant_id = $1
+           AND ci.status = 'paid'
+           AND ci.paid_at IS NOT NULL
+           AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date`,
+        [tenantId, from, to]
+      ),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+         WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+        [tenantId, from, to]
+      ),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+         WHERE lower(COALESCE(l.status, '')) IN ('convertido', 'fechado', 'ganho', 'won')
+           AND (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+        [tenantId, from, to]
+      ),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+         WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+        [tenantId, prev.from, prev.to]
+      ),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+         WHERE lower(COALESCE(l.status, '')) IN ('convertido', 'fechado', 'ganho', 'won')
+           AND (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+        [tenantId, prev.from, prev.to]
+      ),
+    ]);
+
+    const paidSalesCount = Number(paidSalesCountR.rows[0]?.c ?? 0);
+    const leadsCreated = Number(leadsCreatedR.rows[0]?.c ?? 0);
+    const leadsConverted = Number(leadsConvertedR.rows[0]?.c ?? 0);
+    const leadsCreatedPrev = Number(leadsCreatedPrevR.rows[0]?.c ?? 0);
+    const leadsConvertedPrev = Number(leadsConvertedPrevR.rows[0]?.c ?? 0);
+    const conversionRate = leadsCreated > 0 ? (leadsConverted / leadsCreated) * 100 : 0;
+    const conversionPrev = leadsCreatedPrev > 0 ? (leadsConvertedPrev / leadsCreatedPrev) * 100 : 0;
+
+    const [funnelR, leadNoResponseR, ticketsR, tasksR, clientsR, overdueInvoicesR, stalledLeadsR] = await Promise.all([
+      pool.query<{ stage_id: string | null; stage_name: string; c: string; amount: string }>(
+        `SELECT 
+           COALESCE(fs.id::text, c.funnel_stage) AS stage_id,
+           COALESCE(NULLIF(trim(fs.name), ''), NULLIF(trim(c.funnel_stage), ''), 'Sem etapa') AS stage_name,
+           COUNT(*)::text AS c,
+           0::text AS amount
+         FROM clients c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+         LEFT JOIN funnel_stages fs ON fs.id::text = c.funnel_stage OR lower(fs.name) = lower(c.funnel_stage)
+         GROUP BY COALESCE(fs.id::text, c.funnel_stage), COALESCE(NULLIF(trim(fs.name), ''), NULLIF(trim(c.funnel_stage), ''), 'Sem etapa')
+         ORDER BY COUNT(*) DESC`,
+        [tenantId]
+      ),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+         WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date
+           AND l.updated_at <= l.created_at + interval '1 hour'
+           AND NOT EXISTS (SELECT 1 FROM lead_tasks lt WHERE lt.lead_id = l.id)`,
+        [tenantId, from, to]
+      ),
+      pool.query<{ open_c: string; overdue_c: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer', 'in_progress'))::text AS open_c,
+           COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer', 'in_progress')
+                            AND (t.created_at::date) < (CURRENT_DATE - INTERVAL '3 day'))::text AS overdue_c
+         FROM tickets t
+         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
+        [tenantId]
+      ),
+      pool.query<{ overdue_c: string; today_c: string; critical_c: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE t.status = 'pending' AND t.due_date IS NOT NULL AND t.due_date < CURRENT_DATE)::text AS overdue_c,
+           COUNT(*) FILTER (WHERE t.status = 'pending' AND t.due_date = CURRENT_DATE)::text AS today_c,
+           COUNT(*) FILTER (WHERE t.status = 'pending' AND t.priority IN ('high', 'medium'))::text AS critical_c
+         FROM tasks t
+         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
+        [tenantId]
+      ),
+      pool.query<{ active_clients: string; new_clients: string; active_subs: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE lower(COALESCE(c.status, 'ativo')) IN ('ativo', 'active'))::text AS active_clients,
+           COUNT(*) FILTER (WHERE (c.created_at::date) >= $2::date AND (c.created_at::date) <= $3::date)::text AS new_clients,
+           (
+             SELECT COUNT(*)::text
+             FROM subscriptions s
+             WHERE s.tenant_id = $1 AND COALESCE(s.status, 'active') IN ('active', 'trialing')
+           ) AS active_subs
+         FROM clients c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1`,
+        [tenantId, from, to]
+      ),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(DISTINCT ci.client_id)::text AS c
+         FROM customer_invoices ci
+         WHERE ci.tenant_id = $1
+           AND ci.status IN ('pending', 'overdue')
+           AND ci.due_date < CURRENT_DATE`,
+        [tenantId]
+      ),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM leads l
+         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+         WHERE (l.created_at::date) < (CURRENT_DATE - INTERVAL '15 day')
+           AND lower(COALESCE(l.status, '')) NOT IN ('convertido', 'fechado', 'ganho', 'won')`,
+        [tenantId]
+      ),
+    ]);
+
+    const futureRevenue = report.general.projected_subscription_income;
+    const receivedRevenue = report.general.received_income;
+    const averageTicket = paidSalesCount > 0 ? receivedRevenue / paidSalesCount : 0;
+    const expensePaid = report.general.expense_paid ?? report.general.total_expense;
+    const expenseProjected =
+      report.general.expense_projected ??
+      Math.max(0, (report.general.projected_total_expense ?? report.general.total_expense) - report.general.total_expense);
+    const resultProjected =
+      report.general.projected_result ??
+      receivedRevenue + futureRevenue - (report.general.expense_total_potential ?? report.general.projected_total_expense);
+    const cashAvailable = report.by_account.reduce((acc, r) => acc + (r.estimated_balance ?? 0), 0);
+
+    const alerts: Array<{ type: string; severity: 'warning' | 'critical'; title: string; description: string; href: string }> = [];
+    const overdueInvoicesCount = Number(overdueInvoicesR.rows[0]?.c ?? 0);
+    if (overdueInvoicesCount > 0) {
+      alerts.push({
+        type: 'overdue_invoices',
+        severity: 'warning',
+        title: 'Faturas vencidas',
+        description: `Existem ${overdueInvoicesCount} clientes com faturas vencidas.`,
+        href: '/customer-invoices?status=overdue',
+      });
+    }
+    if (resultProjected < 0) {
+      alerts.push({
+        type: 'projected_negative_result',
+        severity: 'critical',
+        title: 'Resultado previsto negativo',
+        description: 'As despesas previstas estão acima da receita esperada no período.',
+        href: '/finance',
+      });
+    }
+    const stalledLeadsCount = Number(stalledLeadsR.rows[0]?.c ?? 0);
+    if (stalledLeadsCount > 0) {
+      alerts.push({
+        type: 'stalled_leads',
+        severity: 'warning',
+        title: 'Leads parados no funil',
+        description: `${stalledLeadsCount} leads sem avanço recente no funil.`,
+        href: '/funnel',
+      });
+    }
+    const ticketsOverdue = Number(ticketsR.rows[0]?.overdue_c ?? 0);
+    if (ticketsOverdue > 0) {
+      alerts.push({
+        type: 'overdue_tickets',
+        severity: 'warning',
+        title: 'Tickets atrasados',
+        description: `${ticketsOverdue} tickets com prazo vencido aguardam ação.`,
+        href: '/support/tickets',
+      });
+    }
+    const tasksOverdue = Number(tasksR.rows[0]?.overdue_c ?? 0);
+    if (tasksOverdue > 0) {
+      alerts.push({
+        type: 'overdue_tasks',
+        severity: 'warning',
+        title: 'Tarefas vencidas',
+        description: `${tasksOverdue} tarefas estão vencidas.`,
+        href: '/tasks',
+      });
+    }
+
+    res.json({
+      period: { from, to, preset },
+      sales: {
+        received_revenue: receivedRevenue,
+        future_revenue: futureRevenue,
+        conversion_rate: conversionRate,
+        conversion_rate_prev: conversionPrev,
+        conversion_rate_change_pct: pct(conversionRate, conversionPrev),
+        average_ticket: paidSalesCount > 0 ? averageTicket : null,
+        paid_sales_count: paidSalesCount,
+        received_revenue_prev: reportPrev.general.received_income,
+        received_revenue_change_pct: pct(receivedRevenue, reportPrev.general.received_income),
+      },
+      funnel: funnelR.rows.map((r) => ({
+        stage_id: r.stage_id ?? '',
+        stage_name: r.stage_name,
+        count: Number(r.c ?? 0),
+        amount: Number(r.amount ?? 0),
+      })),
+      operations: {
+        leads_without_response: Number(leadNoResponseR.rows[0]?.c ?? 0),
+        open_tickets: Number(ticketsR.rows[0]?.open_c ?? 0),
+        overdue_tickets: ticketsOverdue,
+        overdue_tasks: tasksOverdue,
+        today_tasks: Number(tasksR.rows[0]?.today_c ?? 0),
+        critical_tasks: Number(tasksR.rows[0]?.critical_c ?? 0),
+      },
+      clients: {
+        active_clients: Number(clientsR.rows[0]?.active_clients ?? 0),
+        new_clients: Number(clientsR.rows[0]?.new_clients ?? 0),
+        active_subscriptions: Number(clientsR.rows[0]?.active_subs ?? 0),
+        clients_with_overdue_invoices: overdueInvoicesCount,
+      },
+      finance: {
+        income_received: receivedRevenue,
+        income_projected: futureRevenue,
+        expense_paid: expensePaid,
+        expense_projected: expenseProjected,
+        result_projected: resultProjected,
+        cash_available: cashAvailable,
+      },
+      monthly: report.monthly.map((m) => ({
+        month: m.month,
+        revenue_received: m.income_received ?? m.income ?? 0,
+        revenue_projected: m.income_projected ?? m.income_projected_subscriptions ?? 0,
+        expenses_paid: m.expense_paid ?? m.expense ?? 0,
+        expenses_projected: m.expense_projected ?? Math.max(0, (m.expense_total_potential ?? m.projected_expense ?? m.expense) - (m.expense_paid ?? m.expense ?? 0)),
+      })),
+      alerts,
+    });
+  } catch (error) {
+    console.error('Error fetching executive dashboard overview:', error);
+    res.status(500).json({ error: 'Erro ao carregar visão executiva do dashboard' });
   }
 }
 
