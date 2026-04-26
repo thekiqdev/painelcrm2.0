@@ -120,7 +120,8 @@ const Contracts = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { canDeleteRecord } = useModulePermissions();
+  const { canDeleteRecord, canCreate, loading: contractsPermLoading } = useModulePermissions();
+  const canCreateContractShortcut = canCreate("contracts") && !contractsPermLoading;
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -442,11 +443,40 @@ const Contracts = () => {
             <FileText className="mr-2 h-4 w-4" />
             Modelos
           </Button>
-          <Button onClick={() => navigate('/contracts/new')}>
+          <Button disabled={!canCreateContractShortcut} onClick={() => navigate("/contracts/new")}>
             <Plus className="mr-2 h-4 w-4" />
             Novo Contrato
           </Button>
         </div>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap">
+        {canCreateContractShortcut ? (
+          <Button type="button" size="sm" variant="secondary" className="shrink-0 rounded-full" onClick={() => navigate("/contracts/new")}>
+            Novo contrato
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant={filters.status === "PENDING_SIGNATURE" ? "default" : "outline"}
+          className="shrink-0 rounded-full"
+          onClick={() => setFilters((f) => ({ ...f, status: "PENDING_SIGNATURE" }))}
+        >
+          Aguardando assinatura
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={filters.status === "EXPIRED" ? "default" : "outline"}
+          className="shrink-0 rounded-full"
+          onClick={() => setFilters((f) => ({ ...f, status: "EXPIRED" }))}
+        >
+          Ver vencidos
+        </Button>
+        <Button type="button" size="sm" variant="outline" className="shrink-0 rounded-full" onClick={() => navigate("/contracts/templates")}>
+          Templates
+        </Button>
       </div>
 
       {/* Filters — desktop */}
@@ -764,7 +794,7 @@ const Contracts = () => {
           contracts.map((contract) => (
             <div
               key={`m-${contract.id}`}
-              className="min-h-[8.25rem] rounded-2xl border border-border bg-card p-4 shadow-sm"
+              className="min-h-[9.5rem] rounded-2xl border border-border bg-card p-5 shadow-sm"
             >
               <button
                 type="button"
@@ -776,7 +806,16 @@ const Contracts = () => {
                 <p className="mt-1 truncate text-sm text-muted-foreground">
                   {contract.client_name || "—"}
                 </p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">{getStatusBadge(contract.status)}</div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  {getStatusBadge(contract.status)}
+                  {contract.total_value != null && contract.total_value > 0 ? (
+                    <span className="text-sm font-semibold tabular-nums">
+                      {new Intl.NumberFormat("pt-BR", { style: "currency", currency: contract.currency || "BRL" }).format(
+                        contract.total_value,
+                      )}
+                    </span>
+                  ) : null}
+                </div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <span>Início {contract.start_date ? format(new Date(contract.start_date), "dd/MM/yyyy") : "—"}</span>
                   <span>Fim {contract.end_date ? format(new Date(contract.end_date), "dd/MM/yyyy") : "—"}</span>

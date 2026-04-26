@@ -29,6 +29,15 @@ import {
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { customerInvoicesService } from "@/services/customerInvoices";
 import type { CustomerInvoicesSummary, ListCustomerInvoicesParams } from "@/services/customerInvoices";
 import { clientsService } from "@/services/clients";
@@ -50,8 +59,10 @@ import {
   Clock,
   AlertCircle,
   Layers,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
 import {
   canDeleteCustomerInvoice,
@@ -90,6 +101,8 @@ function buildInvoiceListRows(invoices: CustomerInvoice[]): ListRowModel[] {
 
 const CustomerInvoices = () => {
   const navigate = useNavigate();
+  const { canCreate: canCreateModule, loading: permLoading } = useModulePermissions();
+  const canCreateInvoice = canCreateModule("billing") && !permLoading;
   const [invoices, setInvoices] = useState<CustomerInvoice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +114,10 @@ const CustomerInvoices = () => {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [summary, setSummary] = useState<CustomerInvoicesSummary | null>(null);
+  const [search, setSearch] = useState("");
+  const [clientFilter, setClientFilter] = useState<string>("all");
+  const [periodFilter, setPeriodFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<string>("newest");
 
   const refreshSummary = useCallback(() => {
     customerInvoicesService.getSummary().then(setSummary).catch(() => setSummary(null));
@@ -155,6 +172,46 @@ const CustomerInvoices = () => {
   }, [clients]);
 
   const listRows = React.useMemo(() => buildInvoiceListRows(invoices), [invoices]);
+  const filteredRows = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const now = new Date();
+    const inDays = (dateIso: string, days: number) => {
+      const due = new Date(dateIso);
+      const diffMs = due.getTime() - now.getTime();
+      return diffMs >= 0 && diffMs <= days * 24 * 60 * 60 * 1000;
+    };
+    const inCurrentMonth = (dateIso: string) => {
+      const due = new Date(dateIso);
+      return due.getMonth() === now.getMonth() && due.getFullYear() === now.getFullYear();
+    };
+
+    const out = listRows.filter((row) => {
+      const inv = row.inv;
+      const clientName = inv.client_id ? clientMap[inv.client_id] ?? "Cliente" : "Sem cliente";
+      const matchesSearch =
+        !q ||
+        (inv.invoice_number ?? "").toLowerCase().includes(q) ||
+        clientName.toLowerCase().includes(q) ||
+        (inv.description ?? "").toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+
+      if (clientFilter !== "all" && inv.client_id !== clientFilter) return false;
+
+      if (periodFilter === "overdue" && inv.status !== "overdue") return false;
+      if (periodFilter === "due_7" && !inDays(inv.due_date, 7)) return false;
+      if (periodFilter === "due_30" && !inDays(inv.due_date, 30)) return false;
+      if (periodFilter === "this_month" && !inCurrentMonth(inv.due_date)) return false;
+
+      return true;
+    });
+
+    out.sort((a, b) => {
+      if (sortBy === "due_soon") return new Date(a.inv.due_date).getTime() - new Date(b.inv.due_date).getTime();
+      if (sortBy === "amount_desc") return b.inv.amount_cents - a.inv.amount_cents;
+      return new Date(b.inv.created_at).getTime() - new Date(a.inv.created_at).getTime();
+    });
+    return out;
+  }, [listRows, search, clientFilter, periodFilter, sortBy, clientMap]);
 
   const handleConfirmCancel = async () => {
     if (!invoiceToCancel) return;
@@ -205,24 +262,149 @@ const CustomerInvoices = () => {
         </Alert>
       )}
 
-      <div className="flex justify-between items-center gap-4 flex-wrap">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">Faturas</h1>
-          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-            Todas as faturas em ordem cronológica. Para visão por assinatura (histórico, estatísticas e próximas
-            cobranças), use{" "}
-            <Link to="/crm-subscriptions" className="font-medium text-primary underline hover:no-underline">
-              Financeiro → Assinaturas
-            </Link>
-            .
-          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Operação rápida de cobranças e acompanhamento.</p>
         </div>
-        <Button asChild>
-          <Link to="/customer-invoices/new">
-            <Plus className="mr-2 h-4 w-4" />
-            Nova Fatura
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" size="icon" aria-label="Mais ações">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild>
+                <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {canCreateInvoice ? (
+            <Button asChild>
+              <Link to="/customer-invoices/new">
+                <Plus className="mr-2 h-4 w-4" />
+                Nova fatura
+              </Link>
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por cliente, número ou descrição"
+            className="h-10"
+          />
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button type="button" variant="outline" className="md:hidden h-10 px-3">
+                <SlidersHorizontal className="h-4 w-4 mr-1.5" />
+                Filtros
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="rounded-t-2xl">
+              <SheetHeader>
+                <SheetTitle>Filtros da listagem</SheetTitle>
+                <SheetDescription>Ajuste rapidamente a visualização das faturas.</SheetDescription>
+              </SheetHeader>
+              <div className="mt-4 space-y-3">
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="">Todos os status</option>
+                  <option value="paid">Pagas</option>
+                  <option value={PENDING_OPEN_FILTER}>Pendentes</option>
+                  <option value="overdue">Vencidas</option>
+                </select>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  value={periodFilter}
+                  onChange={(e) => setPeriodFilter(e.target.value)}
+                >
+                  <option value="all">Período: todos</option>
+                  <option value="due_7">Vencimento em 7 dias</option>
+                  <option value="due_30">Vencimento em 30 dias</option>
+                  <option value="this_month">Vence neste mês</option>
+                  <option value="overdue">Somente vencidas</option>
+                </select>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  value={clientFilter}
+                  onChange={(e) => setClientFilter(e.target.value)}
+                >
+                  <option value="all">Todos os clientes</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.company || c.id}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                >
+                  <option value="newest">Mais novas</option>
+                  <option value="due_soon">Vencimento mais próximo</option>
+                  <option value="amount_desc">Maior valor</option>
+                </select>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+        <div className="hidden md:grid md:grid-cols-4 md:gap-2">
+          <select
+            className="h-10 rounded-md border bg-background px-3 text-sm"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="">Todos os status</option>
+            <option value="paid">Pagas</option>
+            <option value={PENDING_OPEN_FILTER}>Pendentes</option>
+            <option value="overdue">Vencidas</option>
+          </select>
+          <select
+            className="h-10 rounded-md border bg-background px-3 text-sm"
+            value={periodFilter}
+            onChange={(e) => setPeriodFilter(e.target.value)}
+          >
+            <option value="all">Período: todos</option>
+            <option value="due_7">Vencimento em 7 dias</option>
+            <option value="due_30">Vencimento em 30 dias</option>
+            <option value="this_month">Vence neste mês</option>
+            <option value="overdue">Somente vencidas</option>
+          </select>
+          <select
+            className="h-10 rounded-md border bg-background px-3 text-sm"
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value)}
+          >
+            <option value="all">Todos os clientes</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name || c.company || c.id}
+              </option>
+            ))}
+          </select>
+          <select
+            className="h-10 rounded-md border bg-background px-3 text-sm"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="newest">Mais novas</option>
+            <option value="due_soon">Vencimento mais próximo</option>
+            <option value="amount_desc">Maior valor</option>
+          </select>
+        </div>
       </div>
 
       {summary && (
@@ -242,12 +424,12 @@ const CustomerInvoices = () => {
               }
             }}
           >
-            <CardContent className="p-4 pt-4">
+            <CardContent className="p-3.5">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-medium text-muted-foreground">Pagas</p>
                 <CheckCircle2 className="h-4 w-4 text-emerald-600/80 shrink-0" aria-hidden />
               </div>
-              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.paid_count}</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.paid_count}</p>
               <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.paid_amount_cents)}</p>
             </CardContent>
           </Card>
@@ -266,12 +448,12 @@ const CustomerInvoices = () => {
               }
             }}
           >
-            <CardContent className="p-4 pt-4">
+            <CardContent className="p-3.5">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-medium text-muted-foreground">Pendentes</p>
                 <Clock className="h-4 w-4 text-amber-600/85 shrink-0" aria-hidden />
               </div>
-              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.pending_count}</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.pending_count}</p>
               <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.pending_amount_cents)}</p>
             </CardContent>
           </Card>
@@ -290,12 +472,12 @@ const CustomerInvoices = () => {
               }
             }}
           >
-            <CardContent className="p-4 pt-4">
+            <CardContent className="p-3.5">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
                 <AlertCircle className="h-4 w-4 text-red-600/75 shrink-0" aria-hidden />
               </div>
-              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.overdue_count}</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.overdue_count}</p>
               <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.overdue_amount_cents)}</p>
             </CardContent>
           </Card>
@@ -314,19 +496,19 @@ const CustomerInvoices = () => {
               }
             }}
           >
-            <CardContent className="p-4 pt-4">
+            <CardContent className="p-3.5">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-medium text-muted-foreground">Total</p>
                 <Layers className="h-4 w-4 text-muted-foreground shrink-0 opacity-70" aria-hidden />
               </div>
-              <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{summary.total_count}</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.total_count}</p>
               <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.total_amount_cents)}</p>
             </CardContent>
           </Card>
         </div>
       )}
 
-      <div className="bg-card rounded-lg border overflow-hidden">
+      <div className="hidden overflow-hidden rounded-lg border bg-card md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -346,7 +528,7 @@ const CustomerInvoices = () => {
                   Carregando...
                 </TableCell>
               </TableRow>
-            ) : invoices.length === 0 ? (
+            ) : filteredRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   <span className="block font-medium text-foreground mb-1">Nenhuma fatura encontrada</span>
@@ -354,7 +536,7 @@ const CustomerInvoices = () => {
                 </TableCell>
               </TableRow>
             ) : (
-              listRows.map((row) => {
+              filteredRows.map((row) => {
                 const inv = row.inv;
                 const nextBill = ymdFromApi(inv.subscription_next_billing_date);
                 return (
@@ -471,14 +653,14 @@ const CustomerInvoices = () => {
             )}
           </TableBody>
         </Table>
-        {!loading && (invoices.length > 0 || offset > 0) && (
+        {!loading && (filteredRows.length > 0 || offset > 0) && (
           <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between bg-muted/20">
             <p className="text-sm text-muted-foreground tabular-nums">
-              {invoices.length > 0 ? (
+              {filteredRows.length > 0 ? (
                 <>
                   Página {Math.floor(offset / PAGE_SIZE) + 1}
                   <span className="mx-1.5 text-border">·</span>
-                  {offset + 1}–{offset + invoices.length}
+                  {offset + 1}–{offset + filteredRows.length}
                 </>
               ) : (
                 <>Nenhum resultado nesta página</>
@@ -507,7 +689,7 @@ const CustomerInvoices = () => {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={invoices.length < PAGE_SIZE}
+                disabled={filteredRows.length < PAGE_SIZE}
                 onClick={() => setOffset((o) => o + PAGE_SIZE)}
               >
                 Próxima
@@ -515,6 +697,82 @@ const CustomerInvoices = () => {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="space-y-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
+        {loading ? (
+          <div className="flex min-h-[10rem] items-center justify-center rounded-2xl border border-dashed border-border/70 bg-card/50 py-10 text-sm text-muted-foreground">
+            Carregando…
+          </div>
+        ) : null}
+        {!loading && filteredRows.length > 0
+          ? filteredRows.map((row) => {
+              const inv = row.inv;
+              const nextBill = ymdFromApi(inv.subscription_next_billing_date);
+              return (
+                <div
+                  key={`m-${inv.id}`}
+                  className="rounded-2xl border border-border bg-card p-4 shadow-sm"
+                >
+                  <button
+                    type="button"
+                    className="w-full text-left"
+                    onClick={() => navigate(`/customer-invoices/${inv.id}`)}
+                  >
+                    <p className="font-mono text-xs text-muted-foreground">
+                      {inv.invoice_number ?? inv.id.slice(0, 8)}
+                    </p>
+                    <p className="mt-1 font-semibold leading-snug">
+                      {inv.client_id ? clientMap[inv.client_id] ?? "Cliente" : "Sem cliente"}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <CustomerInvoiceStatusBadge status={inv.status} />
+                      <span className="text-base font-semibold tabular-nums">{formatAmount(inv.amount_cents)}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Venc. {format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}
+                      {isSubscriptionRecurringListItem(inv) ? " · Assinatura" : " · Avulsa"}
+                    </p>
+                    {isSubscriptionRecurringListItem(inv) && inv.subscription_id && nextBill ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Próx. cobrança {format(new Date(nextBill + "T12:00:00"), "dd/MM/yyyy", { locale: ptBR })}
+                      </p>
+                    ) : null}
+                  </button>
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/60 pt-3">
+                    <Button type="button" size="sm" variant="default" onClick={() => navigate(`/customer-invoices/${inv.id}`)}>
+                      Abrir
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" size="sm" variant="outline">
+                          <MoreHorizontal className="h-4 w-4 mr-1" />
+                          Ações
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52">
+                        <DropdownMenuItem onSelect={() => navigate(`/customer-invoices/${inv.id}`)}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          Abrir
+                        </DropdownMenuItem>
+                        {isInvoiceActionable(inv.status) ? (
+                          <DropdownMenuItem onSelect={() => navigate(`/customer-invoices/${inv.id}/edit`)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Editar
+                          </DropdownMenuItem>
+                        ) : null}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              );
+            })
+          : null}
+        {!loading && filteredRows.length === 0 ? (
+          <div className="flex min-h-[10rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center text-sm text-muted-foreground">
+            Nenhuma fatura nesta vista. Ajuste os filtros ou crie uma nova.
+          </div>
+        ) : null}
       </div>
 
       <AlertDialog open={invoiceToCancel !== null} onOpenChange={(open) => !open && setInvoiceToCancel(null)}>

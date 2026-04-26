@@ -71,17 +71,19 @@ function normalizeProposalContactId(v: unknown): string | null {
 }
 
 /** Qual extensão de schema em `proposals` falhou (migração parcial). */
-type ProposalListSchemaOmit = 'lead' | 'converted_invoice' | 'post_accept_billing';
+type ProposalListSchemaOmit = 'lead' | 'converted_invoice' | 'post_accept_billing' | 'public_link';
 
 function proposalListMissingColumnHint(error: unknown): ProposalListSchemaOmit | null {
   const col = pgErrorColumn(error);
   if (col === 'lead_id') return 'lead';
   if (col === 'converted_invoice_id') return 'converted_invoice';
   if (col === 'post_accept_billing_mode') return 'post_accept_billing';
+  if (col === 'public_link_token_ciphertext') return 'public_link';
   const msg = typeof error === 'object' && error !== null && 'message' in error ? String((error as { message: unknown }).message) : String(error);
   if (/lead_id/i.test(msg)) return 'lead';
   if (/converted_invoice_id/i.test(msg)) return 'converted_invoice';
   if (/post_accept_billing_mode/i.test(msg)) return 'post_accept_billing';
+  if (/public_link_token_ciphertext/i.test(msg)) return 'public_link';
   return null;
 }
 
@@ -98,10 +100,12 @@ function buildProposalListSelectFrom(omit: Set<ProposalListSchemaOmit>): string 
   const withLead = !omit.has('lead');
   const withConv = !omit.has('converted_invoice');
   const withPost = !omit.has('post_accept_billing');
+  const withPublicLink = !omit.has('public_link');
 
   const leadSel = withLead ? 'p.lead_id' : 'NULL::uuid AS lead_id';
   const convSel = withConv ? 'p.converted_invoice_id' : 'NULL::uuid AS converted_invoice_id';
   const postSel = withPost ? 'p.post_accept_billing_mode' : `'none'::text AS post_accept_billing_mode`;
+  const pubSel = withPublicLink ? 'p.public_link_token_ciphertext' : 'NULL::text AS public_link_token_ciphertext';
   const leadNameExpr = withLead
     ? 'CASE WHEN ulead.id IS NOT NULL THEN ld.name ELSE NULL END AS lead_name'
     : 'NULL::text AS lead_name';
@@ -113,7 +117,7 @@ function buildProposalListSelectFrom(omit: Set<ProposalListSchemaOmit>): string 
   return `
       SELECT p.id, p.user_id, p.client_id, ${leadSel}, p.funnel_id, p.stage_id, p.title, p.description, p.amount,
              p.status, p.sent_date, p.valid_until, p.items, p.created_at, p.updated_at,
-             ${convSel}, ${postSel}, u.email AS responsible_email,
+             ${convSel}, ${postSel}, ${pubSel}, u.email AS responsible_email,
              CASE WHEN uclient.id IS NOT NULL THEN c.name ELSE NULL END AS client_name,
              ${leadNameExpr}
       FROM proposals p
@@ -248,6 +252,85 @@ function assertProposalStatusTransition(from: string, to: string): void {
   const ok = allowed[from]?.includes(to) ?? false;
   if (!ok) {
     throw new Error(`Transição de status inválida: ${from} → ${to}`);
+  }
+}
+
+/** Garante token + path + URL absolutos antes de publicar (rascunho → enviada), alinhado ao POST create com status sent. */
+async function ensureProposalPublicLinkForPublish(params: {
+  proposalId: string;
+  tenantId: string;
+  accessorUserId: string;
+}): Promise<{ resolvedPublicUrl: string } | null> {
+  const r = await pool.query<{ ct: string | null }>(
+    `SELECT p.public_link_token_ciphertext AS ct
+     FROM proposals p
+     INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+     WHERE p.id = $1`,
+    [params.proposalId, params.accessorUserId],
+  );
+  if (r.rows.length === 0) return null;
+
+  let rawToken = decryptProposalPublicLinkToken(r.rows[0]?.ct ?? null);
+
+  if (!rawToken) {
+    try {
+      const issued = await issueNewPublicTokenForProposal({
+        proposalId: params.proposalId,
+        tenantId: params.tenantId,
+      });
+      rawToken = issued.rawToken;
+      try {
+        await saveProposalPublicLinkCiphertext(params.proposalId, rawToken);
+      } catch (saveErr: unknown) {
+        if (pgErrorCode(saveErr) === PG_UNDEFINED_COLUMN) {
+          console.warn(
+            '[updateProposal] Coluna public_link_token_ciphertext ausente; use migration ou configure o segredo de cifra.',
+          );
+        } else {
+          throw saveErr;
+        }
+      }
+    } catch (e) {
+      console.error('[updateProposal] ensure public link for publish:', e);
+      return null;
+    }
+  }
+
+  const path = proposalPublicLinkPathFromRawToken(rawToken);
+  const resolvedPublicUrl = buildAbsoluteProposalPublicLinkUrl(rawToken);
+  if (!path?.trim() || !resolvedPublicUrl?.trim()) return null;
+  return { resolvedPublicUrl };
+}
+
+/** Path `/proposal-view/...` a partir da URL absoluta ou relativa (sem depender de RETURNING da coluna cifrada). */
+function publicLinkPathFromResolvedUrl(url: string): string | null {
+  const t = url.trim();
+  if (!t) return null;
+  try {
+    if (t.startsWith('http://') || t.startsWith('https://')) {
+      const p = new URL(t).pathname?.trim();
+      return p || null;
+    }
+  } catch {
+    return null;
+  }
+  return t.startsWith('/') ? t : null;
+}
+
+async function tryLoadProposalPublicLinkPath(proposalId: string, accessorUserId: string): Promise<string | null> {
+  try {
+    const r = await pool.query<{ ct: string | null }>(
+      `SELECT p.public_link_token_ciphertext AS ct
+       FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [proposalId, accessorUserId],
+    );
+    const raw = decryptProposalPublicLinkToken(r.rows[0]?.ct ?? null);
+    return raw ? proposalPublicLinkPathFromRawToken(raw) : null;
+  } catch (e) {
+    if (pgErrorCode(e) === PG_UNDEFINED_COLUMN) return null;
+    throw e;
   }
 }
 
@@ -394,7 +477,17 @@ export const getProposals = async (req: Request, res: Response) => {
       throw new Error('Falha inesperada ao listar propostas');
     }
 
-    const proposals = result.rows.map(row => mapProposalRow(row));
+    const proposals = result.rows.map(row => {
+      const r = row as Record<string, unknown> & { public_link_token_ciphertext?: string | null };
+      const ct = r.public_link_token_ciphertext ?? null;
+      const { public_link_token_ciphertext: _ct, ...rest } = r;
+      const rawToken = decryptProposalPublicLinkToken(ct);
+      const public_link_path = rawToken ? proposalPublicLinkPathFromRawToken(rawToken) : null;
+      return {
+        ...mapProposalRow(rest),
+        public_link_path,
+      };
+    });
 
     res.json(proposals);
   } catch (error) {
@@ -753,6 +846,24 @@ export const updateProposal = async (req: Request, res: Response) => {
       assertProposalStatusTransition(oldStatus, validated.status);
     }
 
+    const tenantId = (req as AuthRequest).tenantId;
+    let resolvedPublicProposalUrlForSent: string | undefined;
+    if (tenantId && validated.status === 'sent' && oldStatus === 'draft') {
+      const linkOk = await ensureProposalPublicLinkForPublish({
+        proposalId: id,
+        tenantId,
+        accessorUserId: userId,
+      });
+      if (!linkOk) {
+        return res.status(422).json({
+          error:
+            'Não foi possível gerar o link público obrigatório para publicar a proposta. Corrija o ambiente (ex.: tenant, tabela de tokens) e tente novamente.',
+          code: 'PROPOSAL_SENT_REQUIRES_PUBLIC_LINK',
+        });
+      }
+      resolvedPublicProposalUrlForSent = linkOk.resolvedPublicUrl;
+    }
+
     const updates: string[] = [];
     const values: unknown[] = [];
     let paramCount = 1;
@@ -809,9 +920,17 @@ export const updateProposal = async (req: Request, res: Response) => {
       updates.push(`status = $${paramCount++}`);
       values.push(validated.status);
     }
+    const publishingDraftToSent =
+      validated.status === 'sent' && oldStatus === 'draft' && validated.status !== undefined;
+    let sentDateToPersist: string | null | undefined;
     if (validated.sent_date !== undefined) {
+      sentDateToPersist = validated.sent_date;
+    } else if (publishingDraftToSent) {
+      sentDateToPersist = new Date().toISOString().slice(0, 10);
+    }
+    if (sentDateToPersist !== undefined) {
       updates.push(`sent_date = $${paramCount++}`);
-      values.push(validated.sent_date || null);
+      values.push(sentDateToPersist);
     }
     if (validated.valid_until !== undefined) {
       updates.push(`valid_until = $${paramCount++}`);
@@ -845,7 +964,12 @@ export const updateProposal = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Proposta não encontrada' });
     }
 
-    const newStatus = result.rows[0].status as string;
+    const returnedRow = result.rows[0] as Record<string, unknown> & {
+      status: string;
+      client_id?: string | null;
+      lead_id?: string | null;
+    };
+    const newStatus = returnedRow.status;
     if (validated.status !== undefined && newStatus !== oldStatus) {
       try {
         if (newStatus === 'accepted') {
@@ -881,6 +1005,7 @@ export const updateProposal = async (req: Request, res: Response) => {
               eventKey: 'proposal.sent',
               actorUserId: userId,
               actor: { type: 'user', user_id: userId },
+              resolvedPublicProposalUrl: resolvedPublicProposalUrlForSent,
             });
           } else if (newStatus === 'accepted' && oldStatus !== 'accepted') {
             await runProposalNotificationAfterStatusChangeNow({
@@ -909,14 +1034,13 @@ export const updateProposal = async (req: Request, res: Response) => {
 
     if (validated.status !== undefined && newStatus === 'accepted' && oldStatus !== 'accepted') {
       try {
-        const tenantId = (req as AuthRequest).tenantId;
-        if (tenantId) {
-          const row = result.rows[0] as { client_id?: string | null; lead_id?: string | null };
+        const tenantIdAccept = (req as AuthRequest).tenantId;
+        if (tenantIdAccept) {
           await runProposalKanbanAcceptAutomation({
-            tenantId,
+            tenantId: tenantIdAccept,
             proposalId: id,
-            clientId: row.client_id ?? null,
-            leadId: row.lead_id ?? null,
+            clientId: returnedRow.client_id ?? null,
+            leadId: returnedRow.lead_id ?? null,
             actorUserId: userId,
             acceptanceSource: 'panel',
           });
@@ -926,7 +1050,18 @@ export const updateProposal = async (req: Request, res: Response) => {
       }
     }
 
-    const proposal = mapProposalRow(result.rows[0]);
+    let public_link_path: string | null = null;
+    if (resolvedPublicProposalUrlForSent?.trim()) {
+      public_link_path = publicLinkPathFromResolvedUrl(resolvedPublicProposalUrlForSent);
+    }
+    if (!public_link_path) {
+      try {
+        public_link_path = await tryLoadProposalPublicLinkPath(id, userId);
+      } catch (pathErr) {
+        console.error('[updateProposal] falha ao resolver public_link_path:', pathErr);
+      }
+    }
+    const proposal = { ...mapProposalRow(returnedRow as Record<string, unknown>), public_link_path };
 
     res.json(proposal);
   } catch (error) {

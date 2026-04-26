@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,9 +25,13 @@ import { fetchFunnels } from "@/services/funnels";
 import type { SalesFunnel } from "@/components/funnel/types";
 import { format } from "date-fns";
 import { formatDateOnlyIsoInput } from "@/utils/formatCalendarDate";
+import { cn } from "@/lib/utils";
 import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCommerceScreenLayout } from "@/components/mobile/MobileCommerceScreenLayout";
+import { useMobileShellChrome } from "@/contexts/MobileShellChromeContext";
 
 export type ProposalCreateSuccessPayload = Proposal & { public_link_path?: string | null };
 
@@ -69,6 +73,8 @@ export interface ProposalCreateFormProps {
    * Etapa 3 (Kanban): rascunho existente (`getProposalById`) cujo conteúdo pré-preenche o formulário.
    */
   initialTemplateProposalId?: string | null;
+  /** Edição de proposta existente (`/proposals/:id/edit`): mesmo layout da criação; destinatário fixo. */
+  editProposalId?: string | null;
 }
 
 function normalizeValidUntilForInput(v: string | null | undefined): string {
@@ -85,12 +91,20 @@ function ProposalCreateForm({
   lockClientPicker = false,
   lockLeadPicker = false,
   initialTemplateProposalId = null,
+  editProposalId = null,
   onBack,
   onCreated,
 }: ProposalCreateFormProps) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const { setSuppressMobileBottomNav } = useMobileShellChrome();
   const { user } = useAuth();
-  const { canCreate, loading: permLoading } = useModulePermissions();
+  const { canCreate, canEditRecord, canProposalSendRecord, loading: permLoading } = useModulePermissions();
+
+  const isEditing = Boolean(editProposalId?.trim());
+  const [editLoading, setEditLoading] = useState(false);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const [editSourceProposal, setEditSourceProposal] = useState<Proposal | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [catalog, setCatalog] = useState<Product[]>([]);
@@ -110,8 +124,8 @@ function ProposalCreateForm({
   const [standaloneAmount, setStandaloneAmount] = useState("");
   const templateAppliedForIdRef = useRef<string | null>(null);
 
-  /** Cliente ou lead vindos do perfil: esconde alternância Cliente/Lead. */
-  const hideRecipientToggle = Boolean(initialClientId?.trim()) || Boolean(lockLeadPicker);
+  /** Cliente ou lead vindos do perfil ou edição: esconde alternância Cliente/Lead. */
+  const hideRecipientToggle = Boolean(initialClientId?.trim()) || Boolean(lockLeadPicker) || isEditing;
 
   const [contactMode, setContactMode] = useState<"client" | "lead">(() =>
     initialClientId?.trim() ? "client" : initialLeadId?.trim() ? "lead" : "client",
@@ -188,7 +202,130 @@ function ProposalCreateForm({
     };
   }, []);
 
+  const chatEmbeddedMobile = embedded && isMobile;
+  /** Só no Chat mobile: o shell é interno ao form; não mexer no estado quando `embedded` é false (ex.: `NewProposal` já controla). */
   useEffect(() => {
+    if (!chatEmbeddedMobile) return;
+    setSuppressMobileBottomNav(true);
+    return () => setSuppressMobileBottomNav(false);
+  }, [chatEmbeddedMobile, setSuppressMobileBottomNav]);
+
+  const wrapChatMobileShell = useCallback(
+    (inner: ReactNode) => {
+      if (!chatEmbeddedMobile) return inner;
+      return (
+        <MobileCommerceScreenLayout enabled className="fixed inset-0 z-[200]" header={
+          <div className="flex items-center gap-2 px-3 py-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => onBack?.()}
+              aria-label="Voltar à conversa"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-base font-semibold">{isEditing ? "Editar proposta" : "Nova proposta"}</h1>
+              {!isEditing ? (
+                <p className="truncate text-xs text-muted-foreground">Desde a conversa</p>
+              ) : null}
+            </div>
+          </div>
+        }
+        >
+          <div className="px-2 pt-1">{inner}</div>
+        </MobileCommerceScreenLayout>
+      );
+    },
+    [chatEmbeddedMobile, isEditing, onBack],
+  );
+
+  const applyProposalToForm = useCallback((p: Proposal, titleHint?: string | null) => {
+    const hint = titleHint?.trim();
+    setTitle(hint || p.title || "");
+    setDescription(typeof p.description === "string" ? p.description : "");
+    setValidUntil(normalizeValidUntilForInput(p.valid_until));
+    const rawMode = p.post_accept_billing_mode;
+    const allowed: PostAcceptBillingMode[] = ["none", "notify_team", "auto_pending_invoice"];
+    if (rawMode && allowed.includes(rawMode as PostAcceptBillingMode)) {
+      setPostAccept(rawMode as PostAcceptBillingMode);
+    } else {
+      setPostAccept("none");
+    }
+    if (p.funnel_id) setFunnelId(p.funnel_id);
+    else setFunnelId("");
+    if (p.stage_id) setStageId(p.stage_id);
+    else setStageId("");
+    if (p.client_id?.trim()) {
+      setClientId(p.client_id);
+      setLeadId(null);
+      setContactMode("client");
+    } else if (p.lead_id?.trim()) {
+      setLeadId(p.lead_id);
+      setClientId(null);
+      setContactMode("lead");
+    }
+    const rawItems = Array.isArray(p.items) ? p.items : [];
+    const lineItems = rawItems.filter((it) => it && typeof (it as ProposalItem).description === "string");
+    if (lineItems.length > 0) {
+      setItems(
+        lineItems.map((it) => {
+          const row = it as ProposalItem;
+          return {
+            description: row.description ?? "",
+            quantity: Number(row.quantity) || 0,
+            unitPrice: Number(row.unitPrice) || 0,
+            discount: Number(row.discount) || 0,
+            total: Number(row.total) || 0,
+          };
+        }),
+      );
+      setStandaloneAmount("");
+    } else {
+      setItems([]);
+      setStandaloneAmount(p.amount != null ? String(p.amount) : "");
+    }
+  }, []);
+
+  useEffect(() => {
+    const eid = editProposalId?.trim();
+    if (!eid) {
+      setEditSourceProposal(null);
+      setEditLoadError(null);
+      setEditLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setEditLoading(true);
+    setEditLoadError(null);
+    void (async () => {
+      try {
+        const p = await proposalsService.getProposalById(eid);
+        if (cancelled) return;
+        if (p.status !== "draft" && p.status !== "sent") {
+          setEditLoadError("Só é possível editar propostas em rascunho ou enviadas.");
+          setEditSourceProposal(null);
+          return;
+        }
+        setEditSourceProposal(p);
+        applyProposalToForm(p, null);
+      } catch (e) {
+        if (!cancelled) {
+          setEditLoadError(e instanceof Error ? e.message : "Erro ao carregar proposta");
+          setEditSourceProposal(null);
+        }
+      } finally {
+        if (!cancelled) setEditLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editProposalId, applyProposalToForm]);
+
+  useEffect(() => {
+    if (editProposalId?.trim()) return;
     const tid = initialTemplateProposalId?.trim();
     if (!tid) {
       templateAppliedForIdRef.current = null;
@@ -211,40 +348,7 @@ function ProposalCreateForm({
           return;
         }
         templateAppliedForIdRef.current = tid;
-        const hint = initialTitle?.trim();
-        setTitle(hint || p.title || "");
-        setDescription(typeof p.description === "string" ? p.description : "");
-        setValidUntil(normalizeValidUntilForInput(p.valid_until));
-        const rawMode = p.post_accept_billing_mode;
-        const allowed: PostAcceptBillingMode[] = ["none", "notify_team", "auto_pending_invoice"];
-        if (rawMode && allowed.includes(rawMode as PostAcceptBillingMode)) {
-          setPostAccept(rawMode as PostAcceptBillingMode);
-        } else {
-          setPostAccept("none");
-        }
-        if (p.funnel_id) setFunnelId(p.funnel_id);
-        else setFunnelId("");
-        if (p.stage_id) setStageId(p.stage_id);
-        const rawItems = Array.isArray(p.items) ? p.items : [];
-        const lineItems = rawItems.filter((it) => it && typeof (it as ProposalItem).description === "string");
-        if (lineItems.length > 0) {
-          setItems(
-            lineItems.map((it) => {
-              const row = it as ProposalItem;
-              return {
-                description: row.description ?? "",
-                quantity: Number(row.quantity) || 0,
-                unitPrice: Number(row.unitPrice) || 0,
-                discount: Number(row.discount) || 0,
-                total: Number(row.total) || 0,
-              };
-            }),
-          );
-          setStandaloneAmount("");
-        } else {
-          setItems([]);
-          setStandaloneAmount(p.amount != null ? String(p.amount) : "");
-        }
+        applyProposalToForm(p, initialTitle);
       } catch (e) {
         if (cancelled) return;
         templateAppliedForIdRef.current = tid;
@@ -256,7 +360,7 @@ function ProposalCreateForm({
     return () => {
       cancelled = true;
     };
-  }, [initialTemplateProposalId, initialTitle]);
+  }, [initialTemplateProposalId, initialTitle, editProposalId, applyProposalToForm]);
 
   const selectedFunnel = useMemo(
     () => proposalFunnels.find((f) => f.id === funnelId),
@@ -322,6 +426,20 @@ function ProposalCreateForm({
     [title, clientId, leadId, funnelId, stageId, description, effectiveAmount, validUntil, hasLines, items, postAccept]
   );
 
+  const buildUpdatePayload = useCallback(
+    () => ({
+      title: title.trim(),
+      description: description.trim() ? description : null,
+      amount: effectiveAmount,
+      valid_until: validUntil || null,
+      funnel_id: funnelId || null,
+      stage_id: stageId || null,
+      items: hasLines ? items : [],
+      post_accept_billing_mode: postAccept,
+    }),
+    [title, description, effectiveAmount, validUntil, funnelId, stageId, hasLines, items, postAccept]
+  );
+
   const afterSuccessfulCreate = useCallback(
     (created: ProposalCreateSuccessPayload, mode: "sent" | "draft") => {
       if (created.public_link_path) {
@@ -333,7 +451,7 @@ function ProposalCreateForm({
         return;
       }
       if (mode === "sent") {
-        toast.success("Proposta enviada. Link do cliente já está disponível.");
+        toast.success("Proposta publicada. Link do cliente disponível; notificações de envio disparadas se configuradas.");
         navigate(`/proposals/${created.id}`);
       } else {
         toast.success("Rascunho salvo.");
@@ -346,43 +464,151 @@ function ProposalCreateForm({
   const submit = useCallback(async () => {
     if (!validateBeforeCreate()) return;
 
+    const eid = editProposalId?.trim();
     setSaving(true);
     try {
-      const created = await proposalsService.createProposal(buildCreatePayload("sent"));
-      afterSuccessfulCreate(created, "sent");
+      if (eid) {
+        const ownerId = editSourceProposal?.user_id;
+        if (!ownerId || !user?.id || !canProposalSendRecord(ownerId, user.id)) {
+          toast.error("Sem permissão para publicar esta proposta.");
+          return;
+        }
+        const updated = await proposalsService.updateProposal(eid, {
+          ...buildUpdatePayload(),
+          status: "sent",
+          sent_date: format(new Date(), "yyyy-MM-dd"),
+        });
+        if (updated.public_link_path) {
+          const full = `${window.location.origin}${updated.public_link_path}`;
+          setStoredProposalPublicUrl(eid, full);
+        }
+        toast.success("Proposta publicada. Link disponível; notificações de envio disparadas se configuradas.");
+        navigate(`/proposals/${eid}`);
+      } else {
+        const created = await proposalsService.createProposal(buildCreatePayload("sent"));
+        afterSuccessfulCreate(created, "sent");
+      }
     } catch (e) {
       const withProposal = e as Error & { code?: string; proposal?: Proposal };
-      if (withProposal.code === "PROPOSAL_SENT_REQUIRES_PUBLIC_LINK" && withProposal.proposal?.id) {
+      if (!eid && withProposal.code === "PROPOSAL_SENT_REQUIRES_PUBLIC_LINK" && withProposal.proposal?.id) {
         toast.message("Proposta guardada como rascunho", {
           description: withProposal.message,
         });
         navigate(`/proposals/${withProposal.proposal.id}`);
         return;
       }
-      toast.error(e instanceof Error ? e.message : "Erro ao criar proposta");
+      if (eid && withProposal.code === "PROPOSAL_SENT_REQUIRES_PUBLIC_LINK") {
+        toast.error(withProposal.message || "Não foi possível gerar o link público.");
+        return;
+      }
+      toast.error(e instanceof Error ? e.message : eid ? "Erro ao publicar proposta" : "Erro ao criar proposta");
     } finally {
       setSaving(false);
     }
-  }, [validateBeforeCreate, buildCreatePayload, afterSuccessfulCreate, navigate]);
+  }, [
+    validateBeforeCreate,
+    editProposalId,
+    editSourceProposal?.user_id,
+    user?.id,
+    canProposalSendRecord,
+    buildUpdatePayload,
+    buildCreatePayload,
+    afterSuccessfulCreate,
+    navigate,
+  ]);
+
+  const saveEditsOnly = useCallback(async () => {
+    if (!validateBeforeCreate()) return;
+    const eid = editProposalId?.trim();
+    if (!eid || editSourceProposal?.status !== "sent") return;
+    setSaving(true);
+    try {
+      await proposalsService.updateProposal(eid, buildUpdatePayload());
+      toast.success("Alterações guardadas.");
+      navigate(`/proposals/${eid}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao guardar alterações");
+    } finally {
+      setSaving(false);
+    }
+  }, [validateBeforeCreate, editProposalId, editSourceProposal?.status, buildUpdatePayload, navigate]);
 
   const saveDraft = useCallback(async () => {
     if (!validateBeforeCreate()) return;
 
+    const eid = editProposalId?.trim();
     setSaving(true);
     try {
-      const created = await proposalsService.createProposal(buildCreatePayload("draft"));
-      afterSuccessfulCreate(created, "draft");
+      if (eid) {
+        await proposalsService.updateProposal(eid, buildUpdatePayload());
+        toast.success("Rascunho atualizado.");
+        navigate(`/proposals/${eid}`);
+      } else {
+        const created = await proposalsService.createProposal(buildCreatePayload("draft"));
+        afterSuccessfulCreate(created, "draft");
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar rascunho");
     } finally {
       setSaving(false);
     }
-  }, [validateBeforeCreate, buildCreatePayload, afterSuccessfulCreate]);
+  }, [validateBeforeCreate, editProposalId, buildUpdatePayload, buildCreatePayload, afterSuccessfulCreate, navigate]);
 
-  const canUse = canCreate("proposals") && !permLoading;
+  const canUseCreateFlow = !isEditing && canCreate("proposals") && !permLoading;
+  const canUseEditFlow =
+    isEditing &&
+    !editLoading &&
+    !!editSourceProposal &&
+    !!user?.id &&
+    canEditRecord("proposals", editSourceProposal.user_id ?? "", user.id);
+  const canUse = canUseCreateFlow || canUseEditFlow;
+  const isEditDraft = isEditing && editSourceProposal?.status === "draft";
+  const isEditSent = isEditing && editSourceProposal?.status === "sent";
+  const canPublishInEditor =
+    !isEditing ||
+    (isEditDraft &&
+      !!editSourceProposal?.user_id &&
+      !!user?.id &&
+      canProposalSendRecord(editSourceProposal.user_id, user.id));
 
-  if (!permLoading && !canCreate("proposals")) {
-    return (
+  const mobileFlow = isMobile;
+  const rootClass = embedded ? "space-y-4" : "space-y-6 max-w-5xl";
+
+  if (isEditing && editLoading) {
+    return wrapChatMobileShell(
+      <div className={rootClass}>
+        <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <p className="text-sm">Carregando proposta…</p>
+        </div>
+      </div>,
+    );
+  }
+
+  if (isEditing && editLoadError) {
+    return wrapChatMobileShell(
+      <div className={rootClass}>
+        <p className="text-sm text-destructive">{editLoadError}</p>
+        <Button variant="outline" className="mt-4" asChild>
+          <Link to="/proposals">Voltar à lista</Link>
+        </Button>
+      </div>,
+    );
+  }
+
+  if (isEditing && editSourceProposal && user?.id && !canEditRecord("proposals", editSourceProposal.user_id ?? "", user.id)) {
+    return wrapChatMobileShell(
+      <div className={rootClass}>
+        <p className="text-sm text-muted-foreground">Sem permissão para editar esta proposta.</p>
+        <Button variant="outline" className="mt-4" asChild>
+          <Link to={`/proposals/${editSourceProposal.id}`}>Ver detalhe</Link>
+        </Button>
+      </div>,
+    );
+  }
+
+  if (!isEditing && !permLoading && !canCreate("proposals")) {
+    return wrapChatMobileShell(
       <div className="space-y-4">
         {embedded ? (
           <Button variant="outline" size="sm" onClick={onBack}>
@@ -404,15 +630,13 @@ function ProposalCreateForm({
           </Button>
         )}
         <p className="text-sm text-muted-foreground">Sem permissão para criar propostas.</p>
-      </div>
+      </div>,
     );
   }
 
-  const rootClass = embedded ? "space-y-4" : "space-y-6 max-w-5xl";
-
-  return (
+  return wrapChatMobileShell(
     <div className={rootClass}>
-      {!embedded && (
+      {!embedded && !mobileFlow && (
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-2 min-w-0">
             {clientReturnPath ? (
@@ -430,11 +654,19 @@ function ProposalCreateForm({
               </Button>
             )}
             <div className="min-w-0">
-              <h1 className="text-2xl font-bold truncate">Nova proposta</h1>
+              <h1 className="text-2xl font-bold truncate">{isEditing ? "Editar proposta" : "Nova proposta"}</h1>
               <p className="text-sm text-muted-foreground">
-                <strong>Criar proposta</strong> gera a proposta como <strong>enviada</strong> (com data de envio de hoje) e
-                link público automático. <strong>Salvar como rascunho</strong> mantém rascunho; aceite e recusa pelo link
-                público exigem proposta enviada.
+                {isEditSent ? (
+                  <>
+                    Proposta <strong>enviada</strong>: alterações são guardadas sem reenviar notificações. O cliente aceita ou
+                    recusa pela <strong>página pública</strong> do link.
+                  </>
+                ) : (
+                  <>
+                    <strong>Publicar proposta</strong> envia ao cliente (status <strong>Enviada</strong>, link e notificações
+                    de envio se configuradas). <strong>Salvar rascunho</strong> só grava — não envia nem notifica.
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -499,7 +731,7 @@ function ProposalCreateForm({
                   label={lockClientPicker ? "Cliente CRM (fixo)" : "Cliente CRM"}
                   value={clientId}
                   onChange={handleClientChange}
-                  disabled={lockClientPicker}
+                  disabled={lockClientPicker || isEditing}
                   remoteSearch
                   placeholderTrigger="Buscar cliente (nome, e-mail, telefone...)"
                 />
@@ -509,18 +741,22 @@ function ProposalCreateForm({
                   label={lockLeadPicker ? "Lead (fixo)" : "Lead"}
                   value={leadId}
                   onChange={handleLeadChange}
-                  disabled={lockLeadPicker}
+                  disabled={lockLeadPicker || isEditing}
                   placeholderTrigger="Buscar lead (nome, e-mail, telefone...)"
                 />
               )}
-              {lockClientPicker ? (
+              {lockClientPicker || (isEditing && clientId) ? (
                 <p className="text-xs text-muted-foreground">
-                  Proposta para o cliente aberto no perfil; o destinatário não pode ser alterado neste fluxo.
+                  {isEditing
+                    ? "O destinatário (cliente ou lead) não pode ser alterado após a criação da proposta."
+                    : "Proposta para o cliente aberto no perfil; o destinatário não pode ser alterado neste fluxo."}
                 </p>
               ) : null}
-              {lockLeadPicker ? (
+              {lockLeadPicker || (isEditing && leadId && !clientId) ? (
                 <p className="text-xs text-muted-foreground">
-                  Proposta para o lead aberto no perfil; o destinatário não pode ser alterado neste fluxo.
+                  {isEditing
+                    ? "O destinatário (cliente ou lead) não pode ser alterado após a criação da proposta."
+                    : "Proposta para o lead aberto no perfil; o destinatário não pode ser alterado neste fluxo."}
                 </p>
               ) : null}
               {isLeadOnly ? (
@@ -606,14 +842,34 @@ function ProposalCreateForm({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Itens da proposta</CardTitle>
+      <Card className={cn(mobileFlow && "border-0 bg-transparent shadow-none")}>
+        <CardHeader className={cn("pb-2", mobileFlow && "space-y-2 px-0 pt-0")}>
+          <CardTitle className={cn("text-lg", mobileFlow && "text-base")}>Itens e serviços</CardTitle>
+          {mobileFlow ? (
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Adicione linhas ao orçamento ou use apenas o valor único abaixo.
+            </p>
+          ) : null}
         </CardHeader>
-        <CardContent>
-          <ProposalItemsEditor items={items} onChange={setItems} catalog={catalog} />
+        <CardContent className={cn(mobileFlow && "space-y-4 p-0")}>
+          {mobileFlow ? (
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Linhas da proposta</h2>
+          ) : null}
+          <div
+            className={cn(
+              mobileFlow &&
+                "rounded-2xl border border-border/60 bg-card/40 p-4 space-y-4 dark:bg-card/25",
+            )}
+          >
+            <ProposalItemsEditor
+              items={items}
+              onChange={setItems}
+              catalog={catalog}
+              popoverContentClassName={mobileFlow ? "z-[260]" : undefined}
+            />
+          </div>
           {!hasLines && (
-            <div className="mt-4 max-w-xs space-y-2">
+            <div className={cn("mt-4 max-w-xs space-y-2", mobileFlow && "max-w-none")}>
               <Label htmlFor="np-amount-only">Valor total (sem linhas detalhadas)</Label>
               <Input
                 id="np-amount-only"
@@ -623,6 +879,7 @@ function ProposalCreateForm({
                 value={standaloneAmount}
                 onChange={(e) => setStandaloneAmount(e.target.value)}
                 placeholder="0,00"
+                className={cn(mobileFlow && "h-11")}
               />
             </div>
           )}
@@ -666,23 +923,96 @@ function ProposalCreateForm({
         </CardContent>
       </Card>
 
-      <div className="flex flex-col sm:flex-row gap-3 pb-10 sm:items-center">
-        <Button type="button" size="lg" className="sm:min-w-[200px]" disabled={saving || !canUse} onClick={() => void submit()}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-          Criar proposta
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="lg"
-          className="sm:min-w-[200px]"
-          disabled={saving || !canUse}
-          onClick={() => void saveDraft()}
-        >
-          Salvar como rascunho
-        </Button>
+      {mobileFlow && (
+        <Card className="border-primary/25 bg-primary/5">
+          <CardContent className="flex items-center justify-between gap-3 p-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Resumo da proposta</p>
+              <p className="text-lg font-semibold tabular-nums">
+                {effectiveAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              </p>
+            </div>
+            <div className="text-right text-xs text-muted-foreground">
+              <p>{hasLines ? `${items.length} item(ns)` : "Sem linhas detalhadas"}</p>
+              <p>{validUntil ? `Validade ${formatDateOnlyIsoInput(validUntil) || validUntil}` : "Sem validade definida"}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className={mobileFlow ? "hidden sm:flex sm:flex-row sm:items-center gap-3 pb-10" : "flex flex-col sm:flex-row gap-3 pb-10 sm:items-center"}>
+        {isEditSent ? (
+          <Button
+            type="button"
+            size="lg"
+            className="sm:min-w-[200px]"
+            disabled={saving || !canUse}
+            onClick={() => void saveEditsOnly()}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+            Guardar alterações
+          </Button>
+        ) : (
+          <>
+            <Button
+              type="button"
+              size="lg"
+              className="sm:min-w-[200px]"
+              disabled={saving || !canUse || !canPublishInEditor}
+              title={!canPublishInEditor && isEditDraft ? "Sem permissão para publicar (envio de propostas)" : undefined}
+              onClick={() => void submit()}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Publicar proposta
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              className="sm:min-w-[200px]"
+              disabled={saving || !canUse}
+              onClick={() => void saveDraft()}
+            >
+              Salvar rascunho
+            </Button>
+          </>
+        )}
       </div>
-    </div>
+      {mobileFlow && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] backdrop-blur-md">
+          <div className="mx-auto flex w-full max-w-5xl gap-2">
+            {isEditSent ? (
+              <Button type="button" className="h-11 w-full" disabled={saving || !canUse} onClick={() => void saveEditsOnly()}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Guardar alterações
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 flex-1"
+                  disabled={saving || !canUse}
+                  onClick={() => void saveDraft()}
+                >
+                  Salvar rascunho
+                </Button>
+                <Button
+                  type="button"
+                  className="h-11 flex-[1.3]"
+                  disabled={saving || !canUse || !canPublishInEditor}
+                  title={!canPublishInEditor && isEditDraft ? "Sem permissão para publicar" : undefined}
+                  onClick={() => void submit()}
+                >
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Publicar proposta
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>,
   );
 }
 

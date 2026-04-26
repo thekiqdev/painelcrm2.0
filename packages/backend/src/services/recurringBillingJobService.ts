@@ -1636,7 +1636,7 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
         const status = attempts >= job.max_attempts ? 'failed' : 'pending';
         const hasOc = await billingJobsTableHasOutcomeColumns(client);
         if (hasOc && status === 'failed') {
-          await client.query(
+        await client.query(
             `UPDATE billing_recurring_jobs SET status = $1, attempts = $2, retry_at = $3, error_message = $4,
               locked_at = NULL, locked_by = NULL,
               completion_outcome = $6, completion_detail = NULL, updated_at = now() WHERE id = $5`,
@@ -1646,8 +1646,8 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
           await client.query(
             `UPDATE billing_recurring_jobs SET status = $1, attempts = $2, retry_at = $3, error_message = $4,
               locked_at = NULL, locked_by = NULL, updated_at = now() WHERE id = $5`,
-            [status, attempts, retryAt.toISOString(), errMsg, job.id]
-          );
+          [status, attempts, retryAt.toISOString(), errMsg, job.id]
+        );
         }
         if (status === 'failed') {
           notifyBillingJobFailed(job.id, job.subscription_id, job.tenant_id, errMsg);

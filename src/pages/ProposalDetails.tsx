@@ -1,13 +1,12 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
   FileText,
   ArrowLeft,
-  Check,
-  X,
   Send,
   Receipt,
   ExternalLink,
@@ -15,8 +14,13 @@ import {
   Link2,
   Copy,
   MoreHorizontal,
+  Pencil,
+  ChevronDown,
+  User,
+  Calendar,
+  Banknote,
+  Mail,
 } from "lucide-react";
-import { RichTextEditor } from "@/components/shared/RichTextEditor";
 import { isProposalDescriptionHtml, sanitizeProposalHtml } from "@/utils/proposalRichText";
 import {
   getStoredProposalPublicUrl,
@@ -24,25 +28,16 @@ import {
   clearStoredProposalPublicUrl,
 } from "@/utils/proposalPublicLinkSession";
 import { Badge } from "@/components/ui/badge";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import { useNavigate, useParams, Link, useLocation } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "@/components/ui/sonner";
-import {
-  proposalsService,
-  Proposal,
-  ProposalPublicLinkMeta,
-  ProposalItem,
-  PostAcceptBillingMode,
-} from "@/services/proposals";
+import { proposalsService, Proposal, ProposalPublicLinkMeta, PostAcceptBillingMode } from "@/services/proposals";
 import { clientsService } from "@/services/clients";
-import { ProposalItemsEditor, summarizeProposalLines } from "@/components/proposals/ProposalItemsEditor";
-import { productsService } from "@/services/products";
-import type { Product } from "@/types/products";
 import { format } from "date-fns";
 import { formatDateOnlyIsoInput, formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -56,10 +51,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useMobileShellChrome } from "@/contexts/MobileShellChromeContext";
 
 function resolveProposalPublicUrl(proposal: Proposal, lastPublicUrl: string | null): string | null {
   const path = proposal.public_link_path?.trim();
@@ -74,26 +70,43 @@ const ProposalDetails = () => {
     proposalId: string;
   }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isMobile = useIsMobile();
+  const { setSuppressMobileBottomNav } = useMobileShellChrome();
   const { user } = useAuth();
   const { canEditRecord, canProposalSendRecord, canProposalConvertRecord } = useModulePermissions();
   const [loading, setLoading] = useState(true);
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [clientName, setClientName] = useState<string>("");
-  const [isAcceptDialogOpen, setIsAcceptDialogOpen] = useState(false);
-  const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [dueDate, setDueDate] = useState<string>("");
   const [converting, setConverting] = useState(false);
   const [publicLinkMeta, setPublicLinkMeta] = useState<ProposalPublicLinkMeta | null>(null);
   const [publicLinkBusy, setPublicLinkBusy] = useState(false);
   const [lastPublicUrl, setLastPublicUrl] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("resumo");
   const [billingSaving, setBillingSaving] = useState(false);
-  const [catalog, setCatalog] = useState<Product[]>([]);
-  const [itemsDraft, setItemsDraft] = useState<ProposalItem[]>([]);
-  const [itemsSaving, setItemsSaving] = useState(false);
-  const [descriptionDraft, setDescriptionDraft] = useState("");
-  const [descriptionSaving, setDescriptionSaving] = useState(false);
+  const [chatReturnTo, setChatReturnTo] = useState<string | null>(null);
+  const [publishingProposal, setPublishingProposal] = useState(false);
+  const mobileFlow = isMobile;
+
+  useEffect(() => {
+    if (!mobileFlow) {
+      setSuppressMobileBottomNav(false);
+      return;
+    }
+    setSuppressMobileBottomNav(true);
+    return () => setSuppressMobileBottomNav(false);
+  }, [mobileFlow, setSuppressMobileBottomNav]);
+
+  useEffect(() => {
+    const st = location.state as { chatReturnTo?: string } | null;
+    if (!st) return;
+    const rt = typeof st.chatReturnTo === "string" ? st.chatReturnTo.trim() : "";
+    if (rt) setChatReturnTo(rt);
+    if (rt) {
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.search, location.state, navigate]);
 
   const goBack = useCallback(() => {
     if (funnelId) navigate(`/funnel/${funnelId}`);
@@ -110,8 +123,6 @@ const ProposalDetails = () => {
     try {
       const proposalData = await proposalsService.getProposalById(proposalId);
       setProposal(proposalData);
-      setDescriptionDraft(proposalData.description ?? "");
-      setItemsDraft(Array.isArray(proposalData.items) ? proposalData.items : []);
       const due = proposalData.valid_until
         ? formatDateOnlyIsoInput(proposalData.valid_until) || format(new Date(), "yyyy-MM-dd")
         : format(new Date(), "yyyy-MM-dd");
@@ -178,28 +189,6 @@ const ProposalDetails = () => {
     void fetchProposal();
   }, [fetchProposal]);
 
-  useEffect(() => {
-    if (
-      !proposal ||
-      proposal.converted_invoice_id ||
-      (proposal.status !== "draft" && proposal.status !== "sent")
-    ) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const products = await productsService.getProducts();
-        if (!cancelled) setCatalog(products);
-      } catch {
-        if (!cancelled) setCatalog([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [proposal?.id, proposal?.status, proposal?.converted_invoice_id]);
-
   const effectivePublicUrl = useMemo(
     () => (proposal ? resolveProposalPublicUrl(proposal, lastPublicUrl) : null),
     [proposal, lastPublicUrl]
@@ -221,44 +210,38 @@ const ProposalDetails = () => {
     window.open(effectivePublicUrl, "_blank", "noopener,noreferrer");
   };
 
-  const handleAccept = async () => {
+  const handlePublishProposal = async () => {
     if (!proposal) return;
+    setPublishingProposal(true);
     try {
-      await proposalsService.updateProposal(proposal.id, { status: "accepted" });
-      toast.success("Proposta aceita com sucesso!");
-      setIsAcceptDialogOpen(false);
-      await fetchProposal();
-    } catch (error) {
-      console.error("Erro ao aceitar proposta:", error);
-      toast.error("Erro ao aceitar proposta");
-    }
-  };
-
-  const handleReject = async () => {
-    if (!proposal) return;
-    try {
-      await proposalsService.updateProposal(proposal.id, { status: "rejected" });
-      toast.success("Proposta recusada.");
-      setIsRejectDialogOpen(false);
-      await fetchProposal();
-    } catch (error) {
-      console.error("Erro ao recusar proposta:", error);
-      toast.error("Erro ao recusar proposta");
-    }
-  };
-
-  const handleMarkSent = async () => {
-    if (!proposal) return;
-    try {
-      await proposalsService.updateProposal(proposal.id, {
+      const updated = await proposalsService.updateProposal(proposal.id, {
         status: "sent",
         sent_date: format(new Date(), "yyyy-MM-dd"),
       });
-      toast.success("Proposta marcada como enviada.");
+      const path = updated.public_link_path?.trim();
+      if (path) {
+        const full = `${window.location.origin}${path.startsWith("/") ? path : `/${path}`}`;
+        setStoredProposalPublicUrl(proposal.id, full);
+        setLastPublicUrl(full);
+      }
+      toast.success("Proposta publicada. O cliente pode abrir pelo link público; notificações de envio foram disparadas se estiverem configuradas.");
       await fetchProposal();
+      try {
+        const meta = await proposalsService.getProposalPublicLinkMeta(proposal.id);
+        setPublicLinkMeta(meta);
+      } catch {
+        /* meta opcional */
+      }
     } catch (error) {
       console.error(error);
-      toast.error("Não foi possível atualizar o status.");
+      const err = error as Error & { code?: string };
+      if (err.code === "PROPOSAL_SENT_REQUIRES_PUBLIC_LINK") {
+        toast.error(err.message || "Não foi possível gerar o link público para publicar.");
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : "Não foi possível publicar a proposta.");
+    } finally {
+      setPublishingProposal(false);
     }
   };
 
@@ -337,35 +320,6 @@ const ProposalDetails = () => {
     }
   };
 
-  const handleSaveItems = async () => {
-    if (!proposal) return;
-    setItemsSaving(true);
-    try {
-      await proposalsService.updateProposal(proposal.id, { items: itemsDraft });
-      toast.success("Itens e total atualizados.");
-      await fetchProposal();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar os itens.");
-    } finally {
-      setItemsSaving(false);
-    }
-  };
-
-  const handleSaveDescription = async () => {
-    if (!proposal) return;
-    setDescriptionSaving(true);
-    try {
-      const next = descriptionDraft.trim() ? descriptionDraft.trim() : null;
-      await proposalsService.updateProposal(proposal.id, { description: next });
-      toast.success("Descrição comercial atualizada.");
-      await fetchProposal();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar a descrição.");
-    } finally {
-      setDescriptionSaving(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center p-10">
@@ -421,13 +375,6 @@ const ProposalDetails = () => {
   const isTerminal = proposal.status === "rejected" || proposal.status === "expired" || proposal.status === "invoiced";
   const isInvoiced = proposal.status === "invoiced" || !!proposal.converted_invoice_id;
 
-  const canChangeStatus =
-    canEditThis &&
-    !isInvoiced &&
-    proposal.status !== "accepted" &&
-    proposal.status !== "rejected" &&
-    proposal.status !== "expired";
-
   const canConvertToInvoice =
     !!proposal.user_id &&
     !!user?.id &&
@@ -453,15 +400,14 @@ const ProposalDetails = () => {
     !isInvoiced &&
     (proposal.status === "draft" || proposal.status === "sent");
 
-  /** Itens/valores ainda editáveis em rascunho ou enviada; cliente/lead são imutáveis após criação. */
-  const canEditProposalItems = canEditCommercialLines;
+  /** Edição completa no mesmo layout da criação (rascunho ou enviada, não faturada). */
+  const canOpenFullEditor = canEditCommercialLines;
 
-  const canEditDescription = !!canEditThis && !isInvoiced;
+  /** Publicar = enviar ao cliente (permissão de envio / link público, não só edição). */
+  const canPublishDraft = canManagePublicLink && proposal.status === "draft";
 
   /** Link revogado (`active === false`) bloqueia; falha ao carregar meta não bloqueia se já há URL válida. */
   const canUsePublicLinkActions = Boolean(effectivePublicUrl && publicLinkMeta?.active !== false);
-
-  const itemsDraftSummary = summarizeProposalLines(itemsDraft);
 
   const timelineLabel = (ev: { event_type: string; payload?: Record<string, unknown> }) => {
     const src = ev.payload?.source;
@@ -480,53 +426,126 @@ const ProposalDetails = () => {
   };
 
   const itemsSubtotal = proposal.items.reduce((s, it) => s + (Number(it.total) || 0), 0);
+  const itemsLineGross = proposal.items.reduce(
+    (s, it) => s + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0),
+    0,
+  );
+  const itemsDiscountTotal = proposal.items.reduce((s, it) => s + (Number(it.discount) || 0), 0);
 
-  const primaryAction =
-    canConvertToInvoice ? (
-      <Button className="w-full sm:w-auto" onClick={() => setConvertOpen(true)}>
-        <Receipt className="mr-2 h-4 w-4" />
-        Gerar fatura
-      </Button>
-    ) : canChangeStatus ? (
-      <Button className="w-full sm:w-auto" onClick={() => setIsAcceptDialogOpen(true)}>
-        <Check className="mr-2 h-4 w-4" />
-        Aceitar
-      </Button>
-    ) : canEditThis && proposal.status === "draft" ? (
-      <Button className="w-full sm:w-auto" variant="secondary" onClick={() => void handleMarkSent()}>
-        <Send className="mr-2 h-4 w-4" />
-        Marcar enviada
-      </Button>
-    ) : null;
+  /** Rodapé fixo só para publicar rascunho (evita duplicar com banner e menu). */
+  const showMobilePublishBar = mobileFlow && canPublishDraft;
+
+  const recipientLabel =
+    proposal.client_id ? "Cliente CRM" : proposal.lead_id ? "Lead comercial" : "Destinatário";
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div className="flex min-w-0 items-start gap-2">
-          <Button variant="outline" size="icon" className="shrink-0" onClick={goBack}>
+    <div
+      className={cn(
+        "space-y-5 sm:space-y-6",
+        showMobilePublishBar && "pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))]",
+      )}
+    >
+      {chatReturnTo ? (
+        <Alert className="border-primary/35 bg-primary/5">
+          <Link2 className="h-4 w-4 text-primary" />
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-sm text-foreground/90">
+              Proposta criada a partir do chat. Pode voltar à conversa para continuar o atendimento.
+            </span>
+            <Button type="button" size="sm" variant="secondary" className="shrink-0" onClick={() => navigate(chatReturnTo)}>
+              Voltar para conversa
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <div
+        className={cn(
+          "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4",
+          mobileFlow &&
+            "sticky top-0 z-20 -mx-4 border-b border-border/80 bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/85",
+        )}
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <Button variant="outline" size="icon" className="shrink-0" onClick={goBack} aria-label="Voltar">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-bold leading-tight sm:text-2xl">{proposal.title}</h1>
-              <Badge className={cn(statusColors[proposal.status] || "bg-gray-100 text-gray-800", "shrink-0")}>
-                {statusLabels[proposal.status] || proposal.status}
-              </Badge>
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h1 className="text-base font-bold leading-snug sm:text-2xl">{proposal.title}</h1>
+                <Badge
+                  className={cn(statusColors[proposal.status] || "bg-gray-100 text-gray-800", "shrink-0 text-xs font-medium")}
+                >
+                  {statusLabels[proposal.status] || proposal.status}
+                </Badge>
+              </div>
+              <div className="shrink-0 pt-0.5 md:hidden">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" size="icon" aria-label="Ações da proposta">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem asChild>
+                      <Link to="/proposals">
+                        <FileText className="mr-2 h-4 w-4" />
+                        Voltar à lista
+                      </Link>
+                    </DropdownMenuItem>
+                    {canOpenFullEditor && (
+                      <DropdownMenuItem asChild>
+                        <Link to={`/proposals/${proposal.id}/edit`}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Editar proposta
+                        </Link>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem disabled={!canUsePublicLinkActions} onClick={() => openPublicProposalPage()}>
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      Abrir proposta
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!canUsePublicLinkActions} onClick={() => void copyPublicUrl()}>
+                      <Copy className="mr-2 h-4 w-4" />
+                      Copiar link
+                    </DropdownMenuItem>
+                    {canPublishDraft && !showMobilePublishBar && (
+                      <DropdownMenuItem disabled={publishingProposal} onClick={() => void handlePublishProposal()}>
+                        <Send className="mr-2 h-4 w-4" />
+                        Publicar proposta
+                      </DropdownMenuItem>
+                    )}
+                    {canConvertToInvoice && (
+                      <DropdownMenuItem onClick={() => setConvertOpen(true)}>
+                        <Receipt className="mr-2 h-4 w-4" />
+                        Gerar fatura
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
-            <p className="mt-1 truncate text-sm text-muted-foreground">
+            <p className="mt-0.5 truncate text-sm text-muted-foreground">
               {proposal.client_id ? clientName : proposal.lead_id ? `Lead: ${clientName}` : clientName}
             </p>
           </div>
         </div>
 
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
-          <div className="hidden flex-wrap items-center justify-end gap-2 md:flex">
+        <div className="hidden shrink-0 flex-wrap items-center justify-end gap-2 md:flex">
             <Button variant="outline" asChild size="sm">
               <Link to="/proposals">
                 <FileText className="mr-2 h-4 w-4" />
                 Lista
               </Link>
             </Button>
+            {canOpenFullEditor && (
+              <Button type="button" size="sm" variant="outline" asChild>
+                <Link to={`/proposals/${proposal.id}/edit`}>
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Editar
+                </Link>
+              </Button>
+            )}
             <Button
               type="button"
               size="sm"
@@ -534,7 +553,7 @@ const ProposalDetails = () => {
               disabled={!canUsePublicLinkActions}
               title={
                 publicLinkMeta?.active === false
-                  ? "Link público revogado. Gere um novo na aba Faturamento, se disponível."
+                  ? "Link público revogado. Gere um novo na secção Faturamento, se disponível."
                   : !effectivePublicUrl
                     ? "URL do link não disponível. Verifique PROPOSAL_WEBHOOK_SECRET_KEY ou abra a proposta após criar no Kanban na mesma sessão."
                     : undefined
@@ -561,23 +580,11 @@ const ProposalDetails = () => {
               <Copy className="mr-2 h-4 w-4" />
               Copiar link
             </Button>
-            {canEditThis && proposal.status === "draft" && (
-              <Button variant="secondary" size="sm" onClick={() => void handleMarkSent()}>
-                <Send className="mr-2 h-4 w-4" />
-                Marcar enviada
+            {canPublishDraft && (
+              <Button variant="default" size="sm" disabled={publishingProposal} onClick={() => void handlePublishProposal()}>
+                {publishingProposal ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                Publicar
               </Button>
-            )}
-            {canChangeStatus && (
-              <>
-                <Button variant="destructive" size="sm" onClick={() => setIsRejectDialogOpen(true)}>
-                  <X className="mr-2 h-4 w-4" />
-                  Recusar
-                </Button>
-                <Button size="sm" onClick={() => setIsAcceptDialogOpen(true)}>
-                  <Check className="mr-2 h-4 w-4" />
-                  Aceitar
-                </Button>
-              </>
             )}
             {canConvertToInvoice && (
               <Button size="sm" onClick={() => setConvertOpen(true)}>
@@ -585,81 +592,60 @@ const ProposalDetails = () => {
                 Gerar fatura
               </Button>
             )}
-          </div>
-
-          <div className="flex items-center gap-2 md:hidden">
-            {primaryAction}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="icon" aria-label="Mais ações">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuItem asChild>
-                  <Link to="/proposals">
-                    <FileText className="mr-2 h-4 w-4" />
-                    Voltar à lista
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!canUsePublicLinkActions}
-                  onClick={() => openPublicProposalPage()}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Abrir proposta
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={!canUsePublicLinkActions} onClick={() => void copyPublicUrl()}>
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copiar link
-                </DropdownMenuItem>
-                {canEditThis && proposal.status === "draft" && (
-                  <DropdownMenuItem onClick={() => void handleMarkSent()}>
-                    <Send className="mr-2 h-4 w-4" />
-                    Marcar enviada
-                  </DropdownMenuItem>
-                )}
-                {canChangeStatus && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setIsRejectDialogOpen(true)} className="text-destructive">
-                      <X className="mr-2 h-4 w-4" />
-                      Recusar
-                    </DropdownMenuItem>
-                    {!canConvertToInvoice && (
-                      <DropdownMenuItem onClick={() => setIsAcceptDialogOpen(true)}>
-                        <Check className="mr-2 h-4 w-4" />
-                        Aceitar
-                      </DropdownMenuItem>
-                    )}
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
         </div>
       </div>
 
-      <Card className="border bg-muted/20 md:hidden">
-        <CardContent className="space-y-3 p-4 text-sm">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <span className="text-muted-foreground">Valor</span>
-            <span className="text-xl font-bold tabular-nums">{formatCurrency(proposal.amount)}</span>
+      {proposal.status === "sent" && !isInvoiced && (
+        <Alert>
+          <Link2 className="h-4 w-4" />
+          <AlertDescription className="text-sm text-muted-foreground">
+            Esta proposta está <strong>enviada</strong>. O cliente decide na <strong>página pública</strong> (atalhos na
+            secção Faturamento). O painel não substitui essa decisão.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+        <div className="rounded-xl border bg-card p-3 shadow-sm sm:p-4">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
+            <User className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+            Cliente
           </div>
-          <div className="flex flex-wrap justify-between gap-2 text-muted-foreground">
-            <span>Validade</span>
-            <span className="font-medium text-foreground">
-              {proposal.valid_until ? formatDateOnlyPtBr(proposal.valid_until) : "—"}
-            </span>
+          <p className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{clientName !== "—" ? clientName : "—"}</p>
+          <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">{recipientLabel}</p>
+        </div>
+        <div className="rounded-xl border bg-card p-3 shadow-sm sm:p-4">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
+            <Mail className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+            Responsável
           </div>
+          <p className="mt-2 break-all text-sm font-semibold leading-snug">{proposal.responsible_email || "—"}</p>
+        </div>
+        <div className="rounded-xl border bg-card p-3 shadow-sm sm:p-4">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
+            <Banknote className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+            Valor total
+          </div>
+          <p className="mt-2 text-lg font-bold tabular-nums leading-none sm:text-xl">{formatCurrency(proposal.amount)}</p>
+        </div>
+        <div className="rounded-xl border bg-card p-3 shadow-sm sm:p-4">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
+            <Calendar className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+            Validade
+          </div>
+          <p className="mt-2 text-sm font-semibold leading-snug">
+            {proposal.valid_until ? formatDateOnlyPtBr(proposal.valid_until) : "—"}
+          </p>
           {proposal.sent_date ? (
-            <div className="flex flex-wrap justify-between gap-2 text-muted-foreground">
-              <span>Enviada</span>
-              <span className="font-medium text-foreground">{formatDateOnlyPtBr(proposal.sent_date)}</span>
-            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">
+              Enviada em {formatDateOnlyPtBr(proposal.sent_date)}
+            </p>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground sm:text-xs">
+        O destinatário (cliente ou lead) é definido na criação da proposta e não pode ser alterado.
+      </p>
 
       {proposal.status === "accepted" && !isInvoiced && (
         <p className="text-sm text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
@@ -668,178 +654,135 @@ const ProposalDetails = () => {
         </p>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 sm:flex sm:flex-wrap sm:justify-start">
-          <TabsTrigger value="resumo" className="text-xs sm:text-sm">
-            Resumo
-          </TabsTrigger>
-          <TabsTrigger value="itens" className="text-xs sm:text-sm">
-            Itens
-          </TabsTrigger>
-          <TabsTrigger value="faturamento" className="text-xs sm:text-sm">
-            Faturamento
-          </TabsTrigger>
-          <TabsTrigger value="historico" className="text-xs sm:text-sm">
-            Histórico
-          </TabsTrigger>
-        </TabsList>
+      {showMobilePublishBar ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border/80 bg-background/95 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] backdrop-blur-md md:hidden">
+          <Button
+            className="w-full touch-manipulation"
+            size="lg"
+            disabled={publishingProposal}
+            onClick={() => void handlePublishProposal()}
+          >
+            {publishingProposal ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="mr-2 h-4 w-4" />
+            )}
+            Publicar proposta
+          </Button>
+        </div>
+      ) : null}
 
-        <TabsContent value="resumo" className="mt-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Visão comercial</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">
-                  {proposal.client_id ? "Cliente CRM" : proposal.lead_id ? "Lead" : "Destinatário"}
-                </p>
-                <p className="font-medium">{clientName !== "—" ? clientName : "—"}</p>
-                <p className="text-xs text-muted-foreground">
-                  O vínculo com cliente ou lead não pode ser alterado após a criação da proposta.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Responsável</p>
-                  <p className="font-medium text-sm break-all">{proposal.responsible_email || "—"}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Valor total</p>
-                  <p className="font-semibold text-lg">{formatCurrency(proposal.amount)}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Validade</p>
-                  <p className="font-medium">
-                    {proposal.valid_until ? formatDateOnlyPtBr(proposal.valid_until) : "—"}
-                  </p>
-                </div>
-              </div>
-              <Separator />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                {proposal.sent_date && (
-                  <div>
-                    <span className="text-muted-foreground">Enviada em: </span>
-                    {formatDateOnlyPtBr(proposal.sent_date)}
-                  </div>
-                )}
-                <div>
-                  <span className="text-muted-foreground">Itens: </span>
-                  {proposal.items.length}
-                </div>
-              </div>
-              <Separator />
-              <div className="space-y-3">
-                <h3 className="font-medium">Descrição / conteúdo comercial</h3>
-                {canEditDescription ? (
-                  <>
-                    <RichTextEditor
-                      value={descriptionDraft}
-                      onChange={setDescriptionDraft}
-                      placeholder="Contexto da oferta, escopo, condições comerciais..."
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={descriptionSaving}
-                      onClick={() => void handleSaveDescription()}
-                    >
-                      {descriptionSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      Salvar descrição
-                    </Button>
-                  </>
-                ) : proposal.description?.trim() ? (
-                  isProposalDescriptionHtml(proposal.description) ? (
-                    <div
-                      className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground border rounded-md p-4 bg-muted/20"
-                      dangerouslySetInnerHTML={{ __html: sanitizeProposalHtml(proposal.description) }}
-                    />
-                  ) : (
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap border rounded-md p-4 bg-muted/20">
-                      {proposal.description}
-                    </p>
-                  )
-                ) : (
-                  <p className="text-sm text-muted-foreground">Nenhuma descrição cadastrada.</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="itens" className="mt-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <CardTitle className="text-lg">Itens / serviços</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  {canEditProposalItems ? (
-                    <>
-                      Rascunho: subtotal {formatCurrency(itemsDraftSummary.gross)} · total previsto{" "}
-                      {formatCurrency(itemsDraftSummary.total)} · gravado: {formatCurrency(proposal.amount)}
-                    </>
-                  ) : (
-                    <>
-                      Soma das linhas: {formatCurrency(itemsSubtotal)} · Total: {formatCurrency(proposal.amount)}
-                    </>
-                  )}
-                </p>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {canEditProposalItems && (
-                <div className="mb-4 space-y-3 rounded-lg border bg-muted/20 p-4">
-                  <ProposalItemsEditor items={itemsDraft} onChange={setItemsDraft} catalog={catalog} />
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
-                    <p className="text-xs text-muted-foreground">
-                      Pré-visualização: subtotal {formatCurrency(itemsDraftSummary.gross)} · descontos{" "}
-                      {formatCurrency(itemsDraftSummary.discountSum)} · total{" "}
-                      <span className="font-medium text-foreground">
-                        {formatCurrency(itemsDraftSummary.total)}
-                      </span>
-                    </p>
-                    <Button type="button" size="sm" disabled={itemsSaving} onClick={() => void handleSaveItems()}>
-                      {itemsSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      Salvar itens e total
-                    </Button>
-                  </div>
-                </div>
+      <div className="grid items-start gap-6 lg:grid-cols-12 lg:gap-8">
+        <div className="min-w-0 space-y-8 lg:col-span-8">
+          <section className="space-y-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-base font-semibold tracking-tight sm:text-lg">Conteúdo comercial</h2>
+              {canOpenFullEditor && (
+                <Button type="button" size="sm" variant="outline" className="shrink-0" asChild>
+                  <Link to={`/proposals/${proposal.id}/edit`}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Editar conteúdo
+                  </Link>
+                </Button>
               )}
-              {!canEditProposalItems && (
-                <>
-                <div className="hidden rounded-md border overflow-x-auto md:block">
+            </div>
+            {proposal.description?.trim() ? (
+              isProposalDescriptionHtml(proposal.description) ? (
+                <div
+                  className={cn(
+                    "prose prose-sm dark:prose-invert max-w-none overflow-x-hidden break-words text-foreground/95",
+                    "rounded-xl border border-border/80 bg-muted/10 px-4 py-5 sm:max-w-3xl sm:px-6 sm:py-6",
+                    "[&_p]:leading-relaxed [&_p+p]:mt-3 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_h1]:text-xl [&_h2]:text-lg [&_h3]:text-base",
+                    "[&_img]:max-w-full [&_img]:h-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_pre]:max-w-full [&_pre]:overflow-x-auto",
+                  )}
+                  dangerouslySetInnerHTML={{ __html: sanitizeProposalHtml(proposal.description) }}
+                />
+              ) : (
+                <p className="max-w-none overflow-x-hidden break-words rounded-xl border border-border/80 bg-muted/10 px-4 py-5 text-sm leading-relaxed whitespace-pre-wrap text-foreground/95 sm:max-w-3xl sm:px-6">
+                  {proposal.description}
+                </p>
+              )
+            ) : (
+              <p className="text-sm text-muted-foreground">Nenhuma descrição cadastrada.</p>
+            )}
+          </section>
+
+          <section>
+            <Card className="overflow-hidden border-border/80 shadow-sm">
+              <CardHeader className="space-y-1 pb-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                  <CardTitle className={cn("text-base sm:text-lg")}>Itens e valores</CardTitle>
+                  {canOpenFullEditor && (
+                    <Button type="button" size="sm" variant="outline" asChild>
+                      <Link to={`/proposals/${proposal.id}/edit`}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Editar itens
+                      </Link>
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  {proposal.items.length} {proposal.items.length === 1 ? "linha" : "linhas"}
+                  {proposal.items.length > 0
+                    ? ` · Soma das linhas ${formatCurrency(itemsSubtotal)}`
+                    : " · total definido manualmente"}
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="hidden overflow-x-auto rounded-lg border md:block">
                   <div className="min-w-[640px]">
-                    <div className="grid grid-cols-12 bg-muted px-4 py-2 text-xs sm:text-sm font-medium gap-2">
+                    <div className="grid grid-cols-12 gap-2 bg-muted/80 px-4 py-2.5 text-xs font-medium text-muted-foreground sm:text-sm">
                       <div className="col-span-4">Descrição</div>
                       <div className="col-span-2 text-center">Qtd</div>
                       <div className="col-span-2 text-right">Unit.</div>
                       <div className="col-span-2 text-right">Desc.</div>
-                      <div className="col-span-2 text-right">Subtotal</div>
+                      <div className="col-span-2 text-right">Total linha</div>
                     </div>
                     {proposal.items.length === 0 ? (
-                      <div className="px-4 py-6 text-sm text-muted-foreground">
+                      <div className="px-4 py-8 text-sm text-muted-foreground">
                         Nenhum item cadastrado — o total vem do valor único da proposta.
                       </div>
                     ) : (
                       proposal.items.map((item, index) => (
                         <div
                           key={String(item.id ?? index)}
-                          className="grid grid-cols-12 px-4 py-3 text-sm border-t gap-2 items-center"
+                          className="grid grid-cols-12 items-center gap-2 border-t px-4 py-3 text-sm"
                         >
-                          <div className="col-span-4">{item.description}</div>
-                          <div className="col-span-2 text-center">{item.quantity}</div>
-                          <div className="col-span-2 text-right">{formatCurrency(item.unitPrice)}</div>
-                          <div className="col-span-2 text-right">{formatCurrency(item.discount ?? 0)}</div>
-                          <div className="col-span-2 text-right font-medium">{formatCurrency(item.total)}</div>
+                          <div className="col-span-4 break-words">{item.description}</div>
+                          <div className="col-span-2 text-center tabular-nums">{item.quantity}</div>
+                          <div className="col-span-2 text-right tabular-nums">{formatCurrency(item.unitPrice)}</div>
+                          <div className="col-span-2 text-right tabular-nums">{formatCurrency(item.discount ?? 0)}</div>
+                          <div className="col-span-2 text-right font-medium tabular-nums">{formatCurrency(item.total)}</div>
                         </div>
                       ))
                     )}
-                    <div className="grid grid-cols-12 px-4 py-3 text-sm font-medium border-t bg-muted/50 gap-2">
-                      <div className="col-span-10 text-right">Total:</div>
-                      <div className="col-span-2 text-right">{formatCurrency(proposal.amount)}</div>
+                    <div className="space-y-1 border-t bg-muted/25 px-4 py-3 text-sm">
+                      {proposal.items.length > 0 ? (
+                        <>
+                          <div className="flex justify-between gap-4 tabular-nums text-muted-foreground">
+                            <span>Subtotal (bruto)</span>
+                            <span>{formatCurrency(itemsLineGross)}</span>
+                          </div>
+                          {itemsDiscountTotal > 0 ? (
+                            <div className="flex justify-between gap-4 tabular-nums text-muted-foreground">
+                              <span>Descontos</span>
+                              <span>−{formatCurrency(itemsDiscountTotal)}</span>
+                            </div>
+                          ) : null}
+                          <div className="flex justify-between gap-4 tabular-nums text-muted-foreground">
+                            <span>Soma das linhas</span>
+                            <span>{formatCurrency(itemsSubtotal)}</span>
+                          </div>
+                        </>
+                      ) : null}
+                      <div className="flex justify-between gap-4 border-t border-border/60 pt-2 text-base font-semibold tabular-nums">
+                        <span>Total da proposta</span>
+                        <span>{formatCurrency(proposal.amount)}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
+
                 <div className="space-y-2 md:hidden">
                   {proposal.items.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
@@ -847,164 +790,179 @@ const ProposalDetails = () => {
                     </p>
                   ) : (
                     proposal.items.map((item, index) => (
-                      <div key={String(item.id ?? index)} className="rounded-lg border bg-card p-3 text-sm shadow-sm">
+                      <div
+                        key={String(item.id ?? index)}
+                        className="rounded-xl border border-border/80 bg-card p-3.5 text-sm shadow-sm"
+                      >
                         <p className="font-medium leading-snug">{item.description}</p>
-                        <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                           <span>Qtd {item.quantity}</span>
                           <span>Unit. {formatCurrency(item.unitPrice)}</span>
+                          {(Number(item.discount) || 0) > 0 ? (
+                            <span>Desc. {formatCurrency(item.discount ?? 0)}</span>
+                          ) : null}
                         </div>
-                        <p className="mt-2 text-right text-base font-semibold tabular-nums">
-                          {formatCurrency(item.total)}
-                        </p>
+                        <p className="mt-3 text-right text-base font-semibold tabular-nums">{formatCurrency(item.total)}</p>
                       </div>
                     ))
                   )}
-                  <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-sm font-medium">
-                    <span>Total</span>
-                    <span className="tabular-nums">{formatCurrency(proposal.amount)}</span>
+                  <div className="space-y-1.5 rounded-xl border border-border/80 bg-muted/20 px-3 py-3 text-sm">
+                    {proposal.items.length > 0 ? (
+                      <>
+                        <div className="flex justify-between gap-2 tabular-nums text-muted-foreground">
+                          <span>Subtotal (bruto)</span>
+                          <span>{formatCurrency(itemsLineGross)}</span>
+                        </div>
+                        {itemsDiscountTotal > 0 ? (
+                          <div className="flex justify-between gap-2 tabular-nums text-muted-foreground">
+                            <span>Descontos</span>
+                            <span>−{formatCurrency(itemsDiscountTotal)}</span>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
+                    <div className="flex justify-between gap-2 border-t border-border/60 pt-2 font-semibold tabular-nums">
+                      <span>Total</span>
+                      <span>{formatCurrency(proposal.amount)}</span>
+                    </div>
                   </div>
                 </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+              </CardContent>
+            </Card>
+          </section>
 
-        <TabsContent value="faturamento" className="mt-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Faturamento</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-                <div className="text-sm font-medium">Após aceite pelo link público</div>
-                <p className="text-xs text-muted-foreground">
-                  Define o que o sistema faz quando o cliente aceita pela página pública (não altera o botão &quot;Gerar
-                  fatura&quot; no painel). Aceite feito só por você no CRM segue sem disparar estes gatilhos.
+          <section>
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base sm:text-lg">Faturamento e link público</CardTitle>
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  Política após aceite, gestão do link e vínculo com faturas.
                 </p>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 max-w-md">
-                  <Select
-                    value={proposal.post_accept_billing_mode ?? "none"}
-                    onValueChange={(v) => void handleBillingModeChange(v as PostAcceptBillingMode)}
-                    disabled={!canEditBillingPolicy || billingSaving}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Política" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Sem automação (apenas timeline)</SelectItem>
-                      <SelectItem value="notify_team">Notificar responsável no CRM</SelectItem>
-                      <SelectItem value="auto_pending_invoice">Gerar fatura pendente automaticamente</SelectItem>
-                    </SelectContent>
-                  </Select>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-xl border border-border/80 bg-muted/20 p-4 space-y-3">
+                  <div className="text-sm font-medium">Após aceite pelo link público</div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Define o que o sistema faz quando o <strong>cliente aceita na página pública</strong>. Não altera o
+                    botão <strong className="text-foreground">Gerar fatura</strong> nas ações do topo.
+                  </p>
+                  <div className="flex flex-col gap-2 max-w-md">
+                    <Select
+                      value={proposal.post_accept_billing_mode ?? "none"}
+                      onValueChange={(v) => void handleBillingModeChange(v as PostAcceptBillingMode)}
+                      disabled={!canEditBillingPolicy || billingSaving}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Política" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Sem automação (apenas timeline)</SelectItem>
+                        <SelectItem value="notify_team">Notificar responsável no CRM</SelectItem>
+                        <SelectItem value="auto_pending_invoice">Gerar fatura pendente automaticamente</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {proposal.post_accept_billing_mode === "auto_pending_invoice" && (
+                    <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                      A fatura automática usa as mesmas regras e validações do fluxo manual (gateway, dados do cliente,
+                      etc.). Se falhar, o responsável recebe um aviso no CRM.
+                    </p>
+                  )}
                 </div>
-                {proposal.post_accept_billing_mode === "auto_pending_invoice" && (
-                  <p className="text-xs text-amber-800 dark:text-amber-200">
-                    A fatura automática usa as mesmas regras e validações do fluxo manual (gateway, dados do cliente,
-                    etc.). Se falhar, o responsável recebe um aviso no CRM.
+
+                <div className="rounded-xl border border-border/80 bg-muted/20 p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Link2 className="h-4 w-4 shrink-0" />
+                    Link público para o cliente
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    O cliente abre sem login. O link acompanha a proposta (pré-visualização em rascunho). Aceite e recusa
+                    pelo link só funcionam enquanto a proposta está <strong>enviada</strong>, dentro da validade e sem
+                    fatura gerada.
+                  </p>
+                  {publicLinkMeta?.active && publicLinkMeta.created_at && (
+                    <p className="text-xs text-muted-foreground">
+                      Link ativo (emitido em {format(new Date(publicLinkMeta.created_at), "dd/MM/yyyy HH:mm")}).
+                    </p>
+                  )}
+                  {lastPublicUrl && (
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input readOnly value={lastPublicUrl} className="min-w-0 font-mono text-xs" />
+                      <Button type="button" variant="secondary" size="sm" className="shrink-0" onClick={() => void copyPublicUrl()}>
+                        <Copy className="h-4 w-4 mr-2" />
+                        Copiar
+                      </Button>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {canManagePublicLink && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={publicLinkBusy}
+                        onClick={() => void issuePublicLink()}
+                      >
+                        {publicLinkBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                        {publicLinkMeta?.active ? "Gerar novo link (revoga o anterior)" : "Gerar link público"}
+                      </Button>
+                    )}
+                    {canManagePublicLink && publicLinkMeta?.active && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={publicLinkBusy}
+                        onClick={() => void revokePublicLink()}
+                      >
+                        Revogar link
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {!proposal.client_id && proposal.status === "accepted" && (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 dark:bg-amber-950/30 dark:border-amber-900">
+                    Associe um cliente à proposta antes de gerar fatura.
                   </p>
                 )}
-              </div>
-
-              <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Link2 className="h-4 w-4" />
-                  Link público para o cliente
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  O cliente abre sem login. O link é criado automaticamente com a proposta (pré-visualização em rascunho).
-                  Aceite e recusa pelo link só funcionam enquanto a proposta está <strong>enviada</strong>, dentro da
-                  validade e sem fatura gerada.
-                </p>
-                {publicLinkMeta?.active && publicLinkMeta.created_at && (
-                  <p className="text-xs text-muted-foreground">
-                    Link ativo (emitido em {format(new Date(publicLinkMeta.created_at), "dd/MM/yyyy HH:mm")}).
-                  </p>
-                )}
-                {lastPublicUrl && (
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <Input readOnly value={lastPublicUrl} className="font-mono text-xs" />
-                    <Button type="button" variant="secondary" size="sm" onClick={() => void copyPublicUrl()}>
-                      <Copy className="h-4 w-4 mr-2" />
-                      Copiar
+                {isInvoiced && proposal.converted_invoice_id && (
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <p className="text-sm">
+                      Fatura{" "}
+                      <span className="font-mono font-medium">
+                        {proposal.converted_invoice_number || proposal.converted_invoice_id.slice(0, 8)}
+                      </span>
+                    </p>
+                    <Button variant="outline" size="sm" className="w-fit" asChild>
+                      <Link to={`/customer-invoices/${proposal.converted_invoice_id}`}>
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        Abrir fatura
+                      </Link>
                     </Button>
                   </div>
                 )}
-                <div className="flex flex-wrap gap-2">
-                  {canManagePublicLink && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={publicLinkBusy}
-                      onClick={() => void issuePublicLink()}
-                    >
-                      {publicLinkBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      {publicLinkMeta?.active ? "Gerar novo link (revoga o anterior)" : "Gerar link público"}
-                    </Button>
-                  )}
-                  {canManagePublicLink && publicLinkMeta?.active && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={publicLinkBusy}
-                      onClick={() => void revokePublicLink()}
-                    >
-                      Revogar link
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {!proposal.client_id && proposal.status === "accepted" && (
-                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                  Associe um cliente à proposta antes de gerar fatura.
-                </p>
-              )}
-              {isInvoiced && proposal.converted_invoice_id && (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <p className="text-sm">
-                    Fatura{" "}
-                    <span className="font-mono font-medium">
-                      {proposal.converted_invoice_number || proposal.converted_invoice_id.slice(0, 8)}
-                    </span>
+                {!isInvoiced && (
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Quando a proposta estiver <strong>aceita</strong>, use <strong className="text-foreground">Gerar fatura</strong>{" "}
+                    nas ações do topo (ou no menu no telemóvel) para criar uma fatura manual vinculada (campo{" "}
+                    <code className="text-xs">proposal_id</code>) com cópia dos itens e totais.
                   </p>
-                  <Button variant="outline" size="sm" asChild>
-                    <Link to={`/customer-invoices/${proposal.converted_invoice_id}`}>
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      Abrir fatura
-                    </Link>
-                  </Button>
-                </div>
-              )}
-              {!isInvoiced && (
-                <p className="text-sm text-muted-foreground">
-                  Quando a proposta estiver <strong>aceita</strong>, use &quot;Gerar fatura&quot; no topo para criar uma
-                  fatura manual vinculada (campo <code className="text-xs">proposal_id</code>) com cópia dos itens e
-                  totais.
-                </p>
-              )}
-              {canConvertToInvoice && (
-                <Button onClick={() => setConvertOpen(true)}>
-                  <Receipt className="mr-2 h-4 w-4" />
-                  Gerar fatura a partir desta proposta
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+                )}
+              </CardContent>
+            </Card>
+          </section>
 
-        <TabsContent value="historico" className="mt-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Linha do tempo</CardTitle>
-            </CardHeader>
-            <CardContent>
+          <Collapsible defaultOpen={!mobileFlow} className="group rounded-xl border border-border/80 bg-card shadow-sm">
+            <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40">
+              <span>Histórico e linha do tempo</span>
+              <ChevronDown className="h-4 w-4 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="px-4 pb-4 pt-1">
               {!proposal.timeline?.length ? (
-                <p className="text-sm text-muted-foreground">Nenhum evento registrado ainda.</p>
+                <p className="text-sm text-muted-foreground py-2">Nenhum evento registrado ainda.</p>
               ) : (
-                <ul className="space-y-3 border-l-2 border-muted pl-4 ml-1">
+                <ul className="space-y-3 border-l-2 border-muted pl-4 ml-1 py-2">
                   {proposal.timeline.map((ev) => (
                     <li key={ev.id} className="text-sm relative">
                       <span className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-primary" />
@@ -1024,59 +982,59 @@ const ProposalDetails = () => {
                   ))}
                 </ul>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
+
+        <aside className="hidden lg:col-span-4 lg:block">
+          <div className="sticky top-20 space-y-4">
+            <div className="rounded-xl border border-border/80 bg-muted/15 p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Acesso rápido</p>
+              <div className="mt-3 flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start"
+                  disabled={!canUsePublicLinkActions}
+                  onClick={() => openPublicProposalPage()}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4 shrink-0" />
+                  Abrir página pública
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start"
+                  disabled={!canUsePublicLinkActions}
+                  onClick={() => void copyPublicUrl()}
+                >
+                  <Copy className="mr-2 h-4 w-4 shrink-0" />
+                  Copiar link
+                </Button>
+                <Separator className="my-1" />
+                <Button type="button" variant="ghost" size="sm" className="w-full justify-start" asChild>
+                  <Link to="/proposals">
+                    <FileText className="mr-2 h-4 w-4 shrink-0" />
+                    Todas as propostas
+                  </Link>
+                </Button>
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+                Gestão completa do link (gerar / revogar) continua na secção <strong className="text-foreground/90">Faturamento</strong>{" "}
+                ao lado.
+              </p>
+            </div>
+          </div>
+        </aside>
+      </div>
 
       {isTerminal && proposal.status !== "invoiced" && (
         <p className="text-xs text-muted-foreground">
           Proposta encerrada ({statusLabels[proposal.status]}). Alterações comerciais estão bloqueadas no backend.
         </p>
       )}
-
-      <Dialog open={isAcceptDialogOpen} onOpenChange={setIsAcceptDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Aceitar proposta</DialogTitle>
-            <DialogDescription>
-              A proposta passará para aceita e os valores ficarão protegidos até a geração da fatura.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4 space-y-1 text-sm">
-            <p className="font-medium">{proposal.title}</p>
-            <p className="text-muted-foreground">Cliente: {clientName}</p>
-            <p className="text-muted-foreground">Valor: {formatCurrency(proposal.amount)}</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAcceptDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={() => void handleAccept()}>Confirmar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isRejectDialogOpen} onOpenChange={setIsRejectDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Recusar proposta</DialogTitle>
-            <DialogDescription>A proposta será marcada como recusada.</DialogDescription>
-          </DialogHeader>
-          <div className="py-4 space-y-1 text-sm">
-            <p className="font-medium">{proposal.title}</p>
-            <p className="text-muted-foreground">Cliente: {clientName}</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRejectDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button variant="destructive" onClick={() => void handleReject()}>
-              Confirmar recusa
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={convertOpen} onOpenChange={setConvertOpen}>
         <DialogContent>

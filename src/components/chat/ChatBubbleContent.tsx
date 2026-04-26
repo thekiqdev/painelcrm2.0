@@ -90,18 +90,6 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     '';
   const docName = mediaFileName(message);
 
-  if (import.meta.env.DEV && (kind === 'image' || (message.media?.length ?? 0) > 0)) {
-    console.log('[ChatBubbleContent]', {
-      id: message.id,
-      contractKind: c?.kind,
-      contractMedia0UrlLen:
-        typeof c?.media?.[0]?.url === 'string' ? c.media[0].url.length : null,
-      rawMedia0UrlLen:
-        typeof message.media?.[0]?.url === 'string' ? message.media[0].url.length : null,
-      resolvedUrlLen: typeof url === 'string' ? url.length : url ? 'non-string' : 0,
-    });
-  }
-
   const isAudioKind =
     kind === 'audio' ||
     (!!mime && typeof mime === 'string' && mime.startsWith('audio/'));

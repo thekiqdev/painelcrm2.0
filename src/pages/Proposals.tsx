@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, FileText, Loader2, Trash2, Eye, Pencil, ExternalLink, Search, X, Filter } from "lucide-react";
+import {
+  Plus,
+  FileText,
+  Loader2,
+  Trash2,
+  Eye,
+  Pencil,
+  ExternalLink,
+  Search,
+  X,
+  Filter,
+  Send,
+  CheckCircle2,
+  AlertCircle,
+  Layers,
+} from "lucide-react";
 import {
   Table,
   TableBody,
@@ -43,8 +58,10 @@ import {
 } from "@/components/ui/select";
 import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
 import { getMyTenantUsers, type TenantUser } from "@/services/tenantLimits";
-import { getStoredProposalPublicUrl } from "@/utils/proposalPublicLinkSession";
+import { getStoredProposalPublicUrl, setStoredProposalPublicUrl } from "@/utils/proposalPublicLinkSession";
 import { applyUrlPatch } from "@/lib/listFiltersUrl";
+import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<Proposal["status"], string> = {
   draft: "Rascunho",
@@ -56,27 +73,68 @@ const STATUS_LABELS: Record<Proposal["status"], string> = {
 };
 
 const STATUS_CLASS: Record<Proposal["status"], string> = {
-  draft: "bg-gray-100 text-gray-800",
-  sent: "bg-amber-100 text-amber-800",
-  accepted: "bg-green-100 text-green-800",
-  rejected: "bg-red-100 text-red-800",
-  expired: "bg-red-100 text-red-800",
-  invoiced: "bg-blue-100 text-blue-800",
+  draft: "bg-muted text-muted-foreground border border-border/60",
+  sent: "bg-amber-100 text-amber-950 border border-amber-200/80 dark:bg-amber-950/35 dark:text-amber-100 dark:border-amber-800/50",
+  accepted: "bg-emerald-100 text-emerald-950 border border-emerald-200/80 dark:bg-emerald-950/35 dark:text-emerald-100 dark:border-emerald-800/50",
+  rejected: "bg-red-100 text-red-900 border border-red-200/80 dark:bg-red-950/40 dark:text-red-100 dark:border-red-900/50",
+  expired: "bg-red-100 text-red-900 border border-red-200/80 dark:bg-red-950/40 dark:text-red-100 dark:border-red-900/50",
+  invoiced: "bg-blue-100 text-blue-950 border border-blue-200/80 dark:bg-blue-950/40 dark:text-blue-100 dark:border-blue-900/50",
 };
+
+function proposalStatusBadgeClass(status: Proposal["status"]): string {
+  return cn(
+    "inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium tabular-nums",
+    STATUS_CLASS[status],
+  );
+}
+
+/** Comparador de datas YYYY-MM-DD (sem horário). */
+function isYmdBeforeToday(ymd: string): boolean {
+  const t = ymd.trim().slice(0, 10);
+  if (t.length < 10) return false;
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, "0");
+  const d = String(today.getDate()).padStart(2, "0");
+  const todayStr = `${y}-${m}-${d}`;
+  return t < todayStr;
+}
+
+function daysUntilYmd(ymd: string): number | null {
+  const t = ymd.trim().slice(0, 10);
+  if (t.length < 10) return null;
+  const [yy, mm, dd] = t.split("-").map(Number);
+  const end = new Date(yy, mm - 1, dd);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  return Math.round((end.getTime() - today.getTime()) / 86400000);
+}
 
 function proposalCode(id: string): string {
   return `PROP-${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
 }
 
-function tryOpenStoredPublicProposal(proposalId: string): void {
-  const u = getStoredProposalPublicUrl(proposalId);
-  if (u) {
-    window.open(u, "_blank", "noopener,noreferrer");
+function resolveProposalPublicUrl(p: Proposal): string | null {
+  const raw = p.public_link_path?.trim();
+  if (raw) {
+    if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+    const path = raw.startsWith("/") ? raw : `/${raw}`;
+    return `${window.location.origin}${path}`;
+  }
+  return getStoredProposalPublicUrl(p.id) ?? null;
+}
+
+/** Abre a página pública da proposta (`/proposal-view/:token`), em nova aba. */
+function openProposalPublicPage(p: Proposal): void {
+  const url = resolveProposalPublicUrl(p);
+  if (url) {
+    window.open(url, "_blank", "noopener,noreferrer");
     return;
   }
-  toast.message("Link público indisponível neste navegador", {
+  toast.message("Link público indisponível", {
     description:
-      "Abra o detalhe da proposta, marque como enviada se necessário e gere o link na aba Faturamento. A URL fica guardada nesta sessão após gerar ou copiar.",
+      "Esta proposta pode não ter link público ainda. Abra o detalhe e use Publicar proposta (rascunho) ou gere o link na área de faturamento, se aplicável.",
   });
 }
 
@@ -96,14 +154,46 @@ function parseConversionFromUrl(raw: string | null): string {
   return "__all__";
 }
 
+function ValidadeTableCell({ p }: { p: Proposal }) {
+  const raw = p.valid_until;
+  if (!raw) return <span className="text-sm text-muted-foreground">—</span>;
+  const dateStr = formatDateOnlyPtBr(raw);
+  const past = isYmdBeforeToday(raw);
+  const dLeft = daysUntilYmd(raw);
+  if (p.status === "expired" || (past && (p.status === "sent" || p.status === "draft"))) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-medium text-destructive tabular-nums">{dateStr}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-destructive/90">Vencida</span>
+      </div>
+    );
+  }
+  if (p.status === "sent" && dLeft !== null && dLeft >= 0 && dLeft <= 7) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-medium text-amber-800 tabular-nums dark:text-amber-300">{dateStr}</span>
+        <span className="text-[10px] text-muted-foreground">
+          {dLeft === 0 ? "Vence hoje" : `Em ${dLeft} dia(s)`}
+        </span>
+      </div>
+    );
+  }
+  return <span className="text-sm text-muted-foreground tabular-nums">{dateStr}</span>;
+}
+
+const summaryCardActiveRing =
+  "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]";
+
 const Proposals = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { canCreate, canEditRecord, canDeleteRecord, loading: permLoading } = useModulePermissions();
+  const { canCreate, canEditRecord, canDeleteRecord, canProposalSendRecord, loading: permLoading } =
+    useModulePermissions();
   const [list, setList] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
+  const [publishingProposalId, setPublishingProposalId] = useState<string | null>(null);
 
   const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
   const [debouncedQ, setDebouncedQ] = useState(() => searchParams.get("q") ?? "");
@@ -250,6 +340,38 @@ const Proposals = () => {
     }
   };
 
+  const handlePublishProposalFromList = async (p: Proposal) => {
+    if (!user?.id) return;
+    if (p.status !== "draft") return;
+    if (!canProposalSendRecord(p.user_id, user.id)) {
+      toast.error("Sem permissão para publicar esta proposta");
+      return;
+    }
+    setPublishingProposalId(p.id);
+    try {
+      const updated = await proposalsService.updateProposal(p.id, {
+        status: "sent",
+        sent_date: format(new Date(), "yyyy-MM-dd"),
+      });
+      const path = updated.public_link_path?.trim();
+      if (path) {
+        const full = `${window.location.origin}${path.startsWith("/") ? path : `/${path}`}`;
+        setStoredProposalPublicUrl(p.id, full);
+      }
+      toast.success("Proposta publicada. Status atualizado para Enviada; notificações de envio disparadas se configuradas.");
+      await loadList();
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      if (e.code === "PROPOSAL_SENT_REQUIRES_PUBLIC_LINK") {
+        toast.error(e.message || "Não foi possível gerar o link público.");
+      } else {
+        toast.error(e instanceof Error ? e.message : "Erro ao publicar");
+      }
+    } finally {
+      setPublishingProposalId(null);
+    }
+  };
+
   const clearFilters = () => {
     setSearchInput("");
     setDebouncedQ("");
@@ -273,20 +395,75 @@ const Proposals = () => {
     validityFilter !== "__all__" ||
     conversionFilter !== "__all__";
 
+  const listStats = useMemo(() => {
+    const total = list.length;
+    const abertas = list.filter((p) => p.status === "sent").length;
+    const aceitas = list.filter((p) => p.status === "accepted" || p.status === "invoiced").length;
+    const vencidas = list.filter(
+      (p) => p.status === "expired" || (p.valid_until && new Date(p.valid_until) < new Date() && p.status === "sent"),
+    ).length;
+    return { total, abertas, aceitas, vencidas };
+  }, [list]);
+
+  const cardTotalActive = !hasActiveFilters;
+  const cardAbertasActive = statusFilter === "sent";
+  const cardAceitasActive = statusFilter === "accepted" || statusFilter === "invoiced";
+  const cardVencidasActive = validityFilter === "expired";
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-bold">Propostas / Orçamentos</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold tracking-tight">Propostas</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Pipeline comercial: envios, respostas e conversão em faturas.
+          </p>
+        </div>
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+          <Button type="button" variant="outline" size="sm" className="sm:h-10" onClick={() => navigate("/proposals/templates")}>
+            <FileText className="mr-2 h-4 w-4" />
+            Modelos
+          </Button>
+          {canCreateProposal ? (
+            <Button type="button" size="sm" className="sm:h-10" asChild>
+              <Link to="/proposals/new">
+                <Plus className="mr-2 h-4 w-4" />
+                Nova proposta
+              </Link>
+            </Button>
+          ) : (
+            <Button type="button" size="sm" className="sm:h-10" disabled>
+              <Plus className="mr-2 h-4 w-4" />
+              Nova proposta
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-10 pl-9"
+              placeholder="Buscar por título ou descrição"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              aria-label="Buscar propostas"
+            />
+          </div>
           <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
             <SheetTrigger asChild>
-              <Button type="button" variant="outline" size="sm" className="gap-1 md:hidden">
+              <Button type="button" variant="outline" className="h-10 shrink-0 gap-1.5 px-3 md:hidden">
                 <Filter className="h-4 w-4" />
                 Filtros
-                {hasActiveFilters ? <span className="ml-1 h-2 w-2 rounded-full bg-primary" aria-hidden /> : null}
+                {hasActiveFilters ? <span className="ml-0.5 h-2 w-2 rounded-full bg-primary" aria-hidden /> : null}
               </Button>
             </SheetTrigger>
-            <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto rounded-t-2xl pb-[max(1.25rem,env(safe-area-inset-bottom))] md:hidden">
+            <SheetContent
+              side="bottom"
+              className="max-h-[92vh] overflow-y-auto rounded-t-2xl pb-[max(1.25rem,env(safe-area-inset-bottom))] md:hidden"
+            >
               <SheetHeader className="text-left">
                 <SheetTitle>Filtros</SheetTitle>
                 <SheetDescription>Busca e critérios da lista.</SheetDescription>
@@ -391,113 +568,186 @@ const Proposals = () => {
           </Sheet>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => navigate("/proposals/templates")}>
-            <FileText className="mr-2 h-4 w-4" />
-            Modelos
-          </Button>
-          <Button disabled={!canCreateProposal} asChild>
-            <Link to="/proposals/new">
-              <Plus className="mr-2 h-4 w-4" />
-              Nova proposta
-            </Link>
-          </Button>
+        <div className="hidden md:grid md:grid-cols-4 md:gap-2">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por status">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Todos os status</SelectItem>
+              {(Object.keys(STATUS_LABELS) as Proposal["status"][]).map((s) => (
+                <SelectItem key={s} value={s}>
+                  {STATUS_LABELS[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={validityFilter} onValueChange={setValidityFilter}>
+            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por validade">
+              <SelectValue placeholder="Validade" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Validade: todas</SelectItem>
+              <SelectItem value="valid">Dentro do prazo / sem data</SelectItem>
+              <SelectItem value="expired">Vencidas (por data)</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={conversionFilter} onValueChange={setConversionFilter}>
+            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por faturamento">
+              <SelectValue placeholder="Faturamento" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Faturamento: todas</SelectItem>
+              <SelectItem value="yes">Com fatura</SelectItem>
+              <SelectItem value="no">Sem fatura</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={ownerFilter} onValueChange={setOwnerFilter}>
+            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por responsável">
+              <SelectValue placeholder="Responsável" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Todos os responsáveis</SelectItem>
+              <SelectItem value="__mine__">Minhas propostas</SelectItem>
+              {tenantUsers.map((u) => (
+                <SelectItem key={u.id} value={u.id}>
+                  {u.full_name?.trim() || u.email}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </div>
-
-      <div className="hidden space-y-3 rounded-lg border bg-card p-4 md:block">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[200px] space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Buscar</Label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                placeholder="Título ou descrição..."
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                aria-label="Buscar propostas"
-              />
-            </div>
-          </div>
-          <div className="w-full sm:w-[160px] space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Status</Label>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger aria-label="Filtrar por status">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                {(Object.keys(STATUS_LABELS) as Proposal["status"][]).map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {STATUS_LABELS[s]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="w-full sm:w-[200px] space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Cliente</Label>
-            <ClientSearchCombobox
-              id="proposals-list-client"
-              label=""
-              value={clientFilterId}
-              onChange={setClientFilterId}
-              remoteSearch
-              placeholderTrigger="Qualquer cliente"
-              className="w-full"
-            />
-          </div>
-          <div className="w-full sm:w-[200px] space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Responsável</Label>
-            <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-              <SelectTrigger aria-label="Filtrar por responsável">
-                <SelectValue placeholder="Responsável" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                <SelectItem value="__mine__">Minhas propostas</SelectItem>
-                {tenantUsers.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.full_name?.trim() || u.email}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="w-full sm:w-[170px] space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Validade</Label>
-            <Select value={validityFilter} onValueChange={setValidityFilter}>
-              <SelectTrigger aria-label="Filtrar por validade">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todas</SelectItem>
-                <SelectItem value="valid">Dentro do prazo / sem data</SelectItem>
-                <SelectItem value="expired">Vencidas (por data)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="w-full sm:w-[180px] space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Faturamento</Label>
-            <Select value={conversionFilter} onValueChange={setConversionFilter}>
-              <SelectTrigger aria-label="Filtrar por fatura vinculada">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todas</SelectItem>
-                <SelectItem value="yes">Com fatura</SelectItem>
-                <SelectItem value="no">Sem fatura</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {hasActiveFilters && (
-            <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={clearFilters}>
-              <X className="h-4 w-4 mr-1" />
+        <div className="hidden min-w-0 md:block">
+          <Label className="mb-1.5 block text-xs text-muted-foreground">Cliente</Label>
+          <ClientSearchCombobox
+            id="proposals-list-client"
+            label=""
+            value={clientFilterId}
+            onChange={setClientFilterId}
+            remoteSearch
+            placeholderTrigger="Qualquer cliente"
+            className="w-full"
+          />
+        </div>
+        {hasActiveFilters ? (
+          <div className="hidden justify-end md:flex">
+            <Button type="button" variant="ghost" size="sm" className="h-9 text-muted-foreground" onClick={clearFilters}>
+              <X className="mr-1.5 h-4 w-4" />
               Limpar filtros
             </Button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Card
+          className={cn(
+            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+            cardTotalActive && summaryCardActiveRing,
           )}
-        </div>
+          onClick={() => clearFilters()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              clearFilters();
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Total (lista)</p>
+              <Layers className="h-4 w-4 shrink-0 text-muted-foreground opacity-70" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.total}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Limpar filtros e ver tudo</p>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+            cardAbertasActive && summaryCardActiveRing,
+          )}
+          onClick={() => {
+            setStatusFilter("sent");
+            setValidityFilter("__all__");
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setStatusFilter("sent");
+              setValidityFilter("__all__");
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Abertas</p>
+              <Send className="h-4 w-4 shrink-0 text-amber-600/85" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.abertas}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Enviadas aguardando resposta</p>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+            cardAceitasActive && summaryCardActiveRing,
+          )}
+          onClick={() => {
+            setStatusFilter("accepted");
+            setValidityFilter("__all__");
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setStatusFilter("accepted");
+              setValidityFilter("__all__");
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Aceitas / ganhas</p>
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600/80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.aceitas}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Aceitas e faturadas nesta lista</p>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
+            cardVencidasActive && summaryCardActiveRing,
+          )}
+          onClick={() => {
+            setValidityFilter("expired");
+            setStatusFilter("__all__");
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setValidityFilter("expired");
+              setStatusFilter("__all__");
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600/75" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.vencidas}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Por data ou status expirado</p>
+          </CardContent>
+        </Card>
       </div>
 
       {loading ? (
@@ -514,31 +764,46 @@ const Proposals = () => {
         </div>
       ) : (
         <>
-        <div className="hidden rounded-md border bg-card md:block">
+        <div className="hidden overflow-hidden rounded-lg border bg-card md:block">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead className="w-[100px] whitespace-nowrap">Código</TableHead>
-                <TableHead>Título</TableHead>
-                <TableHead className="hidden lg:table-cell">Cliente</TableHead>
-                <TableHead className="hidden xl:table-cell max-w-[180px]">Responsável</TableHead>
-                <TableHead className="whitespace-nowrap">Status</TableHead>
-                <TableHead className="hidden md:table-cell whitespace-nowrap">Validade</TableHead>
-                <TableHead className="text-right whitespace-nowrap">Valor</TableHead>
-                <TableHead className="hidden lg:table-cell whitespace-nowrap">Atualizado</TableHead>
-                <TableHead className="w-[52px] text-right">Ações</TableHead>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[88px] whitespace-nowrap text-xs font-medium text-muted-foreground">
+                  Código
+                </TableHead>
+                <TableHead className="min-w-[200px] text-xs font-medium text-muted-foreground">Proposta</TableHead>
+                <TableHead className="hidden lg:table-cell min-w-[140px] text-xs font-medium text-muted-foreground">
+                  Cliente
+                </TableHead>
+                <TableHead className="hidden xl:table-cell max-w-[200px] text-xs font-medium text-muted-foreground">
+                  Responsável
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-xs font-medium text-muted-foreground">Status</TableHead>
+                <TableHead className="hidden md:table-cell w-[118px] whitespace-nowrap text-xs font-medium text-muted-foreground">
+                  Validade
+                </TableHead>
+                <TableHead className="text-right whitespace-nowrap text-xs font-medium text-muted-foreground">
+                  Valor
+                </TableHead>
+                <TableHead className="hidden lg:table-cell w-[108px] whitespace-nowrap text-xs font-medium text-muted-foreground">
+                  Atualizado
+                </TableHead>
+                <TableHead className="w-[120px] text-right text-xs font-medium text-muted-foreground">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {list.map((p) => {
-                const clientLabel = p.client_name?.trim() || (p.client_id ? "Cliente" : "—");
+                const clientLabel = p.client_name?.trim() || (p.client_id ? "Cliente CRM" : p.lead_id ? "Lead" : "—");
+                const clientHint = p.lead_id && !p.client_id ? "Lead comercial" : p.client_id && p.client_name?.trim() ? "Cliente CRM" : null;
                 const canEdit = user?.id ? canEditRecord("proposals", p.user_id, user.id) : false;
                 const canDelete = user?.id ? canDeleteRecord("proposals", p.user_id, user.id) : false;
+                const canPublishDraftRow =
+                  p.status === "draft" && user?.id && canProposalSendRecord(p.user_id, user.id);
                 const goDetail = () => navigate(`/proposals/${p.id}`);
                 return (
                   <TableRow
                     key={p.id}
-                    className="cursor-pointer hover:bg-muted/60 active:bg-muted/80 transition-colors"
+                    className="cursor-pointer border-b border-border/60 hover:bg-muted/50"
                     onClick={goDetail}
                     onKeyDown={(e) => {
                       if (e.target !== e.currentTarget) return;
@@ -551,37 +816,47 @@ const Proposals = () => {
                     role="link"
                     aria-label={`Abrir proposta ${p.title}`}
                   >
-                    <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">
+                    <TableCell className="align-top font-mono text-[11px] text-muted-foreground/80 whitespace-nowrap">
                       {proposalCode(p.id)}
                     </TableCell>
-                    <TableCell className="font-medium max-w-[220px] truncate">{p.title}</TableCell>
-                    <TableCell className="hidden lg:table-cell text-muted-foreground max-w-[160px] truncate">
-                      {clientLabel}
+                    <TableCell className="align-top max-w-[280px]">
+                      <span className="line-clamp-2 font-semibold text-sm text-foreground leading-snug">{p.title}</span>
                     </TableCell>
-                    <TableCell className="hidden xl:table-cell text-xs text-muted-foreground truncate max-w-[180px]">
-                      {p.responsible_email || "—"}
+                    <TableCell className="hidden lg:table-cell align-top max-w-[200px]">
+                      <span className="block truncate text-sm text-foreground">{clientLabel}</span>
+                      {clientHint ? (
+                        <span className="mt-0.5 block text-[11px] text-muted-foreground">{clientHint}</span>
+                      ) : null}
                     </TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${STATUS_CLASS[p.status]}`}
-                      >
-                        {STATUS_LABELS[p.status]}
+                    <TableCell className="hidden xl:table-cell align-top max-w-[200px]">
+                      <span className="block truncate text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground/80">Resp. </span>
+                        {p.responsible_email || "—"}
                       </span>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground whitespace-nowrap">
-                      {p.valid_until ? formatDateOnlyPtBr(p.valid_until) : "—"}
+                    <TableCell className="align-top">
+                      <span className={proposalStatusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm font-medium">
+                    <TableCell className="hidden md:table-cell align-top">
+                      <ValidadeTableCell p={p} />
+                    </TableCell>
+                    <TableCell className="align-top text-right text-base font-semibold tabular-nums text-foreground">
                       {formatCurrency(p.amount)}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground whitespace-nowrap">
-                      {p.updated_at ? format(new Date(p.updated_at), "dd/MM/yyyy HH:mm") : "—"}
+                    <TableCell className="hidden lg:table-cell align-top text-[11px] text-muted-foreground/75 whitespace-nowrap tabular-nums">
+                      {p.updated_at ? format(new Date(p.updated_at), "dd/MM/yy HH:mm") : "—"}
                     </TableCell>
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <TableCell className="text-right align-top" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Ações">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1 px-2"
+                            aria-label="Ações da proposta"
+                          >
                             <MoreHorizontal className="h-4 w-4" />
+                            <span className="text-xs">Ações</span>
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
@@ -589,14 +864,26 @@ const Proposals = () => {
                             <Eye className="h-4 w-4 mr-2" />
                             Abrir
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => tryOpenStoredPublicProposal(p.id)}>
+                          <DropdownMenuItem onClick={() => openProposalPublicPage(p)}>
                             <ExternalLink className="h-4 w-4 mr-2" />
                             Abrir proposta pública
                           </DropdownMenuItem>
+                          {canPublishDraftRow && (
+                            <DropdownMenuItem
+                              disabled={publishingProposalId === p.id}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                void handlePublishProposalFromList(p);
+                              }}
+                            >
+                              <Send className="h-4 w-4 mr-2" />
+                              Publicar proposta
+                            </DropdownMenuItem>
+                          )}
                           {canEdit && (
-                            <DropdownMenuItem onClick={() => navigate(`/proposals/${p.id}`)}>
+                            <DropdownMenuItem onClick={() => navigate(`/proposals/${p.id}/edit`)}>
                               <Pencil className="h-4 w-4 mr-2" />
-                              Editar / status
+                              Editar proposta
                             </DropdownMenuItem>
                           )}
                           {canDelete && (
@@ -623,22 +910,20 @@ const Proposals = () => {
             const clientLabel = p.client_name?.trim() || (p.client_id ? "Cliente" : "—");
             const canEdit = user?.id ? canEditRecord("proposals", p.user_id, user.id) : false;
             const canDelete = user?.id ? canDeleteRecord("proposals", p.user_id, user.id) : false;
+            const canPublishDraftRow =
+              p.status === "draft" && user?.id && canProposalSendRecord(p.user_id, user.id);
             const goDetail = () => navigate(`/proposals/${p.id}`);
             return (
               <div
                 key={`m-${p.id}`}
-                className="min-h-[8.25rem] rounded-2xl border border-border bg-card p-4 shadow-sm"
+                className="min-h-[9.5rem] rounded-2xl border border-border bg-card p-4 shadow-sm"
               >
                 <button type="button" onClick={goDetail} className="w-full text-left">
                   <p className="font-mono text-xs text-muted-foreground">{proposalCode(p.id)}</p>
                   <p className="mt-1 font-semibold leading-snug">{p.title}</p>
                   <p className="mt-1 truncate text-sm text-muted-foreground">{clientLabel}</p>
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                    <span
-                      className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[p.status]}`}
-                    >
-                      {STATUS_LABELS[p.status]}
-                    </span>
+                    <span className={proposalStatusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(p.amount)}</span>
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
@@ -646,7 +931,10 @@ const Proposals = () => {
                     {p.updated_at ? ` · Atual. ${format(new Date(p.updated_at), "dd/MM/yyyy")}` : ""}
                   </p>
                 </button>
-                <div className="mt-3 flex justify-end border-t border-border/60 pt-2">
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/60 pt-2">
+                  <Button variant="default" size="sm" className="h-9 px-3" onClick={() => openProposalPublicPage(p)}>
+                    Abrir proposta
+                  </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm" className="h-9 gap-1 px-3">
@@ -659,14 +947,26 @@ const Proposals = () => {
                         <Eye className="mr-2 h-4 w-4" />
                         Abrir
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => tryOpenStoredPublicProposal(p.id)}>
+                      <DropdownMenuItem onClick={() => openProposalPublicPage(p)}>
                         <ExternalLink className="mr-2 h-4 w-4" />
                         Proposta pública
                       </DropdownMenuItem>
+                      {canPublishDraftRow && (
+                        <DropdownMenuItem
+                          disabled={publishingProposalId === p.id}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            void handlePublishProposalFromList(p);
+                          }}
+                        >
+                          <Send className="mr-2 h-4 w-4" />
+                          Publicar proposta
+                        </DropdownMenuItem>
+                      )}
                       {canEdit && (
-                        <DropdownMenuItem onClick={() => navigate(`/proposals/${p.id}`)}>
+                        <DropdownMenuItem onClick={() => navigate(`/proposals/${p.id}/edit`)}>
                           <Pencil className="mr-2 h-4 w-4" />
-                          Editar
+                          Editar proposta
                         </DropdownMenuItem>
                       )}
                       {canDelete && (

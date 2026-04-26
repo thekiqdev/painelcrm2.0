@@ -4884,13 +4884,26 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
 
     const messages = await pool.query(
       `
-        SELECT *
-        FROM chat_messages
-        WHERE conversation_id = $1
-        ORDER BY sent_at DESC NULLS LAST, created_at DESC
+        SELECT m.*
+        FROM chat_messages m
+        INNER JOIN chat_conversations c ON c.id = m.conversation_id
+        INNER JOIN users actor ON actor.id = $2
+        WHERE m.conversation_id = $1
+          AND ${SQL_CHAT_ACCESS_PREDICATE}
+          AND (
+            c.user_id = actor.id
+            OR (
+              actor.tenant_id IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM users conv_owner
+                WHERE conv_owner.id = c.user_id AND conv_owner.tenant_id = actor.tenant_id
+              )
+            )
+          )
+        ORDER BY m.sent_at DESC NULLS LAST, m.created_at DESC
         LIMIT 200
       `,
-      [id]
+      [id, userId]
     );
 
     const ordered = messages.rows.reverse().map((row: any) => ({

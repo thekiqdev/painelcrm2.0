@@ -13,6 +13,7 @@ import type { ProposalItem } from "@/services/proposals";
 import type { Product } from "@/types/products";
 import { resolvePublicCatalogUnitPrice } from "@/types/products";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 function newLineId(): string {
   return crypto.randomUUID();
@@ -53,6 +54,8 @@ export interface ProposalItemsEditorProps {
   catalog: Product[];
   disabled?: boolean;
   className?: string;
+  /** z-index para popovers acima de shells full screen mobile (ex.: `z-[260]`). */
+  popoverContentClassName?: string;
 }
 
 /**
@@ -64,7 +67,9 @@ export function ProposalItemsEditor({
   catalog,
   disabled = false,
   className,
+  popoverContentClassName,
 }: ProposalItemsEditorProps) {
+  const isMobile = useIsMobile();
   const [pickerOpen, setPickerOpen] = useState<"product" | "service" | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
 
@@ -153,11 +158,22 @@ export function ProposalItemsEditor({
     [items, onChange]
   );
 
+  const popoverCn = cn("w-80 p-0", popoverContentClassName);
+
   return (
     <div className={cn("space-y-3", className)}>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={addManual}>
-          <Plus className="h-4 w-4 mr-1" />
+      <div className={cn(isMobile ? "grid grid-cols-1 gap-2" : "flex flex-wrap gap-2")}>
+        <Button
+          type="button"
+          variant={isMobile ? "default" : "secondary"}
+          size={isMobile ? "default" : "sm"}
+          disabled={disabled}
+          onClick={addManual}
+          className={cn(
+            isMobile && "h-12 w-full justify-center gap-2 rounded-xl text-sm font-semibold shadow-sm",
+          )}
+        >
+          <Plus className={cn("shrink-0", isMobile ? "h-5 w-5" : "h-4 w-4")} />
           Linha manual
         </Button>
         <Popover
@@ -168,12 +184,20 @@ export function ProposalItemsEditor({
           }}
         >
           <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="sm" disabled={disabled}>
-              <Package className="h-4 w-4 mr-1" />
-              Produto do catálogo
+            <Button
+              type="button"
+              variant="outline"
+              size={isMobile ? "default" : "sm"}
+              disabled={disabled}
+              className={cn(
+                isMobile && "h-12 w-full justify-center gap-2 rounded-xl border-2 text-sm font-semibold",
+              )}
+            >
+              <Package className={cn("shrink-0", isMobile ? "h-5 w-5" : "h-4 w-4")} />
+              {isMobile ? "Produto (catálogo)" : "Produto do catálogo"}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-80 p-0" align="start">
+          <PopoverContent className={popoverCn} align="start">
             <div className="p-2 border-b flex items-center gap-2">
               <Search className="h-4 w-4 text-muted-foreground shrink-0" />
               <Input
@@ -218,12 +242,20 @@ export function ProposalItemsEditor({
           }}
         >
           <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="sm" disabled={disabled}>
-              <Briefcase className="h-4 w-4 mr-1" />
-              Serviço do catálogo
+            <Button
+              type="button"
+              variant="outline"
+              size={isMobile ? "default" : "sm"}
+              disabled={disabled}
+              className={cn(
+                isMobile && "h-12 w-full justify-center gap-2 rounded-xl border-2 text-sm font-semibold",
+              )}
+            >
+              <Briefcase className={cn("shrink-0", isMobile ? "h-5 w-5" : "h-4 w-4")} />
+              {isMobile ? "Serviço (catálogo)" : "Serviço do catálogo"}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-80 p-0" align="start">
+          <PopoverContent className={popoverCn} align="start">
             <div className="p-2 border-b flex items-center gap-2">
               <Search className="h-4 w-4 text-muted-foreground shrink-0" />
               <Input
@@ -261,7 +293,7 @@ export function ProposalItemsEditor({
         </Popover>
       </div>
 
-      <div className="rounded-md border overflow-x-auto">
+      <div className="hidden rounded-md border overflow-x-auto md:block">
         <div className="min-w-[720px]">
           <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-muted text-xs font-medium">
             <div className="col-span-4">Descrição</div>
@@ -344,6 +376,95 @@ export function ProposalItemsEditor({
             ))
           )}
         </div>
+      </div>
+
+      <div className="space-y-3 md:hidden">
+        {items.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/80 bg-muted/15 px-4 py-8 text-center text-sm leading-relaxed text-muted-foreground">
+            Nenhum item nesta proposta. Use os botões acima para adicionar linhas ou informe um valor único no campo
+            abaixo (quando não houver linhas).
+          </div>
+        ) : (
+          items.map((item, index) => (
+            <div
+              key={String(item.id ?? index)}
+              className="rounded-2xl border border-border bg-card p-3 shadow-sm dark:bg-card/90"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Item {index + 1}
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 shrink-0 text-destructive"
+                  disabled={disabled}
+                  onClick={() => removeRow(index)}
+                  aria-label="Remover item"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="mt-2 space-y-3">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Descrição</Label>
+                  <Input
+                    disabled={disabled}
+                    value={item.description}
+                    onChange={(e) => updateRow(index, { description: e.target.value })}
+                    placeholder="Descrição do item"
+                    className="mt-1 h-11"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Qtd</Label>
+                    <Input
+                      disabled={disabled}
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={item.quantity}
+                      onChange={(e) => updateRow(index, { quantity: parseFloat(e.target.value) || 0 })}
+                      className="mt-1 h-11 text-right"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Valor un. (R$)</Label>
+                    <Input
+                      disabled={disabled}
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={item.unitPrice}
+                      onChange={(e) => updateRow(index, { unitPrice: parseFloat(e.target.value) || 0 })}
+                      className="mt-1 h-11 text-right font-mono text-sm"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Desconto (R$)</Label>
+                  <Input
+                    disabled={disabled}
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={item.discount ?? 0}
+                    onChange={(e) => updateRow(index, { discount: parseFloat(e.target.value) || 0 })}
+                    className="mt-1 h-11 text-right font-mono text-sm"
+                  />
+                </div>
+                <div className="flex items-center justify-between border-t border-border/60 pt-3">
+                  <span className="text-sm text-muted-foreground">Total da linha</span>
+                  <span className="text-base font-semibold tabular-nums">
+                    {item.total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

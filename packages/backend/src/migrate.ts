@@ -215,6 +215,8 @@ const order = [
   '154_subscriptions_cycles_config.sql',
   /** Financeiro: account_scope + transferências internas */
   '155_financial_accounts_scope_and_transfers.sql',
+  /** Sininho: notificações de anúncio com entity_id/href (idempotência por user+announcement) */
+  '156_notifications_announcement_entity.sql',
   'create-admin-user.sql',
 ];
 

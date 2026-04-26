@@ -36,6 +36,7 @@ const Proposals = lazy(() => import("./pages/Proposals"));
 const ProposalTemplates = lazy(() => import("./pages/ProposalTemplates"));
 const ProposalTemplateFormPage = lazy(() => import("./pages/ProposalTemplateFormPage"));
 const NewProposal = lazy(() => import("./pages/NewProposal"));
+const EditProposal = lazy(() => import("./pages/EditProposal"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const ContractTemplates = lazy(() => import("./pages/ContractTemplates"));
 const ContractTemplateFormPage = lazy(() => import("./pages/ContractTemplateFormPage"));
@@ -84,6 +85,7 @@ const StorePublicCheckout = lazy(() => import("./pages/StorePublicCheckout"));
 const ProductForm = lazy(() => import("./pages/ProductForm"));
 const Orders = lazy(() => import("./pages/Orders"));
 const Tickets = lazy(() => import("./pages/Tickets"));
+const TicketDetail = lazy(() => import("./pages/TicketDetail"));
 const NewTicket = lazy(() => import("./pages/NewTicket"));
 const SuperAdminDashboard = lazy(() => import("./pages/superadmin/SuperAdminDashboard"));
 const SuperAdminPlans = lazy(() => import("./pages/superadmin/SuperAdminPlans"));
@@ -112,6 +114,14 @@ const SuperAdminPlatformNotifications = lazy(() => import("./pages/superadmin/Su
 const SuperAdminPlatformBillings = lazy(() => import("./pages/superadmin/SuperAdminPlatformBillings"));
 const PublicSaasBillingPay = lazy(() => import("./pages/PublicSaasBillingPay"));
 const SuperAdminSubscriptionCyclesSettings = lazy(() => import("./pages/superadmin/SuperAdminSubscriptionCyclesSettings"));
+const SuperAdminAnnouncements = lazy(() => import("./pages/superadmin/SuperAdminAnnouncements"));
+const SuperAdminAnnouncementEditor = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementEditor"));
+const SuperAdminAnnouncementSend = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSend"));
+const SuperAdminAnnouncementSends = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSends"));
+const SuperAdminAnnouncementSendDetail = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSendDetail"));
+const SuperAdminAnnouncementGroups = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementGroups"));
+const UpdatesPage = lazy(() => import("./pages/UpdatesPage"));
+const UpdateDetailPage = lazy(() => import("./pages/UpdateDetailPage"));
 
 const MeuPlano = lazy(() => import("./pages/MeuPlano"));
 const InternalBillingCheckout = lazy(() => import("./pages/InternalBillingCheckout"));
@@ -193,6 +203,24 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Dashboard />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/updates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <UpdatesPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/updates/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <UpdateDetailPage />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>
@@ -395,6 +423,15 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <NewProposal />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/:proposalId/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <EditProposal />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>
@@ -671,20 +708,29 @@ const App = () => (
                   </AppLayout>
               </AuthGuard>
             } />
-            <Route path="/support/tickets" element={
-              <AuthGuard requireAuth={true} redirectTo="/">
-                  <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
-                      <Tickets />
-                    </Suspense>
-                  </AppLayout>
-              </AuthGuard>
-            } />
             <Route path="/support/tickets/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <NewTicket />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <TicketDetail />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Tickets />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>
@@ -720,6 +766,13 @@ const App = () => (
                 <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
                 <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
                 <Route path="platform-billings" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformBillings /></Suspense>} />
+                <Route path="announcements/groups" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementGroups /></Suspense>} />
+                <Route path="announcements/sends/:sendId" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSendDetail /></Suspense>} />
+                <Route path="announcements/sends" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSends /></Suspense>} />
+                <Route path="announcements/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementEditor /></Suspense>} />
+                <Route path="announcements/:id/edit" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementEditor /></Suspense>} />
+                <Route path="announcements/:id/send" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSend /></Suspense>} />
+                <Route path="announcements" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncements /></Suspense>} />
               </Route>
             </Route>
             

@@ -216,11 +216,11 @@ export function ContractCreateForm({
   };
 
   useEffect(() => {
-    if (!embedded || !initialClientId?.trim()) return;
+    if (!initialClientId?.trim()) return;
     const cid = initialClientId.trim();
     setFormData((prev) => (prev.client_id === cid ? prev : { ...prev, client_id: cid }));
     void hydrateLinkedClient(cid);
-  }, [embedded, initialClientId]);
+  }, [initialClientId]);
 
   useEffect(() => {
     if (!embedded || !initialTitleHint?.trim()) return;

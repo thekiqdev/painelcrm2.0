@@ -177,8 +177,11 @@ export const proposalsService = {
     return response.data;
   },
 
-  async updateProposal(id: string, proposal: Partial<Proposal>): Promise<Proposal> {
-    const response = await apiClient.patch<Proposal>(`/api/proposals/${id}`, {
+  async updateProposal(
+    id: string,
+    proposal: Partial<Proposal>,
+  ): Promise<Proposal & { public_link_path?: string | null }> {
+    const response = await apiClient.patch<Proposal & { public_link_path?: string | null }>(`/api/proposals/${id}`, {
       client_id: proposal.client_id,
       lead_id: proposal.lead_id,
       funnel_id: proposal.funnel_id,
@@ -192,7 +195,14 @@ export const proposalsService = {
       items: proposal.items,
       post_accept_billing_mode: proposal.post_accept_billing_mode,
     });
-    if (response.error) throw new Error(response.error);
+    if (response.error) {
+      if (response.code === 'PROPOSAL_SENT_REQUIRES_PUBLIC_LINK') {
+        const err = new Error(response.error) as Error & { code: string };
+        err.code = response.code;
+        throw err;
+      }
+      throw new Error(response.error);
+    }
     if (!response.data) throw new Error('Erro ao atualizar proposta');
     return response.data;
   },

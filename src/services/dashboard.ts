@@ -89,6 +89,104 @@ export interface DashboardOverviewResponse {
     description: string;
     href: string;
   }>;
+  accounts_payable_next_7_days?: Array<{
+    id: string;
+    description: string;
+    due_date: string;
+    amount_cents: number;
+    source: "transaction" | "recurring";
+    status: "planned" | "pending";
+  }>;
+  accounts_payable_total_cents?: number;
+  next_7_days?: {
+    receivable_cents: number;
+    payable_cents: number;
+    balance_cents: number;
+  };
+  tasks_overview?: {
+    overdue: Array<{
+      id: string;
+      title: string;
+      due_date: string | null;
+      priority: string | null;
+      status: string | null;
+      project_name: string | null;
+      client_name: string | null;
+    }>;
+    due_today: Array<{
+      id: string;
+      title: string;
+      due_date: string | null;
+      priority: string | null;
+      status: string | null;
+      project_name: string | null;
+      client_name: string | null;
+    }>;
+    upcoming: Array<{
+      id: string;
+      title: string;
+      due_date: string | null;
+      priority: string | null;
+      status: string | null;
+      project_name: string | null;
+      client_name: string | null;
+    }>;
+    recent_assigned: Array<{
+      id: string;
+      title: string;
+      due_date: string | null;
+      priority: string | null;
+      status: string | null;
+      project_name: string | null;
+      client_name: string | null;
+    }>;
+  };
+  projects_overview?: Array<{
+    id: string;
+    name: string;
+    status: string | null;
+    due_date: string | null;
+    pending_tasks: number;
+    progress_pct: number;
+  }>;
+  chat_overview?: {
+    active_conversations: number;
+    awaiting_response: number;
+    unread: number;
+    list: Array<{
+      id: string;
+      contact_name: string | null;
+      phone_number: string | null;
+      unread_count: number;
+      last_message_at: string | null;
+    }>;
+  };
+  tickets_overview?: {
+    open: number;
+    in_progress: number;
+    resolved: number;
+    recent: Array<{
+      id: string;
+      ticket_number: string;
+      subject: string;
+      status: string;
+      updated_at: string;
+    }>;
+  };
+  agent_attendance?: {
+    my_in_service: number;
+    my_queued: number;
+    my_closed_7d: number;
+    queue_unassigned: number;
+    preview: Array<{
+      id: string;
+      contact_name: string | null;
+      phone_number: string | null;
+      attendance_status: string | null;
+      last_message_at: string | null;
+      unread_count: number;
+    }>;
+  } | null;
 }
 
 export interface ActivationMissionItem {

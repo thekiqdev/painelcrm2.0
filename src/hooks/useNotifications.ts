@@ -6,15 +6,16 @@ import { toast } from '@/components/ui/sonner';
 
 export interface Notification {
   id: string;
-  user_id: string;
+  user_id?: string;
   type: string;
   title: string;
   message: string | null;
-  data: Record<string, any>;
+  href?: string;
+  data?: Record<string, any>;
   read: boolean;
-  read_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
+  read_at: Date | string | null;
+  created_at: Date | string;
+  updated_at?: Date | string;
 }
 
 interface UseNotificationsOptions {
@@ -212,7 +213,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   // Marcar notificação como lida
   const markAsRead = useCallback(async (notificationId: string) => {
     try {
-      const response = await apiClient.patch(`/api/notifications/${notificationId}/read`);
+      const response = await apiClient.post(`/api/notifications/${notificationId}/read`, {});
       if (response.data) {
         setNotifications((prev) =>
           prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n))

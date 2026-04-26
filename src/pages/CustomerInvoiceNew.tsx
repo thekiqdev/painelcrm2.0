@@ -48,8 +48,19 @@ import {
   Search,
   FileText,
   Repeat2,
+  User,
+  Mail,
+  Phone,
+  Building2,
+  IdCard,
 } from "lucide-react";
-import { parseBrl, formatBrlDisplay, sanitizeNumericFieldInput } from "@/lib/brlCurrencyInput";
+import {
+  parseBrl,
+  formatBrlDisplay,
+  sanitizeNumericFieldInput,
+  formatBrlInputMask,
+  formatPercentInputMask,
+} from "@/lib/brlCurrencyInput";
 import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
 import {
   effectiveLinkPaymentMethods,
@@ -65,6 +76,18 @@ import {
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCommerceScreenLayout } from "@/components/mobile/MobileCommerceScreenLayout";
+import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useMobileShellChrome } from "@/contexts/MobileShellChromeContext";
+
+function clientInitials(name: string): string {
+  const p = name.trim().split(/\s+/).filter(Boolean);
+  if (p.length === 0) return "?";
+  if (p.length === 1) return p[0]!.slice(0, 2).toUpperCase();
+  return (p[0]![0]! + p[p.length - 1]![0]!).toUpperCase();
+}
 
 function todayLocalYmd(): string {
   const d = new Date();
@@ -186,12 +209,16 @@ const CustomerInvoiceNew = ({
   onCreated,
 }: CustomerInvoiceNewProps = {}) => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const { setSuppressMobileBottomNav } = useMobileShellChrome();
   const editMatch = useMatch({ path: "/customer-invoices/:id/edit", end: true });
   const editInvoiceId = embedded ? undefined : editMatch?.params?.id;
   const isEditMode = Boolean(editInvoiceId);
   const [searchParams] = useSearchParams();
   const editFlowQuery = searchParams.get("flow");
   const queryClientId = searchParams.get("client_id");
+  const returnToConversation = searchParams.get("return_to")?.trim() || "";
+  const originChat = searchParams.get("origin") === "chat";
   const prefillClientId = (initialClientId ?? queryClientId ?? "").trim();
   const forcedEmbeddedClientId = embedded ? prefillClientId : "";
   const [step, setStep] = useState<"client" | "billing_type" | "form">(() => (isEditMode ? "form" : "client"));
@@ -312,6 +339,7 @@ const CustomerInvoiceNew = ({
 
         setEditFlow("invoice");
         setEditingSubscriptionInvoice(inv.origin === "subscription");
+        setCreationKind(inv.origin === "subscription" ? "subscription" : "one_off");
 
         setInvoiceByLink(!inv.client_id);
         const dueYmd = inv.due_date.slice(0, 10);
@@ -601,9 +629,21 @@ const CustomerInvoiceNew = ({
     field: "description" | "quantity" | "unit_price" | "discount",
     value: string
   ) => {
-    const v =
-      field === "description" ? value : sanitizeNumericFieldInput(value);
-    setLines((prev) => prev.map((l) => (l.id === id ? { ...l, [field]: v } : l)));
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.id !== id) return l;
+        if (field === "description") return { ...l, description: value };
+        if (field === "quantity") return { ...l, quantity: sanitizeNumericFieldInput(value) };
+        if (field === "unit_price") {
+          return { ...l, unit_price: formatBrlInputMask(sanitizeNumericFieldInput(value)) };
+        }
+        const raw = sanitizeNumericFieldInput(value);
+        return {
+          ...l,
+          discount: l.discount_kind === "percent" ? formatPercentInputMask(raw) : formatBrlInputMask(raw),
+        };
+      })
+    );
   };
 
   const handleRenewalSave = async () => {
@@ -812,6 +852,10 @@ const CustomerInvoiceNew = ({
       if (result.invoice?.id) {
         if (embedded) {
           onCreated?.(result.invoice.id);
+        } else if (originChat && returnToConversation) {
+          navigate(`/customer-invoices/${result.invoice.id}`, {
+            state: { chatReturnTo: returnToConversation },
+          });
         } else {
           navigate(`/customer-invoices/${result.invoice.id}`, { state: { fromNewInvoice: true } });
         }
@@ -835,7 +879,88 @@ const CustomerInvoiceNew = ({
   );
   const showGatewaySelect = activeGatewaysForSelect.length > 1;
 
+  /** Mesmo shell mobile da rota global: fluxo embutido no Chat usa o mesmo padrão (portal fullscreen). */
+  const mobileShell = isMobile;
+  /** Radix Select/Popover portais precisam ficar acima do shell mobile (z-[200]). */
+  const radixOverlayAboveMobileShellClassName = mobileShell ? "z-[260]" : undefined;
+  const handleMobileBack = () => {
+    if (embedded) {
+      onBack?.();
+      return;
+    }
+    if (returnToConversation) navigate(returnToConversation);
+    else if (isEditMode && editInvoiceId) navigate(`/customer-invoices/${editInvoiceId}`);
+    else navigate("/customer-invoices");
+  };
+
+  useEffect(() => {
+    if (!mobileShell) {
+      setSuppressMobileBottomNav(false);
+      return;
+    }
+    setSuppressMobileBottomNav(true);
+    return () => setSuppressMobileBottomNav(false);
+  }, [mobileShell, setSuppressMobileBottomNav]);
+
+  const canContinueClientStep =
+    invoiceByLink
+      ? crmGatewayActive !== false
+      : Boolean(form.client_id) && crmGatewayActive !== false;
+
+  const cancelClientStep = () => {
+    if (embedded) onBack?.();
+    else if (returnToConversation) navigate(returnToConversation);
+    else navigate("/customer-invoices");
+  };
+
+  const advanceClientStep = () => {
+    setCreationKind(null);
+    setStep("billing_type");
+  };
+
+  const goBackBillingTypeStep = () => {
+    setCreationKind(null);
+    setStep("client");
+  };
+
+  const goBackFormStep = () => {
+    if (embedded) {
+      onBack?.();
+      return;
+    }
+    setStep("billing_type");
+    setCreationKind(null);
+  };
+
+  const mobileFormSubmitId = "customer-invoice-form";
+
   if (!embedded && isEditMode && !editReady) {
+    if (isMobile) {
+      return (
+        <MobileCommerceScreenLayout
+          enabled
+          header={
+            <div className="flex items-center gap-2 px-3 py-2.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => (editInvoiceId ? navigate(`/customer-invoices/${editInvoiceId}`) : navigate("/customer-invoices"))}
+                aria-label="Voltar"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <div className="min-w-0 flex-1">
+                <h1 className="truncate text-base font-semibold tracking-tight">Editar fatura</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">A carregar…</p>
+              </div>
+            </div>
+          }
+        >
+          <div className="flex justify-center px-3 py-12 text-sm text-muted-foreground">A carregar dados da fatura…</div>
+        </MobileCommerceScreenLayout>
+      );
+    }
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-4">
@@ -850,8 +975,180 @@ const CustomerInvoiceNew = ({
   }
 
   return (
-    <div className="space-y-6">
-      {!embedded && (
+    <MobileCommerceScreenLayout
+      enabled={mobileShell}
+      header={
+        mobileShell ? (
+          <div className="flex items-center gap-2 px-3 py-2.5">
+            <Button type="button" variant="ghost" size="icon" onClick={handleMobileBack} aria-label="Voltar">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-base font-semibold tracking-tight">
+                {isEditMode
+                  ? editFlow === "renewal"
+                    ? "Renovação"
+                    : "Editar fatura"
+                  : "Nova fatura"}
+              </h1>
+              {step === "client" && !isEditMode ? (
+                <>
+                  <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                    Como quer criar esta cobrança?
+                  </p>
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/85">
+                    Etapa 1 de 3
+                  </p>
+                </>
+              ) : step === "billing_type" && !isEditMode ? (
+                <>
+                  <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                    Fatura única ou assinatura recorrente
+                  </p>
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/85">
+                    Etapa 2 de 3
+                  </p>
+                </>
+              ) : step === "form" && !isEditMode ? (
+                <>
+                  <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                    {creationKind === "subscription" ? "Assinatura — preencha e confirme" : "Fatura única — preencha e confirme"}
+                  </p>
+                  {embedded ? (
+                    <p className="mt-1 truncate text-[11px] text-muted-foreground">Desde a conversa</p>
+                  ) : (
+                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/85">
+                      Etapa 3 de 3
+                    </p>
+                  )}
+                </>
+              ) : isEditMode && editFlow === "renewal" ? (
+                <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                  Ajuste só a data do próximo ciclo da assinatura
+                </p>
+              ) : isEditMode ? (
+                <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                  Atualize itens, valores e pagamento
+                </p>
+              ) : originChat && returnToConversation ? (
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">Após criar, pode voltar à conversa</p>
+              ) : null}
+            </div>
+          </div>
+        ) : undefined
+      }
+      footer={
+        mobileShell && !isEditMode ? (
+          step === "client" ? (
+            <div className="space-y-2">
+              {crmGatewayActive === false ? (
+                <p className="text-center text-[11px] leading-snug text-amber-800 dark:text-amber-400">
+                  Ative pagamentos (CRM) em Configurações para emitir cobrança.
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 w-full text-sm text-muted-foreground"
+                onClick={cancelClientStep}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="h-12 w-full text-base font-semibold shadow-sm"
+                disabled={!canContinueClientStep}
+                onClick={advanceClientStep}
+              >
+                Continuar
+              </Button>
+            </div>
+          ) : step === "billing_type" ? (
+            <div className="space-y-2">
+              <p className="text-center text-[11px] leading-snug text-muted-foreground">
+                Toque em uma das opções acima para avançar.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-12 w-full text-base font-medium"
+                onClick={goBackBillingTypeStep}
+              >
+                Voltar
+              </Button>
+            </div>
+          ) : step === "form" ? (
+            <div className="space-y-2">
+              {crmGatewayActive === false ? (
+                <p className="text-center text-[11px] leading-snug text-amber-800 dark:text-amber-400">
+                  Ative pagamentos (CRM) em Configurações para emitir cobrança.
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 w-full text-sm text-muted-foreground"
+                onClick={goBackFormStep}
+              >
+                Voltar
+              </Button>
+              <Button
+                type="submit"
+                form={mobileFormSubmitId}
+                className="h-12 w-full text-base font-semibold shadow-sm"
+                disabled={createLoading || crmGatewayActive === false}
+              >
+                {createLoading
+                  ? "Criando…"
+                  : creationKind === "subscription"
+                    ? "Criar assinatura"
+                    : "Criar fatura"}
+              </Button>
+            </div>
+          ) : null
+        ) : mobileShell && isEditMode && editReady && editFlow === "renewal" ? (
+          <div className="space-y-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-11 w-full text-sm text-muted-foreground"
+              onClick={() => editInvoiceId && navigate(`/customer-invoices/${editInvoiceId}`)}
+            >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              className="h-12 w-full text-base font-semibold shadow-sm"
+              onClick={() => void handleRenewalSave()}
+              disabled={renewalSaving}
+            >
+              {renewalSaving ? "Salvando…" : "Salvar próxima data"}
+            </Button>
+          </div>
+        ) : mobileShell && isEditMode && editReady && editFlow === "invoice" ? (
+          <div className="space-y-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-11 w-full text-sm text-muted-foreground"
+              onClick={() => editInvoiceId && navigate(`/customer-invoices/${editInvoiceId}`)}
+            >
+              Voltar
+            </Button>
+            <Button
+              type="submit"
+              form={mobileFormSubmitId}
+              className="h-12 w-full text-base font-semibold shadow-sm"
+              disabled={createLoading}
+            >
+              {createLoading ? "Salvando…" : "Salvar alterações"}
+            </Button>
+          </div>
+        ) : undefined
+      }
+    >
+    <div className={cn("space-y-6", mobileShell && "px-2 pt-1")}>
+      {!embedded && !mobileShell && (
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
             <ArrowLeft className="h-4 w-4" />
@@ -867,35 +1164,55 @@ const CustomerInvoiceNew = ({
       )}
 
       {isEditMode && editReady && editFlow === "renewal" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Próxima cobrança da assinatura</CardTitle>
-            <CardDescription>
-              <strong className="text-foreground">Nesta tela altera-se só a recorrência futura</strong> (data do próximo
-              ciclo na assinatura). <strong>Não</strong> se mexe no vencimento nem nos itens da fatura atual — essa fatura
-              já está paga e permanece como registo histórico.
+        <Card className={cn(mobileShell && "border-0 bg-transparent shadow-none")}>
+          <CardHeader className={cn(mobileShell && "space-y-3 px-0 pt-0")}>
+            <CardTitle className={cn(mobileShell && "text-base")}>Próxima cobrança da assinatura</CardTitle>
+            <CardDescription className={cn(mobileShell && "text-xs leading-relaxed")}>
+              {mobileShell ? (
+                <>
+                  Só a <strong className="text-foreground">recorrência futura</strong>. A fatura atual paga não é
+                  alterada.
+                </>
+              ) : (
+                <>
+                  <strong className="text-foreground">Nesta tela altera-se só a recorrência futura</strong> (data do próximo
+                  ciclo na assinatura). <strong>Não</strong> se mexe no vencimento nem nos itens da fatura atual — essa fatura
+                  já está paga e permanece como registo histórico.
+                </>
+              )}
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4 max-w-md">
-            <Alert className="border-primary/40 bg-primary/5">
+          <CardContent className={cn("space-y-4 max-w-md", mobileShell && "max-w-none space-y-4 p-0")}>
+            <Alert className={cn("border-primary/40 bg-primary/5", mobileShell && "text-xs")}>
               <AlertTriangle className="h-4 w-4 text-primary" />
-              <AlertDescription className="text-sm">
-                O valor guardado na assinatura é <code className="text-xs font-mono">subscriptions.next_billing_date</code>{" "}
-                (vencimento do ciclo). A data que escolhe abaixo é o{" "}
-                <span className="font-medium text-foreground">primeiro dia de geração</span>; ao gravar, o sistema soma{" "}
-                {renewalDaysBefore} dia(s) de antecipação da conta. A fatura atual não é alterada.
+              <AlertDescription className={cn("text-sm", mobileShell && "text-xs leading-snug")}>
+                {mobileShell ? (
+                  <>
+                    A data abaixo é o <strong className="text-foreground">1.º dia de geração</strong>. Ao gravar, soma{" "}
+                    {renewalDaysBefore} dia(s) de antecipação para o vencimento do ciclo.
+                  </>
+                ) : (
+                  <>
+                    O valor guardado na assinatura é <code className="text-xs font-mono">subscriptions.next_billing_date</code>{" "}
+                    (vencimento do ciclo). A data que escolhe abaixo é o{" "}
+                    <span className="font-medium text-foreground">primeiro dia de geração</span>; ao gravar, o sistema soma{" "}
+                    {renewalDaysBefore} dia(s) de antecipação da conta. A fatura atual não é alterada.
+                  </>
+                )}
               </AlertDescription>
             </Alert>
-            <CardDescription className="text-xs text-muted-foreground -mt-2">
-              Jobs pendentes obsoletos na fila são cancelados. Se a nova data já for elegível (calendário do servidor e
-              janela horária local do tenant), o backend pode enfileirar o job de imediato.
-            </CardDescription>
+            {!mobileShell && (
+              <CardDescription className="text-xs text-muted-foreground -mt-2">
+                Jobs pendentes obsoletos na fila são cancelados. Se a nova data já for elegível (calendário do servidor e
+                janela horária local do tenant), o backend pode enfileirar o job de imediato.
+              </CardDescription>
+            )}
             <div>
-              <Label htmlFor="next_renewal_date">Primeiro dia de geração</Label>
+              <Label htmlFor="next_renewal_date">{mobileShell ? "1.º dia de geração" : "Primeiro dia de geração"}</Label>
               <Input
                 id="next_renewal_date"
                 type="date"
-                className="mt-1 max-w-xs"
+                className={cn("mt-1 max-w-xs", mobileShell && "h-11 max-w-full")}
                 value={nextRenewalDate}
                 onChange={(e) => setNextRenewalDate(e.target.value)}
               />
@@ -908,7 +1225,7 @@ const CustomerInvoiceNew = ({
                 </p>
               ) : null}
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className={cn("flex flex-wrap gap-2", mobileShell && "hidden")}>
               <Button type="button" variant="outline" onClick={() => navigate(`/customer-invoices/${editInvoiceId}`)}>
                 Voltar ao detalhe
               </Button>
@@ -936,46 +1253,87 @@ const CustomerInvoiceNew = ({
 
       {(!isEditMode || !editReady || editFlow !== "renewal") &&
         (step === "client" ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>{crmGatewayActive === false ? "Cliente e pré-requisitos" : "Cliente"}</CardTitle>
-            <CardDescription>
-              {crmGatewayActive === false
-                ? "Selecione o cliente. É necessário gateway de pagamentos (CRM) ativo para emitir cobrança."
-                : "Selecione o cliente para continuar."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
+        <Card
+          className={cn(
+            mobileShell && "border-0 bg-transparent shadow-none",
+          )}
+        >
+          {!mobileShell && (
+            <CardHeader>
+              <CardTitle>{crmGatewayActive === false ? "Cliente e pré-requisitos" : "Cliente"}</CardTitle>
+              <CardDescription>
+                {crmGatewayActive === false
+                  ? "Selecione o cliente. É necessário gateway de pagamentos (CRM) ativo para emitir cobrança."
+                  : "Escolha o tipo de fatura e, se for cliente existente, localize o contacto abaixo."}
+              </CardDescription>
+            </CardHeader>
+          )}
+          <CardContent className={cn("space-y-6", mobileShell && "space-y-5 p-0")}>
             {!embedded && (
-              <div className="rounded-xl border-2 border-primary/45 bg-primary/5 dark:bg-primary/10 p-4 space-y-3 shadow-sm">
-              <div className="flex items-center gap-2 text-sm font-semibold text-primary">
-                <Link2 className="h-4 w-4 shrink-0" aria-hidden />
-                Fatura por link
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Gere um link único: o cliente informa os dados na página pública e conclui o pagamento no gateway.
-              </p>
-              <div className="flex items-center space-x-2 pt-1">
-                <Checkbox
-                  id="invoice_by_link"
-                  checked={invoiceByLink}
-                  onCheckedChange={(v) => {
-                    setInvoiceByLink(v === true);
-                    if (v === true) setForm((f) => ({ ...f, client_id: "" }));
-                  }}
-                />
-                <Label htmlFor="invoice_by_link" className="font-normal cursor-pointer">
-                  Usar fatura por link (sem selecionar cliente aqui)
-                </Label>
-              </div>
-              {invoiceByLink && (
-                <p className="text-sm text-muted-foreground leading-relaxed border-t border-primary/15 pt-3">
-                  Você pode criar uma cobrança sem selecionar o cliente agora. O cliente poderá acessar o link e concluir
-                  os dados necessários para pagamento.
-                </p>
-              )}
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-foreground">Tipo de fatura</p>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!invoiceByLink}
+                    onClick={() => setInvoiceByLink(false)}
+                    className={cn(
+                      "rounded-2xl border-2 p-4 text-left transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      !invoiceByLink
+                        ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/15"
+                        : "border-border bg-card hover:border-primary/30 hover:bg-muted/25",
+                    )}
+                  >
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-foreground">
+                      <User className="h-5 w-5 shrink-0" aria-hidden />
+                    </div>
+                    <p className="mt-3 font-semibold text-foreground">Cliente existente</p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      Para quem já está no CRM. Busque pelo nome, e-mail ou telefone.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={invoiceByLink}
+                    onClick={() => {
+                      setInvoiceByLink(true);
+                      setForm((f) => ({ ...f, client_id: "" }));
+                    }}
+                    className={cn(
+                      "rounded-2xl border-2 p-4 text-left transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      invoiceByLink
+                        ? "border-primary bg-primary/5 shadow-sm ring-1 ring-primary/15"
+                        : "border-border bg-card hover:border-primary/30 hover:bg-muted/25",
+                    )}
+                  >
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-foreground">
+                      <Link2 className="h-5 w-5 shrink-0" aria-hidden />
+                    </div>
+                    <p className="mt-3 font-semibold text-foreground">Fatura por link</p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      Link público: a pessoa completa os dados e paga no gateway.
+                    </p>
+                  </button>
+                </div>
               </div>
             )}
+
+            {invoiceByLink && !embedded ? (
+              <div className="space-y-3 rounded-2xl border border-border/80 bg-muted/15 px-4 py-4 dark:bg-muted/10">
+                <h3 className="text-sm font-semibold text-foreground">Cobrança por link</h3>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Não precisa escolher cliente agora. Depois de criar a cobrança, partilhe o link gerado.
+                </p>
+                <ol className="list-decimal space-y-2 pl-4 text-sm text-muted-foreground marker:font-medium">
+                  <li>O cliente abre o link (WhatsApp, e-mail, etc.).</li>
+                  <li>Na página pública, confirma ou preenche os dados necessários.</li>
+                  <li>Conclui o pagamento (PIX, boleto ou cartão, conforme a sua configuração).</li>
+                </ol>
+              </div>
+            ) : null}
+
             {!invoiceByLink && (
               <ClientSearchCombobox
                 id="invoice_client_id"
@@ -992,8 +1350,10 @@ const CustomerInvoiceNew = ({
                     .catch(() => setClients([]));
                   toast.success("Cliente criado e selecionado");
                 }}
-                label="Cliente *"
-                placeholderTrigger="Buscar cliente (nome, e-mail, telefone, CPF)..."
+                label={mobileShell ? "Buscar cliente" : "Cliente *"}
+                placeholderTrigger={
+                  isMobile ? "Nome, e-mail ou telefone" : "Buscar cliente (nome, e-mail, telefone, CPF)..."
+                }
                 selectedLabel={
                   selectedClient
                     ? [selectedClient.name, selectedClient.company].filter(Boolean).join(" — ") || undefined
@@ -1003,150 +1363,185 @@ const CustomerInvoiceNew = ({
               />
             )}
 
-            {invoiceByLink && (
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    if (embedded) onBack?.();
-                    else navigate("/customer-invoices");
-                  }}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  type="button"
-                  disabled={crmGatewayActive === false}
-                  onClick={() => {
-                    setCreationKind(null);
-                    setStep("billing_type");
-                  }}
-                >
-                  Continuar
-                </Button>
-              </div>
-            )}
-
-            {form.client_id && !invoiceByLink && (
-              <>
-                {selectedClient && (
-                  <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
-                    <p className="text-sm font-medium">Dados do cliente</p>
-                    <div className="grid gap-2 text-sm">
-                      <div><span className="text-muted-foreground">Nome:</span> {selectedClient.name || "—"}</div>
-                      {selectedClient.company && (
-                        <div><span className="text-muted-foreground">Empresa:</span> {selectedClient.company}</div>
-                      )}
-                      {selectedClient.email && (
-                        <div><span className="text-muted-foreground">E-mail:</span> {selectedClient.email}</div>
-                      )}
-                      {selectedClient.phone && (
-                        <div><span className="text-muted-foreground">Telefone:</span> {selectedClient.phone}</div>
-                      )}
-                      <div className="space-y-1">
-                        <Label htmlFor="invoice_client_cpf_display" className="text-muted-foreground">
-                          CPF/CNPJ
-                        </Label>
-                        {selectedClient.cpf_cnpj ? (
-                          <Input
-                            id="invoice_client_cpf_display"
-                            readOnly
-                            tabIndex={-1}
-                            value={selectedClient.cpf_cnpj}
-                            className="max-w-[280px] font-mono bg-muted/50 cursor-default"
-                          />
-                        ) : (
-                          <p className="text-sm text-muted-foreground">
-                            Será solicitado na tela pública de pagamento (não editável aqui).
-                          </p>
-                        )}
-                      </div>
+            {form.client_id && !invoiceByLink && selectedClient ? (
+              <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+                <div className="flex gap-3 border-b border-border/60 bg-muted/10 px-4 py-3.5 dark:bg-muted/15">
+                  <Avatar className="h-12 w-12 shrink-0 border border-border/50 shadow-sm">
+                    {selectedClient.whatsapp_avatar_url ? (
+                      <AvatarImage src={selectedClient.whatsapp_avatar_url} alt="" className="object-cover" />
+                    ) : null}
+                    <AvatarFallback className="bg-primary/10 text-sm font-semibold text-primary">
+                      {clientInitials(selectedClient.name || "?")}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-base font-semibold leading-tight text-foreground">
+                      {selectedClient.name || "—"}
+                    </p>
+                    {selectedClient.company ? (
+                      <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <Building2 className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+                        <span className="truncate">{selectedClient.company}</span>
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="space-y-2.5 px-4 py-3.5 text-sm">
+                  {selectedClient.email ? (
+                    <div className="flex items-start gap-2.5">
+                      <Mail className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="min-w-0 break-all text-foreground/90">{selectedClient.email}</span>
                     </div>
+                  ) : null}
+                  {selectedClient.phone ? (
+                    <div className="flex items-start gap-2.5">
+                      <Phone className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="text-foreground/90">{selectedClient.phone}</span>
+                    </div>
+                  ) : null}
+                  <div className="flex items-start gap-2.5 border-t border-border/50 pt-3">
+                    <IdCard className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        CPF / CNPJ
+                      </p>
+                      {selectedClient.cpf_cnpj ? (
+                        <p className="mt-1 font-mono text-sm text-foreground/90">{selectedClient.cpf_cnpj}</p>
+                      ) : (
+                        <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                          Não cadastrado. Se o gateway exigir documento, poderá ser pedido na página de pagamento.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {crmGatewayActive === false && !invoiceByLink && form.client_id ? (
+              <div className="rounded-xl border border-orange-500/35 bg-orange-500/[0.06] px-3 py-3 text-sm dark:bg-orange-950/25">
+                <p className="font-medium text-foreground">Pré-requisitos</p>
+                <ul className="mt-2 list-none space-y-2 pl-0 text-muted-foreground">
+                  <li className="flex flex-wrap items-center gap-2">
+                    <X className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+                    <span>Sem pagamentos (CRM) ativos neste tenant.</span>
+                    <Link
+                      to="/settings/payments"
+                      className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                    >
+                      Configurar <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  </li>
+                </ul>
+              </div>
+            ) : null}
+
+            {!(mobileShell && step === "client") && (
+              <>
+                {invoiceByLink && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={cancelClientStep}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={crmGatewayActive === false}
+                      onClick={advanceClientStep}
+                    >
+                      Continuar
+                    </Button>
                   </div>
                 )}
 
-                {crmGatewayActive === false && (
-                <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
-                  <p className="text-sm font-medium">Pré-requisitos para emitir fatura</p>
-                  <ul className="space-y-2 text-sm list-none pl-0">
-                    <li className="flex items-center gap-2 flex-wrap">
-                      <X className="h-4 w-4 text-red-600 shrink-0" aria-hidden />
-                      <span className="text-muted-foreground">
-                        Sem configuração de pagamentos (CRM) ativa — ative em Configurações
-                      </span>
-                      <Link
-                        to="/settings/payments"
-                        className="inline-flex items-center gap-1 text-primary hover:underline ml-auto"
-                      >
-                        Configurar ou ativar gateway <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    </li>
-                  </ul>
-                </div>
+                {form.client_id && !invoiceByLink && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={cancelClientStep}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={!invoiceByLink && crmGatewayActive === false}
+                      onClick={advanceClientStep}
+                    >
+                      Continuar
+                    </Button>
+                  </div>
                 )}
-
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      if (embedded) onBack?.();
-                      else navigate("/customer-invoices");
-                    }}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    type="button"
-                    disabled={!invoiceByLink && crmGatewayActive === false}
-                    onClick={() => setStep("billing_type")}
-                  >
-                    Continuar
-                  </Button>
-                </div>
               </>
             )}
           </CardContent>
         </Card>
       ) : step === "billing_type" ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Tipo de cobrança</CardTitle>
-            <CardDescription>
-              {invoiceByLink ? (
-                <>
-                  Cobrança por link — sem cliente selecionado neste momento. Escolha entre fatura única ou assinatura
-                  recorrente; em seguida preencha os dados da cobrança.
-                </>
-              ) : (
-                <>
-                  Cliente:{" "}
-                  <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>. Escolha o que
-                  deseja criar.
-                </>
+        <Card
+          className={cn(mobileShell && "border-0 bg-transparent shadow-none")}
+        >
+          {!mobileShell && (
+            <CardHeader>
+              <CardTitle>Tipo de cobrança</CardTitle>
+              <CardDescription>
+                {invoiceByLink ? (
+                  <>
+                    Cobrança por link — sem cliente selecionado neste momento. Escolha entre fatura única ou assinatura
+                    recorrente; em seguida preencha os dados da cobrança.
+                  </>
+                ) : (
+                  <>
+                    Cliente:{" "}
+                    <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>. Escolha o que
+                    deseja criar.
+                  </>
+                )}
+              </CardDescription>
+            </CardHeader>
+          )}
+          <CardContent className={cn("space-y-6", mobileShell && "space-y-4 p-0")}>
+            {mobileShell ? (
+              <section className="rounded-2xl border border-border/70 bg-muted/20 p-3 dark:bg-muted/10">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Contexto</p>
+                <p className="mt-1 text-sm text-foreground">
+                  {invoiceByLink ? (
+                    <>Cobrança por link — escolha o tipo abaixo.</>
+                  ) : (
+                    <>
+                      Cliente:{" "}
+                      <span className="font-medium">
+                        {selectedClient?.name || selectedClient?.company || form.client_id}
+                      </span>
+                    </>
+                  )}
+                </p>
+              </section>
+            ) : null}
+            <div
+              className={cn(
+                "grid gap-4 sm:grid-cols-2",
+                mobileShell && "grid-cols-1 gap-3",
               )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2">
+            >
               <button
                 type="button"
                 onClick={() => {
                   setCreationKind("one_off");
                   setStep("form");
                 }}
-                className="text-left rounded-xl border-2 border-border bg-card p-6 shadow-sm transition-colors hover:border-primary/50 hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className={cn(
+                  "text-left rounded-xl border-2 border-border bg-card shadow-sm transition-colors hover:border-primary/50 hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                  mobileShell ? "min-h-[148px] p-4 active:scale-[0.99]" : "p-6",
+                )}
               >
-                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-muted text-foreground mb-3">
-                  <FileText className="h-5 w-5 shrink-0" aria-hidden />
+                <div
+                  className={cn(
+                    "flex items-center justify-center rounded-lg bg-muted text-foreground mb-3",
+                    mobileShell ? "h-12 w-12" : "h-11 w-11",
+                  )}
+                >
+                  <FileText className={cn("shrink-0", mobileShell ? "h-6 w-6" : "h-5 w-5")} aria-hidden />
                 </div>
-                <h3 className="font-semibold text-lg text-foreground">Fatura</h3>
-                <p className="text-sm font-medium text-muted-foreground mt-1">Fatura única</p>
-                <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
+                <h3 className={cn("font-semibold text-foreground", mobileShell ? "text-base" : "text-lg")}>Fatura única</h3>
+                <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                   {invoiceByLink
-                    ? "Crie uma cobrança avulsa por link."
-                    : "Crie uma cobrança única para este cliente. Não cria assinatura nem geração automática de novas faturas."}
+                    ? "Uma cobrança avulsa por link."
+                    : "Uma cobrança só para este cliente — sem renovação automática."}
                 </p>
               </button>
               <button
@@ -1155,48 +1550,79 @@ const CustomerInvoiceNew = ({
                   setCreationKind("subscription");
                   setStep("form");
                 }}
-                className="text-left rounded-xl border-2 border-primary/35 bg-primary/[0.06] p-6 shadow-sm transition-colors hover:border-primary/60 hover:bg-primary/[0.09] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className={cn(
+                  "text-left rounded-xl border-2 border-primary/35 bg-primary/[0.06] shadow-sm transition-colors hover:border-primary/60 hover:bg-primary/[0.09] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                  mobileShell ? "min-h-[148px] p-4 active:scale-[0.99]" : "p-6",
+                )}
               >
-                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/15 text-primary mb-3">
-                  <Repeat2 className="h-5 w-5 shrink-0" aria-hidden />
+                <div
+                  className={cn(
+                    "flex items-center justify-center rounded-lg bg-primary/15 text-primary mb-3",
+                    mobileShell ? "h-12 w-12" : "h-11 w-11",
+                  )}
+                >
+                  <Repeat2 className={cn("shrink-0", mobileShell ? "h-6 w-6" : "h-5 w-5")} aria-hidden />
                 </div>
-                <h3 className="font-semibold text-lg text-foreground">Assinatura</h3>
-                <p className="text-sm font-medium text-muted-foreground mt-1">Assinatura recorrente</p>
-                <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
+                <h3 className={cn("font-semibold text-foreground", mobileShell ? "text-base" : "text-lg")}>
+                  Assinatura recorrente
+                </h3>
+                <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                   {invoiceByLink
-                    ? "Crie uma cobrança recorrente por link, com geração automática das próximas faturas."
-                    : "Crie uma cobrança recorrente com geração automática de faturas. A primeira fatura e o link de pagamento são criados neste passo."}
+                    ? "Renovações automáticas por link."
+                    : "Renovações automáticas — primeira fatura e link neste passo."}
                 </p>
               </button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={() => setStep("client")}>
-                Voltar
-              </Button>
-            </div>
+            {!mobileShell && (
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => setStep("client")}>
+                  Voltar
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardHeader>
+        <Card className={cn(mobileShell && "border-0 bg-transparent shadow-none")}>
+          <CardHeader className={cn(mobileShell && "space-y-3 px-0 pt-0")}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <CardTitle>Dados da cobrança</CardTitle>
-                <CardDescription>
-                  {invoiceByLink ? (
-                    <>
-                      Cobrança por link — o cliente poderá concluir os dados no link público. Tipo:{" "}
-                      <strong>{creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}</strong>.
-                    </>
-                  ) : (
-                    <>
-                      Cliente:{" "}
-                      <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>
-                    </>
-                  )}
-                </CardDescription>
+                {!mobileShell && <CardTitle>Dados da cobrança</CardTitle>}
+                {mobileShell ? (
+                  <div className="rounded-2xl border border-border/70 bg-muted/20 p-3 dark:bg-muted/10">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {isEditMode ? "Fatura" : "Resumo"}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge variant={creationKind === "subscription" ? "default" : "secondary"} className="text-xs">
+                        {creationKind === "subscription" ? "Assinatura" : "Fatura única"}
+                      </Badge>
+                      {invoiceByLink ? (
+                        <span className="text-xs text-muted-foreground">Por link</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground truncate max-w-[220px]">
+                          {selectedClient?.name || selectedClient?.company || form.client_id}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <CardDescription>
+                    {invoiceByLink ? (
+                      <>
+                        Cobrança por link — o cliente poderá concluir os dados no link público. Tipo:{" "}
+                        <strong>{creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}</strong>.
+                      </>
+                    ) : (
+                      <>
+                        Cliente:{" "}
+                        <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>
+                      </>
+                    )}
+                  </CardDescription>
+                )}
               </div>
-              {!isEditMode && creationKind && (
+              {!isEditMode && creationKind && !mobileShell && (
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={creationKind === "subscription" ? "default" : "secondary"} className="text-sm">
                     {creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}
@@ -1217,10 +1643,28 @@ const CustomerInvoiceNew = ({
                   )}
                 </div>
               )}
+              {!isEditMode && creationKind && mobileShell && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full shrink-0 sm:w-auto"
+                  onClick={() => {
+                    setStep("billing_type");
+                    setCreationKind(null);
+                  }}
+                >
+                  Alterar tipo de cobrança
+                </Button>
+              )}
             </div>
           </CardHeader>
-          <CardContent>
-            <form onSubmit={handleCreate} className="space-y-6">
+          <CardContent className={cn(mobileShell && "px-0 pb-0")}>
+            <form
+              id={mobileShell ? mobileFormSubmitId : undefined}
+              onSubmit={handleCreate}
+              className={cn("space-y-6", mobileShell && "space-y-5")}
+            >
               {isEditMode && editingSubscriptionInvoice && (
                 <Alert className="border-primary/45 bg-primary/5 dark:bg-primary/10">
                   <Package className="h-4 w-4 text-primary" />
@@ -1240,19 +1684,38 @@ const CustomerInvoiceNew = ({
                 </Alert>
               )}
               {!isEditMode && (
-              <div>
-                <Label htmlFor="charge_search">Vincular à cobrança (opcional)</Label>
+              <div
+                className={cn(
+                  mobileShell &&
+                    "rounded-2xl border border-border/60 bg-card/40 p-4 space-y-3 dark:bg-card/25",
+                )}
+              >
+                {mobileShell ? (
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Vincular cobrança (opcional)
+                  </h2>
+                ) : null}
+                <Label htmlFor="charge_search">
+                  {mobileShell ? "Ligação com cobrança existente" : "Vincular à cobrança (opcional)"}
+                </Label>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Busca no servidor por descrição, ID, nome/empresa/e-mail/telefone do cliente
-                  {form.client_id ? " (restrita ao cliente selecionado)" : " (todas as cobranças do tenant)"}.
+                  {mobileShell
+                    ? form.client_id
+                      ? "Busca no servidor, só deste cliente."
+                      : "Busca em todas as cobranças abertas do tenant."
+                    : `Busca no servidor por descrição, ID, nome/empresa/e-mail/telefone do cliente${
+                        form.client_id ? " (restrita ao cliente selecionado)" : " (todas as cobranças do tenant)"
+                      }.`}
                 </p>
                 <div className="mt-1 space-y-2">
                   <Input
                     id="charge_search"
                     value={chargeQuery}
                     onChange={(e) => setChargeQuery(e.target.value)}
-                    placeholder="Digite para filtrar cobranças abertas ou parciais…"
-                    className="h-9"
+                    placeholder={
+                      mobileShell ? "Filtrar cobranças abertas…" : "Digite para filtrar cobranças abertas ou parciais…"
+                    }
+                    className={cn("h-9", mobileShell && "h-11")}
                     disabled={loadingCharges}
                     autoComplete="off"
                   />
@@ -1261,10 +1724,10 @@ const CustomerInvoiceNew = ({
                   value={form.charge_id ?? "none"}
                   onValueChange={(v) => setForm((f) => ({ ...f, charge_id: v === "none" ? null : v }))}
                 >
-                  <SelectTrigger id="charge_id" className="mt-1">
+                  <SelectTrigger id="charge_id" className={cn("mt-1", mobileShell && "h-11")}>
                     <SelectValue placeholder="Nenhuma" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className={radixOverlayAboveMobileShellClassName}>
                     <SelectItem value="none">Nenhuma</SelectItem>
                     {loadingCharges ? (
                       <SelectItem value="__loading_charges__" disabled>
@@ -1286,8 +1749,15 @@ const CustomerInvoiceNew = ({
               </div>
               )}
               {!isEditMode && creationKind === "subscription" && (
-                <div className="rounded-lg border border-primary/25 bg-primary/[0.04] p-4 space-y-4">
-                  <h3 className="text-sm font-semibold text-foreground">Dados da assinatura</h3>
+                <div
+                  className={cn(
+                    "rounded-lg border border-primary/25 bg-primary/[0.04] p-4 space-y-4",
+                    mobileShell && "rounded-2xl",
+                  )}
+                >
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {mobileShell ? "Assinatura" : "Dados da assinatura"}
+                  </h3>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
                       <Label htmlFor="billing_interval_sub">Periodicidade</Label>
@@ -1298,7 +1768,7 @@ const CustomerInvoiceNew = ({
                         <SelectTrigger id="billing_interval_sub" className="mt-1 max-w-[240px]">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className={radixOverlayAboveMobileShellClassName}>
                           <SelectItem value="monthly">Mensal</SelectItem>
                           <SelectItem value="quarterly">Trimestral</SelectItem>
                           <SelectItem value="semi_annual">Semestral</SelectItem>
@@ -1360,11 +1830,34 @@ const CustomerInvoiceNew = ({
                   </AlertDescription>
                 </Alert>
               )}
-              <div>
-                <Label className="mb-2 block">Itens da fatura</Label>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  <Button type="button" variant="secondary" size="sm" onClick={handleAddLine}>
-                    <Plus className="h-4 w-4 mr-1" />
+              <div
+                className={cn(
+                  mobileShell &&
+                    "rounded-2xl border border-border/60 bg-card/40 p-4 space-y-4 dark:bg-card/25",
+                )}
+              >
+                {mobileShell ? (
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Itens</h2>
+                ) : null}
+                <Label className={cn("mb-2 block", mobileShell && "text-sm font-semibold text-foreground")}>
+                  {mobileShell ? "Linhas da fatura" : "Itens da fatura"}
+                </Label>
+                <div
+                  className={cn(
+                    "mb-3",
+                    mobileShell ? "grid grid-cols-1 gap-2" : "flex flex-wrap gap-2",
+                  )}
+                >
+                  <Button
+                    type="button"
+                    variant={mobileShell ? "default" : "secondary"}
+                    size={mobileShell ? "default" : "sm"}
+                    className={cn(
+                      mobileShell && "h-12 w-full justify-center gap-2 rounded-xl text-sm font-semibold shadow-sm",
+                    )}
+                    onClick={handleAddLine}
+                  >
+                    <Plus className={cn("shrink-0", mobileShell ? "h-5 w-5" : "h-4 w-4")} />
                     Linha manual
                   </Button>
                   <Popover
@@ -1378,14 +1871,21 @@ const CustomerInvoiceNew = ({
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
+                        size={mobileShell ? "default" : "sm"}
                         disabled={loadingProducts}
+                        className={cn(
+                          mobileShell &&
+                            "h-12 w-full justify-center gap-2 rounded-xl border-2 text-sm font-semibold",
+                        )}
                       >
-                        <Package className="h-4 w-4 mr-1" />
-                        Produto do catálogo
+                        <Package className={cn("shrink-0", mobileShell ? "h-5 w-5" : "h-4 w-4")} />
+                        {mobileShell ? "Produto (catálogo)" : "Produto do catálogo"}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-80 p-0" align="start">
+                    <PopoverContent
+                      className={cn("w-80 p-0", radixOverlayAboveMobileShellClassName)}
+                      align="start"
+                    >
                       <div className="p-2 border-b flex items-center gap-2">
                         <Search className="h-4 w-4 text-muted-foreground shrink-0" />
                         <Input
@@ -1432,14 +1932,21 @@ const CustomerInvoiceNew = ({
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
+                        size={mobileShell ? "default" : "sm"}
                         disabled={loadingProducts}
+                        className={cn(
+                          mobileShell &&
+                            "h-12 w-full justify-center gap-2 rounded-xl border-2 text-sm font-semibold",
+                        )}
                       >
-                        <Briefcase className="h-4 w-4 mr-1" />
-                        Serviço do catálogo
+                        <Briefcase className={cn("shrink-0", mobileShell ? "h-5 w-5" : "h-4 w-4")} />
+                        {mobileShell ? "Serviço (catálogo)" : "Serviço do catálogo"}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-80 p-0" align="start">
+                    <PopoverContent
+                      className={cn("w-80 p-0", radixOverlayAboveMobileShellClassName)}
+                      align="start"
+                    >
                       <div className="p-2 border-b flex items-center gap-2">
                         <Search className="h-4 w-4 text-muted-foreground shrink-0" />
                         <Input
@@ -1476,140 +1983,29 @@ const CustomerInvoiceNew = ({
                     </PopoverContent>
                   </Popover>
                 </div>
-                <div className="rounded-md border overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left p-2 font-medium">Descrição</th>
-                        <th className="text-right p-2 w-20">Qtd</th>
-                        <th className="text-right p-2 w-32">Valor un. (R$)</th>
-                        <th className="text-right p-2 min-w-[140px]">Desconto</th>
-                        <th className="text-right p-2 w-28">Total</th>
-                        <th className="w-10 p-2" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
-                            Nenhuma linha. Adicione itens manuais ou do catálogo — ou informe um valor único abaixo
-                            (quando não houver linhas).
-                          </td>
-                        </tr>
-                      ) : null}
-                      {lines.flatMap((line) => [
-                        <tr key={`${line.id}-main`} className="border-b">
-                          <td className="p-2">
-                            <Input
-                              placeholder="Descrição"
-                              value={line.description}
-                              onChange={(e) => handleLineChange(line.id, "description", e.target.value)}
-                              className="h-8"
-                            />
-                          </td>
-                          <td className="p-2">
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="1"
-                              value={line.quantity}
-                              onChange={(e) => handleLineChange(line.id, "quantity", e.target.value)}
-                              className="h-8 text-right"
-                            />
-                          </td>
-                          <td className="p-2">
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="0,00"
-                              value={line.unit_price}
-                              onChange={(e) => handleLineChange(line.id, "unit_price", e.target.value)}
-                              onBlur={() =>
-                                setLines((prev) =>
-                                  prev.map((l) =>
-                                    l.id === line.id && l.unit_price.trim() !== ""
-                                      ? { ...l, unit_price: formatBrlDisplay(parseBrl(l.unit_price)) }
-                                      : l
-                                  )
-                                )
-                              }
-                              className="h-8 text-right font-mono text-xs"
-                            />
-                          </td>
-                          <td className="p-2">
-                            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-end">
-                              <Select
-                                value={line.discount_kind}
-                                onValueChange={(v) =>
-                                  setLines((prev) =>
-                                    prev.map((l) =>
-                                      l.id === line.id
-                                        ? {
-                                            ...l,
-                                            discount_kind: v as InvoiceLineDiscountKind,
-                                            discount:
-                                              v === "percent"
-                                                ? l.discount_kind === "fixed"
-                                                  ? "0"
-                                                  : l.discount
-                                                : l.discount_kind === "percent"
-                                                  ? "0,00"
-                                                  : l.discount,
-                                          }
-                                        : l
-                                    )
-                                  )
-                                }
-                              >
-                                <SelectTrigger className="h-8 w-full sm:w-[68px] text-xs shrink-0">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="fixed">R$</SelectItem>
-                                  <SelectItem value="percent">%</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <Input
-                                type="text"
-                                inputMode="decimal"
-                                placeholder={line.discount_kind === "percent" ? "0" : "0,00"}
-                                value={line.discount}
-                                onChange={(e) => handleLineChange(line.id, "discount", e.target.value)}
-                                onBlur={() =>
-                                  setLines((prev) =>
-                                    prev.map((l) => {
-                                      if (l.id !== line.id) return l;
-                                      if (l.discount.trim() === "") {
-                                        return { ...l, discount: l.discount_kind === "percent" ? "0" : "0,00" };
-                                      }
-                                      if (l.discount_kind === "percent") {
-                                        const p = Math.min(100, Math.max(0, parseBrl(l.discount)));
-                                        return {
-                                          ...l,
-                                          discount: p.toLocaleString("pt-BR", {
-                                            maximumFractionDigits: 2,
-                                            minimumFractionDigits: 0,
-                                          }),
-                                        };
-                                      }
-                                      return { ...l, discount: formatBrlDisplay(parseBrl(l.discount)) };
-                                    })
-                                  )
-                                }
-                                className="h-8 text-right font-mono text-xs sm:min-w-[4.5rem]"
-                              />
-                            </div>
-                          </td>
-                          <td className="p-2 text-right font-medium">
-                            R$ {(lineTotalCents(line) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="p-2">
-                            <div className="flex items-center justify-end gap-1">
+                {mobileShell ? (
+                  <div className="space-y-3">
+                    {lines.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-border/80 bg-muted/15 px-4 py-8 text-center text-sm leading-relaxed text-muted-foreground">
+                        Nenhum item nesta fatura. Adicione linhas acima ou informe um valor único abaixo (substitui as
+                        linhas).
+                      </div>
+                    ) : (
+                      lines.map((line, idx) => (
+                        <div
+                          key={line.id}
+                          className="rounded-2xl border border-border bg-card p-3 shadow-sm dark:bg-card/90"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Item {idx + 1}
+                            </p>
+                            <div className="flex shrink-0 items-center gap-0.5">
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 text-muted-foreground"
+                                className="h-10 w-10 text-muted-foreground"
                                 onClick={() =>
                                   setLines((prev) =>
                                     prev.map((l) => (l.id === line.id ? { ...l, show_advanced: !l.show_advanced } : l))
@@ -1620,28 +2016,136 @@ const CustomerInvoiceNew = ({
                               >
                                 <Settings2 className="h-4 w-4" />
                               </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground"
-                              onClick={() => handleRemoveLine(line.id)}
-                              aria-label="Remover linha"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-10 w-10 text-muted-foreground"
+                                onClick={() => handleRemoveLine(line.id)}
+                                aria-label="Remover linha"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
                             </div>
-                          </td>
-                        </tr>,
-                        ...(line.show_advanced
-                          ? [
-                              <tr key={`${line.id}-adv`} className="border-b bg-muted/30">
-                            <td colSpan={6} className="p-2 text-xs text-muted-foreground">
-                              <div className="flex items-center gap-2 mb-2 font-medium text-foreground">
-                                Opções avançadas do item
-                                {line.show_advanced ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          </div>
+                          <div className="mt-2 space-y-3">
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Descrição</Label>
+                              <Input
+                                placeholder="O que está a cobrar"
+                                value={line.description}
+                                onChange={(e) => handleLineChange(line.id, "description", e.target.value)}
+                                className="mt-1 h-11"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Qtd</Label>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="1"
+                                  value={line.quantity}
+                                  onChange={(e) => handleLineChange(line.id, "quantity", e.target.value)}
+                                  className="mt-1 h-11 text-right"
+                                />
                               </div>
-                              <div className="grid gap-2 sm:grid-cols-3">
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Valor un. (R$)</Label>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="0,00"
+                                  value={line.unit_price}
+                                  onChange={(e) => handleLineChange(line.id, "unit_price", e.target.value)}
+                                  onBlur={() =>
+                                    setLines((prev) =>
+                                      prev.map((l) =>
+                                        l.id === line.id && l.unit_price.trim() !== ""
+                                          ? { ...l, unit_price: formatBrlDisplay(parseBrl(l.unit_price)) }
+                                          : l
+                                      )
+                                    )
+                                  }
+                                  className="mt-1 h-11 text-right font-mono text-sm"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Desconto</Label>
+                              <div className="mt-1 flex gap-2">
+                                <Select
+                                  value={line.discount_kind}
+                                  onValueChange={(v) =>
+                                    setLines((prev) =>
+                                      prev.map((l) =>
+                                        l.id === line.id
+                                          ? {
+                                              ...l,
+                                              discount_kind: v as InvoiceLineDiscountKind,
+                                              discount:
+                                                v === "percent"
+                                                  ? l.discount_kind === "fixed"
+                                                    ? "0"
+                                                    : l.discount
+                                                  : l.discount_kind === "percent"
+                                                    ? "0,00"
+                                                    : l.discount,
+                                            }
+                                          : l
+                                      )
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger className="h-11 w-[76px] shrink-0 text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className={radixOverlayAboveMobileShellClassName}>
+                                    <SelectItem value="fixed">R$</SelectItem>
+                                    <SelectItem value="percent">%</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder={line.discount_kind === "percent" ? "0" : "0,00"}
+                                  value={line.discount}
+                                  onChange={(e) => handleLineChange(line.id, "discount", e.target.value)}
+                                  onBlur={() =>
+                                    setLines((prev) =>
+                                      prev.map((l) => {
+                                        if (l.id !== line.id) return l;
+                                        if (l.discount.trim() === "") {
+                                          return { ...l, discount: l.discount_kind === "percent" ? "0" : "0,00" };
+                                        }
+                                        if (l.discount_kind === "percent") {
+                                          const p = Math.min(100, Math.max(0, parseBrl(l.discount)));
+                                          return {
+                                            ...l,
+                                            discount: p.toLocaleString("pt-BR", {
+                                              maximumFractionDigits: 2,
+                                              minimumFractionDigits: 0,
+                                            }),
+                                          };
+                                        }
+                                        return { ...l, discount: formatBrlDisplay(parseBrl(l.discount)) };
+                                      })
+                                    )
+                                  }
+                                  className="h-11 flex-1 text-right font-mono text-sm"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between border-t border-border/60 pt-3">
+                              <span className="text-sm text-muted-foreground">Total linha</span>
+                              <span className="text-base font-semibold tabular-nums">
+                                R${" "}
+                                {(lineTotalCents(line) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            {line.show_advanced ? (
+                              <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-3 dark:bg-muted/10">
+                                <p className="text-xs font-medium text-foreground">Opções avançadas</p>
                                 <div className="flex items-center gap-2">
                                   <Checkbox
                                     id={`line_is_recurring_${line.id}`}
@@ -1655,12 +2159,15 @@ const CustomerInvoiceNew = ({
                                       )
                                     }
                                   />
-                                  <Label htmlFor={`line_is_recurring_${line.id}`} className="text-xs font-normal cursor-pointer">
+                                  <Label
+                                    htmlFor={`line_is_recurring_${line.id}`}
+                                    className="text-sm font-normal leading-snug cursor-pointer"
+                                  >
                                     Participa da recorrência
                                   </Label>
                                 </div>
                                 <div>
-                                  <Label className="text-xs">Intervalo por item</Label>
+                                  <Label className="text-xs text-muted-foreground">Intervalo por item</Label>
                                   <Select
                                     value={line.recurring_interval}
                                     onValueChange={(v) =>
@@ -1677,10 +2184,10 @@ const CustomerInvoiceNew = ({
                                     }
                                     disabled={!line.is_recurring || creationKind === "subscription"}
                                   >
-                                    <SelectTrigger className="h-8 mt-1">
+                                    <SelectTrigger className="mt-1 h-11">
                                       <SelectValue />
                                     </SelectTrigger>
-                                    <SelectContent>
+                                    <SelectContent className={radixOverlayAboveMobileShellClassName}>
                                       <SelectItem value="daily">Diário</SelectItem>
                                       <SelectItem value="weekly">Semanal</SelectItem>
                                       <SelectItem value="monthly">Mensal</SelectItem>
@@ -1691,7 +2198,7 @@ const CustomerInvoiceNew = ({
                                   </Select>
                                 </div>
                                 <div>
-                                  <Label className="text-xs">Cobrar em outra data (opcional)</Label>
+                                  <Label className="text-xs text-muted-foreground">Outra data de cobrança (opc.)</Label>
                                   <Input
                                     type="date"
                                     value={line.scheduled_due_date}
@@ -1702,54 +2209,354 @@ const CustomerInvoiceNew = ({
                                         )
                                       )
                                     }
-                                    className="h-8 mt-1"
+                                    className="mt-1 h-11"
                                   />
                                 </div>
                               </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-md border overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="text-left p-2 font-medium">Descrição</th>
+                          <th className="text-right p-2 w-20">Qtd</th>
+                          <th className="text-right p-2 w-32">Valor un. (R$)</th>
+                          <th className="text-right p-2 min-w-[140px]">Desconto</th>
+                          <th className="text-right p-2 w-28">Total</th>
+                          <th className="w-10 p-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lines.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                              Nenhuma linha. Adicione itens manuais ou do catálogo — ou informe um valor único abaixo
+                              (quando não houver linhas).
+                            </td>
+                          </tr>
+                        ) : null}
+                        {lines.flatMap((line) => [
+                          <tr key={`${line.id}-main`} className="border-b">
+                            <td className="p-2">
+                              <Input
+                                placeholder="Descrição"
+                                value={line.description}
+                                onChange={(e) => handleLineChange(line.id, "description", e.target.value)}
+                                className="h-8"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                placeholder="1"
+                                value={line.quantity}
+                                onChange={(e) => handleLineChange(line.id, "quantity", e.target.value)}
+                                className="h-8 text-right"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                placeholder="0,00"
+                                value={line.unit_price}
+                                onChange={(e) => handleLineChange(line.id, "unit_price", e.target.value)}
+                                onBlur={() =>
+                                  setLines((prev) =>
+                                    prev.map((l) =>
+                                      l.id === line.id && l.unit_price.trim() !== ""
+                                        ? { ...l, unit_price: formatBrlDisplay(parseBrl(l.unit_price)) }
+                                        : l
+                                    )
+                                  )
+                                }
+                                className="h-8 text-right font-mono text-xs"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-end">
+                                <Select
+                                  value={line.discount_kind}
+                                  onValueChange={(v) =>
+                                    setLines((prev) =>
+                                      prev.map((l) =>
+                                        l.id === line.id
+                                          ? {
+                                              ...l,
+                                              discount_kind: v as InvoiceLineDiscountKind,
+                                              discount:
+                                                v === "percent"
+                                                  ? l.discount_kind === "fixed"
+                                                    ? "0"
+                                                    : l.discount
+                                                  : l.discount_kind === "percent"
+                                                    ? "0,00"
+                                                    : l.discount,
+                                            }
+                                          : l
+                                      )
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger className="h-8 w-full sm:w-[68px] text-xs shrink-0">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className={radixOverlayAboveMobileShellClassName}>
+                                    <SelectItem value="fixed">R$</SelectItem>
+                                    <SelectItem value="percent">%</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder={line.discount_kind === "percent" ? "0" : "0,00"}
+                                  value={line.discount}
+                                  onChange={(e) => handleLineChange(line.id, "discount", e.target.value)}
+                                  onBlur={() =>
+                                    setLines((prev) =>
+                                      prev.map((l) => {
+                                        if (l.id !== line.id) return l;
+                                        if (l.discount.trim() === "") {
+                                          return { ...l, discount: l.discount_kind === "percent" ? "0" : "0,00" };
+                                        }
+                                        if (l.discount_kind === "percent") {
+                                          const p = Math.min(100, Math.max(0, parseBrl(l.discount)));
+                                          return {
+                                            ...l,
+                                            discount: p.toLocaleString("pt-BR", {
+                                              maximumFractionDigits: 2,
+                                              minimumFractionDigits: 0,
+                                            }),
+                                          };
+                                        }
+                                        return { ...l, discount: formatBrlDisplay(parseBrl(l.discount)) };
+                                      })
+                                    )
+                                  }
+                                  className="h-8 text-right font-mono text-xs sm:min-w-[4.5rem]"
+                                />
+                              </div>
+                            </td>
+                            <td className="p-2 text-right font-medium">
+                              R$ {(lineTotalCents(line) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="p-2">
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground"
+                                  onClick={() =>
+                                    setLines((prev) =>
+                                      prev.map((l) => (l.id === line.id ? { ...l, show_advanced: !l.show_advanced } : l))
+                                    )
+                                  }
+                                  aria-label="Opções avançadas do item"
+                                  title="Opções avançadas do item"
+                                >
+                                  <Settings2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground"
+                                  onClick={() => handleRemoveLine(line.id)}
+                                  aria-label="Remover linha"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </td>
                           </tr>,
-                            ]
-                          : []),
-                      ])}
-                    </tbody>
-                  </table>
-                </div>
+                          ...(line.show_advanced
+                            ? [
+                                <tr key={`${line.id}-adv`} className="border-b bg-muted/30">
+                                  <td colSpan={6} className="p-2 text-xs text-muted-foreground">
+                                    <div className="flex items-center gap-2 mb-2 font-medium text-foreground">
+                                      Opções avançadas do item
+                                      {line.show_advanced ? (
+                                        <ChevronUp className="h-3.5 w-3.5" />
+                                      ) : (
+                                        <ChevronDown className="h-3.5 w-3.5" />
+                                      )}
+                                    </div>
+                                    <div className="grid gap-2 sm:grid-cols-3">
+                                      <div className="flex items-center gap-2">
+                                        <Checkbox
+                                          id={`line_is_recurring_${line.id}`}
+                                          checked={line.is_recurring}
+                                          disabled={creationKind === "subscription"}
+                                          onCheckedChange={(v) =>
+                                            setLines((prev) =>
+                                              prev.map((l) =>
+                                                l.id === line.id ? { ...l, is_recurring: v === true } : l
+                                              )
+                                            )
+                                          }
+                                        />
+                                        <Label
+                                          htmlFor={`line_is_recurring_${line.id}`}
+                                          className="text-xs font-normal cursor-pointer"
+                                        >
+                                          Participa da recorrência
+                                        </Label>
+                                      </div>
+                                      <div>
+                                        <Label className="text-xs">Intervalo por item</Label>
+                                        <Select
+                                          value={line.recurring_interval}
+                                          onValueChange={(v) =>
+                                            setLines((prev) =>
+                                              prev.map((l) =>
+                                                l.id === line.id
+                                                  ? {
+                                                      ...l,
+                                                      recurring_interval: v as InvoiceLineRow["recurring_interval"],
+                                                    }
+                                                  : l
+                                              )
+                                            )
+                                          }
+                                          disabled={!line.is_recurring || creationKind === "subscription"}
+                                        >
+                                          <SelectTrigger className="h-8 mt-1">
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent className={radixOverlayAboveMobileShellClassName}>
+                                            <SelectItem value="daily">Diário</SelectItem>
+                                            <SelectItem value="weekly">Semanal</SelectItem>
+                                            <SelectItem value="monthly">Mensal</SelectItem>
+                                            <SelectItem value="quarterly">Trimestral</SelectItem>
+                                            <SelectItem value="semi_annual">Semestral</SelectItem>
+                                            <SelectItem value="yearly">Anual</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                      <div>
+                                        <Label className="text-xs">Cobrar em outra data (opcional)</Label>
+                                        <Input
+                                          type="date"
+                                          value={line.scheduled_due_date}
+                                          onChange={(e) =>
+                                            setLines((prev) =>
+                                              prev.map((l) =>
+                                                l.id === line.id ? { ...l, scheduled_due_date: e.target.value } : l
+                                              )
+                                            )
+                                          }
+                                          className="h-8 mt-1"
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>,
+                              ]
+                            : []),
+                        ])}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground mt-2">
-                  Total: <strong>R$ {(totalCentsFromLines / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                  Total:{" "}
+                  <strong>R$ {(totalCentsFromLines / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Desconto <strong>%</strong>: aplicado sobre o subtotal da linha; valor em centavos arredondado por linha
-                  (regra documentada no plano técnico).
+                  {mobileShell ? (
+                    <>
+                      Desconto em <strong>%</strong> incide sobre o subtotal da linha (arredondamento por linha).
+                    </>
+                  ) : (
+                    <>
+                      Desconto <strong>%</strong>: aplicado sobre o subtotal da linha; valor em centavos arredondado por
+                      linha (regra documentada no plano técnico).
+                    </>
+                  )}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Ou use valor único:{" "}
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0,00"
-                    value={form.amount}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, amount: sanitizeNumericFieldInput(e.target.value) }))
-                    }
-                    onBlur={() =>
-                      setForm((f) =>
-                        f.amount?.trim()
-                          ? { ...f, amount: formatBrlDisplay(parseBrl(f.amount)) }
-                          : f
-                      )
-                    }
-                    className="inline-block w-28 h-7 text-xs font-mono"
-                  />{" "}
-                  R$ (se preenchido, ignora a tabela de itens)
+                <p className={cn("text-xs text-muted-foreground mt-1", mobileShell && "flex flex-col gap-2 sm:block")}>
+                  {mobileShell ? (
+                    <>
+                      <span className="font-medium text-foreground">Valor único (opcional)</span>
+                      <span className="text-muted-foreground">
+                        Se preencher, substitui as linhas acima no valor total da fatura.
+                      </span>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        value={form.amount}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            amount: formatBrlInputMask(sanitizeNumericFieldInput(e.target.value)),
+                          }))
+                        }
+                        onBlur={() =>
+                          setForm((f) =>
+                            f.amount?.trim() ? { ...f, amount: formatBrlDisplay(parseBrl(f.amount)) } : f
+                          )
+                        }
+                        className="h-11 w-full max-w-[200px] font-mono text-sm"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      Ou use valor único:{" "}
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        value={form.amount}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            amount: formatBrlInputMask(sanitizeNumericFieldInput(e.target.value)),
+                          }))
+                        }
+                        onBlur={() =>
+                          setForm((f) =>
+                            f.amount?.trim()
+                              ? { ...f, amount: formatBrlDisplay(parseBrl(f.amount)) }
+                              : f
+                          )
+                        }
+                        className="inline-block w-28 h-7 text-xs font-mono"
+                      />{" "}
+                      R$ (se preenchido, ignora a tabela de itens)
+                    </>
+                  )}
                 </p>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div
+                className={cn(
+                  "grid gap-4 sm:grid-cols-2",
+                  mobileShell && "rounded-2xl border border-border/60 bg-card/40 p-4 dark:bg-card/25",
+                )}
+              >
+                {mobileShell ? (
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2">
+                    Vencimento e pagamento
+                  </h2>
+                ) : null}
                 <div>
                   <Label htmlFor="due_date">
-                    {!isEditMode && creationKind === "subscription"
-                      ? "Vencimento da primeira cobrança *"
-                      : "Data de vencimento *"}
+                    {mobileShell
+                      ? !isEditMode && creationKind === "subscription"
+                        ? "1.º vencimento *"
+                        : "Vencimento *"
+                      : !isEditMode && creationKind === "subscription"
+                        ? "Vencimento da primeira cobrança *"
+                        : "Data de vencimento *"}
                   </Label>
                   <Input
                     id="due_date"
@@ -1775,13 +2582,17 @@ const CustomerInvoiceNew = ({
                       }
                       setForm((f) => ({ ...f, due_date: v }));
                     }}
-                    className="mt-1"
+                    className={cn("mt-1", mobileShell && "h-11")}
                   />
                 </div>
                 <div>
-                  <Label>Métodos permitidos no link de pagamento</Label>
+                  <Label>
+                    {mobileShell ? "Métodos no link" : "Métodos permitidos no link de pagamento"}
+                  </Label>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Só é possível ativar métodos que estão ligados na configuração do gateway (Configurações → Pagamentos).
+                    {mobileShell
+                      ? "Só aparecem métodos já ativos no gateway (Configurações → Pagamentos)."
+                      : "Só é possível ativar métodos que estão ligados na configuração do gateway (Configurações → Pagamentos)."}
                   </p>
                   <div className="mt-2 space-y-2 rounded-md border p-3">
                     {PAYMENT_METHOD_OPTIONS.filter((option) => gatewayEnabledMethods.includes(option.value)).map(
@@ -1835,7 +2646,7 @@ const CustomerInvoiceNew = ({
                         <SelectTrigger id="gateway_key" className="mt-1 max-w-[320px]">
                           <SelectValue placeholder="Padrão do tenant" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className={radixOverlayAboveMobileShellClassName}>
                           <SelectItem value="__none__">Padrão do tenant</SelectItem>
                           {activeGatewaysForSelect.map((g) => (
                             <SelectItem key={g.key} value={g.key}>
@@ -1848,18 +2659,28 @@ const CustomerInvoiceNew = ({
                   )}
                 </div>
               </div>
-              <div>
-                <Label htmlFor="description">Observações (opcional)</Label>
+              <div
+                className={cn(
+                  mobileShell &&
+                    "rounded-2xl border border-border/60 bg-card/40 p-4 dark:bg-card/25",
+                )}
+              >
+                {mobileShell ? (
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notas</h2>
+                ) : null}
+                <Label htmlFor="description" className={cn(mobileShell && "mt-3 block")}>
+                  {mobileShell ? "Observações (opc.)" : "Observações (opcional)"}
+                </Label>
                 <Textarea
                   id="description"
-                  placeholder="Observações da cobrança"
+                  placeholder={mobileShell ? "Ex.: referência, NF, instruções…" : "Observações da cobrança"}
                   value={form.description ?? ""}
                   onChange={(e) => setForm((f) => ({ ...f, description: e.target.value || null }))}
-                  rows={2}
-                  className="mt-1"
+                  rows={mobileShell ? 3 : 2}
+                  className={cn("mt-1", mobileShell && "min-h-[88px] text-base")}
                 />
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className={cn("flex gap-2 pt-2", mobileShell && "hidden")}>
                 {!isEditMode && (
                   <Button
                     type="button"
@@ -1893,6 +2714,7 @@ const CustomerInvoiceNew = ({
         </Card>
       ))}
     </div>
+    </MobileCommerceScreenLayout>
   );
 };
 

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Bell, User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard, LayoutGrid, Store, Package, ShoppingCart, CalendarSync, Landmark, Receipt, PieChart, ArrowLeftRight, Tags, Repeat } from 'lucide-react';
+import { User, LayoutDashboard, Users, List, Calendar, Briefcase, FileText, FileSearch, Settings, UserPlus, ClipboardCheck, MessageSquare, LogOut, Search, LayoutTemplate, Ticket, ShieldCheck, CreditCard, LayoutGrid, Store, Package, ShoppingCart, CalendarSync, Landmark, Receipt, PieChart, ArrowLeftRight, Tags, Repeat, Newspaper } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -41,9 +41,33 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { routePreload } from '@/routePreload';
 import { cn } from '@/lib/utils';
 import { MobileAppNavigation } from '@/components/navigation/MobileAppNavigation';
+import {
+  MobileShellChromeProvider,
+  useMobileShellChrome,
+} from '@/contexts/MobileShellChromeContext';
+import { useInAppNotificationBadges } from '@/hooks/useInAppNotificationBadges';
+import { HeaderNotificationBell } from '@/components/layout/HeaderNotificationBell';
 
 interface AppLayoutProps {
   children: React.ReactNode;
+}
+
+/** Coluna principal: `main` + bottom nav, com padding ajustável quando um fluxo full screen suprime a tab bar. */
+function AppMainColumn({ children }: { children: React.ReactNode }) {
+  const { suppressMobileBottomNav } = useMobileShellChrome();
+  return (
+    <>
+      <main
+        className={cn(
+          'flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-4 pb-28 md:p-6 md:pb-6',
+          suppressMobileBottomNav && 'max-md:!pb-4',
+        )}
+      >
+        <RequireModuleView>{children}</RequireModuleView>
+      </main>
+      {!suppressMobileBottomNav ? <MobileAppNavigation /> : null}
+    </>
+  );
 }
 
 // Prefetch dos chunks das rotas mais usadas após o layout carregar (evita espera no primeiro clique)
@@ -447,6 +471,8 @@ const Header = () => {
     `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : 
     'Usuário';
 
+  const { notifUnread, updatesUnread } = useInAppNotificationBadges();
+
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
@@ -603,29 +629,7 @@ const Header = () => {
       
       <div className="flex min-w-0 shrink-0 items-center gap-2">
         <ThemeToggle />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-5 w-5" />
-              <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center bg-red-500 text-white text-xs">3</Badge>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel>Notificações</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <div className="max-h-96 overflow-y-auto">
-              {[1, 2, 3].map(i => (
-                <DropdownMenuItem key={i} className="py-3">
-                  <div>
-                    <p className="text-sm font-medium">Nova tarefa atribuída</p>
-                    <p className="text-xs text-muted-foreground">Reunião com cliente XYZ às 15:00</p>
-                    <p className="text-xs text-muted-foreground mt-1">Há 5 minutos</p>
-                  </div>
-                </DropdownMenuItem>
-              ))}
-            </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <HeaderNotificationBell unreadCount={notifUnread} />
         
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -648,6 +652,18 @@ const Header = () => {
             <DropdownMenuItem onClick={() => navigate('/settings')}>
               <Settings className="mr-2 h-4 w-4" />
               <span>Configurações</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onClick={() => navigate('/updates')}>
+              <Newspaper className="mr-2 h-4 w-4 shrink-0" />
+              <span className="flex-1">Atualizações</span>
+              {updatesUnread > 0 ? (
+                <Badge
+                  variant="default"
+                  className="ml-auto h-5 min-w-[1.25rem] shrink-0 justify-center px-1.5 text-[10px]"
+                >
+                  {updatesUnread > 99 ? '99+' : updatesUnread}
+                </Badge>
+              ) : null}
             </DropdownMenuItem>
             {user?.can_manage_plan && canView('meu_plano') && (
               <DropdownMenuItem onClick={() => navigate('/meu-plano')}>
@@ -683,10 +699,9 @@ const AppLayout = ({ children }: AppLayoutProps) => {
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <Header />
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-4 pb-28 md:p-6 md:pb-6">
-              <RequireModuleView>{children}</RequireModuleView>
-            </main>
-            <MobileAppNavigation />
+            <MobileShellChromeProvider>
+              <AppMainColumn>{children}</AppMainColumn>
+            </MobileShellChromeProvider>
           </div>
         </div>
       </SidebarProvider>

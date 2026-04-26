@@ -29,6 +29,7 @@ import {
 } from '../services/customerInvoiceAdminService.js';
 import { getCustomerInvoiceRecurrenceInsight } from '../services/customerInvoiceRecurrenceInsightService.js';
 import { patchCustomerSubscriptionNextBillingFromPaidInvoice } from '../services/customerInvoiceRecurrenceNextBillingService.js';
+import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
 
 const createItemSchema = z.object({
   description: z.string().min(1, 'Descrição é obrigatória'),
@@ -145,6 +146,9 @@ export async function getCustomerInvoicesSummaryHandler(req: AuthRequest, res: R
       res.status(401).json({ error: 'Tenant não identificado' });
       return;
     }
+    await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
+      console.error('[customerInvoicesController] getCustomerInvoicesSummaryHandler overdue sync:', err)
+    );
     const summary = await getCustomerInvoicesSummary(tenantId);
     res.json(summary);
   } catch (err) {
@@ -161,6 +165,9 @@ export async function listCustomerInvoices(req: AuthRequest, res: Response): Pro
       res.status(401).json({ error: 'Tenant não identificado' });
       return;
     }
+    await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
+      console.error('[customerInvoicesController] listCustomerInvoices overdue sync:', err)
+    );
 
     const { client_id, status, status_in, limit, offset } = req.query;
     const filters: ListCustomerInvoicesFilters = {};
@@ -200,6 +207,9 @@ export async function getCustomerInvoiceById(req: AuthRequest, res: Response): P
       res.status(401).json({ error: 'Tenant não identificado' });
       return;
     }
+    await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
+      console.error('[customerInvoicesController] getCustomerInvoiceById overdue sync:', err)
+    );
 
     const { id } = req.params;
     const invoice = await getInvoiceById(tenantId, id);

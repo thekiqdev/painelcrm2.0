@@ -13,6 +13,7 @@ import * as superadminPlatformNotificationsController from '../controllers/super
 import * as superadminPlatformWhatsAppController from '../controllers/superadminPlatformWhatsAppController.js';
 import * as superadminPlatformBillingsController from '../controllers/superadminPlatformBillingsController.js';
 import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsService.js';
+import superadminAnnouncementRoutes from './superadminAnnouncementRoutes.js';
 
 const router = Router();
 
@@ -129,5 +130,7 @@ router.post('/platform-whatsapp/instances/:id/connect', superadminPlatformWhatsA
 router.get('/platform-whatsapp/instances/:id/status', superadminPlatformWhatsAppController.getInstanceStatus);
 router.patch('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.patchInstance);
 router.delete('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.deleteSuperadminPlatformWhatsAppInstance);
+
+router.use('/announcements', superadminAnnouncementRoutes);
 
 export default router;

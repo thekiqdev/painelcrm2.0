@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -123,6 +124,7 @@ const ContractDetails = () => {
   const [signers, setSigners] = useState<ContractSigner[]>([]);
   const [events, setEvents] = useState<ContractEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [chatReturnTo, setChatReturnTo] = useState<string | null>(null);
   const [publicViewBootstrap, setPublicViewBootstrap] = useState<ContractPublicViewBootstrapResponse | null>(null);
   const [lastIssuedPublicToken, setLastIssuedPublicToken] = useState<string | null>(null);
   const [issuingPublicLink, setIssuingPublicLink] = useState(false);
@@ -153,14 +155,26 @@ const ContractDetails = () => {
   }, [id, user]);
 
   useEffect(() => {
+    const st = location.state as {
+      chatReturnTo?: string;
+      signatureInviteBootstrap?: ContractSignatureInviteBootstrapItem[];
+      publicView?: { token?: string };
+    } | null;
+    if (!st) return;
+    const rt = typeof st.chatReturnTo === "string" ? st.chatReturnTo.trim() : "";
+    if (rt) setChatReturnTo(rt);
+  }, [location.state]);
+
+  useEffect(() => {
     if (!id) return;
     const st = location.state as {
+      chatReturnTo?: string;
       signatureInviteBootstrap?: ContractSignatureInviteBootstrapItem[];
       publicView?: { token?: string };
     } | null;
     const sig = st?.signatureInviteBootstrap;
     const pv = st?.publicView;
-    if (!sig?.length && !pv?.token) return;
+    if (!sig?.length && !pv?.token && !st?.chatReturnTo) return;
 
     const rest = { ...(st || {}) } as Record<string, unknown>;
 
@@ -186,6 +200,9 @@ const ContractDetails = () => {
         });
       }
       delete rest.signatureInviteBootstrap;
+    }
+    if (st?.chatReturnTo) {
+      delete rest.chatReturnTo;
     }
 
     navigate(`/contracts/${id}`, {
@@ -693,6 +710,19 @@ const ContractDetails = () => {
 
   return (
     <div className="space-y-6">
+      {chatReturnTo ? (
+        <Alert className="border-primary/35 bg-primary/5">
+          <Link2 className="h-4 w-4 text-primary" />
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-sm text-foreground/90">
+              Contrato criado a partir do chat. Pode voltar à conversa para continuar o atendimento.
+            </span>
+            <Button type="button" size="sm" variant="secondary" className="shrink-0" onClick={() => navigate(chatReturnTo)}>
+              Voltar para conversa
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="flex min-w-0 items-start gap-3">

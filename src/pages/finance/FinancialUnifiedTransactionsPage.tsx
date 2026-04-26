@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   financialService,
@@ -99,7 +99,7 @@ const FinancialUnifiedTransactionsPage = () => {
     setSearchParams(next, { replace: true });
   };
 
-  const openCreate = (preset?: FinancialTransactionType) => {
+  const openCreate = useCallback((preset?: FinancialTransactionType) => {
     setFormType(preset ?? "income");
     setFormAccount(accounts[0]?.id ?? "");
     setFormAmount("");
@@ -108,7 +108,17 @@ const FinancialUnifiedTransactionsPage = () => {
     setFormCategory("");
     setFormStatus("completed");
     setOpen(true);
-  };
+  }, [accounts]);
+
+  useEffect(() => {
+    const preset = searchParams.get("new");
+    if (preset !== "income" && preset !== "expense") return;
+    if (loading) return;
+    openCreate(preset);
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, loading, openCreate]);
 
   const handleCreate = async () => {
     const cents = Math.round(parseFloat(formAmount.replace(",", ".")) * 100);

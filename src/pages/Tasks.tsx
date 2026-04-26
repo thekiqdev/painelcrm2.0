@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +29,7 @@ import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox"
 const TASKS_QUERY_KEY = ["tasks", "list"] as const;
 
 const Tasks = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
@@ -51,6 +53,29 @@ const Tasks = () => {
       setClients(tasksData.clients);
     }
   }, [tasksData]);
+
+  const clearTaskQuery = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("task");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [setSearchParams]);
+
+  useEffect(() => {
+    const tid = searchParams.get("task");
+    if (!tid || loading) return;
+    const t = tasks.find((x) => x.id === tid);
+    if (t) {
+      setFullViewTask(globalTaskToUnified(t));
+    } else if (tasks.length > 0) {
+      clearTaskQuery();
+    }
+  }, [searchParams, tasks, loading, clearTaskQuery]);
+
   
   // Estados para o modal de detalhes e gerenciamento de checklist
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
@@ -574,7 +599,13 @@ const closeTaskDetail = () => {
       <TaskFullView
         task={fullViewTask}
         open={!!fullViewTask}
-        onOpenChange={(open) => !open && setFullViewTask(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setFullViewTask(null);
+            clearTaskQuery();
+          }
+        }}
+        fullscreenMobile
         clients={clients.map((c) => ({ id: c.id, name: c.name }))}
         onUpdate={handleFullViewUpdate}
         onDelete={handleFullViewDelete}

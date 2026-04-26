@@ -15,7 +15,8 @@ export type NotificationType =
   | 'instance_connected'
   | 'instance_disconnected'
   | 'kanban_automation'
-  | 'crm_proposal';
+  | 'crm_proposal'
+  | 'announcement';
 
 /**
  * Interface para criar notificação
@@ -34,14 +35,151 @@ export interface CreateNotificationParams {
 export interface Notification {
   id: string;
   user_id: string;
-  type: NotificationType;
+  tenant_id?: string | null;
+  type: NotificationType | string;
   title: string;
   message: string | null;
+  href?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
   data: Record<string, any>;
   read: boolean;
   read_at: Date | null;
   created_at: Date;
   updated_at: Date;
+}
+
+/** Resposta enxuta do centro de notificações (sininho). */
+export type NotificationListItemDto = {
+  id: string;
+  type: string;
+  title: string;
+  message: string | null;
+  href: string;
+  read: boolean;
+  read_at: string | null;
+  created_at: string;
+};
+
+function asData(n: Notification): Record<string, any> {
+  const d = n.data;
+  return d && typeof d === 'object' && !Array.isArray(d) ? (d as Record<string, any>) : {};
+}
+
+/**
+ * Destino in-app quando `href` não veio persistido (notificações antigas ou só JSON em `data`).
+ */
+export function resolveNotificationHrefForRow(n: Notification): string {
+  const rawHref = n.href != null ? String(n.href).trim() : '';
+  if (rawHref.startsWith('/')) return rawHref;
+
+  const d = asData(n);
+  const dataHref = typeof d.href === 'string' ? d.href.trim() : '';
+  if (dataHref.startsWith('/')) return dataHref;
+
+  const type = String(n.type || '');
+  const et = n.entity_type != null ? String(n.entity_type) : '';
+
+  const entityMap: Record<string, (id: string) => string> = {
+    announcement: (id) => `/updates/${id}`,
+    invoice: (id) => `/customer-invoices/${id}`,
+    customer_invoice: (id) => `/customer-invoices/${id}`,
+    proposal: (id) => `/proposals/${id}`,
+    contract: (id) => `/contracts/${id}`,
+    task: (id) => `/tasks`,
+    ticket: (id) => `/support/tickets/${id}`,
+    conversation: (id) => `/chat/${encodeURIComponent(id)}`,
+  };
+
+  if (n.entity_id && et && entityMap[et]) {
+    return entityMap[et](String(n.entity_id));
+  }
+
+  if (type === 'announcement' || et === 'announcement') {
+    const aid = n.entity_id ? String(n.entity_id) : typeof d.announcement_id === 'string' ? d.announcement_id : '';
+    if (aid) return `/updates/${aid}`;
+    return '/updates';
+  }
+
+  const conv =
+    (typeof d.conversationId === 'string' && d.conversationId) ||
+    (typeof d.conversation_id === 'string' && d.conversation_id) ||
+    '';
+  if (conv) {
+    if (
+      type === 'new_message' ||
+      type === 'message_delivered' ||
+      type === 'message_read' ||
+      type === 'new_conversation' ||
+      type === 'kanban_automation'
+    ) {
+      return `/chat/${encodeURIComponent(conv)}`;
+    }
+  }
+
+  if (type === 'crm_proposal') {
+    const pid = typeof d.proposal_id === 'string' ? d.proposal_id : typeof d.proposalId === 'string' ? d.proposalId : '';
+    if (pid) return `/proposals/${pid}`;
+  }
+
+  if (type === 'lead_updated') {
+    const lid = typeof d.leadId === 'string' ? d.leadId : typeof d.lead_id === 'string' ? d.lead_id : '';
+    if (lid) return `/leads/${lid}`;
+  }
+
+  const invoiceId =
+    typeof d.invoice_id === 'string'
+      ? d.invoice_id
+      : typeof d.invoiceId === 'string'
+        ? d.invoiceId
+        : typeof d.customer_invoice_id === 'string'
+          ? d.customer_invoice_id
+          : '';
+  if (invoiceId) return `/customer-invoices/${invoiceId}`;
+
+  const contractId =
+    typeof d.contract_id === 'string' ? d.contract_id : typeof d.contractId === 'string' ? d.contractId : '';
+  if (contractId) return `/contracts/${contractId}`;
+
+  const ticketId =
+    typeof d.ticket_id === 'string' ? d.ticket_id : typeof d.ticketId === 'string' ? d.ticketId : '';
+  if (ticketId) return `/support/tickets/${ticketId}`;
+
+  if (type.startsWith('superadmin_')) {
+    return '/superadmin/notifications';
+  }
+
+  if (type === 'instance_connected' || type === 'instance_disconnected' || type.startsWith('connection_')) {
+    return '/settings';
+  }
+
+  if (conv) return `/chat/${encodeURIComponent(conv)}`;
+
+  return '/dashboard';
+}
+
+function toIsoString(d: Date | string | null | undefined): string | null {
+  if (d == null) return null;
+  try {
+    const dt = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+export function notificationToListDto(row: Notification): NotificationListItemDto {
+  return {
+    id: row.id,
+    type: String(row.type),
+    title: row.title,
+    message: row.message,
+    href: resolveNotificationHrefForRow(row),
+    read: row.read === true,
+    read_at: toIsoString(row.read_at),
+    created_at: toIsoString(row.created_at) ?? new Date().toISOString(),
+  };
 }
 
 /**
@@ -340,7 +478,7 @@ export async function getUserNotifications(
   }
 
   if (type) {
-    whereClause += ` AND type = $${paramIndex}`;
+    whereClause += ` AND type = $${paramIndex}::varchar`;
     params.push(type);
     paramIndex++;
   }
@@ -390,25 +528,89 @@ export async function getUnreadCount(userId: string): Promise<number> {
 }
 
 /**
- * Marca notificação como lida
+ * Marca notificações de anúncio como lidas (vários IDs de announcement).
  */
-export async function markNotificationAsRead(
+export async function markAnnouncementNotificationsAsReadForUser(
+  userId: string,
+  announcementIds: string[]
+): Promise<void> {
+  if (announcementIds.length === 0) return;
+  await pool.query(
+    `
+    UPDATE notifications
+    SET read = true, read_at = COALESCE(read_at, now()), updated_at = now()
+    WHERE user_id = $1
+      AND entity_type = 'announcement'
+      AND entity_id = ANY($2::uuid[])
+    `,
+    [userId, announcementIds]
+  );
+  try {
+    const unreadCount = await getUnreadCount(userId);
+    emitUnreadCount(userId, unreadCount);
+  } catch (error: any) {
+    console.warn('Failed to emit unread count via WebSocket:', error.message);
+  }
+}
+
+export async function getNotificationById(
   notificationId: string,
   userId: string
 ): Promise<Notification | null> {
   const result = await pool.query<Notification>(
+    `SELECT * FROM notifications WHERE id = $1 AND user_id = $2 LIMIT 1`,
+    [notificationId, userId]
+  );
+  return result.rows[0] || null;
+}
+
+async function upsertAnnouncementRead(
+  userId: string,
+  tenantId: string,
+  announcementId: string
+): Promise<void> {
+  await pool.query(
+    `
+    INSERT INTO announcement_reads (announcement_id, tenant_id, user_id)
+    VALUES ($1::uuid, $2::uuid, $3::uuid)
+    ON CONFLICT (announcement_id, user_id) DO NOTHING
+    `,
+    [announcementId, tenantId, userId]
+  );
+}
+
+/**
+ * Marca notificação como lida (idempotente).
+ * Para tipo announcement + tenant, sincroniza announcement_reads.
+ */
+export async function markNotificationAsRead(
+  notificationId: string,
+  userId: string,
+  tenantId: string | null
+): Promise<Notification | null> {
+  const result = await pool.query<Notification>(
     `
     UPDATE notifications
-    SET read = true, read_at = now(), updated_at = now()
-    WHERE id = $1 AND user_id = $2 AND read = false
+    SET read = true, read_at = COALESCE(read_at, now()), updated_at = now()
+    WHERE id = $1 AND user_id = $2
     RETURNING *
     `,
     [notificationId, userId]
   );
 
   const notification = result.rows[0] || null;
+  if (notification && tenantId) {
+    const d = asData(notification);
+    const isAnn =
+      notification.entity_type === 'announcement' || String(notification.type) === 'announcement';
+    const aid =
+      (notification.entity_id as string | undefined) ||
+      (typeof d.announcement_id === 'string' ? d.announcement_id : undefined);
+    if (isAnn && aid) {
+      await upsertAnnouncementRead(userId, tenantId, aid);
+    }
+  }
 
-  // Atualizar contador de não lidas via WebSocket
   if (notification) {
     try {
       const unreadCount = await getUnreadCount(userId);
@@ -466,5 +668,19 @@ export async function deleteNotification(
   );
 
   return (result.rowCount || 0) > 0;
+}
+
+/**
+ * Remove todas as notificações do utilizador (hard delete; tabela sem deleted_at).
+ */
+export async function deleteAllNotificationsForUser(userId: string): Promise<number> {
+  const result = await pool.query(`DELETE FROM notifications WHERE user_id = $1 RETURNING id`, [userId]);
+  const count = result.rowCount || 0;
+  try {
+    emitUnreadCount(userId, 0);
+  } catch (error: any) {
+    console.warn('Failed to emit unread count via WebSocket:', error.message);
+  }
+  return count;
 }
 

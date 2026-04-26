@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   AlertTriangle,
   CreditCard,
@@ -22,13 +23,22 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useFeatureFlag } from "@/hooks/useFeatureFlag";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { ticketStatusLabels, type TicketStatus } from "@/types/tickets";
+import { DashboardQuickActionsPanel } from "@/components/dashboard/DashboardQuickActionsPanel";
+import {
+  type DashboardQuickActionContext,
+  computeOrderedQuickActions,
+} from "@/lib/dashboardQuickActions";
+import { useDashboardQuickActionsPreferences } from "@/hooks/useDashboardQuickActionsPreferences";
 
 const axisTickProps = { fill: "hsl(var(--muted-foreground))", fontSize: 11 };
 type PeriodPreset = "current_month" | "last_month" | "ytd";
 
 const Dashboard = () => {
   const { user } = useAuth();
-  const { canView } = useModulePermissions();
+  const { canView, canCreate, canEdit } = useModulePermissions();
   const hasClients = useFeatureFlag("clients");
   const hasInvoices = useFeatureFlag("invoices");
   const hasProposals = useFeatureFlag("proposals");
@@ -37,9 +47,13 @@ const Dashboard = () => {
   const hasDashboard = useFeatureFlag("dashboard");
   const hasExpenses = useFeatureFlag("expenses");
   const hasLeads = useFeatureFlag("leads");
+  const hasProjects = useFeatureFlag("projects");
   const hasTickets = useFeatureFlag("tickets");
   const hasTasks = useFeatureFlag("tasks");
   const [preset, setPreset] = useState<PeriodPreset>("current_month");
+  const [chartShowReceived, setChartShowReceived] = useState(true);
+  const [chartShowProjected, setChartShowProjected] = useState(true);
+  const [queueSort, setQueueSort] = useState<"new" | "old">("new");
   const trialEndsAt =
     user?.tenant_status === 'trial' && user?.trial_ends_at
       ? new Date(user.trial_ends_at)
@@ -82,6 +96,40 @@ const Dashboard = () => {
     });
   }, [overview]);
 
+  const sortedAgentPreview = useMemo(() => {
+    const list = overview?.agent_attendance?.preview ?? [];
+    const copy = [...list];
+    const ts = (s: string | null) => (s ? new Date(s).getTime() : 0);
+    copy.sort((a, b) => {
+      const da = ts(a.last_message_at);
+      const db = ts(b.last_message_at);
+      return queueSort === "new" ? db - da : da - db;
+    });
+    return copy;
+  }, [overview?.agent_attendance?.preview, queueSort]);
+
+  const attendanceStatusLabel = (s: string | null | undefined): string => {
+    const v = (s ?? "").toLowerCase();
+    if (v === "in_service" || v === "in-service") return "Em atendimento";
+    if (v === "queued") return "Na fila";
+    if (v === "unassigned") return "Sem responsável";
+    if (v === "closed") return "Encerrada";
+    return s ? s.replace(/_/g, " ") : "—";
+  };
+
+  const ticketStatusShort = (status: string): string => {
+    const k = status as TicketStatus;
+    return ticketStatusLabels[k] ?? status;
+  };
+
+  const mobileChatDeepLink = useMemo(() => {
+    const firstAgent = sortedAgentPreview[0]?.id;
+    if (firstAgent) return `/chat/${firstAgent}`;
+    const c = overview?.chat_overview?.list?.[0]?.id;
+    if (c) return `/chat/${c}`;
+    return "/chat";
+  }, [sortedAgentPreview, overview?.chat_overview?.list]);
+
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
@@ -91,57 +139,74 @@ const Dashboard = () => {
     }).format(value);
   };
   const formatPct = (value: number): string => `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+  const formatCurrencyCents = (valueCents: number): string =>
+    new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format((valueCents ?? 0) / 100);
+  const payableTag = (dueDate: string): string => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(`${dueDate}T00:00:00`);
+    due.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((due.getTime() - today.getTime()) / 86400000);
+    if (diffDays < 0) return "Vencida";
+    if (diffDays === 0) return "Hoje";
+    if (diffDays === 1) return "Amanhã";
+    return `Em ${diffDays} dias`;
+  };
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
-  const mobileShortcuts = [
-    show(hasInvoices, "billing")
-      ? { label: "Nova cobrança", to: "/customer-invoices/new", icon: FileText, tone: "bg-blue-500/10 text-blue-700 dark:text-blue-200" }
-      : null,
-    show(hasInvoices, "billing")
-      ? { label: "Cobranças", to: "/customer-charges", icon: CreditCard, tone: "bg-sky-500/10 text-sky-800 dark:text-sky-200" }
-      : null,
-    show(hasClients, "clients")
-      ? { label: "Clientes", to: "/clients", icon: UserPlus, tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-200" }
-      : null,
-    show(hasProposals, "proposals")
-      ? { label: "Nova proposta", to: "/proposals/new", icon: FileText, tone: "bg-amber-500/10 text-amber-700 dark:text-amber-200" }
-      : null,
-    show(hasContracts, "contracts")
-      ? { label: "Novo contrato", to: "/contracts/new", icon: FileSignature, tone: "bg-violet-500/10 text-violet-700 dark:text-violet-200" }
-      : null,
-    show(hasChat, "chat")
-      ? { label: "Chat", to: "/chat", icon: MessageSquare, tone: "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-200" }
-      : null,
-    show(hasExpenses, "finance")
-      ? { label: "Financeiro", to: "/finance", icon: DollarSign, tone: "bg-teal-500/10 text-teal-700 dark:text-teal-200" }
-      : show(hasDashboard, "dashboard")
-        ? { label: "Métricas", to: "/dashboard", icon: DollarSign, tone: "bg-teal-500/10 text-teal-700 dark:text-teal-200" }
-        : null,
-  ].filter((item): item is NonNullable<typeof item> => item !== null);
+  const canManageFinance = show(hasExpenses, "finance") && (canCreate("finance") || canEdit("finance"));
+
+  const quickActionCtx = useMemo<DashboardQuickActionContext>(
+    () => ({
+      flags: {
+        invoices: hasInvoices,
+        clients: hasClients,
+        proposals: hasProposals,
+        contracts: hasContracts,
+        chat: hasChat,
+        expenses: hasExpenses,
+        dashboard: hasDashboard,
+      },
+      canView,
+      canCreate,
+      canEdit,
+      canManageFinance,
+    }),
+    [
+      hasInvoices,
+      hasClients,
+      hasProposals,
+      hasContracts,
+      hasChat,
+      hasExpenses,
+      hasDashboard,
+      canView,
+      canCreate,
+      canEdit,
+      canManageFinance,
+    ],
+  );
+
+  const { prefs, setPrefs, reset } = useDashboardQuickActionsPreferences(user?.id);
+  const quickActionsForPanel = useMemo(
+    () => computeOrderedQuickActions(quickActionCtx, prefs),
+    [quickActionCtx, prefs],
+  );
 
   return (
     <div className="space-y-6">
-      {mobileShortcuts.length > 0 ? (
-        <section className="space-y-3 md:hidden">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold tracking-tight">Atalhos rápidos</h2>
-            <span className="shrink-0 text-xs text-muted-foreground">Ações frequentes</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {mobileShortcuts.map((shortcut) => (
-              <Link
-                key={shortcut.label}
-                to={shortcut.to}
-                className="group min-h-[4.5rem] rounded-2xl border border-border bg-card p-3.5 shadow-sm transition-transform active:scale-[0.98] md:hover:-translate-y-0.5 md:hover:shadow-md"
-              >
-                <div className={`inline-flex rounded-xl p-2 ${shortcut.tone}`}>
-                  <shortcut.icon className="h-5 w-5" aria-hidden />
-                </div>
-                <p className="mt-2 text-sm font-medium leading-snug">{shortcut.label}</p>
-              </Link>
-            ))}
-          </div>
-        </section>
+      {quickActionsForPanel.length > 0 ? (
+        <DashboardQuickActionsPanel
+          ctx={quickActionCtx}
+          prefs={prefs}
+          setPrefs={setPrefs}
+          resetPrefs={reset}
+        />
       ) : null}
 
       {overview && show(hasDashboard, "dashboard") ? (
@@ -188,6 +253,236 @@ const Dashboard = () => {
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">Vendas pagas</p>
             </div>
+          </div>
+        </section>
+      ) : null}
+
+      {overview && show(hasExpenses, "finance") ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Contas a pagar</h2>
+              <p className="text-xs text-muted-foreground">Próximos 7 dias</p>
+            </div>
+            <Button asChild size="sm" variant="outline" className="h-8">
+              <Link to="/finance/expenses">Ver despesas</Link>
+            </Button>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
+            {(overview.accounts_payable_next_7_days ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhuma conta a vencer nos próximos 7 dias.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {(overview.accounts_payable_next_7_days ?? []).map((item) => (
+                  <div key={item.id} className="rounded-lg border p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium truncate">{item.description}</p>
+                      <Badge variant="outline" className="text-[10px]">{payableTag(item.due_date)}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Vence em {new Date(`${item.due_date}T00:00:00`).toLocaleDateString("pt-BR")}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold tabular-nums">{formatCurrencyCents(item.amount_cents)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 flex items-center justify-between border-t pt-3">
+              <span className="text-xs text-muted-foreground">Total da semana</span>
+              <span className="text-sm font-semibold">
+                {formatCurrencyCents(overview.accounts_payable_total_cents ?? 0)}
+              </span>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {overview &&
+      show(hasExpenses, "finance") &&
+      show(hasInvoices, "billing") &&
+      overview.next_7_days ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Próximos 7 dias</h2>
+            <span className="text-xs text-muted-foreground">Fluxo previsto</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl border p-2.5">
+              <p className="text-[11px] text-muted-foreground">A receber</p>
+              <p className="mt-1 text-xs font-semibold">{formatCurrencyCents(overview.next_7_days.receivable_cents)}</p>
+            </div>
+            <div className="rounded-xl border p-2.5">
+              <p className="text-[11px] text-muted-foreground">A pagar</p>
+              <p className="mt-1 text-xs font-semibold">{formatCurrencyCents(overview.next_7_days.payable_cents)}</p>
+            </div>
+            <div className="rounded-xl border p-2.5">
+              <p className="text-[11px] text-muted-foreground">Saldo</p>
+              <p className={`mt-1 text-xs font-semibold ${(overview.next_7_days.balance_cents ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                {formatCurrencyCents(overview.next_7_days.balance_cents)}
+              </p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {overview && show(hasTasks, "tasks") ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Tarefas</h2>
+              <p className="text-xs text-muted-foreground">Suas próximas atividades</p>
+            </div>
+            <Button asChild size="sm" variant="outline" className="h-8">
+              <Link to="/tasks">Ver tarefas</Link>
+            </Button>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
+            {(() => {
+              const grouped = overview.tasks_overview;
+              const items = grouped
+                ? [...grouped.overdue, ...grouped.due_today, ...grouped.upcoming, ...grouped.recent_assigned].slice(0, 5)
+                : [];
+              if (items.length === 0) return <p className="text-sm text-muted-foreground">Nenhuma tarefa urgente.</p>;
+              return (
+                <div className="space-y-2.5">
+                  {items.map((task) => (
+                    <Link
+                      key={task.id}
+                      to={`/tasks?task=${encodeURIComponent(task.id)}`}
+                      className="block rounded-lg border p-2.5 transition-colors active:scale-[0.99]"
+                    >
+                      <p className="text-sm font-medium truncate">{task.title}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {task.due_date ? new Date(`${task.due_date}T00:00:00`).toLocaleDateString("pt-BR") : "Sem data"}
+                        {task.priority ? ` · ${task.priority}` : ""}
+                      </p>
+                    </Link>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </section>
+      ) : null}
+
+      {overview && show(hasProjects, "projects") ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Projetos</h2>
+              <p className="text-xs text-muted-foreground">Seus projetos recentes</p>
+            </div>
+            <Button asChild size="sm" variant="outline" className="h-8">
+              <Link to="/projects">Ver projetos</Link>
+            </Button>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
+            {(overview.projects_overview ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum projeto listado.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {(overview.projects_overview ?? []).slice(0, 5).map((project) => (
+                  <Link
+                    key={project.id}
+                    to={`/projects?project=${encodeURIComponent(project.id)}`}
+                    className="block rounded-lg border p-2.5 transition-colors active:scale-[0.99]"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium truncate">{project.name}</p>
+                      <Badge variant="outline" className="shrink-0 text-[10px]">
+                        {project.progress_pct}%
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {project.pending_tasks} pendente(s)
+                      {project.due_date ? ` · ${new Date(`${project.due_date}T00:00:00`).toLocaleDateString("pt-BR")}` : ""}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {overview && show(hasTickets, "tickets") ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Tickets</h2>
+            <Button asChild size="sm" variant="outline" className="h-8">
+              <Link to="/support/tickets">Ver todos</Link>
+            </Button>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl border bg-card p-2.5">
+              <p className="text-[11px] text-muted-foreground">Abertos</p>
+              <p className="mt-1 text-base font-semibold tabular-nums">{overview.tickets_overview?.open ?? 0}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-2.5">
+              <p className="text-[11px] text-muted-foreground">Em andamento</p>
+              <p className="mt-1 text-base font-semibold tabular-nums">{overview.tickets_overview?.in_progress ?? 0}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-2.5">
+              <p className="text-[11px] text-muted-foreground">Resolvidos</p>
+              <p className="mt-1 text-base font-semibold tabular-nums">{overview.tickets_overview?.resolved ?? 0}</p>
+            </div>
+          </div>
+          {(overview.tickets_overview?.recent ?? []).length > 0 ? (
+            <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Recentes</p>
+              <div className="space-y-2">
+                {(overview.tickets_overview?.recent ?? []).slice(0, 4).map((t) => (
+                  <Link
+                    key={t.id}
+                    to={`/support/tickets/${encodeURIComponent(t.id)}`}
+                    className="block rounded-lg border p-2.5 text-left transition-colors active:scale-[0.99]"
+                  >
+                    <p className="text-xs text-muted-foreground">{t.ticket_number}</p>
+                    <p className="text-sm font-medium leading-snug">{t.subject}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{ticketStatusShort(t.status)}</p>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {overview && show(hasChat, "chat") ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold tracking-tight">Atendimento</h2>
+            <span className="text-xs text-muted-foreground">Resumo rápido</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-xl border bg-card p-2.5">
+              <p className="text-[11px] text-muted-foreground">Em atendimento (você)</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">
+                {overview.agent_attendance != null ? overview.agent_attendance.my_in_service : "—"}
+              </p>
+            </div>
+            <div className="rounded-xl border bg-card p-2.5">
+              <p className="text-[11px] text-muted-foreground">Sua fila</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">
+                {overview.agent_attendance != null ? overview.agent_attendance.my_queued : "—"}
+              </p>
+            </div>
+            <div className="rounded-xl border bg-card p-2.5">
+              <p className="text-[11px] text-muted-foreground">Não lidas</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{overview.chat_overview?.unread ?? 0}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-2.5">
+              <p className="text-[11px] text-muted-foreground">Tickets abertos</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{overview.operations.open_tickets ?? 0}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button asChild className="h-11 rounded-xl">
+              <Link to="/chat">Abrir chat</Link>
+            </Button>
+            <Button asChild variant="outline" className="h-11 rounded-xl">
+              <Link to={mobileChatDeepLink}>Abrir conversa</Link>
+            </Button>
           </div>
         </section>
       ) : null}
@@ -245,7 +540,7 @@ const Dashboard = () => {
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-semibold tracking-tight">Clientes e cobranças</h2>
             <span className="shrink-0 text-xs text-muted-foreground">Base</span>
-          </div>
+                </div>
           <div className="grid grid-cols-2 gap-3">
             {show(hasClients, "clients") ? (
               <Link
@@ -349,7 +644,7 @@ const Dashboard = () => {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2">
+            <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-amber-600" />Ticket médio</CardDescription>
             <CardTitle className="text-2xl">
               {overview?.sales.average_ticket != null ? formatCurrency(overview.sales.average_ticket) : "—"}
@@ -362,37 +657,97 @@ const Dashboard = () => {
       {/* Gráfico receita vs prevista e funil */}
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
         <Card>
-          <CardHeader>
-            <CardTitle>Receita realizada vs prevista</CardTitle>
-            <CardDescription>Visão consolidada mensal para decisão</CardDescription>
+          <CardHeader className="space-y-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1">
+                <CardTitle>Receita realizada vs prevista</CardTitle>
+                <CardDescription>Colunas empilhadas: realizada (base) + prevista (topo)</CardDescription>
+                </div>
+              <Select value={preset} onValueChange={(v) => setPreset(v as PeriodPreset)}>
+                <SelectTrigger className="h-9 w-full lg:w-[11rem]" aria-label="Período do gráfico">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current_month">Este mês</SelectItem>
+                  <SelectItem value="last_month">Mês passado</SelectItem>
+                  <SelectItem value="ytd">Ano atual</SelectItem>
+                </SelectContent>
+              </Select>
+                </div>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t pt-3">
+              <div className="flex items-center gap-2">
+                <Switch id="dash-chart-received" checked={chartShowReceived} onCheckedChange={setChartShowReceived} />
+                <Label htmlFor="dash-chart-received" className="cursor-pointer text-sm font-normal">
+                  Receita realizada
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="dash-chart-projected" checked={chartShowProjected} onCheckedChange={setChartShowProjected} />
+                <Label htmlFor="dash-chart-projected" className="cursor-pointer text-sm font-normal">
+                  Receita prevista
+                </Label>
+              </div>
+      </div>
           </CardHeader>
           <CardContent className="h-[320px]">
             <div className="h-80">
+              {!chartShowReceived && !chartShowProjected ? (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  Ative ao menos uma série para visualizar o gráfico.
+                </div>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartRows} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted" />
+                  <BarChart data={chartRows} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted" />
                   <XAxis dataKey="name" tick={axisTickProps} />
-                  <YAxis tick={axisTickProps} />
-                  <Tooltip
-                    formatter={(value: number, name: string) => [formatCurrency(Number(value)), name]}
-                    content={({ active, payload, label }) => {
-                      if (!active || !payload?.length) return null;
-                      const row = payload[0].payload as any;
-                      return (
-                        <div className="rounded-md border bg-background p-3 text-xs shadow-sm space-y-1">
-                          <p className="font-medium">{label}</p>
-                          <p>Receita recebida: {formatCurrency(row.receita_recebida)}</p>
-                          <p>Receita futura: {formatCurrency(row.receita_futura)}</p>
-                          <p>Total potencial: {formatCurrency(row.receita_total_potencial)}</p>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Legend />
-                  <Bar dataKey="receita_recebida" stackId="r" fill="hsl(142 76% 36%)" name="Receita recebida" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="receita_futura" stackId="r" fill="hsl(142 55% 62%)" name="Receita prevista" radius={[4, 4, 0, 0]} />
-                </BarChart>
+                    <YAxis tick={axisTickProps} />
+                    <Tooltip
+                      formatter={(value: number, name: string) => [formatCurrency(Number(value)), name]}
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length) return null;
+                        const row = payload[0].payload as (typeof chartRows)[number];
+                        return (
+                          <div className="space-y-1 rounded-md border bg-background p-3 text-xs shadow-sm">
+                            <p className="font-medium">{label}</p>
+                            {chartShowReceived ? (
+                              <p className="text-emerald-700 dark:text-emerald-400">
+                                Realizada: {formatCurrency(row.receita_recebida)}
+                              </p>
+                            ) : null}
+                            {chartShowProjected ? (
+                              <p className="text-emerald-600/90 dark:text-emerald-300/90">
+                                Prevista: {formatCurrency(row.receita_futura)}
+                              </p>
+                            ) : null}
+                            <p className="border-t pt-1 text-muted-foreground">
+                              Total: {formatCurrency(row.receita_total_potencial)}
+                            </p>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Legend />
+                    {chartShowReceived ? (
+                      <Bar
+                        dataKey="receita_recebida"
+                        stackId="r"
+                        fill="hsl(142 76% 36%)"
+                        name="Receita realizada"
+                        radius={chartShowProjected ? [0, 0, 0, 0] : [4, 4, 0, 0]}
+                      />
+                    ) : null}
+                    {chartShowProjected ? (
+                      <Bar
+                        dataKey="receita_futura"
+                        stackId="r"
+                        fill="hsl(142 55% 52%)"
+                        name="Receita prevista"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    ) : null}
+                  </BarChart>
               </ResponsiveContainer>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -417,7 +772,7 @@ const Dashboard = () => {
                     <p className="text-sm text-muted-foreground">
                       {f.count} {f.count === 1 ? "lead" : "leads"}{f.amount > 0 ? ` | ${formatCurrency(f.amount)}` : ""}
                     </p>
-                  </div>
+            </div>
                 );
               })
             )}
@@ -425,30 +780,255 @@ const Dashboard = () => {
         </Card>
       </div>
 
+      <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-3">
+        {show(hasTasks, "tasks") ? (
+          <Card>
+          <CardHeader>
+              <CardTitle>Tarefas</CardTitle>
+              <CardDescription>Suas próximas atividades</CardDescription>
+          </CardHeader>
+            <CardContent className="space-y-2">
+              {(() => {
+                const grouped = overview?.tasks_overview;
+                const items = grouped
+                  ? [...grouped.overdue, ...grouped.due_today, ...grouped.upcoming, ...grouped.recent_assigned].slice(0, 5)
+                  : [];
+                if (items.length === 0) return <p className="text-sm text-muted-foreground">Nenhuma tarefa urgente.</p>;
+                return items.map((task) => (
+                  <Link
+                    key={task.id}
+                    to={`/tasks?task=${encodeURIComponent(task.id)}`}
+                    className="block rounded-lg border p-2.5 transition-colors hover:bg-muted/50"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium leading-snug">{task.title}</p>
+                      {task.due_date ? (
+                        <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
+                          {new Date(`${task.due_date}T00:00:00`).toLocaleDateString("pt-BR")}
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="shrink-0 text-[10px]">
+                          Sem data
+                        </Badge>
+                      )}
+            </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {task.client_name ? `${task.client_name} · ` : ""}
+                      Prioridade: {task.priority ?? "—"}
+                    </p>
+                  </Link>
+                ));
+              })()}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {show(hasProjects, "projects") ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Projetos</CardTitle>
+              <CardDescription>Projetos vinculados a você</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {(overview?.projects_overview ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhum projeto ativo vinculado a você.</p>
+              ) : (
+                (overview?.projects_overview ?? []).slice(0, 5).map((project) => (
+                  <Link
+                    key={project.id}
+                    to={`/projects?project=${encodeURIComponent(project.id)}`}
+                    className="block rounded-lg border p-2.5 transition-colors hover:bg-muted/50"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold leading-snug">{project.name}</p>
+                      <Badge variant="outline" className="text-[10px]">
+                        {project.progress_pct}%
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {project.pending_tasks} pendente(s)
+                      {project.due_date ? ` · prazo ${new Date(`${project.due_date}T00:00:00`).toLocaleDateString("pt-BR")}` : ""}
+                    </p>
+                  </Link>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {show(hasTickets, "tickets") ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Tickets</CardTitle>
+              <CardDescription>Chamados do tenant</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg border p-2">
+                  <p className="text-xs text-muted-foreground">Abertos</p>
+                  <p className="text-lg font-semibold tabular-nums">{overview?.tickets_overview?.open ?? 0}</p>
+                </div>
+                <div className="rounded-lg border p-2">
+                  <p className="text-xs text-muted-foreground">Em andamento</p>
+                  <p className="text-lg font-semibold tabular-nums">{overview?.tickets_overview?.in_progress ?? 0}</p>
+                </div>
+                <div className="rounded-lg border p-2">
+                  <p className="text-xs text-muted-foreground">Resolvidos</p>
+                  <p className="text-lg font-semibold tabular-nums">{overview?.tickets_overview?.resolved ?? 0}</p>
+                </div>
+              </div>
+              {(overview?.tickets_overview?.recent ?? []).length > 0 ? (
+                <div className="space-y-2">
+                  {(overview?.tickets_overview?.recent ?? []).slice(0, 4).map((t) => (
+                    <Link
+                      key={t.id}
+                      to={`/support/tickets/${encodeURIComponent(t.id)}`}
+                      className="block rounded-lg border p-2.5 text-left transition-colors hover:bg-muted/50"
+                    >
+                      <p className="text-xs text-muted-foreground">{t.ticket_number}</p>
+                      <p className="text-sm font-medium leading-snug">{t.subject}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">{ticketStatusShort(t.status)}</p>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Nenhum ticket recente.</p>
+              )}
+              <Button asChild variant="outline" className="w-full">
+                <Link to="/support/tickets">Abrir central de tickets</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
+
       {/* Operação + Clientes */}
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="space-y-1">
             <CardTitle>Atendimento e operação</CardTitle>
-            <CardDescription>Gargalos que pedem ação rápida</CardDescription>
+            <CardDescription>
+              {overview?.agent_attendance
+                ? "Sua fila, conversas atribuídas a você e atalhos"
+                : "Gargalos que pedem ação rápida"}
+            </CardDescription>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Link to="/leads" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-              <p className="text-xs text-muted-foreground">Leads sem resposta</p>
-              <p className="text-xl font-semibold">{overview?.operations.leads_without_response ?? 0}</p>
-            </Link>
-            <Link to="/support/tickets" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-              <p className="text-xs text-muted-foreground">Tickets abertos</p>
-              <p className="text-xl font-semibold">{overview?.operations.open_tickets ?? 0}</p>
-            </Link>
-            <Link to="/tasks" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-              <p className="text-xs text-muted-foreground">Tarefas vencidas</p>
-              <p className="text-xl font-semibold">{overview?.operations.overdue_tasks ?? 0}</p>
-            </Link>
-            <Link to="/tasks" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-              <p className="text-xs text-muted-foreground">Vencem hoje</p>
-              <p className="text-xl font-semibold">{overview?.operations.today_tasks ?? 0}</p>
-            </Link>
+          <CardContent className="space-y-4">
+            {overview?.agent_attendance ? (
+              <>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Em atendimento (você)</p>
+                      <p className="text-xl font-semibold tabular-nums">{overview.agent_attendance.my_in_service}</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Na sua fila</p>
+                      <p className="text-xl font-semibold tabular-nums">{overview.agent_attendance.my_queued}</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Resolvidos (7 dias)</p>
+                      <p className="text-xl font-semibold tabular-nums">{overview.agent_attendance.my_closed_7d}</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Fila sem responsável</p>
+                      <p className="text-xl font-semibold tabular-nums">{overview.agent_attendance.queue_unassigned}</p>
+                    </div>
+                  </div>
+                  <div className="flex min-h-[200px] flex-col gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm font-medium">Suas conversas (até 7)</p>
+                      <Select value={queueSort} onValueChange={(v) => setQueueSort(v as "new" | "old")}>
+                        <SelectTrigger className="h-8 w-full sm:w-[11rem] text-xs" aria-label="Ordenação da fila">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="new">Mais novas</SelectItem>
+                          <SelectItem value="old">Mais antigas</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="max-h-[280px] flex-1 space-y-2 overflow-y-auto pr-1">
+                      {sortedAgentPreview.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Nenhuma conversa ativa atribuída a você.</p>
+                      ) : (
+                        sortedAgentPreview.map((row) => (
+                          <Link
+                            key={row.id}
+                            to={`/chat/${encodeURIComponent(row.id)}`}
+                            className="block rounded-lg border p-2.5 transition-colors hover:bg-muted/50"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm font-medium leading-snug">
+                                {row.contact_name ?? row.phone_number ?? "Contato"}
+                              </p>
+                              {row.unread_count > 0 ? (
+                                <Badge variant="secondary" className="shrink-0 text-[10px]">
+                                  {row.unread_count} não lidas
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {attendanceStatusLabel(row.attendance_status)}
+                              {row.last_message_at
+                                ? ` · ${new Date(row.last_message_at).toLocaleString("pt-BR", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}`
+                                : ""}
+                            </p>
+                          </Link>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 border-t pt-3">
+                  <Button asChild size="sm">
+                    <Link to="/chat">Abrir chat</Link>
+                  </Button>
+                  {show(hasTickets, "tickets") ? (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to="/support/tickets">Tickets</Link>
+                    </Button>
+                  ) : null}
+                  {show(hasChat, "chat") ? (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to="/chat/kanbam">Kanban</Link>
+                    </Button>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {show(hasLeads, "leads") ? (
+                  <Link to="/leads" className="rounded-lg border p-3 transition-colors hover:bg-muted/50">
+                    <p className="text-xs text-muted-foreground">Leads sem resposta</p>
+                    <p className="text-xl font-semibold">{overview?.operations.leads_without_response ?? 0}</p>
+                  </Link>
+                ) : null}
+                {show(hasTickets, "tickets") ? (
+                  <Link to="/support/tickets" className="rounded-lg border p-3 transition-colors hover:bg-muted/50">
+                    <p className="text-xs text-muted-foreground">Tickets abertos</p>
+                    <p className="text-xl font-semibold">{overview?.operations.open_tickets ?? 0}</p>
+                  </Link>
+                ) : null}
+                {show(hasTasks, "tasks") ? (
+                  <Link to="/tasks" className="rounded-lg border p-3 transition-colors hover:bg-muted/50">
+                    <p className="text-xs text-muted-foreground">Tarefas vencidas</p>
+                    <p className="text-xl font-semibold">{overview?.operations.overdue_tasks ?? 0}</p>
+                  </Link>
+                ) : null}
+                {show(hasTasks, "tasks") ? (
+                  <Link to="/tasks" className="rounded-lg border p-3 transition-colors hover:bg-muted/50">
+                    <p className="text-xs text-muted-foreground">Vencem hoje</p>
+                    <p className="text-xl font-semibold">{overview?.operations.today_tasks ?? 0}</p>
+                  </Link>
+                ) : null}
+            </div>
+            )}
           </CardContent>
         </Card>
 
@@ -493,17 +1073,17 @@ const Dashboard = () => {
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Receita futura</p>
               <p className="text-lg font-semibold">{formatCurrency(overview?.finance.income_projected ?? 0)}</p>
-            </div>
+                    </div>
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Despesas</p>
               <p className="text-lg font-semibold">
                 {formatCurrency((overview?.finance.expense_paid ?? 0) + (overview?.finance.expense_projected ?? 0))}
               </p>
-            </div>
+                    </div>
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Caixa disponível</p>
               <p className="text-lg font-semibold">{formatCurrency(overview?.finance.cash_available ?? 0)}</p>
-            </div>
+                  </div>
             <div className="rounded-lg border p-3 sm:col-span-2">
               <p className="text-xs text-muted-foreground">Resultado previsto</p>
               <p className={`text-xl font-semibold ${(overview?.finance.result_projected ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
@@ -515,23 +1095,29 @@ const Dashboard = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>Atenção necessária</CardTitle>
-            <CardDescription>Alertas inteligentes do período</CardDescription>
+            <CardTitle>Contas a pagar</CardTitle>
+            <CardDescription>Próximos 7 dias</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {(overview?.alerts ?? []).length === 0 ? (
-              <p className="text-sm text-emerald-700 dark:text-emerald-400">Tudo certo por enquanto.</p>
+            {(overview?.accounts_payable_next_7_days ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhuma conta a vencer nos próximos 7 dias.</p>
             ) : (
-              overview!.alerts.map((a) => (
-                <Link key={`${a.type}-${a.href}`} to={a.href} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-                  <AlertTriangle className={`h-4 w-4 mt-0.5 ${a.severity === "critical" ? "text-rose-600" : "text-amber-600"}`} />
+              (overview?.accounts_payable_next_7_days ?? []).map((item) => (
+                <Link key={item.id} to="/finance/expenses" className="flex items-start justify-between gap-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
                   <div>
-                    <p className="text-sm font-medium">{a.title}</p>
-                    <p className="text-xs text-muted-foreground">{a.description}</p>
+                    <p className="text-sm font-medium">{item.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(`${item.due_date}T00:00:00`).toLocaleDateString("pt-BR")} · {payableTag(item.due_date)}
+                    </p>
                   </div>
+                  <p className="text-sm font-semibold tabular-nums">{formatCurrencyCents(item.amount_cents)}</p>
                 </Link>
-              ))
-            )}
+                ))
+              )}
+            <div className="flex items-center justify-between border-t pt-2">
+              <span className="text-xs text-muted-foreground">Total da semana</span>
+              <span className="text-sm font-semibold">{formatCurrencyCents(overview?.accounts_payable_total_cents ?? 0)}</span>
+            </div>
           </CardContent>
         </Card>
       </div>

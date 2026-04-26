@@ -7,35 +7,31 @@ import { useParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { apiClient } from "@/integrations/api/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-  ExternalLink,
   Loader2,
   CheckCircle,
   XCircle,
-  Clock,
   Copy,
   QrCode,
-  CreditCard,
-  FileText,
   ChevronDown,
+  CalendarDays,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { formatPhoneBrDigits, formatCpfCnpjDigits } from "@/lib/brazilInputMasks";
 import { InlineCreditCardPaymentForm } from "@/components/payments/InlineCreditCardPaymentForm";
-import {
-  customerInvoicePublicStatusTextClass,
-  getCustomerInvoiceStatusLabel,
-} from "@/lib/customerInvoiceStatusUi";
+import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
 import { cn } from "@/lib/utils";
 import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
 import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
 import { useTheme } from "next-themes";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export interface PayInvoiceResponse {
   invoice_number: string | null;
@@ -210,6 +206,7 @@ function toPixImageSrc(raw: string | undefined): string | null {
 const CustomerInvoicePay = () => {
   const { token } = useParams<{ token: string }>();
   const { resolvedTheme } = useTheme();
+  const isMobile = useIsMobile();
   const [data, setData] = useState<PayInvoiceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -595,8 +592,12 @@ const CustomerInvoicePay = () => {
     );
   }
 
-  const canPay = ["pending", "waiting_payment", "overdue"].includes(data.status);
+  const canInitiatePayment = ["pending", "waiting_payment", "overdue"].includes(data.status);
+  const isProcessingPayment = data.status === "processing";
   const isPaid = data.status === "paid";
+  /** Cobrança ainda passível de fluxo de pagamento ou confirmação (evita “indisponível” em processing). */
+  const showPaymentSection =
+    (canInitiatePayment || isProcessingPayment) && !data.needs_customer;
   const tenantName = data.tenant_branding?.name?.trim() || "PainelCRM";
   const tb = data.tenant_branding;
   const hasTenantLogo = Boolean(tb && hasTenantLogoForTheme(resolvedTheme, tb));
@@ -627,12 +628,9 @@ const CustomerInvoicePay = () => {
   const isBoletoSelected = currentMethod === "BOLETO";
   const isCardSelected = currentMethod === "CREDIT_CARD";
   const hasPix = allowPix && Boolean(data.payment_urls.pixCopyPaste || pixImageSrc);
-  const bankSlipUrl = (data.payment_urls.bankSlipUrl ?? "").trim();
   const bankSlipDigitableLine = (data.payment_urls.bankSlipDigitableLine ?? "").trim();
-  const hostedCheckoutUrl = (data.payment_urls.invoiceUrl ?? "").trim();
   const hasBoletoDigitable = allowBoleto && isBoletoSelected && bankSlipDigitableLine.length > 0;
-  const hasBankSlipPdf = allowBoleto && isBoletoSelected && bankSlipUrl.length > 0;
-  const hasBoletoHosted = allowBoleto && isBoletoSelected && Boolean(hostedCheckoutUrl);
+  const canCopyBoleto = hasBoletoDigitable;
   /** Cobrança cartão válida para o formulário inline (tentativa ou coluna da fatura após switch). */
   const invoiceMethodIsCard = data.payment_method === "CREDIT_CARD";
   const showCardChargeReady =
@@ -643,16 +641,15 @@ const CustomerInvoicePay = () => {
   const showCardSection =
     isCardSelected && allowCard && (switchingMethod === "CREDIT_CARD" || showCardChargeReady);
   const showCardFormFields = showCardChargeReady && !switchingMethod;
-  const showBoletoSection =
-    isBoletoSelected && allowBoleto && (hasBoletoDigitable || hasBankSlipPdf || hasBoletoHosted);
+  const showBoletoSection = isBoletoSelected && allowBoleto;
   const hasSecondaryMethods = showBoletoSection || showCardSection;
   const awaitingGatewayPayload =
-    canPay &&
+    canInitiatePayment &&
     !data.needs_customer &&
     (allowPix || allowBoleto || allowCard) &&
     !(
       (isPixSelected && hasPix) ||
-      showBoletoSection ||
+      hasBoletoDigitable ||
       showCardChargeReady ||
       (isCardSelected && allowCard && switchingMethod === "CREDIT_CARD")
     );
@@ -660,177 +657,173 @@ const CustomerInvoicePay = () => {
   const pixCopyPaste = (data.payment_urls.pixCopyPaste ?? "").trim();
   const canCopyPix = pixCopyPaste.length > 0;
 
+  const itemsTotalCents = (data.items ?? []).reduce((acc, item) => acc + item.total_cents, 0);
+  const itemsCount = data.items?.length ?? 0;
+
+  const invoiceTitle = data.invoice_number?.trim()
+    ? `Fatura n.º ${data.invoice_number}`
+    : "Cobrança";
+  const showStickyBar = isMobile && showPaymentSection && !isPaid;
+
+  const handleStickyPrimary = async () => {
+    if (isProcessingPayment) {
+      await handleRefreshStatus();
+      return;
+    }
+    if (isPixSelected && canCopyPix) {
+      try {
+        await navigator.clipboard.writeText(pixCopyPaste);
+        toast.success("Código PIX copiado");
+      } catch {
+        toast.error("Não foi possível copiar");
+      }
+      return;
+    }
+    if (isBoletoSelected && canCopyBoleto) {
+      try {
+        await navigator.clipboard.writeText(bankSlipDigitableLine);
+        toast.success("Linha digitável copiada");
+      } catch {
+        toast.error("Não foi possível copiar");
+      }
+      return;
+    }
+    document.getElementById("area-pagamento")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const stickyLabel = isProcessingPayment
+    ? refreshing
+      ? "A atualizar…"
+      : "Atualizar status"
+    : isPixSelected && canCopyPix
+      ? "Copiar código PIX"
+      : isBoletoSelected && canCopyBoleto
+        ? "Copiar código do boleto"
+        : "Ver como pagar";
+
   return (
-    <div className="min-h-screen bg-muted/30 py-6 px-3 sm:px-5 lg:px-8">
-      <div className="w-full space-y-6">
-        <Card className="shadow-md border-border/80">
-          <CardHeader className="pb-2 border-b bg-card/80 rounded-t-xl">
-            <div className="flex items-center justify-between gap-3 pb-3 border-b">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
-                {tb ? (
-                  <PublicTenantBrandMark
-                    branding={tb}
-                    nameShownElsewhere
-                    className="shrink-0 items-start pt-0.5"
-                    imgClassName="max-h-12 max-w-[200px]"
-                  />
-                ) : (
-                  <div className="h-10 w-10 shrink-0 rounded border bg-muted flex items-center justify-center text-xs font-semibold">
-                    {tenantName.slice(0, 2).toUpperCase()}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  {hasTenantLogo ? (
-                    <>
-                      {billingEmail ? (
-                        <p className="text-xs text-muted-foreground truncate">{billingEmail}</p>
-                      ) : null}
-                      {billingPhone ? (
-                        <p className="text-xs text-muted-foreground truncate">{billingPhone}</p>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm font-semibold truncate">{tenantName}</p>
-                      {billingEmail ? (
-                        <p className="text-xs text-muted-foreground truncate">{billingEmail}</p>
-                      ) : null}
-                      {billingPhone ? (
-                        <p className="text-xs text-muted-foreground truncate">{billingPhone}</p>
-                      ) : null}
-                    </>
-                  )}
-                </div>
+    <div
+      className={cn(
+        "min-h-[100dvh] bg-gradient-to-b from-background via-background to-muted/25",
+        showStickyBar && "pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]",
+      )}
+    >
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:py-10 sm:px-6">
+        {/* Cabeçalho — marca e identificação */}
+        <header className="mb-8 text-center sm:text-left">
+          <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
+            {tb ? (
+              <PublicTenantBrandMark
+                branding={tb}
+                nameShownElsewhere
+                className="shrink-0 items-center sm:items-start"
+                imgClassName="max-h-14 max-w-[220px] sm:max-h-12"
+              />
+            ) : (
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border bg-card text-sm font-bold shadow-sm">
+                {tenantName.slice(0, 2).toUpperCase()}
               </div>
-              <div className="text-right shrink-0 space-y-0.5">
-                <p className="text-[10px] font-medium text-muted-foreground leading-tight">Pagamento seguro</p>
-                <p className="text-[10px] text-muted-foreground/75 leading-tight max-w-[140px] sm:max-w-none">
-                  Processado por parceiro de pagamento
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle className="text-xl">
-                {data.invoice_number || "Fatura"}
-              </CardTitle>
-              <span
-                className={cn(
-                  "flex items-center gap-1.5 text-sm font-medium",
-                  customerInvoicePublicStatusTextClass(data.status, isPaid, canPay)
-                )}
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-              >
-                {isPaid ? (
-                  <CheckCircle className="h-4 w-4 shrink-0" aria-hidden />
-                ) : data.status === "overdue" ? (
-                  <Clock className="h-4 w-4 shrink-0" aria-hidden />
-                ) : (
-                  <Clock className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
-                )}
-                {getCustomerInvoiceStatusLabel(data.status)}
-              </span>
-            </div>
-            {data.client_name && (
-              <p className="text-sm text-muted-foreground">
-                Cliente: {data.client_name}
-              </p>
             )}
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              {data.description && (
-              <p className="text-sm text-muted-foreground">{data.description}</p>
-              )}
-              {data.items && data.items.length > 0 && (
-              <div className="rounded-md border text-sm">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="text-left p-2">Descrição</th>
-                      <th className="text-right p-2">Qtd</th>
-                      <th className="text-right p-2">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.map((item, i) => (
-                      <tr key={i} className="border-b last:border-0">
-                        <td className="p-2">{item.description}</td>
-                        <td className="p-2 text-right">{item.quantity}</td>
-                        <td className="p-2 text-right">
-                          R${" "}
-                          {(item.total_cents / 100).toLocaleString("pt-BR", {
-                            minimumFractionDigits: 2,
-                          })}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {tenantName}
+              </p>
+              <div className="flex flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">{invoiceTitle}</h1>
+                <CustomerInvoiceStatusBadge status={data.status} />
               </div>
-              )}
-              <p className="text-right font-semibold">
-                Total: R$ {totalBrl}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Vencimento: {formatInvoiceDueDatePtBr(data.due_date)}
-              </p>
-              {!data.needs_customer && canPay && (
-                <div className="rounded-lg border p-3 bg-muted/20 space-y-2">
-                  <p className="text-sm font-semibold">Métodos de pagamento</p>
-                  {normalizedAllowedMethods.map((method) => {
-                    const isSelected = currentMethod === method;
-                    const isLoading = switchingMethod === method;
-                    const label =
-                      method === "PIX" ? "PIX" : method === "BOLETO" ? "Boleto" : "Cartão";
-                    return (
-                      <Button
-                        key={method}
-                        type="button"
-                        variant={isSelected ? "default" : "outline"}
-                        className="w-full justify-between"
-                        disabled={!!switchingMethod}
-                        onClick={() => void handleSwitchMethod(method)}
-                      >
-                        <span>{label}</span>
-                        {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                      </Button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-4">
-              {!data.needs_customer && isPaid && (
-              <div
-                className="rounded-xl border-2 border-emerald-500/35 bg-emerald-50/90 dark:bg-emerald-950/30 p-6 sm:p-8 text-center space-y-3 shadow-sm"
-                role="status"
-                aria-live="polite"
-              >
-                <CheckCircle
-                  className="h-14 w-14 sm:h-16 sm:w-16 text-emerald-600 dark:text-emerald-400 mx-auto"
-                  strokeWidth={1.35}
-                  aria-hidden
-                />
-                <h2 className="text-lg sm:text-xl font-semibold text-emerald-900 dark:text-emerald-100">
-                  Pagamento confirmado
-                </h2>
-                <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                  Obrigado. Esta fatura está quitada e não requer nenhuma ação adicional.
+              {!hasTenantLogo && (billingEmail || billingPhone) ? (
+                <p className="text-xs text-muted-foreground">
+                  {[billingEmail, billingPhone].filter(Boolean).join(" · ")}
                 </p>
-                {data.paid_at ? (
-                  <p className="text-xs text-emerald-800/90 dark:text-emerald-200/90 font-medium pt-1">
-                    Confirmado em{" "}
-                    {format(new Date(data.paid_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
-                  </p>
-                ) : null}
-              </div>
-              )}
+              ) : null}
+            </div>
+          </div>
+        </header>
 
+        {/* Resumo principal — compacto e distribuído no desktop */}
+        <section
+          className={cn(
+            "mb-6 rounded-2xl border bg-card p-4 shadow-sm sm:p-5",
+            data.status === "overdue" && canInitiatePayment && "border-amber-500/40 ring-1 ring-amber-500/20",
+            isPaid && "border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-950/20",
+          )}
+          aria-labelledby="pay-amount-heading"
+        >
+          {isProcessingPayment ? (
+            <div className="mb-4 flex gap-2 rounded-xl border border-primary/25 bg-primary/5 px-3 py-2.5 text-sm text-foreground">
+              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden />
+              <p>
+                <span className="font-semibold">Confirmando pagamento.</span> Estamos verificando com o banco; em
+                geral leva poucos segundos. Use <strong>Atualizar</strong> se o status não mudar.
+              </p>
+            </div>
+          ) : null}
+
+          {data.status === "overdue" && canInitiatePayment ? (
+            <div className="mb-4 flex gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-950 dark:text-amber-100">
+              <AlertTriangle className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
+              <p>
+                <span className="font-semibold">Vencida.</span> Pode pagar abaixo com o mesmo link — não é necessário
+                pedir nova cobrança.
+              </p>
+            </div>
+          ) : null}
+
+          {!data.needs_customer && isPaid ? (
+            <div className="mb-5 flex flex-col items-center gap-2 text-center">
+              <CheckCircle
+                className="h-12 w-12 text-emerald-600 dark:text-emerald-400"
+                strokeWidth={1.25}
+                aria-hidden
+              />
+              <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-100">Pagamento recebido</p>
+              <p className="text-sm text-muted-foreground">Esta cobrança está quitada. Guarde este comprovativo.</p>
+              {data.paid_at ? (
+                <p className="text-xs font-medium text-emerald-800/90 dark:text-emerald-200/90">
+                  {format(new Date(data.paid_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <p id="pay-amount-heading" className="sr-only">
+            Valor e vencimento
+          </p>
+          <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr_1fr]">
+            <div className="rounded-xl border bg-background/70 p-3.5">
+              <p className="text-sm font-medium text-muted-foreground">{isPaid ? "Valor pago" : "Valor a pagar"}</p>
+              <p className="text-3xl font-bold tabular-nums tracking-tight text-foreground sm:text-4xl">R$ {totalBrl}</p>
+            </div>
+            <div className="rounded-xl border bg-background/70 p-3.5">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Vencimento</p>
+              <p className="mt-1 flex items-center gap-2 text-sm">
+                <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="font-medium text-foreground">{formatInvoiceDueDatePtBr(data.due_date)}</span>
+              </p>
+            </div>
+            <div className="rounded-xl border bg-background/70 p-3.5">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Referência</p>
+              <p className="mt-1 text-sm font-medium text-foreground">{data.client_name || "Cobrança avulsa"}</p>
+              {data.invoice_number ? (
+                <p className="mt-1 text-xs text-muted-foreground">N.º {data.invoice_number}</p>
+              ) : null}
+            </div>
+          </div>
+          {data.description ? (
+            <p className="mt-3 border-t border-border/60 pt-3 text-sm leading-relaxed text-foreground">
+              {data.description}
+            </p>
+          ) : null}
+        </section>
+
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.9fr)] lg:items-start">
+          <div className="space-y-6">
               {data.needs_customer && (
-              <form onSubmit={handleCompleteCustomer} className="space-y-4 pt-4 border-t">
+              <form
+                onSubmit={handleCompleteCustomer}
+                className="space-y-4 rounded-2xl border bg-card p-4 shadow-sm sm:p-5"
+              >
                 {data.needs_customer_reason === "missing_cpf_cnpj" ? (
                   <>
                     <p className="text-sm font-medium leading-snug">
@@ -925,36 +918,124 @@ const CustomerInvoicePay = () => {
               </form>
               )}
 
-              {!data.needs_customer && canPay && (
-              <div className="space-y-5 pt-4 border-t">
-                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <p className="text-sm font-semibold">Pagamento</p>
+              {!data.needs_customer && showPaymentSection && isProcessingPayment ? (
+                <section
+                  id="area-pagamento"
+                  className="scroll-mt-6 space-y-5 rounded-2xl border-2 border-primary/25 bg-primary/[0.06] p-6 text-center shadow-md dark:bg-primary/10 sm:p-8"
+                >
+                  <Loader2 className="mx-auto h-12 w-12 animate-spin text-primary" aria-hidden />
+                  <div className="space-y-2">
+                    <h2 className="text-lg font-semibold tracking-tight text-foreground">Confirmando pagamento</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Não é necessário pagar de novo. Aguarde a confirmação ou atualize o status abaixo.
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {POLLABLE_STATUSES.has(data.status) && (
-                      <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                        <Loader2 className="h-3 w-3 animate-spin shrink-0" aria-hidden />
-                        Verificando pagamento automaticamente a cada 5s
-                      </span>
+                  {POLLABLE_STATUSES.has(data.status) ? (
+                    <p className="text-xs text-muted-foreground flex items-center justify-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden />
+                      Verificação automática em andamento…
+                    </p>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 w-full max-w-xs rounded-xl"
+                    onClick={() => void handleRefreshStatus()}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        A atualizar…
+                      </>
+                    ) : (
+                      "Atualizar status agora"
                     )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleRefreshStatus()}
-                      disabled={refreshing}
-                    >
-                      {refreshing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                          Atualizando…
-                        </>
-                      ) : (
-                        "Atualizar status"
-                      )}
-                    </Button>
-                  </div>
+                  </Button>
+                </section>
+              ) : null}
+
+              {!data.needs_customer && showPaymentSection && !isProcessingPayment ? (
+              <section
+                id="area-pagamento"
+                className="scroll-mt-6 space-y-5 rounded-2xl border-2 border-primary/30 bg-primary/[0.06] p-4 shadow-md dark:bg-primary/10 sm:p-6 lg:p-7"
+              >
+                <div className="space-y-1">
+                  <h2 className="text-lg font-semibold tracking-tight text-foreground">Pagar agora</h2>
+                  <p className="text-xs text-muted-foreground sm:text-sm">
+                    Escolha a forma de pagamento e use o código, QR ou link abaixo.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {normalizedAllowedMethods.map((method) => {
+                    const isSelected = currentMethod === method;
+                    const isLoading = switchingMethod === method;
+                    const label = method === "PIX" ? "PIX" : method === "BOLETO" ? "Boleto" : "Cartão";
+                    return (
+                      <Button
+                        key={method}
+                        type="button"
+                        variant={isSelected ? "default" : "outline"}
+                        className="h-12 w-full justify-center rounded-xl text-base font-semibold shadow-sm"
+                        disabled={!!switchingMethod}
+                        onClick={() => void handleSwitchMethod(method)}
+                      >
+                        <span className="flex items-center justify-center gap-2">
+                          {label}
+                          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-10 rounded-xl text-xs font-medium"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(window.location.href);
+                        toast.success("Link desta cobrança copiado");
+                      } catch {
+                        toast.error("Não foi possível copiar o link");
+                      }
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                    Copiar link da cobrança
+                  </Button>
+                </div>
+
+                <div className="flex flex-col gap-2 border-t border-primary/15 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  {POLLABLE_STATUSES.has(data.status) ? (
+                    <span className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden />
+                      A confirmar pagamento automaticamente…
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 self-start sm:self-auto text-muted-foreground"
+                    onClick={() => void handleRefreshStatus()}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        A atualizar…
+                      </>
+                    ) : (
+                      "Já paguei — atualizar"
+                    )}
+                  </Button>
                 </div>
 
                 <div className="space-y-4">
@@ -980,57 +1061,62 @@ const CustomerInvoicePay = () => {
                       </CollapsibleContent>
                     </Collapsible>
 
-                    {pixImageSrc ? (
-                      <div className="flex justify-center">
-                        <img
-                          src={pixImageSrc}
-                          alt="QR Code PIX"
-                          className="h-48 w-48 rounded border bg-white p-2"
-                        />
-                      </div>
-                    ) : null}
-
-                    {canCopyPix && (
-                      <div className="space-y-2">
-                        <Label className="text-xs text-muted-foreground">PIX copia e cola</Label>
-                        <div className="flex items-start gap-2">
-                          <code className="text-xs bg-muted px-2 py-1.5 rounded break-all flex-1 min-w-0">
-                            {pixCopyPaste}
-                          </code>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={async () => {
-                              if (!pixCopyPaste) {
-                                toast.error("Código PIX indisponível");
-                                return;
-                              }
-                              try {
-                                await navigator.clipboard.writeText(pixCopyPaste);
-                                toast.success("Código PIX copiado");
-                              } catch {
-                                toast.error("Não foi possível copiar automaticamente");
-                              }
-                            }}
-                          >
-                            <Copy className="h-4 w-4 mr-1" />
-                            Copiar
-                          </Button>
+                    <div className="grid gap-4 lg:grid-cols-[220px_1fr] lg:items-start">
+                      {pixImageSrc ? (
+                        <div className="flex justify-center lg:justify-start">
+                          <img
+                            src={pixImageSrc}
+                            alt="QR Code PIX"
+                            className="h-44 w-44 rounded border bg-white p-2 lg:h-52 lg:w-52"
+                          />
                         </div>
-                      </div>
-                    )}
+                      ) : null}
+
+                      {canCopyPix ? (
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">PIX copia e cola</Label>
+                          <div className="flex items-start gap-2">
+                            <code className="text-xs bg-muted px-2 py-1.5 rounded break-all flex-1 min-w-0">
+                              {pixCopyPaste}
+                            </code>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={async () => {
+                                if (!pixCopyPaste) {
+                                  toast.error("Código PIX indisponível");
+                                  return;
+                                }
+                                try {
+                                  await navigator.clipboard.writeText(pixCopyPaste);
+                                  toast.success("Código PIX copiado");
+                                } catch {
+                                  toast.error("Não foi possível copiar automaticamente");
+                                }
+                              }}
+                            >
+                              <Copy className="h-4 w-4 mr-1" />
+                              Copiar
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 )}
 
                 {(isBoletoSelected || isCardSelected) && hasSecondaryMethods && (
                   <div className="rounded-lg border border-border/80 bg-muted/30 dark:bg-muted/15 p-4 space-y-4">
                     {isBoletoSelected && allowBoleto && showBoletoSection && (
-                      <div className="space-y-4">
-                        <h3 className="text-sm font-semibold">Boleto</h3>
-                        {hasBoletoDigitable && (
+                      <div className="rounded-xl border-2 border-primary/40 bg-primary/5 dark:bg-primary/10 p-5 space-y-3 shadow-lg ring-2 ring-primary/20">
+                        <div className="flex items-center gap-2 text-base font-semibold text-primary">
+                          <Copy className="h-5 w-5 shrink-0" aria-hidden />
+                          Boleto — pague com linha digitável
+                        </div>
+                        {hasBoletoDigitable ? (
                           <div className="space-y-2">
-                            <Label className="text-xs text-muted-foreground">Linha digitável</Label>
+                            <Label className="text-xs text-muted-foreground">Linha digitável do boleto</Label>
                             <div className="flex items-start gap-2">
                               <code className="text-xs bg-muted px-2 py-1.5 rounded break-all flex-1 min-w-0">
                                 {bankSlipDigitableLine}
@@ -1053,59 +1139,18 @@ const CustomerInvoicePay = () => {
                                 }}
                               >
                                 <Copy className="h-4 w-4 mr-1" />
-                                Copiar
+                                Copiar código
                               </Button>
                             </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              Copie o código e pague no app do seu banco. O status desta cobrança será atualizado
+                              automaticamente após a confirmação.
+                            </p>
                           </div>
-                        )}
-                        {!hasBoletoDigitable && (hasBankSlipPdf || hasBoletoHosted) && (
+                        ) : (
                           <p className="text-xs text-muted-foreground leading-relaxed">
-                            A linha digitável não está disponível para exibição neste momento. Use o PDF ou o link
-                            do provedor abaixo.
-                          </p>
-                        )}
-                        {hasBankSlipPdf && (
-                          <div className="space-y-2">
-                            <Button variant="outline" className="w-full sm:w-auto justify-start" asChild>
-                              <a href={bankSlipUrl} target="_blank" rel="noopener noreferrer">
-                                <FileText className="h-4 w-4 mr-2 shrink-0" aria-hidden />
-                                Baixar / abrir boleto (PDF)
-                                <ExternalLink className="h-4 w-4 ml-2 shrink-0 opacity-70" aria-hidden />
-                                <span className="sr-only">Abre em nova aba</span>
-                              </a>
-                            </Button>
-                            <p className="text-xs text-muted-foreground pl-0.5">
-                              O PDF abre em nova aba para impressão ou download. A compensação pode levar um ou dois
-                              dias úteis; use <strong>Atualizar status</strong> ou aguarde a verificação automática.
-                            </p>
-                          </div>
-                        )}
-                        {!hasBoletoDigitable && !hasBankSlipPdf && hasBoletoHosted && (
-                          <div className="space-y-2">
-                            <Button variant="default" className="w-full sm:w-auto justify-start" asChild>
-                              <a href={hostedCheckoutUrl} target="_blank" rel="noopener noreferrer">
-                                <FileText className="h-4 w-4 mr-2 shrink-0" aria-hidden />
-                                Abrir cobrança no provedor
-                                <ExternalLink className="h-4 w-4 ml-2 shrink-0 opacity-70" aria-hidden />
-                                <span className="sr-only">Abre em nova aba</span>
-                              </a>
-                            </Button>
-                            <p className="text-xs text-muted-foreground pl-0.5">
-                              Sem linha digitável nem PDF neste retorno; use a página do provedor para pagar.
-                            </p>
-                          </div>
-                        )}
-                        {(hasBoletoDigitable || hasBankSlipPdf) && hasBoletoHosted && (
-                          <p className="text-xs text-muted-foreground">
-                            <a
-                              href={hostedCheckoutUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary underline underline-offset-2 inline-flex items-center gap-1"
-                            >
-                              Abrir também no site do provedor
-                              <ExternalLink className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
-                            </a>
+                            A linha digitável do boleto ainda está em preparação. Aguarde alguns instantes e use{" "}
+                            <strong>Atualizar status</strong>.
                           </p>
                         )}
                       </div>
@@ -1124,7 +1169,7 @@ const CustomerInvoicePay = () => {
                         setForm={setCardForm}
                         onSubmit={handlePayWithCard}
                         paying={payingCard}
-                        hostedCheckoutUrl={hostedCheckoutUrl || null}
+                        hostedCheckoutUrl={null}
                       />
                     )}
                   </div>
@@ -1138,27 +1183,163 @@ const CustomerInvoicePay = () => {
                     aria-live="polite"
                   >
                     <Loader2 className="h-4 w-4 animate-spin shrink-0 text-muted-foreground/80" aria-hidden />
-                    <span>Um momento.</span>
+                    <span>A preparar o pagamento…</span>
                   </div>
                 )}
-              </div>
+              </section>
+              ) : null}
+
+              {!data.needs_customer && !showPaymentSection && !isPaid && (
+                <div className="rounded-2xl border bg-muted/40 px-4 py-6 text-center text-sm">
+                  <p className="font-medium text-foreground">Esta cobrança não está disponível para pagamento aqui.</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Em dúvida, contacte <strong>{tenantName}</strong>
+                    {tenantContact ? <> — {tenantContact}</> : null}.
+                  </p>
+                </div>
               )}
 
-              {!data.needs_customer && (
-              <div className="text-center border-t pt-4 mt-2 space-y-2 leading-relaxed">
-                <p className="text-[10px] text-muted-foreground/85 tracking-tight">
-                  Pagamento seguro · Processado por parceiro de pagamento certificado
-                </p>
+              <footer className="mt-10 space-y-3 border-t border-border/60 pt-6 text-center sm:text-left">
                 <p className="text-[11px] text-muted-foreground">
-                  Em caso de dúvida sobre esta fatura, entre em contato com <strong>{tenantName}</strong>
+                  Pagamento processado de forma segura. Dúvidas sobre valores ou prazos? Fale com{" "}
+                  <strong className="text-foreground">{tenantName}</strong>
                   {tenantContact ? <> — {tenantContact}</> : null}.
                 </p>
+              </footer>
+          </div>
+
+          <>
+            <aside className="hidden lg:block lg:sticky lg:top-6">
+              <div className="space-y-4">
+                <div className="rounded-2xl border bg-card p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Resumo da cobrança</p>
+                  <div className="mt-2 space-y-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted-foreground">Valor</span>
+                      <span className="font-semibold tabular-nums">R$ {totalBrl}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted-foreground">Vencimento</span>
+                      <span className="font-medium">{formatInvoiceDueDatePtBr(data.due_date)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted-foreground">Status</span>
+                      <CustomerInvoiceStatusBadge status={data.status} />
+                    </div>
+                  </div>
+                </div>
+
+                {data.items && data.items.length > 0 ? (
+                  <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                    <div className="mb-4 space-y-1">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Itens da cobrança</p>
+                      <p className="text-sm font-medium text-foreground">
+                        {itemsCount} item{itemsCount > 1 ? "s" : ""} • R${" "}
+                        {(itemsTotalCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div className="max-h-[58vh] overflow-auto rounded-lg border text-sm">
+                      <table className="w-full">
+                        <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                          <tr className="border-b">
+                            <th className="text-left p-2.5">Descrição</th>
+                            <th className="text-right p-2.5 w-16">Qtd</th>
+                            <th className="text-right p-2.5 w-28">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.items.map((item, i) => (
+                            <tr key={i} className="border-b last:border-0">
+                              <td className="p-2.5 align-top">{item.description}</td>
+                              <td className="p-2.5 text-right align-top">{item.quantity}</td>
+                              <td className="p-2.5 text-right tabular-nums font-medium align-top">
+                                R${" "}
+                                {(item.total_cents / 100).toLocaleString("pt-BR", {
+                                  minimumFractionDigits: 2,
+                                })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+            </aside>
+
+            {data.items && data.items.length > 0 ? (
+              <Collapsible className="rounded-2xl border bg-card/50 lg:hidden">
+                <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-4 py-3.5 text-left text-sm font-medium hover:bg-muted/40 rounded-2xl">
+                  <span>Detalhe dos itens ({data.items.length})</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 opacity-70" aria-hidden />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-t px-4 pb-4 pt-2">
+                  <div className="space-y-3 sm:hidden">
+                    {data.items.map((item, i) => (
+                      <div
+                        key={i}
+                        className="flex flex-col gap-1 rounded-xl border bg-background/80 px-3 py-2.5 text-sm"
+                      >
+                        <span className="font-medium text-foreground">{item.description}</span>
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span>Qtd. {item.quantity}</span>
+                          <span className="font-semibold tabular-nums text-foreground">
+                            R${" "}
+                            {(item.total_cents / 100).toLocaleString("pt-BR", {
+                              minimumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="hidden sm:block overflow-x-auto rounded-lg border text-sm">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="text-left p-2">Descrição</th>
+                          <th className="text-right p-2">Qtd</th>
+                          <th className="text-right p-2">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.items.map((item, i) => (
+                          <tr key={i} className="border-b last:border-0">
+                            <td className="p-2">{item.description}</td>
+                            <td className="p-2 text-right">{item.quantity}</td>
+                            <td className="p-2 text-right">
+                              R${" "}
+                              {(item.total_cents / 100).toLocaleString("pt-BR", {
+                                minimumFractionDigits: 2,
+                              })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            ) : null}
+          </>
+        </div>
       </div>
+
+      {showStickyBar ? (
+        <div
+          className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-background/95 px-4 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] backdrop-blur-md dark:shadow-[0_-8px_30px_rgba(0,0,0,0.4)] pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]"
+        >
+          <Button
+            type="button"
+            className="h-12 w-full max-w-lg mx-auto flex rounded-xl text-base font-semibold shadow-md"
+            onClick={() => void handleStickyPrimary()}
+            disabled={refreshing && isProcessingPayment}
+          >
+            {stickyLabel}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 };

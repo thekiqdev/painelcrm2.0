@@ -61,6 +61,7 @@ import plansRoutes from './routes/plansRoutes.js';
 import * as plansController from './controllers/plansController.js';
 import myTenantPlanRoutes from './routes/myTenantPlanRoutes.js';
 import { authenticateToken, setCurrentTenant, setRequestDb } from './middleware/auth.js';
+import announcementsUpdatesRoutes from './routes/announcementsUpdatesRoutes.js';
 import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
 import billingRoutes from './routes/billingRoutes.js';
@@ -91,6 +92,8 @@ import {
   getWhatsappTemplateMediaRootCandidates,
   resolveExistingWhatsappTemplateMediaAbsolutePath,
 } from './services/whatsappTemplateMediaStorageService.js';
+import { syncOverdueBillingStatuses } from './services/billingOverdueStatusService.js';
+import { processAnnouncementSendRecipientsBatch } from './services/announcements/announcementSendWorker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -404,6 +407,7 @@ app.get(
   getCheckoutContext
 );
 app.use('/api/me/tenant', myTenantPlanRoutes);
+app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);
 app.use('/api/superadmin/tenants', tenantsRoutes);
@@ -493,6 +497,30 @@ httpServer.listen(PORT, '0.0.0.0', () => {
       void runInvoiceDigestTickSafe();
     }, digestMs);
   }
+
+  const overdueSyncPollMs = Math.max(
+    60_000,
+    parseInt(process.env.BILLING_OVERDUE_SYNC_POLL_MS || '300000', 10)
+  );
+  setInterval(() => {
+    void syncOverdueBillingStatuses()
+      .then((result) => {
+        const total = result.customer_invoices_updated + result.tenant_billing_updated;
+        if (total > 0) {
+          console.log(
+            `[billing-overdue-sync] updated=${total} customer_invoices=${result.customer_invoices_updated} tenant_billing=${result.tenant_billing_updated}`
+          );
+        }
+      })
+      .catch((err) => console.error('[billing-overdue-sync] batch error', err));
+  }, overdueSyncPollMs);
+
+  const announcementsPollMs = Math.max(2000, parseInt(process.env.ANNOUNCEMENTS_SEND_POLL_MS || '4000', 10));
+  setInterval(() => {
+    void processAnnouncementSendRecipientsBatch(pool, 6).catch((err) =>
+      console.error('[announcements/send] batch error', err),
+    );
+  }, announcementsPollMs);
 });
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {

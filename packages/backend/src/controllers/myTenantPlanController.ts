@@ -33,6 +33,7 @@ import {
   startSeatAddonCheckout,
 } from '../services/tenantSeatCommercialService.js';
 import { getInvoiceById } from '../services/invoiceService.js';
+import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import { reassignTenantUserDataAndDeleteUser } from '../services/tenantUserRemovalService.js';
 
@@ -572,6 +573,9 @@ export async function getMyTenantCommercialBillings(req: AuthRequest, res: Respo
       res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
       return;
     }
+    await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
+      console.error('getMyTenantCommercialBillings overdue sync:', err)
+    );
     const billings = await listCommercialBillingsForHub(tenantId, 60);
     res.json({ billings });
   } catch (error: unknown) {

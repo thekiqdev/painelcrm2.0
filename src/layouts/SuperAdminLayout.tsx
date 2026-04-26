@@ -15,6 +15,7 @@ import {
   Building2,
   Repeat2,
   Receipt,
+  Megaphone,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -121,6 +122,14 @@ export default function SuperAdminLayout() {
                     <NavLink to="/superadmin/notifications" className={getNavClass}>
                       <Bell className="mr-2 h-5 w-5" />
                       <span>Notificações</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/superadmin/announcements" className={getNavClass}>
+                      <Megaphone className="mr-2 h-5 w-5" />
+                      <span>Anúncios</span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

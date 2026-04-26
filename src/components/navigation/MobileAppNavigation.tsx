@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Calendar,
@@ -13,6 +13,7 @@ import {
   List,
   LogOut,
   MessageSquare,
+  Newspaper,
   Receipt,
   Settings,
   ShieldCheck,
@@ -32,6 +33,8 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { announcementsUpdatesService } from "@/services/announcementsUpdates";
+import { UPDATES_REFRESH_EVENT } from "@/services/systemNotifications";
 import { useFeatureFlag } from "@/hooks/useFeatureFlag";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { routePreload } from "@/routePreload";
@@ -86,6 +89,16 @@ export function MobileAppNavigation() {
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
 
+  const [updatesUnread, setUpdatesUnread] = useState(0);
+  useEffect(() => {
+    const run = () => {
+      void announcementsUpdatesService.unreadCount().then(setUpdatesUnread);
+    };
+    run();
+    window.addEventListener(UPDATES_REFRESH_EVENT, run);
+    return () => window.removeEventListener(UPDATES_REFRESH_EVENT, run);
+  }, []);
+
   const homeItem: MobileNavItem | null = show(hasDashboard, "dashboard")
     ? {
         key: "home",
@@ -117,11 +130,11 @@ export function MobileAppNavigation() {
   const chargesItem: MobileNavItem | null = show(hasInvoices, "billing")
     ? {
         key: "charges",
-        label: "Cobranças",
-        to: "/customer-charges",
+        label: "Faturas",
+        to: "/customer-invoices",
         icon: CreditCard,
-        isActive: (p) => isRoutePrefix(p, "/customer-charges"),
-        preload: routePreload.customerCharges,
+        isActive: (p) => isRoutePrefix(p, "/customer-invoices"),
+        preload: routePreload.customerInvoices,
       }
     : null;
 
@@ -198,6 +211,7 @@ export function MobileAppNavigation() {
         show(hasSettings, "settings")
           ? { label: "Configurações", to: "/settings", icon: Settings, preload: routePreload.settings }
           : null,
+        { label: "Atualizações", to: "/updates", icon: Newspaper },
         user?.is_super_admin ? { label: "Administração", to: "/superadmin", icon: ShieldCheck } : null,
       ].filter((item): item is MoreLink => item !== null),
     },
@@ -265,7 +279,16 @@ export function MobileAppNavigation() {
                           className="flex min-h-12 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors active:bg-muted/70 hover:bg-muted/55"
                         >
                           <item.icon className="h-4 w-4 shrink-0 text-primary" />
-                          <span>{item.label}</span>
+                          <span className="flex min-w-0 flex-1 items-center gap-2">
+                            <span className="truncate">{item.label}</span>
+                            {item.to === "/updates" && updatesUnread > 0 ? (
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full bg-primary"
+                                title="Novas atualizações"
+                                aria-hidden
+                              />
+                            ) : null}
+                          </span>
                         </Link>
                       </SheetClose>
                     ))}

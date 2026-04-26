@@ -136,23 +136,24 @@ const Projects = () => {
     if (fullViewTask && selectedProject) {
       setSearchParams(
         (prev) => {
-          prev.set("task", fullViewTask.id);
-          prev.set("project", selectedProject.id);
-          return prev;
+          const next = new URLSearchParams(prev);
+          next.set("task", fullViewTask.id);
+          next.set("project", selectedProject.id);
+          return next;
         },
         { replace: true }
       );
-    } else if (!fullViewTask && !searchParams.get("task")) {
+    } else if (!fullViewTask && searchParams.get("task")) {
       setSearchParams(
         (prev) => {
-          prev.delete("task");
-          prev.delete("project");
-          return prev;
+          const next = new URLSearchParams(prev);
+          next.delete("task");
+          return next;
         },
         { replace: true }
       );
     }
-  }, [fullViewTask?.id, selectedProject?.id]);
+  }, [fullViewTask?.id, selectedProject?.id, searchParams, setSearchParams]);
 
   // Restaurar painel a partir da URL ao carregar/selecionar projeto
   useEffect(() => {
@@ -179,13 +180,20 @@ const Projects = () => {
     }
   }, [searchParams, selectedProject, fullViewTask?.id]);
 
-  // Ao abrir projeto pela primeira vez, se URL tiver project=id, selecionar esse projeto
+  // Deep link: /projects?project=id (com ou sem task) abre o projeto em modo detalhe
   useEffect(() => {
     const projectId = searchParams.get("project");
-    if (!projectId || projects.length === 0 || selectedProject?.id === projectId) return;
+    if (!projectId || projects.length === 0) return;
+    if (selectedProject?.id === projectId) {
+      if (viewMode === "list") setViewMode("detail");
+      return;
+    }
     const project = projects.find((p) => p.id === projectId);
-    if (project) setSelectedProject(project);
-  }, [searchParams.get("project"), projects]);
+    if (project) {
+      setSelectedProject(project);
+      setViewMode("detail");
+    }
+  }, [searchParams, projects, selectedProject?.id, viewMode]);
 
   // Membros em cache para carregamento rápido
   const { data: membersData } = useQuery({
@@ -1243,7 +1251,18 @@ const Projects = () => {
                 <Button 
                   variant="outline" 
                   size="icon" 
-                  onClick={() => setViewMode("list")}
+                  onClick={() => {
+                    setViewMode("list");
+                    setSearchParams(
+                      (prev) => {
+                        const next = new URLSearchParams(prev);
+                        next.delete("project");
+                        next.delete("task");
+                        return next;
+                      },
+                      { replace: true }
+                    );
+                  }}
                 >
                   <X className="h-4 w-4" />
                 </Button>

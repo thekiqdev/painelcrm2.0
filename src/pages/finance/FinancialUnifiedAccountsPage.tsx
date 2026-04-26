@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useSearchParams } from "react-router-dom";
 import {
   financialService,
   type FinancialAccountDto,
@@ -56,6 +56,7 @@ function monthBoundsNow(): { from: string; to: string } {
 }
 
 const FinancialUnifiedAccountsPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<FinancialAccountDto[]>([]);
   const [periodTx, setPeriodTx] = useState<FinancialTransactionDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +111,16 @@ const FinancialUnifiedAccountsPage = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const shouldOpenTransfer = searchParams.get("transfer");
+    if (shouldOpenTransfer !== "1") return;
+    if (loading) return;
+    setTransferOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("transfer");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, loading]);
 
   const handleCreate = async () => {
     const cents = Math.round(parseFloat(initialCentsInput.replace(",", ".")) * 100);

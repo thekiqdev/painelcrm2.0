@@ -6,6 +6,8 @@ import {
   buildActivationChecklist,
   setActivationChecklistDismissed,
 } from '../services/activationChecklistService.js';
+import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
+import { hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
 
 // GET /api/dashboard/kpis
 export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
@@ -194,10 +196,14 @@ function pct(current: number, previous: number): number {
 export async function getExecutiveOverview(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
+    const userId = req.userId ?? null;
     if (!tenantId) {
       res.status(401).json({ error: 'Tenant não identificado' });
       return;
     }
+    await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
+      console.error('[dashboard] ensureTenantOverdueStatusesFresh:', err)
+    );
 
     const q = req.query as Record<string, unknown>;
     const { from, to, preset } = resolveDashboardRange(q);
@@ -258,7 +264,28 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
     const conversionRate = leadsCreated > 0 ? (leadsConverted / leadsCreated) * 100 : 0;
     const conversionPrev = leadsCreatedPrev > 0 ? (leadsConvertedPrev / leadsCreatedPrev) * 100 : 0;
 
-    const [funnelR, leadNoResponseR, ticketsR, tasksR, clientsR, overdueInvoicesR, stalledLeadsR] = await Promise.all([
+    const attendanceCols = await hasAttendanceColumns();
+
+    const [
+      funnelR,
+      leadNoResponseR,
+      ticketsR,
+      tasksR,
+      clientsR,
+      overdueInvoicesR,
+      stalledLeadsR,
+      payableRowsR,
+      payableTotalR,
+      receivableNext7R,
+      tasksListR,
+      projectsOverviewR,
+      chatCountsR,
+      chatListR,
+      ticketsBreakdownR,
+      ticketsRecentR,
+      agentMetricsR,
+      agentQueuePreviewR,
+    ] = await Promise.all([
       pool.query<{ stage_id: string | null; stage_name: string; c: string; amount: string }>(
         `SELECT 
            COALESCE(fs.id::text, c.funnel_stage) AS stage_id,
@@ -328,6 +355,222 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
            AND lower(COALESCE(l.status, '')) NOT IN ('convertido', 'fechado', 'ganho', 'won')`,
         [tenantId]
       ),
+      pool.query<{ id: string; description: string; due_date: string; amount_cents: string; source: 'transaction' | 'recurring'; status: 'planned' | 'pending' }>(
+        `SELECT * FROM (
+           SELECT
+             ft.id::text AS id,
+             ft.description AS description,
+             ft.transaction_date::text AS due_date,
+             ft.amount_cents::text AS amount_cents,
+             'transaction'::text AS source,
+             CASE WHEN ft.status = 'pending' THEN 'pending' ELSE 'planned' END::text AS status
+           FROM financial_transactions ft
+           WHERE ft.tenant_id = $1
+             AND ft.type = 'expense'
+             AND ft.status IN ('pending')
+             AND COALESCE(ft.transaction_kind, 'regular') <> 'transfer'
+             AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
+           UNION ALL
+           SELECT
+             fro.id::text AS id,
+             fre.description AS description,
+             fro.due_date::text AS due_date,
+             fro.amount_cents::text AS amount_cents,
+             'recurring'::text AS source,
+             fro.status::text AS status
+           FROM financial_recurring_expense_occurrences fro
+           INNER JOIN financial_recurring_expenses fre ON fre.id = fro.recurring_expense_id
+           WHERE fro.tenant_id = $1
+             AND fro.status IN ('planned', 'pending')
+             AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')
+         ) p
+         ORDER BY p.due_date::date ASC, p.amount_cents::bigint DESC
+         LIMIT 5`,
+        [tenantId]
+      ),
+      pool.query<{ total: string }>(
+        `SELECT COALESCE(SUM(amount_cents), 0)::text AS total
+         FROM (
+           SELECT ft.amount_cents
+           FROM financial_transactions ft
+           WHERE ft.tenant_id = $1
+             AND ft.type = 'expense'
+             AND ft.status IN ('pending')
+             AND COALESCE(ft.transaction_kind, 'regular') <> 'transfer'
+             AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
+           UNION ALL
+           SELECT fro.amount_cents
+           FROM financial_recurring_expense_occurrences fro
+           WHERE fro.tenant_id = $1
+             AND fro.status IN ('planned', 'pending')
+             AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')
+         ) s`,
+        [tenantId]
+      ),
+      pool.query<{ total: string }>(
+        `SELECT COALESCE(SUM(ci.amount_cents), 0)::text AS total
+         FROM customer_invoices ci
+         WHERE ci.tenant_id = $1
+           AND ci.status IN ('pending', 'overdue')
+           AND ci.due_date >= CURRENT_DATE
+           AND ci.due_date <= (CURRENT_DATE + INTERVAL '7 day')`,
+        [tenantId]
+      ),
+      pool.query<{ id: string; title: string; due_date: string | null; priority: string | null; status: string | null; client_name: string | null; created_at: string }>(
+        `SELECT
+           t.id::text,
+           t.title,
+           t.due_date::text,
+           t.priority,
+           t.status,
+           t.client_name,
+           t.created_at::text
+         FROM tasks t
+         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+         WHERE t.status = 'pending'
+           AND ($2::uuid IS NULL OR t.assignee_id = $2::uuid OR t.user_id = $2::uuid)
+         ORDER BY
+           CASE
+             WHEN t.due_date IS NOT NULL AND t.due_date < CURRENT_DATE THEN 0
+             WHEN t.due_date = CURRENT_DATE THEN 1
+             WHEN t.due_date IS NOT NULL AND t.due_date > CURRENT_DATE THEN 2
+             ELSE 3
+           END,
+           t.due_date ASC NULLS LAST,
+           t.created_at DESC
+         LIMIT 20`,
+        [tenantId, userId]
+      ),
+      pool.query<{ id: string; name: string; status: string | null; due_date: string | null; pending_tasks: string }>(
+        `SELECT
+           p.id::text,
+           p.name,
+           p.status,
+           p.due_date::text,
+           COALESCE((
+             SELECT COUNT(*)::int
+             FROM project_tasks pt
+             WHERE pt.project_id = p.id
+               AND lower(COALESCE(pt.status, 'todo')) NOT IN ('done', 'completed', 'concluido', 'concluído')
+           ), 0)::text AS pending_tasks
+         FROM projects p
+         INNER JOIN users owner ON owner.id = p.user_id
+         WHERE owner.tenant_id = $1
+           AND lower(COALESCE(p.status, 'active')) NOT IN ('done', 'completed', 'cancelled', 'cancelado')
+           AND (
+             $2::uuid IS NULL
+             OR p.user_id = $2::uuid
+             OR COALESCE(p.responsible_ids, '[]'::jsonb) @> to_jsonb(ARRAY[$2::text]::text[])
+           )
+         ORDER BY p.updated_at DESC
+         LIMIT 5`,
+        [tenantId, userId]
+      ),
+      pool.query<{ active_conversations: number; awaiting_response: number; unread: number }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE c.attendance_status IS DISTINCT FROM 'closed')::int AS active_conversations,
+           COUNT(*) FILTER (
+             WHERE c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued')
+           )::int AS awaiting_response,
+           COUNT(*) FILTER (WHERE COALESCE(c.unread_count, 0) > 0)::int AS unread
+         FROM chat_conversations c
+         INNER JOIN users u ON u.id = c.user_id
+         WHERE u.tenant_id = $1`,
+        [tenantId]
+      ),
+      pool.query<{ id: string; contact_name: string | null; phone_number: string | null; unread_count: number; last_message_at: string | null }>(
+        `SELECT
+           c.id::text,
+           c.contact_name,
+           c.phone_number,
+           COALESCE(c.unread_count, 0)::int AS unread_count,
+           c.last_message_at::text
+         FROM chat_conversations c
+         INNER JOIN users u ON u.id = c.user_id
+         WHERE u.tenant_id = $1
+         ORDER BY COALESCE(c.unread_count, 0) DESC, c.last_message_at DESC NULLS LAST
+         LIMIT 3`,
+        [tenantId]
+      ),
+      pool.query<{ open_excl: string; in_progress: string; resolved: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer'))::text AS open_excl,
+           COUNT(*) FILTER (WHERE t.status = 'in_progress')::text AS in_progress,
+           COUNT(*) FILTER (WHERE t.status IN ('resolved', 'closed'))::text AS resolved
+         FROM tickets t
+         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
+        [tenantId]
+      ),
+      pool.query<{ id: string; ticket_number: string; subject: string; status: string; updated_at: string }>(
+        `SELECT t.id::text, t.ticket_number, t.subject, t.status, t.updated_at::text
+         FROM tickets t
+         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+         ORDER BY t.updated_at DESC NULLS LAST
+         LIMIT 5`,
+        [tenantId]
+      ),
+      attendanceCols && userId
+        ? pool.query<{
+            my_in_service: string;
+            my_queued: string;
+            my_closed_7d: string;
+            queue_unassigned: string;
+          }>(
+            `SELECT
+               COUNT(*) FILTER (
+                 WHERE c.assigned_to_user_id = $2::uuid AND c.attendance_status = 'in_service'
+               )::text AS my_in_service,
+               COUNT(*) FILTER (
+                 WHERE c.assigned_to_user_id = $2::uuid AND c.attendance_status = 'queued'
+               )::text AS my_queued,
+               COUNT(*) FILTER (
+                 WHERE c.assigned_to_user_id = $2::uuid
+                   AND c.attendance_status = 'closed'
+                   AND c.updated_at >= (CURRENT_TIMESTAMP - INTERVAL '7 days')
+               )::text AS my_closed_7d,
+               COUNT(*) FILTER (
+                 WHERE c.attendance_status IN ('unassigned', 'queued')
+                   AND c.assigned_to_user_id IS NULL
+               )::text AS queue_unassigned
+             FROM chat_conversations c
+             INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1`,
+            [tenantId, userId]
+          )
+        : Promise.resolve({ rows: [] as Array<{ my_in_service: string; my_queued: string; my_closed_7d: string; queue_unassigned: string }> }),
+      attendanceCols && userId
+        ? pool.query<{
+            id: string;
+            contact_name: string | null;
+            phone_number: string | null;
+            attendance_status: string | null;
+            last_message_at: string | null;
+            unread_count: number;
+          }>(
+            `SELECT
+               c.id::text,
+               c.contact_name,
+               c.phone_number,
+               c.attendance_status,
+               c.last_message_at::text,
+               COALESCE(c.unread_count, 0)::int AS unread_count
+             FROM chat_conversations c
+             INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+             WHERE c.assigned_to_user_id = $2::uuid
+               AND COALESCE(c.attendance_status, '') <> 'closed'
+             ORDER BY c.last_message_at DESC NULLS LAST
+             LIMIT 7`,
+            [tenantId, userId]
+          )
+        : Promise.resolve({
+            rows: [] as Array<{
+              id: string;
+              contact_name: string | null;
+              phone_number: string | null;
+              attendance_status: string | null;
+              last_message_at: string | null;
+              unread_count: number;
+            }>,
+          }),
     ]);
 
     const futureRevenue = report.general.projected_subscription_income;
@@ -393,6 +636,117 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
       });
     }
 
+    const tasksList = tasksListR.rows;
+    const taskClassifier = (row: (typeof tasksList)[number]) => {
+      if (!row.due_date) return 'recent_assigned' as const;
+      const due = new Date(`${row.due_date}T00:00:00Z`).getTime();
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const todayTs = today.getTime();
+      if (due < todayTs) return 'overdue' as const;
+      if (due === todayTs) return 'due_today' as const;
+      return 'upcoming' as const;
+    };
+    type TaskOverviewItem = {
+      id: string;
+      title: string;
+      due_date: string | null;
+      priority: string | null;
+      status: string | null;
+      project_name: string | null;
+      client_name: string | null;
+    };
+    const tasksBuckets: {
+      overdue: TaskOverviewItem[];
+      due_today: TaskOverviewItem[];
+      upcoming: TaskOverviewItem[];
+      recent_assigned: TaskOverviewItem[];
+    } = {
+      overdue: [],
+      due_today: [],
+      upcoming: [],
+      recent_assigned: [],
+    };
+    for (const row of tasksList) {
+      const bucket = taskClassifier(row);
+      if (tasksBuckets.overdue.length + tasksBuckets.due_today.length + tasksBuckets.upcoming.length + tasksBuckets.recent_assigned.length >= 5) {
+        break;
+      }
+      if (tasksBuckets[bucket].length >= 5) continue;
+      tasksBuckets[bucket].push({
+        id: row.id,
+        title: row.title,
+        due_date: row.due_date,
+        priority: row.priority,
+        status: row.status,
+        project_name: null,
+        client_name: row.client_name,
+      });
+    }
+
+    const accountsPayableItems = payableRowsR.rows.map((row) => ({
+      id: row.id,
+      description: row.description,
+      due_date: row.due_date,
+      amount_cents: Number(row.amount_cents ?? 0),
+      source: row.source,
+      status: row.status,
+    }));
+    const accountsPayableTotalCents = Number(payableTotalR.rows[0]?.total ?? 0);
+    const next7ReceivableCents = Number(receivableNext7R.rows[0]?.total ?? 0);
+
+    const projectsOverview = projectsOverviewR.rows.map((row) => {
+      const pendingTasks = Number(row.pending_tasks ?? 0);
+      const progressPct = Math.max(0, Math.min(100, pendingTasks === 0 ? 100 : 100 - pendingTasks * 10));
+      return {
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        due_date: row.due_date,
+        pending_tasks: pendingTasks,
+        progress_pct: progressPct,
+      };
+    });
+
+    const chatCounts = chatCountsR.rows[0] ?? {
+      active_conversations: 0,
+      awaiting_response: 0,
+      unread: 0,
+    };
+
+    const tb = ticketsBreakdownR.rows[0];
+    const tickets_overview = {
+      open: Number(tb?.open_excl ?? 0),
+      in_progress: Number(tb?.in_progress ?? 0),
+      resolved: Number(tb?.resolved ?? 0),
+      recent: ticketsRecentR.rows.map((r) => ({
+        id: r.id,
+        ticket_number: r.ticket_number,
+        subject: r.subject,
+        status: r.status,
+        updated_at: r.updated_at,
+      })),
+    };
+
+    const am = agentMetricsR.rows[0];
+    const agent_attendance =
+      attendanceCols && userId
+        ? {
+            my_in_service: Number(am?.my_in_service ?? 0),
+            my_queued: Number(am?.my_queued ?? 0),
+            my_closed_7d: Number(am?.my_closed_7d ?? 0),
+            queue_unassigned: Number(am?.queue_unassigned ?? 0),
+            preview: agentQueuePreviewR.rows.map((r) => ({
+              id: r.id,
+              contact_name: r.contact_name,
+              phone_number: r.phone_number,
+              attendance_status: r.attendance_status,
+              last_message_at: r.last_message_at,
+              unread_count: r.unread_count,
+            })),
+          }
+        : null;
+
     res.json({
       period: { from, to, preset },
       sales: {
@@ -442,6 +796,29 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
         expenses_projected: m.expense_projected ?? Math.max(0, (m.expense_total_potential ?? m.projected_expense ?? m.expense) - (m.expense_paid ?? m.expense ?? 0)),
       })),
       alerts,
+      accounts_payable_next_7_days: accountsPayableItems,
+      accounts_payable_total_cents: accountsPayableTotalCents,
+      next_7_days: {
+        receivable_cents: next7ReceivableCents,
+        payable_cents: accountsPayableTotalCents,
+        balance_cents: next7ReceivableCents - accountsPayableTotalCents,
+      },
+      tasks_overview: tasksBuckets,
+      projects_overview: projectsOverview,
+      chat_overview: {
+        active_conversations: Number(chatCounts.active_conversations ?? 0),
+        awaiting_response: Number(chatCounts.awaiting_response ?? 0),
+        unread: Number(chatCounts.unread ?? 0),
+        list: chatListR.rows.map((row) => ({
+          id: row.id,
+          contact_name: row.contact_name,
+          phone_number: row.phone_number,
+          unread_count: Number(row.unread_count ?? 0),
+          last_message_at: row.last_message_at,
+        })),
+      },
+      tickets_overview,
+      agent_attendance,
     });
   } catch (error) {
     console.error('Error fetching executive dashboard overview:', error);

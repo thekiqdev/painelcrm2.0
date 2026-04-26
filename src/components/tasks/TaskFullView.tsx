@@ -94,6 +94,8 @@ export interface TaskFullViewProps {
   onDelete?: (taskId: string) => void | Promise<void>;
   /** Alternar status concluída/pendente. */
   onToggleStatus?: (taskId: string) => void | Promise<void>;
+  /** Em viewports pequenas, usa quase tela cheia (navegação tipo app). */
+  fullscreenMobile?: boolean;
 }
 
 const STATUS_OPTIONS: { value: UnifiedTaskStatus; label: string }[] = [
@@ -120,6 +122,7 @@ export function TaskFullView({
   onUpdate,
   onDelete,
   onToggleStatus,
+  fullscreenMobile = false,
 }: TaskFullViewProps) {
   const [editMode, setEditMode] = useState(false);
   const [editTitle, setEditTitle] = useState("");
@@ -253,7 +256,11 @@ export function TaskFullView({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[95vw] sm:w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+        className={cn(
+          "w-[95vw] sm:w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden",
+          fullscreenMobile &&
+            "max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:w-full max-md:max-w-none max-md:rounded-none max-md:p-4"
+        )}
         aria-describedby={undefined}
       >
         <DialogDescription id="task-full-view-description" className="sr-only">

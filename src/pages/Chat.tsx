@@ -10,14 +10,8 @@ import {
   ChevronLeft,
   Plus,
   MoreVertical,
-  UserPlus,
   FileText,
-  CheckSquare,
-  Ticket,
-  Receipt,
-  FileSignature,
   User,
-  Trash2,
   Users,
   CalendarIcon,
   Image as ImageIcon,
@@ -98,6 +92,8 @@ import { messagesService } from '@/services/messages';
 import { customerInvoicesService } from '@/services/customerInvoices';
 import { buildInvoiceLink } from '@/services/chatFinancialAdapter';
 import CustomerInvoiceNew from '@/pages/CustomerInvoiceNew';
+import { ChatContactProfileSheet } from '@/components/chat/ChatContactProfileSheet';
+import { MobileCommerceScreenLayout } from '@/components/mobile/MobileCommerceScreenLayout';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { CrmIdentityListRow } from '@/components/crm/CrmIdentityListRow';
 import {
@@ -282,6 +278,7 @@ const Chat = () => {
   const { canCreate, loading: modulePermLoading } = useModulePermissions();
   const canCreateProposalsInChat = canCreate('proposals') && !modulePermLoading;
   const canCreateContractsInChat = canCreate('contracts') && !modulePermLoading;
+  const canCreateInvoicesInChat = canCreate('billing') && !modulePermLoading;
   const navigate = useNavigate();
   const location = useLocation();
   const { conversationId: routeConversationId } = useParams<{ conversationId: string }>();
@@ -319,6 +316,7 @@ const Chat = () => {
   const [transferTeamId, setTransferTeamId] = useState('');
   const [transferMode, setTransferMode] = useState<'operator' | 'team'>('operator');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [contactProfileOpen, setContactProfileOpen] = useState(false);
   const [attendingConversation, setAttendingConversation] = useState(false);
 
   const [loadingInstances, setLoadingInstances] = useState(false);
@@ -350,6 +348,13 @@ const Chat = () => {
   const conversationsHydratedRef = useRef(false);
   /** FIFO: um id otimista por envio em voo; o WebSocket remove o mais antigo ao chegar a mensagem real. */
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
+  /** Evita GET /messages em rajada quando `conversation_updated` chega muitas vezes sem mudar o histórico visível. */
+  const conversationUpdatedReloadSigRef = useRef<{
+    id: string | null;
+    lastAt: string | null;
+    preview: string | null;
+  }>({ id: null, lastAt: null, preview: null });
+  const conversationUpdatedReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Estados para dialogs
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
@@ -370,6 +375,11 @@ const Chat = () => {
   const keyboardInset = useVisualKeyboardInset(
     Boolean(isMobile && routeConversationId && viewMode === 'conversation'),
   );
+
+  useEffect(() => {
+    setContactProfileOpen(false);
+  }, [selectedConversationId]);
+
   /** Etapa 3+: modelo oficial (`proposal_templates`) e/ou legado rascunho `proposals` da coluna Kanban. */
   const [proposalKanbanModelId, setProposalKanbanModelId] = useState<string | null>(null);
   const [proposalKanbanLegacyDraftId, setProposalKanbanLegacyDraftId] = useState<string | null>(null);
@@ -510,6 +520,15 @@ const Chat = () => {
   // Atualizar refs quando valores mudarem
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
+    conversationUpdatedReloadSigRef.current = {
+      id: selectedConversationId,
+      lastAt: null,
+      preview: null,
+    };
+    if (conversationUpdatedReloadTimerRef.current) {
+      clearTimeout(conversationUpdatedReloadTimerRef.current);
+      conversationUpdatedReloadTimerRef.current = null;
+    }
   }, [selectedConversationId]);
 
   useEffect(() => {
@@ -821,10 +840,28 @@ const Chat = () => {
         return sorted;
       });
 
-      // Se a conversa atualizada é a selecionada, recarregar mensagens
-      // Usar ref para evitar closure stale
+      // Se a conversa atualizada é a selecionada, recarregar mensagens só quando o “último
+      // conteúdo” mudou (evita rajadas de GET por eventos repetidos / campos só de lista).
       if (selectedConversationIdRef.current === updatedConversation.id) {
-        void loadMessages(updatedConversation.id, { silent: true });
+        const lastAt = updatedConversation.lastMessageAt ?? null;
+        const preview = updatedConversation.lastMessagePreview ?? null;
+        const sig = conversationUpdatedReloadSigRef.current;
+        if (sig.id === updatedConversation.id && sig.lastAt === lastAt && sig.preview === preview) {
+          return;
+        }
+        conversationUpdatedReloadSigRef.current = {
+          id: updatedConversation.id,
+          lastAt,
+          preview,
+        };
+        if (conversationUpdatedReloadTimerRef.current) {
+          clearTimeout(conversationUpdatedReloadTimerRef.current);
+        }
+        conversationUpdatedReloadTimerRef.current = setTimeout(() => {
+          conversationUpdatedReloadTimerRef.current = null;
+          if (selectedConversationIdRef.current !== updatedConversation.id) return;
+          void loadMessages(updatedConversation.id, { silent: true });
+        }, 650);
       }
     });
 
@@ -985,6 +1022,10 @@ const Chat = () => {
     });
 
     return () => {
+      if (conversationUpdatedReloadTimerRef.current) {
+        clearTimeout(conversationUpdatedReloadTimerRef.current);
+        conversationUpdatedReloadTimerRef.current = null;
+      }
       // Limpar socket quando token mudar ou componente desmontar
       if (socketRef.current) {
         console.log('[Chat] WebSocket: Cleaning up socket');
@@ -1068,6 +1109,13 @@ const Chat = () => {
   useEffect(() => {
     if (enabledInstanceIds.size === 0) {
       setConversations([]);
+      if (!pendingConversationRestoreRef.current) {
+        setSelectedConversationId(null);
+      }
+      setMessages([]);
+      if (isMobile && routeConversationId) {
+        navigate('/chat', { replace: true });
+      }
       return;
     }
     if (!pendingConversationRestoreRef.current) {
@@ -1077,7 +1125,7 @@ const Chat = () => {
     // Carregar conversas de todas as instâncias habilitadas
     // Nota: Não usamos polling automático pois os webhooks atualizam em tempo real
     loadConversations(Array.from(enabledInstanceIds));
-  }, [enabledInstanceIds, loadConversations]);
+  }, [enabledInstanceIds, loadConversations, isMobile, routeConversationId, navigate]);
 
   useEffect(() => {
     if (pendingConversationRestoreRef.current) {
@@ -1332,6 +1380,62 @@ const Chat = () => {
       }),
     [selectedConversation, user, profile],
   );
+
+  const chatContactProfileModel = useMemo(() => {
+    if (!selectedConversation || !user) return null;
+    const conv = selectedConversation;
+    const id = selectedIdentity;
+    const displayName = id?.displayName ?? '—';
+    const phoneDisplay =
+      (id?.phoneLine && id.phoneLine.trim()) || conv.phoneNumber || conv.canonicalPhone || conv.canonical_phone || null;
+    const statusParts: string[] = [];
+    if (id?.waSubtitle) statusParts.push(`WhatsApp: ${id.waSubtitle}`);
+    if (conv.attendance_status === 'in_service') statusParts.push('Em atendimento');
+    if (conv.attendance_status === 'queued') statusParts.push('Na fila');
+    if (conv.attendance_status === 'closed') statusParts.push('Encerrado');
+    const statusLine = statusParts.length ? statusParts.join(' · ') : null;
+    const lastInteractionLabel = formatRelativeDate(conv.lastMessageAt || conv.updated_at);
+    const assigneeDisplay =
+      conv.assignee_display?.trim() ||
+      (conv.assigned_to_user_id ? 'Atribuído' : null);
+    const teamName = conv.assigned_team_name?.trim() || null;
+    const detailRows: { label: string; value: string }[] = [];
+    const contact = currentClient || currentLead;
+    if (contact?.email?.trim()) detailRows.push({ label: 'E-mail', value: contact.email.trim() });
+    if (contact && 'company' in contact && (contact as { company?: string }).company?.trim()) {
+      detailRows.push({ label: 'Empresa', value: String((contact as { company?: string }).company).trim() });
+    }
+    if (currentClient?.cpf_cnpj?.trim()) {
+      detailRows.push({ label: 'CPF/CNPJ', value: currentClient.cpf_cnpj.trim() });
+    }
+    if (currentLead && !currentClient) {
+      const notes = typeof currentLead.notes === 'string' ? currentLead.notes.trim() : '';
+      if (notes) detailRows.push({ label: 'Notas', value: notes.slice(0, 280) + (notes.length > 280 ? '…' : '') });
+    }
+    const tagLabels: string[] = [];
+    if (currentClient?.funnel_stage) tagLabels.push(String(currentClient.funnel_stage));
+    if (currentClient?.client_groups?.name) tagLabels.push(currentClient.client_groups.name);
+    const adminBypass = user.is_tenant_admin === true;
+    const canTransferProfile =
+      !!user.tenant_id &&
+      conv.attendance_status === 'in_service' &&
+      !!conv.assigned_to_user_id &&
+      (conv.assigned_to_user_id === user.id || adminBypass);
+    return {
+      displayName,
+      phoneDisplay,
+      statusLine,
+      avatarUrl: id?.avatarUrl ?? null,
+      initials: id?.initials ?? '?',
+      kind: conv.client_id ? ('client' as const) : conv.leadId ? ('lead' as const) : ('unlinked' as const),
+      lastInteractionLabel,
+      assigneeDisplay,
+      teamName,
+      detailRows,
+      tagLabels,
+      canTransferProfile,
+    };
+  }, [selectedConversation, user, selectedIdentity, currentClient, currentLead]);
   const activeInstance =
     instances.find((instance) => instance.id === selectedInstanceId) ||
     instances.find((instance) => instance.status === 'connected') ||
@@ -2498,7 +2602,7 @@ const Chat = () => {
           'fixed inset-0 z-[60] m-0 h-[100dvh] max-h-[100dvh] bg-background',
       )}
     >
-      {enabledInstanceIds.size > 0 ? (
+      {instances.length > 0 ? (
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
           <div
@@ -2829,6 +2933,18 @@ const Chat = () => {
                             <p className="mt-1 text-xs">Aguarde um momento.</p>
                           </div>
                         </div>
+                      ) : enabledInstanceIds.size === 0 ? (
+                        <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+                          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                            <ListFilter className="h-7 w-7 text-muted-foreground" aria-hidden />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-foreground">Nenhum WhatsApp ativo no inbox</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Use o botão de filtro ao lado da pesquisa e marque pelo menos uma conexão.
+                            </p>
+                          </div>
+                        </div>
                       ) : conversationsToShow.length === 0 ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
                           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
@@ -2858,12 +2974,14 @@ const Chat = () => {
                   {selectedConversation ? (
                     <>
                       {viewMode === 'invoice-create' ? (
-                        <CardContent className="p-4 flex-1 min-h-0 overflow-auto">
-                          <div className="mb-3">
-                            <Button variant="ghost" size="sm" onClick={handleBackFromInvoiceCreate}>
-                              Voltar para conversa
-                            </Button>
-                          </div>
+                        <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0')}>
+                          {!isMobile ? (
+                            <div className="mb-3">
+                              <Button variant="ghost" size="sm" onClick={handleBackFromInvoiceCreate}>
+                                Voltar para conversa
+                              </Button>
+                            </div>
+                          ) : null}
                           <CustomerInvoiceNew
                             embedded
                             initialClientId={selectedConversation.client_id ?? null}
@@ -2874,12 +2992,14 @@ const Chat = () => {
                           />
                         </CardContent>
                       ) : viewMode === 'proposal-create' ? (
-                        <CardContent className="p-4 flex-1 min-h-0 overflow-auto">
-                          <div className="mb-3">
-                            <Button variant="ghost" size="sm" onClick={handleBackFromProposalCreate}>
-                              Voltar para conversa
-                            </Button>
-                          </div>
+                        <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0')}>
+                          {!isMobile ? (
+                            <div className="mb-3">
+                              <Button variant="ghost" size="sm" onClick={handleBackFromProposalCreate}>
+                                Voltar para conversa
+                              </Button>
+                            </div>
+                          ) : null}
                           <ProposalCreateForm
                             key={`${selectedConversation.id}:${proposalKanbanModelId ?? 'noM'}:${proposalKanbanLegacyDraftId ?? 'noD'}`}
                             embedded
@@ -2895,6 +3015,10 @@ const Chat = () => {
                                 ? `Proposta — ${currentClient?.name || currentLead?.name}`
                                 : ''
                             }
+                            lockClientPicker={Boolean(selectedConversation.client_id)}
+                            lockLeadPicker={
+                              Boolean(!selectedConversation.client_id && selectedConversation.leadId)
+                            }
                             initialProposalModelId={proposalKanbanModelId}
                             initialTemplateProposalId={proposalKanbanLegacyDraftId}
                             onBack={handleBackFromProposalCreate}
@@ -2904,28 +3028,50 @@ const Chat = () => {
                           />
                         </CardContent>
                       ) : viewMode === 'contract-create' ? (
-                        <CardContent className="p-4 flex-1 min-h-0 overflow-auto">
-                          <div className="mb-3">
-                            <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
-                              Voltar para conversa
-                            </Button>
-                          </div>
-                          <ContractCreateForm
-                            key={selectedConversation.id}
-                            embedded
-                            initialClientId={selectedConversation.client_id ?? null}
-                            initialSigners={chatContractInitialSigners}
-                            initialTitleHint={
-                              currentClient?.name || currentLead?.name
-                                ? `Contrato — ${currentClient?.name || currentLead?.name}`
-                                : ''
-                            }
-                            onBack={handleBackFromContractCreate}
-                            onCreated={(created, mode) => {
-                              void handleContractCreatedInChat(created, mode);
-                            }}
-                          />
-                        </CardContent>
+                        <MobileCommerceScreenLayout
+                          className="min-h-0 flex-1"
+                          enabled={isMobile}
+                          header={
+                            <div className="flex items-center gap-2 px-2 py-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="shrink-0 gap-1"
+                                onClick={handleBackFromContractCreate}
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                                Conversa
+                              </Button>
+                              <span className="min-w-0 flex-1 truncate text-sm font-semibold">Novo contrato</span>
+                            </div>
+                          }
+                        >
+                          <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0 pt-2')}>
+                            {!isMobile ? (
+                              <div className="mb-3">
+                                <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
+                                  Voltar para conversa
+                                </Button>
+                              </div>
+                            ) : null}
+                            <ContractCreateForm
+                              key={selectedConversation.id}
+                              embedded
+                              initialClientId={selectedConversation.client_id ?? null}
+                              initialSigners={chatContractInitialSigners}
+                              initialTitleHint={
+                                currentClient?.name || currentLead?.name
+                                  ? `Contrato — ${currentClient?.name || currentLead?.name}`
+                                  : ''
+                              }
+                              onBack={handleBackFromContractCreate}
+                              onCreated={(created, mode) => {
+                                void handleContractCreatedInChat(created, mode);
+                              }}
+                            />
+                          </CardContent>
+                        </MobileCommerceScreenLayout>
                       ) : (
                         <>
                       <CardHeader
@@ -3189,135 +3335,20 @@ const Chat = () => {
                             >
                               <RefreshCw className={`h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`} />
                             </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className={cn(
-                                    'h-8 w-8 pointer-events-auto',
-                                    isMobile && routeConversationId && 'h-7 w-7 shrink-0',
-                                  )}
-                                >
-                                  <MoreVertical className="h-3.5 w-3.5" />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className={cn(
+                                'h-8 w-8 pointer-events-auto',
+                                isMobile && routeConversationId && 'h-7 w-7 shrink-0',
+                              )}
+                              aria-label="Perfil do contato e ações"
+                              title="Perfil do contato e ações"
+                              onClick={() => setContactProfileOpen(true)}
+                            >
+                              <MoreVertical className="h-3.5 w-3.5" />
                             </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent
-                                align="end"
-                                className="z-[80] max-h-[min(70dvh,28rem)] overflow-y-auto"
-                              >
-                                {user && selectedConversation && isMobile && routeConversationId ? (
-                                  <>
-                                    <DropdownMenuItem
-                                      onClick={() => void handleSyncConversation()}
-                                      disabled={syncingMessages}
-                                    >
-                                      <RefreshCw
-                                        className={`mr-2 h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`}
-                                      />
-                                      Sincronizar conversa
-                                    </DropdownMenuItem>
-                                    {(() => {
-                                      const adminBypass = user.is_tenant_admin === true;
-                                      const canTransferMobile =
-                                        !!user.tenant_id &&
-                                        selectedConversation.attendance_status === 'in_service' &&
-                                        !!selectedConversation.assigned_to_user_id &&
-                                        (selectedConversation.assigned_to_user_id === user.id || adminBypass);
-                                      return canTransferMobile ? (
-                                        <DropdownMenuItem onClick={() => void openTransferDialog()}>
-                                          <ArrowRightLeft className="mr-2 h-4 w-4" />
-                                          Transferir atendimento
-                                        </DropdownMenuItem>
-                                      ) : null;
-                                    })()}
-                                    <DropdownMenuSeparator />
-                                  </>
-                                ) : null}
-                                {selectedConversation.client_id ? (
-                                  <>
-                                    <DropdownMenuItem onClick={handleCreateInvoice}>
-                                      <Receipt className="mr-2 h-4 w-4" />
-                                      Criar fatura
-                                    </DropdownMenuItem>
-                                    {canCreateContractsInChat && (
-                                      <DropdownMenuItem onClick={handleCreateContract}>
-                                        <FileSignature className="mr-2 h-4 w-4" />
-                                        Criar contrato
-                                      </DropdownMenuItem>
-                                    )}
-                                    {canCreateProposalsInChat && (
-                                      <DropdownMenuItem onClick={handleCreateProposal}>
-                                        <FileText className="mr-2 h-4 w-4" />
-                                        Criar proposta
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuItem onClick={handleCreateTask}>
-                                      <CheckSquare className="mr-2 h-4 w-4" />
-                                      Criar tarefa
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={handleOpenTicket}>
-                                      <Ticket className="mr-2 h-4 w-4" />
-                                      Abrir ticket
-                                    </DropdownMenuItem>
-                                  </>
-                                ) : selectedConversation.leadId ? (
-                                  <>
-                                    <DropdownMenuItem onClick={handleConvertToClient} disabled={loadingLead || !currentLead}>
-                                      <UserPlus className="mr-2 h-4 w-4" />
-                                      Converter para cliente
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    {canCreateContractsInChat && (
-                                      <DropdownMenuItem onClick={handleCreateContract}>
-                                        <FileSignature className="mr-2 h-4 w-4" />
-                                        Criar contrato
-                                      </DropdownMenuItem>
-                                    )}
-                                    {canCreateProposalsInChat && (
-                                      <DropdownMenuItem onClick={handleCreateProposal}>
-                                        <FileText className="mr-2 h-4 w-4" />
-                                        Criar proposta
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuItem onClick={handleCreateTask}>
-                                      <CheckSquare className="mr-2 h-4 w-4" />
-                                      Criar tarefa
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={handleOpenTicket}>
-                                      <Ticket className="mr-2 h-4 w-4" />
-                                      Abrir ticket
-                                    </DropdownMenuItem>
-                                  </>
-                                ) : (
-                                  <>
-                                    <DropdownMenuItem onClick={openLinkDialog}>
-                                      <Users className="mr-2 h-4 w-4" />
-                                      {selectedConversation.link_state === 'review_required'
-                                        ? 'Escolher vínculo'
-                                        : 'Vincular conversa'}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={handleAddLead} disabled={loadingLead}>
-                                      <UserPlus className="mr-2 h-4 w-4" />
-                                      Adicionar lead
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                                {(selectedConversation.client_id || selectedConversation.leadId) && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      className="text-destructive focus:text-destructive"
-                                      onClick={() => setUnlinkConfirmOpen(true)}
-                                    >
-                                      <Trash2 className="mr-2 h-4 w-4" />
-                                      Remover vínculo com CRM
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
                           </div>
                         </div>
                       </CardHeader>
@@ -3533,6 +3564,57 @@ const Chat = () => {
           }
         }}
       />
+
+      {selectedConversation && user && chatContactProfileModel ? (
+        <ChatContactProfileSheet
+          open={contactProfileOpen}
+          onOpenChange={setContactProfileOpen}
+          isMobile={isMobile}
+          displayName={chatContactProfileModel.displayName}
+          phoneDisplay={chatContactProfileModel.phoneDisplay}
+          statusLine={chatContactProfileModel.statusLine}
+          avatarUrl={chatContactProfileModel.avatarUrl}
+          initials={chatContactProfileModel.initials}
+          kind={chatContactProfileModel.kind}
+          lastInteractionLabel={chatContactProfileModel.lastInteractionLabel}
+          assigneeDisplay={chatContactProfileModel.assigneeDisplay}
+          teamName={chatContactProfileModel.teamName}
+          detailRows={chatContactProfileModel.detailRows}
+          tagLabels={chatContactProfileModel.tagLabels}
+          syncingMessages={syncingMessages}
+          loadingLead={loadingLead}
+          canCreateInvoice={Boolean(selectedConversation.client_id && canCreateInvoicesInChat)}
+          canCreateProposal={Boolean(
+            (selectedConversation.client_id || selectedConversation.leadId) && canCreateProposalsInChat,
+          )}
+          canCreateContract={Boolean(
+            (selectedConversation.client_id || selectedConversation.leadId) && canCreateContractsInChat,
+          )}
+          canTransfer={chatContactProfileModel.canTransferProfile}
+          onBackToConversation={() => setContactProfileOpen(false)}
+          onCreateInvoice={handleCreateInvoice}
+          onCreateProposal={handleCreateProposal}
+          onCreateContract={handleCreateContract}
+          onTransfer={() => void openTransferDialog()}
+          onSync={() => void handleSyncConversation()}
+          onCreateTask={handleCreateTask}
+          onOpenTicket={handleOpenTicket}
+          onConvertLead={handleConvertToClient}
+          onLink={openLinkDialog}
+          onAddLead={() => {
+            void handleAddLead();
+          }}
+          onUnlink={() => setUnlinkConfirmOpen(true)}
+          showConvertLead={Boolean(selectedConversation.leadId && !selectedConversation.client_id)}
+          showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
+          showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
+          linkConversationLabel={
+            selectedConversation.link_state === 'review_required'
+              ? 'Escolher vínculo'
+              : 'Vincular conversa'
+          }
+        />
+      ) : null}
 
       <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
         <DialogContent className="sm:max-w-md">

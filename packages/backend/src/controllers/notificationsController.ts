@@ -27,8 +27,10 @@ export async function getNotifications(req: AuthRequest, res: Response) {
       type: queryParams.type as any,
     });
 
+    const list = notifications.map((n) => notificationService.notificationToListDto(n));
+
     res.json({
-      notifications,
+      notifications: list,
       pagination: {
         total,
         limit: queryParams.limit || 50,
@@ -82,20 +84,38 @@ export async function markNotificationAsRead(req: AuthRequest, res: Response) {
       return;
     }
 
-    const notification = await notificationService.markNotificationAsRead(id, userId);
+    const notification = await notificationService.markNotificationAsRead(id, userId, req.tenantId ?? null);
 
     if (!notification) {
-      res.status(404).json({ error: 'Notification not found or already read' });
+      res.status(404).json({ error: 'Notification not found' });
       return;
     }
 
     res.json({
-      notification,
+      notification: notificationService.notificationToListDto(notification),
       message: 'Notification marked as read',
     });
   } catch (error: any) {
     console.error('Error marking notification as read:', error);
     res.status(500).json({ error: error.message || 'Failed to mark notification as read' });
+  }
+}
+
+/**
+ * DELETE /api/notifications
+ * Remove todas as notificações do utilizador autenticado.
+ */
+export async function deleteAllNotifications(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const deleted = await notificationService.deleteAllNotificationsForUser(userId);
+    res.json({
+      deleted,
+      message: deleted === 0 ? 'Nenhuma notificação para remover' : `${deleted} notificação(ões) removida(s)`,
+    });
+  } catch (error: any) {
+    console.error('Error deleting all notifications:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete notifications' });
   }
 }
 
@@ -162,19 +182,14 @@ export async function getNotification(req: AuthRequest, res: Response) {
       return;
     }
 
-    const { notifications } = await notificationService.getUserNotifications(userId, {
-      limit: 1,
-      offset: 0,
-    });
-
-    const notification = notifications.find((n) => n.id === id);
+    const notification = await notificationService.getNotificationById(id, userId);
 
     if (!notification) {
       res.status(404).json({ error: 'Notification not found' });
       return;
     }
 
-    res.json({ notification });
+    res.json({ notification: notificationService.notificationToListDto(notification) });
   } catch (error: any) {
     console.error('Error fetching notification:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch notification' });

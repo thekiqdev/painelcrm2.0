@@ -5,6 +5,7 @@ import {
   getUnreadCount,
   markNotificationAsRead,
   markAllNotificationsAsRead,
+  deleteAllNotifications,
   deleteNotification,
   getNotification,
 } from '../controllers/notificationsController.js';
@@ -15,23 +16,20 @@ const router = Router();
 router.use(...tenantAuthCrm);
 
 // Rotas específicas devem vir antes de rotas com parâmetros dinâmicos
-// GET /api/notifications/unread-count - Contador de não lidas
 router.get('/unread-count', getUnreadCount);
 
-// PATCH /api/notifications/read-all - Marcar todas como lidas
 router.patch('/read-all', markAllNotificationsAsRead);
 
-// GET /api/notifications - Listar notificações (com paginação e filtros)
+// DELETE coleção antes de DELETE /:id
+router.delete('/', deleteAllNotifications);
+
 router.get('/', getNotifications);
 
-// GET /api/notifications/:id - Obter notificação específica
 router.get('/:id', getNotification);
 
-// PATCH /api/notifications/:id/read - Marcar notificação como lida
+router.post('/:id/read', markNotificationAsRead);
 router.patch('/:id/read', markNotificationAsRead);
 
-// DELETE /api/notifications/:id - Deletar notificação
 router.delete('/:id', deleteNotification);
 
 export default router;
-
