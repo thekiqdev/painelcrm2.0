@@ -90,9 +90,10 @@ async function loadInvoiceForSync(invoiceId: string): Promise<InvoiceRowForSync 
 }
 
 function isPaidStatus(raw: string | null | undefined): boolean {
-  return String(raw ?? '')
+  const s = String(raw ?? '')
     .trim()
-    .toLowerCase() === 'paid';
+    .toLowerCase();
+  return s === 'paid' || s === 'pago';
 }
 
 function effectiveGatewayReferenceId(inv: InvoiceRowForSync, gatewayKey: GatewayProviderKey): string {
@@ -106,10 +107,14 @@ function effectiveGatewayReferenceId(inv: InvoiceRowForSync, gatewayKey: Gateway
 
 async function clientExistsForTenant(tenantId: string, clientId: string | null): Promise<boolean> {
   if (!clientId?.trim()) return false;
-  const r = await pool.query(`SELECT 1 FROM clients WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [
-    clientId,
-    tenantId,
-  ]);
+  // `clients` não tem `tenant_id`; o tenant vem de `users` (mesmo padrão que clientsController, dashboard, etc.)
+  const r = await pool.query(
+    `SELECT 1 FROM clients c
+     INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2::uuid
+     WHERE c.id = $1::uuid
+     LIMIT 1`,
+    [clientId, tenantId]
+  );
   return (r.rowCount ?? 0) > 0;
 }
 
@@ -422,7 +427,7 @@ export async function syncPaidInvoicesForGatewayPeriod(params: {
   const invoices = await pool.query<{ id: string }>(
     `SELECT id::text FROM customer_invoices
      WHERE tenant_id = $1::uuid
-       AND status = 'paid'
+       AND lower(trim(status)) IN ('paid', 'pago')
        AND paid_at IS NOT NULL
        AND paid_at::date >= $2::date
        AND paid_at::date <= $3::date`,
@@ -507,3 +512,6 @@ export async function syncPaidInvoicesForGatewayPeriod(params: {
     errors,
   };
 }
+
+/** Nome alinhado à especificação; mesmo comportamento que `syncCustomerInvoicePaymentToFinancialAccount`. */
+export const syncPaidCustomerInvoiceToGatewayAccount = syncCustomerInvoicePaymentToFinancialAccount;

@@ -19,6 +19,12 @@ export type FinancialAccountScope = "business" | "personal";
 
 export type FinancialGatewayProvider = "asaas" | "mercado_pago";
 
+export interface FinancialGatewayAvailableItem {
+  key: string;
+  label: string;
+  enabled: boolean;
+}
+
 export interface FinancialAccountGatewayLinkDto {
   gateway: FinancialGatewayProvider;
   is_enabled: boolean;
@@ -445,8 +451,12 @@ export interface FinancialPayablesListDto {
 export interface GatewayReceivablesSyncPaidInvoicesResult {
   total_paid_invoices_found: number;
   eligible_count: number;
+  eligible_amount_cents?: number;
+  created_amount_cents?: number;
+  /** @deprecated preferir eligible_amount_cents */
   eligible_amount: number;
   created_count: number;
+  /** @deprecated preferir created_amount_cents */
   created_amount: number;
   skipped_existing_count: number;
   skipped_no_gateway_count: number;
@@ -455,7 +465,25 @@ export interface GatewayReceivablesSyncPaidInvoicesResult {
   errors: { invoice_id: string; message: string }[];
 }
 
+const KNOWN_GATEWAY_LABELS: Record<string, string> = {
+  asaas: "Asaas",
+  mercado_pago: "Mercado Pago",
+};
+
+/** Rótulo para exibição; chaves desconhecidas devolvem o próprio id. */
+export function displayFinancialGatewayLabel(key: string | null | undefined): string {
+  if (key == null || key === "") return "—";
+  return KNOWN_GATEWAY_LABELS[key] ?? key;
+}
+
 export const financialService = {
+  /** Gateways que podem ser vinculados a contas (configuração do ambiente). */
+  async getAvailableFinancialGateways(): Promise<FinancialGatewayAvailableItem[]> {
+    const r = await apiClient.get<FinancialGatewayAvailableItem[]>(`${BASE}/gateways/available`);
+    if (r.error) throw new Error(r.error);
+    return r.data ?? [];
+  },
+
   async getSummary(params?: { from?: string; to?: string; preset?: string }): Promise<FinancialSummaryDto> {
     const r = await apiClient.get<FinancialSummaryDto>(`${BASE}/summary${qs(params ?? {})}`);
     if (r.error) throw new Error(r.error);

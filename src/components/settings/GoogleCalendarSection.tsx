@@ -27,17 +27,33 @@ export function GoogleCalendarSection() {
   useEffect(() => {
     const raw = searchParams.get('google_calendar');
     if (!raw) return;
+    const reason = searchParams.get('reason') || undefined;
     if (raw === 'connected') {
       toast.success('Google Agenda conectado com sucesso.');
+    } else if (raw === 'error') {
+      if (reason === 'email_not_found') {
+        toast.error(
+          'Não foi possível obter o e-mail da conta Google. Tente de novo. Se o problema continuar, confira os scopes na Google Cloud (openid, email, profile) e a política de dados.',
+        );
+      } else if (reason === 'denied') {
+        toast.error('Autorização Google cancelada ou negada.');
+      } else if (reason === 'misconfigured') {
+        toast.error('Servidor sem configuração OAuth / cifra. Contacte o suporte.');
+      } else if (reason === 'disabled' || reason === 'invalid') {
+        toast.error('Ligação inválida ou integração desativada.');
+      } else {
+        toast.error('Não foi possível concluir a ligação com o Google.');
+      }
     } else if (raw === 'denied') {
       toast.error('Autorização Google cancelada ou negada.');
-    } else if (raw === 'invalid' || raw === 'error') {
+    } else if (raw === 'invalid') {
       toast.error('Não foi possível concluir a ligação com o Google.');
     } else if (raw === 'misconfigured' || raw === 'disabled') {
       toast.error('Integração Google indisponível neste ambiente.');
     }
     const next = new URLSearchParams(searchParams);
     next.delete('google_calendar');
+    next.delete('reason');
     setSearchParams(next, { replace: true });
     void queryClient.invalidateQueries({ queryKey: ['google-calendar-status'] });
   }, [searchParams, setSearchParams, queryClient]);

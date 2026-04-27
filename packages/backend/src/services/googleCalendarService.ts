@@ -9,9 +9,49 @@ import {
   type GoogleCalendarConnectionSecrets,
 } from './googleCalendarConnectionService.js';
 
-/** Escopo mínimo: criar/listar eventos no calendário primário (evita o scope amplo `.../auth/calendar` na tela de consentimento) */
-export const GOOGLE_CALENDAR_SCOPES =
-  'https://www.googleapis.com/auth/calendar.events';
+/**
+ * openid + email + profile: necessários para userinfo e id_token (e-mail da conta).
+ * Calendário: eventos e calendário completo (solicitado no produto).
+ * Ordem no URL: o Google concatena; manter tudo o que a consola "Dados" listar.
+ */
+const GOOGLE_CALENDAR_SCOPE_PARTS = [
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar',
+] as const;
+export const GOOGLE_CALENDAR_SCOPES = GOOGLE_CALENDAR_SCOPE_PARTS.join(' ');
+
+function maskEmailForLog(email: string): string {
+  const t = email.trim();
+  if (!t.includes('@') || t.length < 3) return '***';
+  const [local, domain] = t.split('@', 2);
+  const d = domain ?? '';
+  if (local.length <= 1) return `*@${d}`;
+  return `${local[0]}***@${d}`;
+}
+
+function decodeIdTokenEmailPayload(
+  idToken: string,
+): { email?: string; email_verified?: boolean; name?: string; picture?: string } | null {
+  try {
+    const parts = idToken.split('.');
+    if (parts.length < 2) return null;
+    const b64 = parts[1]!.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
+    const raw = Buffer.from(b64 + pad, 'base64').toString('utf8');
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      email: typeof p.email === 'string' ? p.email : undefined,
+      email_verified: p.email_verified === true,
+      name: typeof p.name === 'string' ? p.name : undefined,
+      picture: typeof p.picture === 'string' ? p.picture : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Quando `GOOGLE_OAUTH_LOG_PARAMS=true`, regista parâmetros da URL de autorização (sem `client_secret`).
@@ -61,12 +101,15 @@ export function buildGoogleAuthorizeUrl(state: string): string {
   return url;
 }
 
-export async function exchangeAuthorizationCode(code: string): Promise<{
+export type GoogleTokenExchangeResult = {
   access_token: string;
   refresh_token?: string;
+  id_token?: string;
   expires_in: number;
   scope: string;
-}> {
+};
+
+export async function exchangeAuthorizationCode(code: string): Promise<GoogleTokenExchangeResult> {
   const cfg = getGoogleOAuthClientConfig();
   if (!cfg) throw new Error('Google OAuth não configurado');
   const body = new URLSearchParams({
@@ -88,21 +131,76 @@ export async function exchangeAuthorizationCode(code: string): Promise<{
   }
   const access_token = String(json.access_token || '');
   const refresh_token = json.refresh_token != null ? String(json.refresh_token) : undefined;
+  const id_token = json.id_token != null ? String(json.id_token) : undefined;
   const expires_in = Number(json.expires_in) || 3600;
   const scope = String(json.scope || GOOGLE_CALENDAR_SCOPES);
   if (!access_token) throw new Error('Resposta Google sem access_token');
-  return { access_token, refresh_token, expires_in, scope };
+  if (String(process.env.GOOGLE_OAUTH_LOG_PARAMS || '').toLowerCase() === 'true') {
+    console.log('[google-oauth:token]', {
+      status: res.status,
+      has_refresh_token: Boolean(refresh_token),
+      has_id_token: Boolean(id_token),
+      scope,
+    });
+  }
+  return { access_token, refresh_token, id_token, expires_in, scope };
 }
 
-export async function fetchGoogleAccountEmail(accessToken: string): Promise<string> {
-  const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+export type GoogleUserProfile = {
+  email: string;
+  email_verified?: boolean;
+  name?: string;
+  picture?: string;
+};
+
+/**
+ * Obtém e-mail (e perfil) via userinfo v3; fallback no payload de id_token (sem logar segredos).
+ */
+export async function fetchGoogleUserProfile(
+  accessToken: string,
+  idToken: string | undefined,
+): Promise<GoogleUserProfile> {
+  const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  const json = (await res.json()) as { email?: string };
-  if (!res.ok || !json.email) {
-    throw new Error('Não foi possível obter o e-mail da conta Google');
+  let j: unknown = null;
+  try {
+    j = await res.json();
+  } catch {
+    j = null;
   }
-  return json.email;
+  const json = j as { email?: string; email_verified?: boolean; name?: string; picture?: string; error?: string };
+  if (String(process.env.GOOGLE_OAUTH_LOG_PARAMS || '').toLowerCase() === 'true') {
+    const emailMask = json.email ? maskEmailForLog(json.email) : '(nenhum na resposta)';
+    console.log('[google-oauth:userinfo]', { status: res.status, email_masked: emailMask });
+  }
+
+  if (res.ok && typeof json.email === 'string' && json.email.length > 0) {
+    return {
+      email: json.email,
+      email_verified: json.email_verified === true,
+      name: json.name,
+      picture: json.picture,
+    };
+  }
+
+  if (idToken) {
+    const p = decodeIdTokenEmailPayload(idToken);
+    if (p?.email) {
+      if (String(process.env.GOOGLE_OAUTH_LOG_PARAMS || '').toLowerCase() === 'true') {
+        console.log('[google-oauth:id_token] fallback e-mail a partir de id_token (userinfo indisponível ou sem email)');
+      }
+      return {
+        email: p.email,
+        email_verified: p.email_verified,
+        name: p.name,
+        picture: p.picture,
+      };
+    }
+  }
+
+  const hint = res.ok ? 'userinfo sem email' : `HTTP ${res.status} ${json?.error || ''}`.trim();
+  throw new Error(`Não foi possível obter o e-mail da conta Google (${hint})`);
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {

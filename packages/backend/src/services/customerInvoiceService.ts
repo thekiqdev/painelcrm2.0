@@ -767,6 +767,10 @@ export async function updateCustomerInvoiceStatus(
       invoiceId,
       preferredSenderUserId: null,
     });
+  }
+
+  /** Sempre que a fatura está/continua paga: sync idempotente (webhook reenviado, correção manual, etc.) */
+  if (markingPaid && tenantIdRow) {
     try {
       await syncCustomerInvoicePaymentToFinancialAccount(invoiceId);
     } catch (err) {

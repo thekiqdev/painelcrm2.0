@@ -37,6 +37,7 @@ import {
   getCreditCardStatementHandler,
   payCreditCardStatementHandler,
   getFinancialReportsHandler,
+  getFinancialGatewaysAvailableHandler,
   postGatewayReceivablesSyncPaidInvoicesHandler,
 } from '../controllers/financialController.js';
 
@@ -45,6 +46,7 @@ router.use(...tenantAuthCrm);
 
 router.get('/summary', getFinancialSummaryHandler);
 router.get('/reports', getFinancialReportsHandler);
+router.get('/gateways/available', getFinancialGatewaysAvailableHandler);
 router.post('/gateway-receivables/sync-paid-invoices', postGatewayReceivablesSyncPaidInvoicesHandler);
 router.get('/payables', getPayablesHandler);
 router.get('/accounts-payable', getPayablesHandler);

@@ -65,6 +65,10 @@ export default function SettingsLayout() {
     if (!location.pathname.startsWith("/settings") || location.pathname.startsWith("/settings/payments")) {
       return;
     }
+    if (location.pathname === "/settings/integrations" || location.pathname.endsWith("/settings/integrations")) {
+      setActiveSection("googleCalendar");
+      return;
+    }
     const s =
       sectionFromQuery(searchParams.get("section")) ?? sectionFromQuery(searchParams.get("tab"));
     if (s) setActiveSection(s);

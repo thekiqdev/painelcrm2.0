@@ -708,6 +708,11 @@ const App = () => (
                   <Settings />
                 </Suspense>
               } />
+              <Route path="integrations" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <Settings />
+                </Suspense>
+              } />
               <Route path="payments" element={
                 <Suspense fallback={<LoadingFallback />}>
                   <PaymentsPanelPage />

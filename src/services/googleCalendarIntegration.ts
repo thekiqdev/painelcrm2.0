@@ -4,6 +4,8 @@ export type GoogleCalendarStatusResponse = {
   enabled: boolean;
   connected: boolean;
   google_email: string | null;
+  google_name?: string | null;
+  google_picture?: string | null;
   connected_at?: string | null;
   encryption_configured?: boolean;
   oauth_configured?: boolean;

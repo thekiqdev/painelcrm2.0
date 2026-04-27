@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   financialService,
+  displayFinancialGatewayLabel,
   type FinancialAccountDto,
   type FinancialAccountPermissionGrantDto,
   type FinancialAccountPermissionsPayload,
   type FinancialAccountType,
   type FinancialAccountVisibilityMode,
+  type FinancialGatewayAvailableItem,
   type FinancialGatewayProvider,
+  type GatewayReceivablesSyncPaidInvoicesResult,
 } from "@/services/financial";
 import {
   Sheet,
@@ -47,11 +50,6 @@ const TYPE_OPTIONS: { value: FinancialAccountType; label: string }[] = [
   { value: "cash", label: "Caixa" },
   { value: "wallet", label: "Carteira" },
 ];
-
-const GATEWAY_LABEL: Record<FinancialGatewayProvider, string> = {
-  asaas: "Asaas",
-  mercado_pago: "Mercado Pago",
-};
 
 const VISIBILITY_HELP: Record<FinancialAccountVisibilityMode, string> = {
   all_finance_users:
@@ -128,6 +126,19 @@ export function FinancialAccountSettingsDrawer({
     is_default_receivables?: boolean;
   } | null>(null);
 
+  const [availableGateways, setAvailableGateways] = useState<FinancialGatewayAvailableItem[]>([]);
+  const [storedUnavailableGateway, setStoredUnavailableGateway] = useState<string | null>(null);
+
+  const [syncFrom, setSyncFrom] = useState(() => {
+    const t = new Date();
+    const f = new Date();
+    f.setDate(f.getDate() - 90);
+    return f.toISOString().slice(0, 10);
+  });
+  const [syncTo, setSyncTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [syncPreview, setSyncPreview] = useState<GatewayReceivablesSyncPaidInvoicesResult | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+
   useEffect(() => {
     if (open) setTab(initialSection);
   }, [open, initialSection]);
@@ -161,15 +172,31 @@ export function FinancialAccountSettingsDrawer({
   const loadGateway = useCallback(async () => {
     setGwLoading(true);
     try {
-      const { link } = await financialService.getAccountGatewayLink(accountId);
+      const [linkRes, available] = await Promise.all([
+        financialService.getAccountGatewayLink(accountId),
+        financialService.getAvailableFinancialGateways().catch(() => [] as FinancialGatewayAvailableItem[]),
+      ]);
+      const list: FinancialGatewayAvailableItem[] =
+        available.length > 0 ? available : [{ key: "asaas", label: "Asaas", enabled: true }];
+      setAvailableGateways(list);
+      const keys = new Set(list.map((g) => g.key));
+
+      const { link } = linkRes;
       if (link) {
         setGwEnabled(link.is_enabled);
-        setGwGateway(link.gateway);
         setGwDefault(link.is_default_receivables);
+        if (keys.has(link.gateway)) {
+          setStoredUnavailableGateway(null);
+          setGwGateway(link.gateway);
+        } else {
+          setStoredUnavailableGateway(link.gateway);
+          setGwGateway((list[0]?.key as FinancialGatewayProvider) ?? "asaas");
+        }
       } else {
         setGwEnabled(false);
-        setGwGateway("asaas");
+        setStoredUnavailableGateway(null);
         setGwDefault(false);
+        setGwGateway((list[0]?.key as FinancialGatewayProvider) ?? "asaas");
       }
     } catch {
       toast.error("Não foi possível carregar o vínculo com gateway.");
@@ -274,6 +301,68 @@ export function FinancialAccountSettingsDrawer({
       toast.error(e instanceof Error ? e.message : "Erro ao guardar vínculo.");
     } finally {
       setGwSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    setSyncPreview(null);
+  }, [syncFrom, syncTo, accountId]);
+
+  const formatBrlCents = (c: number) =>
+    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(c / 100);
+
+  const runSyncSimulate = async () => {
+    setSyncBusy(true);
+    setSyncPreview(null);
+    try {
+      const { link } = await financialService.getAccountGatewayLink(accountId);
+      if (!link?.is_enabled) {
+        toast.error("Active o vínculo, escolha um gateway e guarde antes de sincronizar.");
+        return;
+      }
+      const r = await financialService.syncGatewayPaidInvoices({
+        gateway: link.gateway,
+        account_id: accountId,
+        from: syncFrom,
+        to: syncTo,
+        dry_run: true,
+      });
+      setSyncPreview(r);
+      toast.success("Simulação concluída. Confirme abaixo para criar os movimentos.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro na simulação");
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const runSyncExecute = async () => {
+    setSyncBusy(true);
+    try {
+      const { link } = await financialService.getAccountGatewayLink(accountId);
+      if (!link?.is_enabled) {
+        toast.error("O vínculo não está activo. Guarde a configuração e tente de novo.");
+        return;
+      }
+      const r = await financialService.syncGatewayPaidInvoices({
+        gateway: link.gateway,
+        account_id: accountId,
+        from: syncFrom,
+        to: syncTo,
+        dry_run: false,
+      });
+      setSyncPreview(r);
+      if (r.created_count > 0) {
+        toast.success(`${r.created_count} movimento(s) criado(s) na conta.`);
+      } else {
+        toast.message("Nenhum movimento novo. Pode já estar tudo sincronizado ou sem faturas no período.");
+      }
+      onSaved?.();
+      void loadAccount();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro na sincronização");
+    } finally {
+      setSyncBusy(false);
     }
   };
 
@@ -563,18 +652,28 @@ export function FinancialAccountSettingsDrawer({
                     </div>
                     {gwEnabled && (
                       <>
+                        {storedUnavailableGateway ? (
+                          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+                            Gateway guardado: {displayFinancialGatewayLabel(storedUnavailableGateway)} (indisponível neste
+                            ambiente). Seleccione abaixo um gateway activo e guarde para actualizar o vínculo.
+                          </div>
+                        ) : null}
                         <div className="space-y-2">
                           <Label>Gateway</Label>
                           <Select
                             value={gwGateway}
                             onValueChange={(v) => setGwGateway(v as FinancialGatewayProvider)}
+                            disabled={availableGateways.length === 0}
                           >
                             <SelectTrigger>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="asaas">{GATEWAY_LABEL.asaas}</SelectItem>
-                              <SelectItem value="mercado_pago">{GATEWAY_LABEL.mercado_pago}</SelectItem>
+                              {availableGateways.map((g) => (
+                                <SelectItem key={g.key} value={g.key}>
+                                  {g.label}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
@@ -587,6 +686,57 @@ export function FinancialAccountSettingsDrawer({
                           </div>
                           <Switch checked={gwDefault} onCheckedChange={setGwDefault} />
                         </div>
+                        <div className="rounded-lg border border-dashed p-4 space-y-3">
+                          <div>
+                            <p className="text-sm font-medium">Sincronizar recebimentos antigos</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Cria entradas em falta no extrato (faturas CRM já pagas) para as datas abaixo. O processo
+                              é idempotente: não duplica se já existir o movimento.
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">De</Label>
+                              <Input type="date" value={syncFrom} onChange={(e) => setSyncFrom(e.target.value)} />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Até</Label>
+                              <Input type="date" value={syncTo} onChange={(e) => setSyncTo(e.target.value)} />
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => void runSyncSimulate()}
+                              disabled={syncBusy}
+                            >
+                              {syncBusy ? "A processar…" : "Simular"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => void runSyncExecute()}
+                              disabled={syncBusy || syncPreview == null}
+                            >
+                              Confirmar sincronização
+                            </Button>
+                          </div>
+                          {syncPreview != null ? (
+                            <div className="text-xs text-muted-foreground space-y-1 font-mono tabular-nums">
+                              <p>
+                                Encontradas: {syncPreview.total_paid_invoices_found} | Elegíveis:{" "}
+                                {syncPreview.eligible_count} — {formatBrlCents(syncPreview.eligible_amount_cents ?? syncPreview.eligible_amount ?? 0)}
+                              </p>
+                              <p>
+                                Criadas nesta operação: {syncPreview.created_count} —{" "}
+                                {formatBrlCents(syncPreview.created_amount_cents ?? syncPreview.created_amount ?? 0)} | Já
+                                existentes: {syncPreview.skipped_existing_count}
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
                       </>
                     )}
                     <Button
@@ -598,7 +748,7 @@ export function FinancialAccountSettingsDrawer({
                             : { enabled: false }
                         )
                       }
-                      disabled={gwSaving}
+                      disabled={gwSaving || (gwEnabled && !availableGateways.some((g) => g.key === gwGateway))}
                     >
                       {gwSaving ? "A guardar…" : "Guardar vínculo"}
                     </Button>

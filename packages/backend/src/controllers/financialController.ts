@@ -21,6 +21,7 @@ import {
   listGatewayLinksForTenant,
   upsertGatewayLinkForAccount,
   type FinancialAccountGatewayLinkRow,
+  type GatewayProviderKey,
 } from '../services/financialAccountGatewayLinkService.js';
 import {
   getVisibleFinancialAccountIdsForUser,
@@ -68,6 +69,10 @@ import type { InstallmentStatus, StatementStatus } from '../services/financialCr
 import { getFinancialEnterpriseReport } from '../services/financialReportsService.js';
 import { createFinancialTransfer, listFinancialTransfers } from '../services/financialTransfersService.js';
 import { syncPaidInvoicesForGatewayPeriod } from '../services/financialGatewayReceivablesService.js';
+import {
+  getFinancialGatewaysAvailablePayload,
+  isFinancialGatewayKeyAvailable,
+} from '../config/financialAvailableGateways.js';
 
 const accountTypeSchema = z.enum(['bank', 'cash', 'wallet']);
 const accountScopeSchema = z.enum(['business', 'personal']);
@@ -75,8 +80,15 @@ const transactionTypeSchema = z.enum(['income', 'expense']);
 const transactionKindSchema = z.enum(['regular', 'transfer']);
 const transactionStatusSchema = z.enum(['pending', 'completed']);
 
+const gatewayKeySchema = z
+  .string()
+  .transform((s) => s.trim().toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_'))
+  .refine((k) => isFinancialGatewayKeyAvailable(k), {
+    message: 'Gateway não disponível neste ambiente',
+  });
+
 const syncPaidGatewayReceivablesBody = z.object({
-  gateway: z.enum(['asaas', 'mercado_pago']),
+  gateway: gatewayKeySchema,
   account_id: z.string().uuid(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -85,7 +97,7 @@ const syncPaidGatewayReceivablesBody = z.object({
 
 const gatewayLinkInputSchema = z.object({
   enabled: z.boolean(),
-  gateway: z.enum(['asaas', 'mercado_pago']).optional(),
+  gateway: gatewayKeySchema.optional(),
   is_default_receivables: z.boolean().optional(),
 });
 
@@ -119,7 +131,7 @@ const putAccountPermissionsBody = z.object({
 const putGatewayLinkExtendedBody = z
   .object({
     enabled: z.boolean(),
-    gateway: z.enum(['asaas', 'mercado_pago']).optional(),
+    gateway: gatewayKeySchema.optional(),
     is_default_receivables: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
@@ -387,6 +399,20 @@ function respondPermissionDenied(res: Response, e: unknown): boolean {
   return false;
 }
 
+/** GET /api/financial/gateways/available — fonte única para o select de gateway (conta ↔ recebimentos). */
+export async function getFinancialGatewaysAvailableHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  try {
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
+    res.json(getFinancialGatewaysAvailablePayload());
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    console.error('[financial] getFinancialGatewaysAvailableHandler', e);
+    res.status(500).json({ error: 'Erro ao listar gateways' });
+  }
+}
+
 export async function listFinancialAccountsHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId || !req.userId) return;
@@ -455,7 +481,7 @@ export async function createFinancialAccountHandler(req: AuthRequest, res: Respo
     const gl = parsed.data.gateway_link;
     if (gl?.enabled && gl.gateway) {
       await upsertGatewayLinkForAccount(tenantId, row.id, {
-        gateway: gl.gateway,
+        gateway: gl.gateway as GatewayProviderKey,
         is_enabled: true,
         is_default_receivables: gl.is_default_receivables ?? false,
       });
@@ -751,7 +777,7 @@ export async function putFinancialAccountGatewayLinkHandler(req: AuthRequest, re
       res.json({ link: null });
       return;
     }
-    const gateway = parsed.data.gateway!;
+    const gateway = parsed.data.gateway! as GatewayProviderKey;
     if (
       existing &&
       existing.gateway !== gateway &&
@@ -1548,7 +1574,8 @@ export async function postGatewayReceivablesSyncPaidInvoicesHandler(req: AuthReq
     res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
     return;
   }
-  const { gateway, account_id, from, to, dry_run } = parsed.data;
+  const { account_id, from, to, dry_run } = parsed.data;
+  const gateway = parsed.data.gateway as GatewayProviderKey;
   if (from > to) {
     res.status(400).json({ error: 'Data inicial deve ser anterior ou igual à final' });
     return;
@@ -1571,8 +1598,12 @@ export async function postGatewayReceivablesSyncPaidInvoicesHandler(req: AuthReq
     res.json({
       total_paid_invoices_found: out.total_paid_invoices_found,
       eligible_count: out.eligible_count,
+      eligible_amount_cents: out.eligible_amount_cents,
+      created_amount_cents: out.created_amount_cents,
+      /** @deprecated Usar eligible_amount_cents; mantido por compat. */
       eligible_amount: out.eligible_amount_cents,
       created_count: out.created_count,
+      /** @deprecated Usar created_amount_cents */
       created_amount: out.created_amount_cents,
       skipped_existing_count: out.skipped_existing_count,
       skipped_no_gateway_count: out.skipped_no_gateway_count,

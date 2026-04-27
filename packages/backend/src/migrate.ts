@@ -235,6 +235,8 @@ const order = [
   '162_financial_gateway_account_links.sql',
   /** Visibilidade por conta + permissões utilizador/equipa */
   '163_financial_account_visibility.sql',
+  /** Google Calendar: colunas opcionais google_name / google_picture (userinfo) */
+  '164_google_calendar_oauth_profile.sql',
   'create-admin-user.sql',
 ];
 

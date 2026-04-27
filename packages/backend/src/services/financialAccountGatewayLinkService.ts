@@ -1,6 +1,7 @@
 /**
  * Vínculo conta financeira ↔ gateway (um registo por conta).
  */
+import { assertFinancialGatewayKeyAvailable } from '../config/financialAvailableGateways.js';
 import { pool } from '../utils/db.js';
 
 export type GatewayProviderKey = 'asaas' | 'mercado_pago';
@@ -92,6 +93,8 @@ export async function upsertGatewayLinkForAccount(
     financialAccountId,
   ]);
   if (acc.rowCount === 0) throw new Error('Conta não encontrada');
+
+  assertFinancialGatewayKeyAvailable(patch.gateway, patch.gateway);
 
   await pool.query('BEGIN');
   try {

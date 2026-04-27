@@ -133,10 +133,12 @@ export async function createFinancialTransaction(
     if (c.rowCount === 0) throw new Error('Categoria inválida');
   }
   if (body.customer_id) {
-    const cl = await pool.query(`SELECT 1 FROM clients WHERE id = $1 AND tenant_id = $2`, [
-      body.customer_id,
-      tenantId,
-    ]);
+    const cl = await pool.query(
+      `SELECT 1 FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2::uuid
+       WHERE c.id = $1::uuid`,
+      [body.customer_id, tenantId]
+    );
     if (cl.rowCount === 0) throw new Error('Cliente inválido');
   }
   const metaJson =

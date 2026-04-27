@@ -6,6 +6,8 @@ export type GoogleCalendarConnectionRow = {
   tenant_id: string;
   user_id: string;
   google_email: string;
+  google_name: string | null;
+  google_picture: string | null;
   access_token_ciphertext: string;
   refresh_token_ciphertext: string;
   token_expires_at: string;
@@ -41,7 +43,7 @@ export async function getConnectionForUser(
   userId: string,
 ): Promise<GoogleCalendarConnectionSecrets | null> {
   const r = await pool.query<GoogleCalendarConnectionRow>(
-    `SELECT id, tenant_id, user_id, google_email, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, scope
+    `SELECT id, tenant_id, user_id, google_email, google_name, google_picture, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, scope
      FROM google_calendar_connections
      WHERE tenant_id = $1 AND user_id = $2
      LIMIT 1`,
@@ -54,22 +56,39 @@ export async function getConnectionForUser(
 export async function getConnectionPublicMeta(
   tenantId: string,
   userId: string,
-): Promise<{ google_email: string; connected_at: string } | null> {
-  const r = await pool.query<{ google_email: string; created_at: string }>(
-    `SELECT google_email, created_at::text AS created_at
+): Promise<{
+  google_email: string;
+  google_name: string | null;
+  google_picture: string | null;
+  connected_at: string;
+} | null> {
+  const r = await pool.query<{
+    google_email: string;
+    google_name: string | null;
+    google_picture: string | null;
+    created_at: string;
+  }>(
+    `SELECT google_email, google_name, google_picture, created_at::text AS created_at
      FROM google_calendar_connections
      WHERE tenant_id = $1 AND user_id = $2
      LIMIT 1`,
     [tenantId, userId],
   );
   if (!r.rows[0]) return null;
-  return { google_email: r.rows[0].google_email, connected_at: r.rows[0].created_at };
+  return {
+    google_email: r.rows[0].google_email,
+    google_name: r.rows[0].google_name,
+    google_picture: r.rows[0].google_picture,
+    connected_at: r.rows[0].created_at,
+  };
 }
 
 export async function upsertConnection(params: {
   tenantId: string;
   userId: string;
   googleEmail: string;
+  googleName?: string | null;
+  googlePicture?: string | null;
   accessToken: string;
   refreshToken?: string;
   expiresInSeconds: number;
@@ -93,26 +112,27 @@ export async function upsertConnection(params: {
     refreshCt = existing;
   }
 
+  const gName = params.googleName !== undefined && params.googleName !== null && params.googleName !== ''
+    ? params.googleName
+    : null;
+  const gPic = params.googlePicture !== undefined && params.googlePicture !== null && params.googlePicture !== ''
+    ? params.googlePicture
+    : null;
+
   await pool.query(
     `INSERT INTO google_calendar_connections (
-       tenant_id, user_id, google_email, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, scope
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       tenant_id, user_id, google_email, google_name, google_picture, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, scope
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (tenant_id, user_id) DO UPDATE SET
        google_email = EXCLUDED.google_email,
+       google_name = COALESCE(EXCLUDED.google_name, google_calendar_connections.google_name),
+       google_picture = COALESCE(EXCLUDED.google_picture, google_calendar_connections.google_picture),
        access_token_ciphertext = EXCLUDED.access_token_ciphertext,
        refresh_token_ciphertext = EXCLUDED.refresh_token_ciphertext,
        token_expires_at = EXCLUDED.token_expires_at,
        scope = EXCLUDED.scope,
        updated_at = now()`,
-    [
-      params.tenantId,
-      params.userId,
-      params.googleEmail,
-      accessCt,
-      refreshCt,
-      expiresAt.toISOString(),
-      params.scope,
-    ],
+    [params.tenantId, params.userId, params.googleEmail, gName, gPic, accessCt, refreshCt, expiresAt.toISOString(), params.scope],
   );
 }
 

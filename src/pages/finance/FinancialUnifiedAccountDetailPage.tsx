@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import {
   financialService,
+  displayFinancialGatewayLabel,
   type FinancialAccountDto,
-  type FinancialGatewayProvider,
   type FinancialTransactionDto,
   type FinancialTransactionType,
   type ExpenseCategoryDto,
@@ -30,11 +30,6 @@ const TYPE_LABEL: Record<string, string> = {
   bank: "Banco",
   cash: "Caixa",
   wallet: "Carteira",
-};
-
-const GATEWAY_LABEL: Record<FinancialGatewayProvider, string> = {
-  asaas: "Asaas",
-  mercado_pago: "Mercado Pago",
 };
 
 function formatBrlCents(cents: number): string {
@@ -314,7 +309,7 @@ const FinancialUnifiedAccountDetailPage = () => {
             {account?.gateway_link?.is_enabled ? (
               <div className="pt-2">
                 <Badge variant="secondary" className="text-[10px] font-normal tabular-nums">
-                  Recebimento automático: {GATEWAY_LABEL[account.gateway_link.gateway]}
+                  Recebimento automático: {displayFinancialGatewayLabel(account.gateway_link.gateway)}
                 </Badge>
               </div>
             ) : null}

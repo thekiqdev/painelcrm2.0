@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { NavLink, useSearchParams } from "react-router-dom";
 import {
   financialService,
+  displayFinancialGatewayLabel,
   type FinancialAccountDto,
   type FinancialAccountScope,
   type FinancialAccountType,
+  type FinancialGatewayAvailableItem,
   type FinancialGatewayProvider,
   type FinancialTransactionDto,
 } from "@/services/financial";
@@ -46,11 +48,6 @@ const SCOPE_LABEL: Record<FinancialAccountScope, string> = {
   personal: "Pessoal",
 };
 
-const GATEWAY_LABEL: Record<FinancialGatewayProvider, string> = {
-  asaas: "Asaas",
-  mercado_pago: "Mercado Pago",
-};
-
 function formatBrl(n: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
 }
@@ -89,8 +86,28 @@ const FinancialUnifiedAccountsPage = () => {
   const [gwLinkEnabled, setGwLinkEnabled] = useState(false);
   const [gwProvider, setGwProvider] = useState<FinancialGatewayProvider>("asaas");
   const [gwDefaultReceivables, setGwDefaultReceivables] = useState(false);
+  const [availableGw, setAvailableGw] = useState<FinancialGatewayAvailableItem[]>([]);
 
   const { from: monthFrom, to: monthTo } = useMemo(() => monthBoundsNow(), []);
+
+  useEffect(() => {
+    if (!open) return;
+    void financialService
+      .getAvailableFinancialGateways()
+      .then((list) => {
+        setAvailableGw(list.length > 0 ? list : [{ key: "asaas", label: "Asaas", enabled: true }]);
+      })
+      .catch(() => {
+        setAvailableGw([{ key: "asaas", label: "Asaas", enabled: true }]);
+      });
+  }, [open]);
+
+  useEffect(() => {
+    if (availableGw.length === 0) return;
+    if (!availableGw.some((g) => g.key === gwProvider)) {
+      setGwProvider(availableGw[0].key as FinancialGatewayProvider);
+    }
+  }, [availableGw, gwProvider]);
 
   const statsByAccount = useMemo(() => {
     const m = new Map<string, { inc: number; exp: number }>();
@@ -328,9 +345,9 @@ const FinancialUnifiedAccountsPage = () => {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {(Object.keys(GATEWAY_LABEL) as FinancialGatewayProvider[]).map((k) => (
-                              <SelectItem key={k} value={k}>
-                                {GATEWAY_LABEL[k]}
+                            {availableGw.map((g) => (
+                              <SelectItem key={g.key} value={g.key}>
+                                {g.label}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -484,7 +501,7 @@ const FinancialUnifiedAccountsPage = () => {
                     <CardTitle className="text-base font-semibold leading-tight">{a.name}</CardTitle>
                     {a.gateway_link?.is_enabled ? (
                       <Badge variant="secondary" className="text-[10px] font-normal w-fit tabular-nums">
-                        Recebimento automático: {GATEWAY_LABEL[a.gateway_link.gateway]}
+                        Recebimento automático: {displayFinancialGatewayLabel(a.gateway_link.gateway)}
                       </Badge>
                     ) : null}
                     <CardDescription>
