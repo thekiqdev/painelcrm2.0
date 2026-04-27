@@ -42,7 +42,7 @@ export async function dispatchWhatsAppText(params: {
     params.tenantId,
   ]);
   if (member.rows.length === 0) {
-    return { ok: false, error: 'Remetente não pertence ao tenant.' };
+    return { ok: false, error: 'Remetente não pertence à empresa.' };
   }
 
   const instanceResult = await params.pool.query<{ instance_token: string }>(

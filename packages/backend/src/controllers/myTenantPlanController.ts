@@ -150,7 +150,7 @@ export async function postMyTenantUser(req: AuthRequest, res: Response): Promise
       [tenantId]
     );
     if (profileRow.rows.length === 0) {
-      res.status(400).json({ error: 'Nenhum perfil encontrado no tenant' });
+      res.status(400).json({ error: 'Nenhum perfil encontrado na empresa' });
       return;
     }
     const profileId = profileRow.rows[0].id;
@@ -359,7 +359,7 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
       [targetUserId, tenantId]
     );
     if (targetUser.rows.length === 0) {
-      res.status(404).json({ error: 'Usuário não encontrado no tenant' });
+      res.status(404).json({ error: 'Usuário não encontrado na empresa' });
       return;
     }
 
@@ -370,7 +370,7 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
       [tenantId]
     );
     if (profileResult.rows.length === 0) {
-      res.status(400).json({ error: 'Nenhum perfil encontrado no tenant' });
+      res.status(400).json({ error: 'Nenhum perfil encontrado na empresa' });
       return;
     }
     const profileId = profileResult.rows[0].id;
@@ -392,7 +392,7 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
         [body.custom_role_id, profileId]
       );
       if (customCheck.rows.length === 0) {
-        res.status(400).json({ error: 'Perfil personalizado não encontrado neste tenant.' });
+        res.status(400).json({ error: 'Perfil personalizado não encontrado nesta empresa.' });
         return;
       }
       await pool.query('DELETE FROM user_roles WHERE user_id = $1 AND profile_id = $2', [targetUserId, profileId]);
@@ -413,7 +413,7 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
       [profileId, role]
     );
     if (enabled.rows.length === 0) {
-      res.status(400).json({ error: 'Este perfil de acesso não está habilitado no tenant. Adicione-o em Configurações → Perfis de acesso.' });
+      res.status(400).json({ error: 'Este perfil de acesso não está habilitado na empresa. Adicione-o em Configurações → Perfis de acesso.' });
       return;
     }
 
@@ -477,7 +477,7 @@ export async function deleteMyTenantUser(req: AuthRequest, res: Response): Promi
       [tenantId]
     );
     if (profileRow.rows.length === 0) {
-      res.status(400).json({ error: 'Nenhum perfil encontrado no tenant' });
+      res.status(400).json({ error: 'Nenhum perfil encontrado na empresa' });
       return;
     }
     const profileId = profileRow.rows[0].id;
@@ -533,7 +533,7 @@ export async function deleteMyTenantUser(req: AuthRequest, res: Response): Promi
     }
     const message = error instanceof Error ? error.message : 'Erro ao excluir usuário';
     if (message === 'USER_NOT_IN_TENANT') {
-      res.status(404).json({ error: 'Usuário não encontrado no tenant' });
+      res.status(404).json({ error: 'Usuário não encontrado na empresa' });
       return;
     }
     res.status(500).json({ error: message });

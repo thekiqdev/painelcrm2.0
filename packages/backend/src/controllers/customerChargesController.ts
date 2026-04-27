@@ -27,7 +27,7 @@ export async function listCustomerCharges(req: AuthRequest, res: Response): Prom
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const client_id = typeof req.query.client_id === 'string' ? req.query.client_id : undefined;
@@ -48,7 +48,7 @@ export async function getCustomerChargeById(req: AuthRequest, res: Response): Pr
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;
@@ -70,7 +70,7 @@ export async function createCustomerCharge(req: AuthRequest, res: Response): Pro
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const parsed = createBodySchema.safeParse(req.body);
@@ -81,7 +81,7 @@ export async function createCustomerCharge(req: AuthRequest, res: Response): Pro
     if (parsed.data.client_id != null && parsed.data.client_id !== '') {
       const belongs = await clientBelongsToTenant(tenantId, parsed.data.client_id);
       if (!belongs) {
-        res.status(403).json({ error: 'Cliente não pertence ao tenant' });
+        res.status(403).json({ error: 'Cliente não pertence à empresa' });
         return;
       }
     }
@@ -101,7 +101,7 @@ export async function updateCustomerCharge(req: AuthRequest, res: Response): Pro
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;

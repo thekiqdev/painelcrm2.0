@@ -19,7 +19,7 @@ export async function getBillingReceipts(req: AuthRequest, res: Response): Promi
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
 

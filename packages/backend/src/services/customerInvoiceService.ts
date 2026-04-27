@@ -13,6 +13,7 @@ import {
   publishInvoiceCreatedNotification,
   publishInvoicePaidNotification,
 } from './notificationsEngine/businessTransactionalNotifications.js';
+import { syncCustomerInvoicePaymentToFinancialAccount } from './financialGatewayReceivablesService.js';
 
 export interface CustomerInvoiceRow {
   id: string;
@@ -707,8 +708,16 @@ export async function updateCustomerInvoiceGatewayData(
   );
 }
 
+/** Comparação insensível a maiúsculas para transição → paid */
+function invoiceStatusNorm(s: string | undefined | null): string {
+  return String(s ?? '')
+    .trim()
+    .toLowerCase();
+}
+
 /**
  * Atualiza status (e opcionalmente paid_at, gateway_status) da fatura. Usado pelo webhook. Fase 4: apenas gateway_status.
+ * Pagamentos financeiros automáticos: sempre que deixa de não-paga → paid (qualquer capitalização em `status`).
  */
 export async function updateCustomerInvoiceStatus(
   invoiceId: string,
@@ -723,13 +732,17 @@ export async function updateCustomerInvoiceStatus(
   const oldStatus = prev.rows[0]?.status;
   const tenantIdRow = prev.rows[0]?.tenant_id;
 
-  if (status === 'paid') {
+  const oldNorm = invoiceStatusNorm(oldStatus);
+  const incomingNorm = invoiceStatusNorm(status);
+  const markingPaid = incomingNorm === 'paid';
+
+  if (markingPaid) {
     await pool.query(
       `UPDATE customer_invoices
-       SET status = $1, paid_at = COALESCE($2::timestamptz, now()),
-           gateway_status = COALESCE($3, gateway_status), updated_at = now()
-       WHERE id = $4`,
-      [status, paidAt ?? null, gatewayStatus ?? null, invoiceId]
+       SET status = 'paid', paid_at = COALESCE($1::timestamptz, now()),
+           gateway_status = COALESCE($2, gateway_status), updated_at = now()
+       WHERE id = $3`,
+      [paidAt ?? null, gatewayStatus ?? null, invoiceId]
     );
   } else {
     await pool.query(
@@ -741,17 +754,23 @@ export async function updateCustomerInvoiceStatus(
   }
 
   try {
-    await syncOrdersFromCustomerInvoiceStatus(invoiceId, status);
+    await syncOrdersFromCustomerInvoiceStatus(invoiceId, markingPaid ? 'paid' : status);
   } catch (err) {
     console.error('[updateCustomerInvoiceStatus] syncOrdersFromCustomerInvoiceStatus:', err);
   }
 
-  if (status === 'paid' && oldStatus !== 'paid' && tenantIdRow) {
+  const becamePaid = markingPaid && oldNorm !== 'paid';
+  if (becamePaid && tenantIdRow) {
     publishInvoicePaidNotification({
       pool,
       tenantId: tenantIdRow,
       invoiceId,
       preferredSenderUserId: null,
     });
+    try {
+      await syncCustomerInvoicePaymentToFinancialAccount(invoiceId);
+    } catch (err) {
+      console.error('[gateway_receivable_sync_error]', err);
+    }
   }
 }

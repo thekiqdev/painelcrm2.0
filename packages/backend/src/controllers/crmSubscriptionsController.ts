@@ -14,7 +14,7 @@ export async function listCrmSubscriptions(req: AuthRequest, res: Response): Pro
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const subscriptions = await listCrmCustomerSubscriptions(tenantId);
@@ -29,7 +29,7 @@ export async function getCrmSubscription(req: AuthRequest, res: Response): Promi
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;
@@ -71,7 +71,7 @@ export async function patchCrmSubscriptionCyclesHandler(req: AuthRequest, res: R
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;
@@ -107,7 +107,7 @@ export async function patchCrmSubscriptionNextBillingHandler(req: AuthRequest, r
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;
@@ -151,7 +151,7 @@ export async function postCrmSubscriptionCancel(req: AuthRequest, res: Response)
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;

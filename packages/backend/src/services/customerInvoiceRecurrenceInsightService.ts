@@ -451,7 +451,7 @@ export async function getCustomerInvoiceRecurrenceInsight(
     const nextY = (sub.next_billing_date ?? '').slice(0, 10);
     if (dbToday && nextY && nextY <= dbToday) {
       const line =
-        `A próxima cobrança da assinatura (${nextY}) já é hoje ou anterior no calendário do servidor (CURRENT_DATE), mas não há job na fila. Confirme os processos billing:scheduler e billing:worker. Ao guardar "Alterar próxima renovação" com a janela horária local do tenant já aberta, o backend tenta enfileirar o job de imediato.`;
+        `A próxima cobrança da assinatura (${nextY}) já é hoje ou anterior no calendário do servidor (CURRENT_DATE), mas não há job na fila. Confirme os processos billing:scheduler e billing:worker. Ao guardar "Alterar próxima renovação" com a janela horária local da empresa já aberta, o backend tenta enfileirar o job de imediato.`;
       problem_hint_pt = problem_hint_pt ? `${problem_hint_pt} ${line}` : line;
     }
   }

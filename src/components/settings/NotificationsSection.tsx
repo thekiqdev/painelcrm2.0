@@ -265,7 +265,7 @@ export const NotificationsSection: React.FC<SettingsSectionProps> = () => {
               <AlertTitle>Publicação automática desativada globalmente</AlertTitle>
               <AlertDescription>
                 O Super Admin desativou a publicação de eventos de negócio. Criação de entregas a partir de faturas /
-                propostas / contratos pode não ocorrer mesmo com preferências do tenant ativas.
+                propostas / contratos pode não ocorrer mesmo com preferências da empresa ativas.
               </AlertDescription>
             </Alert>
           )}

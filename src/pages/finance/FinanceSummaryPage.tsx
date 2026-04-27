@@ -180,7 +180,7 @@ const FinanceSummaryPage = () => {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Período</CardTitle>
-          <CardDescription>Filtre o resumo por mês, trimestre ou ano (dados do tenant).</CardDescription>
+          <CardDescription>Filtre o resumo por mês, trimestre ou ano (dados da empresa).</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-4 items-end">
           <div className="space-y-2">

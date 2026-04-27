@@ -24,7 +24,7 @@ export async function getCheckoutContext(req: AuthRequest, res: Response): Promi
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant obrigatório', code: 'TENANT_REQUIRED' });
+      res.status(403).json({ error: 'Empresa obrigatória', code: 'TENANT_REQUIRED' });
       return;
     }
 
@@ -47,7 +47,7 @@ export async function getCheckoutContext(req: AuthRequest, res: Response): Promi
       [tenantId]
     );
     if (tRow.rows.length === 0) {
-      res.status(404).json({ error: 'Tenant não encontrado' });
+      res.status(404).json({ error: 'Empresa não encontrada' });
       return;
     }
     const t = tRow.rows[0];

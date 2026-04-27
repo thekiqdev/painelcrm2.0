@@ -19,13 +19,13 @@ interface User {
   created_at?: string;
   default_profile_id?: string | null;
   is_super_admin?: boolean;
-  /** Role `admin` no tenant (user_roles) — supervisão no chat (transferir, ver equipa). */
+  /** Role `admin` na empresa (user_roles) — supervisão no chat (transferir, ver equipa). */
   is_tenant_admin?: boolean;
-  /** Se true, o usuário é o administrador da conta (primary user do tenant) e pode acessar a tela de planos. */
+  /** Se true, o utilizador é o administrador da conta (utilizador principal da empresa) e pode acessar a tela de planos. */
   can_manage_plan?: boolean;
   /** Se true, o plano grátis expirou e o usuário deve ser direcionado para contratação. */
   plan_expired?: boolean;
-  /** Status do tenant (active, trial, payment_pending, suspended). */
+  /** Estado da empresa no plano (active, trial, payment_pending, suspended). */
   tenant_status?: string | null;
   /** Se false e tenant_status === 'active', redirecionar para /onboarding. */
   onboarding_completed?: boolean;

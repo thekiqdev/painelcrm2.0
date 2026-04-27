@@ -118,7 +118,7 @@ export async function runTransactionalNotification(params: {
 
   const pref = await getTenantPreference(params.pool, params.tenantId, params.eventKey);
   if (pref && pref.enabled === false) {
-    return { ok: false, error: 'Notificação desativada para este tenant (preferência).' };
+    return { ok: false, error: 'Notificação desativada para esta empresa (preferência).' };
   }
 
   const channel = pref?.primary_channel || event.default_channel;

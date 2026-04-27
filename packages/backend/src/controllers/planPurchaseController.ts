@@ -514,7 +514,7 @@ export async function getPlanCheckoutPending(req: AuthRequest, res: Response): P
   try {
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant obrigatório', code: 'TENANT_REQUIRED' });
+      res.status(403).json({ error: 'Empresa obrigatória', code: 'TENANT_REQUIRED' });
       return;
     }
     const parsed = planCheckoutPendingQuerySchema.safeParse(req.query);
@@ -557,7 +557,7 @@ export async function postPlanCheckoutPreparePayment(req: AuthRequest, res: Resp
   try {
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant obrigatório', code: 'TENANT_REQUIRED' });
+      res.status(403).json({ error: 'Empresa obrigatória', code: 'TENANT_REQUIRED' });
       return;
     }
     const ctx = await getMyTenantAndPrimary(req);

@@ -5,11 +5,19 @@ import {
   type FinancialAccountDto,
   type FinancialAccountScope,
   type FinancialAccountType,
+  type FinancialGatewayProvider,
   type FinancialTransactionDto,
 } from "@/services/financial";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,9 +30,11 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeftRight, Landmark, Plus } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
 import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const TYPE_LABEL: Record<FinancialAccountType, string> = {
   bank: "Banco",
@@ -34,6 +44,11 @@ const TYPE_LABEL: Record<FinancialAccountType, string> = {
 const SCOPE_LABEL: Record<FinancialAccountScope, string> = {
   business: "Empresarial",
   personal: "Pessoal",
+};
+
+const GATEWAY_LABEL: Record<FinancialGatewayProvider, string> = {
+  asaas: "Asaas",
+  mercado_pago: "Mercado Pago",
 };
 
 function formatBrl(n: number): string {
@@ -51,6 +66,7 @@ function monthBoundsNow(): { from: string; to: string } {
 }
 
 const FinancialUnifiedAccountsPage = () => {
+  const isMobile = useIsMobile();
   const [searchParams, setSearchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<FinancialAccountDto[]>([]);
   const [periodTx, setPeriodTx] = useState<FinancialTransactionDto[]>([]);
@@ -70,6 +86,9 @@ const FinancialUnifiedAccountsPage = () => {
   const [transferAmount, setTransferAmount] = useState("");
   const [transferDate, setTransferDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [transferDesc, setTransferDesc] = useState("");
+  const [gwLinkEnabled, setGwLinkEnabled] = useState(false);
+  const [gwProvider, setGwProvider] = useState<FinancialGatewayProvider>("asaas");
+  const [gwDefaultReceivables, setGwDefaultReceivables] = useState(false);
 
   const { from: monthFrom, to: monthTo } = useMemo(() => monthBoundsNow(), []);
 
@@ -137,12 +156,22 @@ const FinancialUnifiedAccountsPage = () => {
         account_scope: scope,
         initial_balance_cents: cents,
         initial_balance_date: initialDate,
+        gateway_link: gwLinkEnabled
+          ? {
+              enabled: true,
+              gateway: gwProvider,
+              is_default_receivables: gwDefaultReceivables,
+            }
+          : undefined,
       });
       toast.success("Conta criada");
       setOpen(false);
       setName("");
       setScope("business");
       setInitialCentsInput("0");
+      setGwLinkEnabled(false);
+      setGwProvider("asaas");
+      setGwDefaultReceivables(false);
       load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar");
@@ -205,67 +234,134 @@ const FinancialUnifiedAccountsPage = () => {
             Transferir
           </Button>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Nova conta</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-3 py-2">
-              <div className="grid gap-2">
-                <Label htmlFor="fa-name">Nome</Label>
-                <Input id="fa-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Conta principal" />
-              </div>
-              <div className="grid gap-2">
-                <Label>Tipo</Label>
-                <Select value={type} onValueChange={(v) => setType(v as FinancialAccountType)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(TYPE_LABEL) as FinancialAccountType[]).map((k) => (
-                      <SelectItem key={k} value={k}>
-                        {TYPE_LABEL[k]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>Tipo da conta</Label>
-                <Select value={scope} onValueChange={(v) => setScope(v as FinancialAccountScope)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="business">Empresarial</SelectItem>
-                    <SelectItem value="personal">Pessoal</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="fa-balance">Saldo inicial (R$)</Label>
-                <Input
-                  id="fa-balance"
-                  inputMode="decimal"
-                  value={initialCentsInput}
-                  onChange={(e) => setInitialCentsInput(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="fa-date">Data do saldo inicial</Label>
-                <Input id="fa-date" type="date" value={initialDate} onChange={(e) => setInitialDate(e.target.value)} />
+        <Sheet
+          open={open}
+          onOpenChange={(next) => {
+            setOpen(next);
+            if (next) {
+              setGwLinkEnabled(false);
+              setGwProvider("asaas");
+              setGwDefaultReceivables(false);
+            }
+          }}
+        >
+          <SheetContent
+            side={isMobile ? "bottom" : "right"}
+            className={cn(
+              "flex flex-col gap-0 p-0",
+              isMobile ? "h-[100dvh] max-h-[100dvh] rounded-t-xl sm:max-w-none w-full" : "sm:max-w-md w-full"
+            )}
+          >
+            <SheetHeader className="px-6 pt-6 pb-2 space-y-1 border-b border-border shrink-0">
+              <SheetTitle>Nova conta</SheetTitle>
+              <SheetDescription>
+                Defina nome, tipo e saldo inicial. Opcionalmente associe um gateway para recebimentos automáticos.
+              </SheetDescription>
+            </SheetHeader>
+
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+              <div className="grid gap-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="fa-name">Nome</Label>
+                  <Input id="fa-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Conta principal" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Tipo</Label>
+                  <Select value={type} onValueChange={(v) => setType(v as FinancialAccountType)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(TYPE_LABEL) as FinancialAccountType[]).map((k) => (
+                        <SelectItem key={k} value={k}>
+                          {TYPE_LABEL[k]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Tipo da conta</Label>
+                  <Select value={scope} onValueChange={(v) => setScope(v as FinancialAccountScope)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="business">Empresarial</SelectItem>
+                      <SelectItem value="personal">Pessoal</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="fa-balance">Saldo inicial (R$)</Label>
+                  <Input
+                    id="fa-balance"
+                    inputMode="decimal"
+                    value={initialCentsInput}
+                    onChange={(e) => setInitialCentsInput(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="fa-date">Data do saldo inicial</Label>
+                  <Input id="fa-date" type="date" value={initialDate} onChange={(e) => setInitialDate(e.target.value)} />
+                </div>
+
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-4">
+                  <div>
+                    <p className="text-sm font-medium">Gateway de pagamento</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Pagamentos confirmados pelo gateway serão lançados automaticamente como entrada nesta conta.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <Label htmlFor="fa-gw-link" className="text-sm font-normal">
+                      Vincular esta conta a um gateway
+                    </Label>
+                    <Switch id="fa-gw-link" checked={gwLinkEnabled} onCheckedChange={setGwLinkEnabled} />
+                  </div>
+                  {gwLinkEnabled ? (
+                    <>
+                      <div className="grid gap-2">
+                        <Label>Gateway</Label>
+                        <Select value={gwProvider} onValueChange={(v) => setGwProvider(v as FinancialGatewayProvider)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(Object.keys(GATEWAY_LABEL) as FinancialGatewayProvider[]).map((k) => (
+                              <SelectItem key={k} value={k}>
+                                {GATEWAY_LABEL[k]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-md border border-border/50 bg-background/50 p-3">
+                        <Label htmlFor="fa-gw-default" className="text-sm font-normal leading-tight">
+                          Usar como conta padrão para recebimentos deste gateway
+                        </Label>
+                        <Switch
+                          id="fa-gw-default"
+                          checked={gwDefaultReceivables}
+                          onCheckedChange={setGwDefaultReceivables}
+                        />
+                      </div>
+                    </>
+                  ) : null}
+                </div>
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>
+
+            <div className="border-t px-6 py-4 flex flex-wrap gap-2 justify-end shrink-0 bg-background">
+              <Button variant="outline" type="button" onClick={() => setOpen(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleCreate} disabled={saving}>
+              <Button type="button" onClick={() => void handleCreate()} disabled={saving}>
                 {saving ? "A guardar…" : "Criar"}
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </div>
+          </SheetContent>
+        </Sheet>
         <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
           <DialogContent>
             <DialogHeader>
@@ -386,6 +482,11 @@ const FinancialUnifiedAccountsPage = () => {
                       </div>
                     </div>
                     <CardTitle className="text-base font-semibold leading-tight">{a.name}</CardTitle>
+                    {a.gateway_link?.is_enabled ? (
+                      <Badge variant="secondary" className="text-[10px] font-normal w-fit tabular-nums">
+                        Recebimento automático: {GATEWAY_LABEL[a.gateway_link.gateway]}
+                      </Badge>
+                    ) : null}
                     <CardDescription>
                       Saldo actual
                       <span className="block text-lg font-semibold text-foreground tabular-nums mt-1">

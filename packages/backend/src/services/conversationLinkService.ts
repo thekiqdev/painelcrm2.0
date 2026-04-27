@@ -34,7 +34,7 @@ export async function migrateConversationLeadToClient(params: {
   );
   if ((clientInTenant.rowCount ?? 0) === 0) {
     throw new Error(
-      'migrateConversationLeadToClient: clientId não pertence ao tenant do dono da conversa'
+      'migrateConversationLeadToClient: clientId não pertence à empresa do dono da conversa'
     );
   }
 

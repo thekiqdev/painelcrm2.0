@@ -70,7 +70,7 @@ export async function getMyTenantCompany(req: AuthRequest, res: Response): Promi
       [tenantId]
     );
     if (r.rows.length === 0) {
-      res.status(404).json({ error: 'Tenant não encontrado' });
+      res.status(404).json({ error: 'Empresa não encontrada' });
       return;
     }
     res.json(mapTenantCompanyLogosForClient(req, r.rows[0]));

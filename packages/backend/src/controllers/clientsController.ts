@@ -234,7 +234,7 @@ export async function getClientTimeline(req: AuthRequest, res: Response): Promis
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id: clientId } = req.params;
@@ -258,7 +258,7 @@ export async function createClientTimeline(req: AuthRequest, res: Response): Pro
     const tenantId = req.tenantId ?? null;
     const userId = req.userId!;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id: clientId } = req.params;
@@ -388,7 +388,7 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       if (!tenantId) {
         res.status(403).json({
           error: 'INVALID_TENANT',
-          message: 'Tenant necessário para associar grupo ao cliente.',
+          message: 'Empresa necessária para associar grupo ao cliente.',
         });
         return;
       }
@@ -396,7 +396,7 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       if (!groupOk) {
         res.status(400).json({
           error: 'INVALID_GROUP_FOR_TENANT',
-          message: 'Grupo inexistente ou não pertence ao tenant.',
+          message: 'Grupo inexistente ou não pertence à empresa.',
         });
         return;
       }
@@ -405,7 +405,7 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       if (!tenantId) {
         res.status(403).json({
           error: 'INVALID_TENANT',
-          message: 'Tenant necessário para associar perfil ao cliente.',
+          message: 'Empresa necessária para associar perfil ao cliente.',
         });
         return;
       }
@@ -413,7 +413,7 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       if (!profileOk) {
         res.status(400).json({
           error: 'INVALID_PROFILE_FOR_TENANT',
-          message: 'Perfil inexistente ou não pertence ao tenant.',
+          message: 'Perfil inexistente ou não pertence à empresa.',
         });
         return;
       }
@@ -509,7 +509,7 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
         if (!tenantIdForRefs) {
           res.status(403).json({
             error: 'INVALID_TENANT',
-            message: 'Tenant necessário para associar grupo ao cliente.',
+            message: 'Empresa necessária para associar grupo ao cliente.',
           });
           return;
         }
@@ -517,7 +517,7 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
         if (!groupOk) {
           res.status(400).json({
             error: 'INVALID_GROUP_FOR_TENANT',
-            message: 'Grupo inexistente ou não pertence ao tenant.',
+            message: 'Grupo inexistente ou não pertence à empresa.',
           });
           return;
         }
@@ -537,7 +537,7 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
         if (!tenantIdForRefs) {
           res.status(403).json({
             error: 'INVALID_TENANT',
-            message: 'Tenant necessário para associar perfil ao cliente.',
+            message: 'Empresa necessária para associar perfil ao cliente.',
           });
           return;
         }
@@ -545,7 +545,7 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
         if (!profileOk) {
           res.status(400).json({
             error: 'INVALID_PROFILE_FOR_TENANT',
-            message: 'Perfil inexistente ou não pertence ao tenant.',
+            message: 'Perfil inexistente ou não pertence à empresa.',
           });
           return;
         }

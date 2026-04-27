@@ -1654,7 +1654,7 @@ const ContractDetails = () => {
           <DialogHeader>
             <DialogTitle>Excluir contrato</DialogTitle>
             <DialogDescription>
-              Esta ação é irreversível e remove o contrato do tenant, incluindo links e evidências relacionadas.
+              Esta ação é irreversível e remove o contrato da empresa, incluindo links e evidências relacionadas.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1 text-sm">

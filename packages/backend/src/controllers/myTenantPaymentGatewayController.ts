@@ -34,7 +34,7 @@ export async function getMyTenantPaymentGatewayConfig(req: Request, res: Respons
   try {
     const tenantId = getTenantId(req as AuthRequest);
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const config = await getTenantConfig(tenantId);
@@ -61,7 +61,7 @@ export async function putMyTenantPaymentGatewayConfig(req: Request, res: Respons
   try {
     const tenantId = getTenantId(req as AuthRequest);
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const { gateway_key, credentials, options, display_name, enabled_payment_methods, default_payment_method } =
@@ -120,7 +120,7 @@ export async function postMyTenantPaymentGatewayTest(req: Request, res: Response
   try {
     const tenantId = getTenantId(req as AuthRequest);
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     if (!checkPaymentGatewayTestRateLimit(tenantId)) {
@@ -178,7 +178,7 @@ export async function getMyTenantPaymentGatewaysList(req: Request, res: Response
   try {
     const tenantId = getTenantId(req as AuthRequest);
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const gateways = await listGateways();
@@ -198,7 +198,7 @@ export async function getMyTenantPaymentGatewaysStatus(req: Request, res: Respon
   try {
     const tenantId = getTenantId(req as AuthRequest);
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const statusList = await getGatewaysStatus('tenant', tenantId);
@@ -218,7 +218,7 @@ export async function getMyTenantPaymentWebhookEvents(req: Request, res: Respons
   try {
     const tenantId = getTenantId(req as AuthRequest);
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const gatewayKey = typeof req.query.gateway_key === 'string' ? req.query.gateway_key : undefined;
@@ -241,7 +241,7 @@ export async function postMyTenantPaymentGatewayDisable(req: Request, res: Respo
   try {
     const tenantId = getTenantId(req as AuthRequest);
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const gateway_key = typeof req.body?.gateway_key === 'string' ? req.body.gateway_key.trim() : '';

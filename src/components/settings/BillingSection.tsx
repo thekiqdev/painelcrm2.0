@@ -188,7 +188,7 @@ export const BillingSection: React.FC = () => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Faturas recorrentes por tenant</CardTitle>
+        <CardTitle>Faturas recorrentes por empresa</CardTitle>
         <CardDescription>
           Configure o fuso e horários usados na recorrência de faturas da sua empresa.
         </CardDescription>

@@ -51,7 +51,7 @@ export async function getMyTenantBillingPreferences(req: AuthRequest, res: Respo
 
     const row = await getTenantBillingPreferences(tenantId);
     if (!row) {
-      res.status(404).json({ error: 'Tenant não encontrado' });
+      res.status(404).json({ error: 'Empresa não encontrada' });
       return;
     }
     const resolved = resolveTenantBillingPreferences(row);
@@ -112,7 +112,7 @@ export async function putMyTenantBillingPreferences(req: AuthRequest, res: Respo
       recurring_invoice_generate_days_before_due: payload.recurring_invoice_generate_days_before_due,
     });
     if (!updated) {
-      res.status(404).json({ error: 'Tenant não encontrado' });
+      res.status(404).json({ error: 'Empresa não encontrada' });
       return;
     }
     const resolved = resolveTenantBillingPreferences(updated);

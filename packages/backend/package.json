@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "migrate": "node dist/migrate.js",
+    "migrate:tsx": "tsx src/migrate.ts",
     "migrate:teams": "tsx src/migrate-teams.ts",
     "cancel-expired-billings": "tsx src/scripts/cancelExpiredBillings.ts",
     "trial:expire": "tsx src/scripts/runTrialExpiration.ts",

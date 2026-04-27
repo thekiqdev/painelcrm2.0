@@ -118,7 +118,7 @@ async function resolveMediaForTemplateItem(params: {
 
   if (incomingStoragePath) {
     if (!incomingStoragePath.startsWith(`tenants/${params.tenantId}/whatsapp-templates/`)) {
-      throw new Error('storage_path inválido para o tenant atual.');
+      throw new Error('storage_path inválido para a empresa atual.');
     }
     let finalStoragePath = incomingStoragePath;
     if (isWhatsappTemplateTempPath(params.tenantId, incomingStoragePath)) {
@@ -327,7 +327,7 @@ export async function createWhatsappMessageTemplate(req: AuthRequest, res: Respo
   try {
     const body = createTemplateSchema.parse(req.body || {});
     if (!(await assertCategoryOwned(tenantId, body.category_id))) {
-      res.status(400).json({ error: 'Categoria inválida para este tenant.' });
+      res.status(400).json({ error: 'Categoria inválida para esta empresa.' });
       return;
     }
 
@@ -370,7 +370,7 @@ export async function createWhatsappMessageTemplate(req: AuthRequest, res: Respo
       return;
     }
     if (e?.code === '23505') {
-      res.status(409).json({ error: 'Slug já em uso neste tenant.' });
+      res.status(409).json({ error: 'Slug já em uso nesta empresa.' });
       return;
     }
     console.error('[whatsappMessageTemplates] create', e);
@@ -385,7 +385,7 @@ export async function patchWhatsappMessageTemplate(req: AuthRequest, res: Respon
   try {
     const body = patchTemplateSchema.parse(req.body || {});
     if (body.category_id && !(await assertCategoryOwned(tenantId, body.category_id))) {
-      res.status(400).json({ error: 'Categoria inválida para este tenant.' });
+      res.status(400).json({ error: 'Categoria inválida para esta empresa.' });
       return;
     }
 
@@ -465,7 +465,7 @@ export async function patchWhatsappMessageTemplate(req: AuthRequest, res: Respon
       return;
     }
     if (e?.code === '23505') {
-      res.status(409).json({ error: 'Slug já em uso neste tenant.' });
+      res.status(409).json({ error: 'Slug já em uso nesta empresa.' });
       return;
     }
     console.error('[whatsappMessageTemplates] patch', e);

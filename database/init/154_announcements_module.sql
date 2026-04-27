@@ -92,14 +92,18 @@ CREATE TABLE IF NOT EXISTS public.announcement_reads (
   UNIQUE (announcement_id, user_id)
 );
 
+-- Reexecutável: sem DROP, CREATE TRIGGER dispara "already exists" e o script migrate.ts marcaria tudo como "(já existe)" sem ser óbvio.
+DROP TRIGGER IF EXISTS update_announcement_groups_updated_at ON public.announcement_groups;
 CREATE TRIGGER update_announcement_groups_updated_at
   BEFORE UPDATE ON public.announcement_groups
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_announcements_updated_at ON public.announcements;
 CREATE TRIGGER update_announcements_updated_at
   BEFORE UPDATE ON public.announcements
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_announcement_send_recipients_updated_at ON public.announcement_send_recipients;
 CREATE TRIGGER update_announcement_send_recipients_updated_at
   BEFORE UPDATE ON public.announcement_send_recipients
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();

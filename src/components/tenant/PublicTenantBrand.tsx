@@ -17,7 +17,7 @@ type Props = {
 };
 
 /**
- * Marca do tenant em páginas públicas: imagem conforme tema (claro/escuro + fallbacks)
+ * Marca da empresa em páginas públicas: imagem conforme tema (claro/escuro + fallbacks)
  * ou apenas texto quando não houver logo.
  */
 export function PublicTenantBrandMark({

@@ -34,9 +34,9 @@ interface ProjectAreasSectionProps {
   projectId: string;
   areas: ProjectArea[];
   areaProgress?: Record<string, AreaProgress>;
-  /** Membros do tenant (na configuração da área serão filtrados pelos que estão no projeto). */
+  /** Membros da empresa (na configuração da área serão filtrados pelos que estão no projeto). */
   members?: Member[];
-  /** Equipes do tenant (na configuração da área serão filtradas pelas que estão no projeto). */
+  /** Equipes da empresa (na configuração da área serão filtradas pelas que estão no projeto). */
   teams?: AreaTeam[];
   /** IDs dos responsáveis selecionados no projeto; só esses aparecem na seleção da área. */
   projectResponsibleIds?: string[];

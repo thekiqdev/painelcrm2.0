@@ -7,10 +7,30 @@ import type { AuthRequest } from '../middleware/auth.js';
 import {
   createFinancialAccount,
   listFinancialAccounts,
+  getFinancialAccount,
   getAccountBalanceCents,
+  updateFinancialAccountSettings,
+  deleteFinancialAccount,
   type FinancialAccountScope,
   type FinancialAccountType,
+  type FinancialAccountVisibilityMode,
 } from '../services/financialAccountsService.js';
+import {
+  getGatewayLinkForAccount,
+  disableGatewayLinkForAccount,
+  listGatewayLinksForTenant,
+  upsertGatewayLinkForAccount,
+  type FinancialAccountGatewayLinkRow,
+} from '../services/financialAccountGatewayLinkService.js';
+import {
+  getVisibleFinancialAccountIdsForUser,
+  canUserViewFinancialAccountId,
+  listPermissionRowsForAccount,
+  replaceAccountPermissions,
+  listTenantUsersForPicker,
+  listTeamsForPicker,
+} from '../services/financialAccountPermissionsService.js';
+import { assertModulePermission, ModulePermissionError, checkPermission } from '../permissions/index.js';
 import {
   createFinancialTransaction,
   getFinancialTransaction,
@@ -47,6 +67,7 @@ import {
 import type { InstallmentStatus, StatementStatus } from '../services/financialCreditCardService.js';
 import { getFinancialEnterpriseReport } from '../services/financialReportsService.js';
 import { createFinancialTransfer, listFinancialTransfers } from '../services/financialTransfersService.js';
+import { syncPaidInvoicesForGatewayPeriod } from '../services/financialGatewayReceivablesService.js';
 
 const accountTypeSchema = z.enum(['bank', 'cash', 'wallet']);
 const accountScopeSchema = z.enum(['business', 'personal']);
@@ -54,14 +75,82 @@ const transactionTypeSchema = z.enum(['income', 'expense']);
 const transactionKindSchema = z.enum(['regular', 'transfer']);
 const transactionStatusSchema = z.enum(['pending', 'completed']);
 
-const createAccountBody = z.object({
-  name: z.string().min(1),
-  type: accountTypeSchema,
-  account_scope: accountScopeSchema.optional(),
-  initial_balance_cents: z.number().int(),
-  initial_balance_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+const syncPaidGatewayReceivablesBody = z.object({
+  gateway: z.enum(['asaas', 'mercado_pago']),
+  account_id: z.string().uuid(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dry_run: z.boolean(),
+});
+
+const gatewayLinkInputSchema = z.object({
+  enabled: z.boolean(),
+  gateway: z.enum(['asaas', 'mercado_pago']).optional(),
+  is_default_receivables: z.boolean().optional(),
+});
+
+const patchAccountSettingsBody = z.object({
+  name: z.string().min(1).optional(),
+  type: accountTypeSchema.optional(),
   is_active: z.boolean().optional(),
 });
+
+const visibilityModeSchema = z.enum(['all_finance_users', 'admins_only', 'restricted']);
+
+const accountPermissionGrantSchema = z
+  .object({
+    user_id: z.string().uuid().optional(),
+    team_id: z.string().uuid().optional(),
+    permission: z.enum(['view', 'manage']),
+  })
+  .superRefine((row, ctx) => {
+    const hasU = !!row.user_id;
+    const hasT = !!row.team_id;
+    if (hasU === hasT) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Informe user_id ou team_id (exclusivo)' });
+    }
+  });
+
+const putAccountPermissionsBody = z.object({
+  visibility_mode: visibilityModeSchema,
+  grants: z.array(accountPermissionGrantSchema),
+});
+
+const putGatewayLinkExtendedBody = z
+  .object({
+    enabled: z.boolean(),
+    gateway: z.enum(['asaas', 'mercado_pago']).optional(),
+    is_default_receivables: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.enabled && !data.gateway) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Indique o gateway quando o vínculo está activo',
+        path: ['gateway'],
+      });
+    }
+  });
+
+const createAccountBody = z
+  .object({
+    name: z.string().min(1),
+    type: accountTypeSchema,
+    account_scope: accountScopeSchema.optional(),
+    initial_balance_cents: z.number().int(),
+    initial_balance_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    is_active: z.boolean().optional(),
+    gateway_link: gatewayLinkInputSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.gateway_link?.enabled && !data.gateway_link.gateway) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Indique o gateway quando o vínculo está activo',
+        path: ['gateway_link', 'gateway'],
+      });
+    }
+  });
 
 const createTransactionBody = z.object({
   account_id: z.string().uuid(),
@@ -254,7 +343,7 @@ export function resolveSummaryRange(q: Record<string, unknown>): { from: string;
 function tenantOr401(req: AuthRequest, res: Response): string | null {
   const tenantId = req.tenantId ?? null;
   if (!tenantId) {
-    res.status(401).json({ error: 'Tenant não identificado' });
+    res.status(401).json({ error: 'Empresa não identificada' });
     return null;
   }
   return tenantId;
@@ -264,26 +353,70 @@ function centsToReais(cents: number): number {
   return Math.round(cents) / 100;
 }
 
+function mapGatewayLinkDto(link: FinancialAccountGatewayLinkRow | null): {
+  gateway: 'asaas' | 'mercado_pago';
+  is_enabled: boolean;
+  is_default_receivables: boolean;
+} | null {
+  if (!link || !link.is_enabled) return null;
+  return {
+    gateway: link.gateway,
+    is_enabled: link.is_enabled,
+    is_default_receivables: link.is_default_receivables,
+  };
+}
+
+function mapGatewayLinkFullDto(link: FinancialAccountGatewayLinkRow | null): {
+  gateway: 'asaas' | 'mercado_pago';
+  is_enabled: boolean;
+  is_default_receivables: boolean;
+} | null {
+  if (!link) return null;
+  return {
+    gateway: link.gateway,
+    is_enabled: link.is_enabled,
+    is_default_receivables: link.is_default_receivables,
+  };
+}
+
+function respondPermissionDenied(res: Response, e: unknown): boolean {
+  if (e instanceof ModulePermissionError) {
+    res.status(e.statusCode).json({ error: e.message });
+    return true;
+  }
+  return false;
+}
+
 export async function listFinancialAccountsHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const scope =
     req.query.account_scope === 'business' || req.query.account_scope === 'personal'
       ? (req.query.account_scope as FinancialAccountScope)
       : undefined;
   try {
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
     const rows = await listFinancialAccounts(tenantId, { account_scope: scope });
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
+    const filtered = rows.filter((a) => visible.has(a.id));
+    const links = await listGatewayLinksForTenant(tenantId);
+    const linkByAccount = new Map<string, FinancialAccountGatewayLinkRow>();
+    for (const l of links) {
+      if (l.is_enabled) linkByAccount.set(l.financial_account_id, l);
+    }
     const withBalance = await Promise.all(
-      rows.map(async (a) => {
+      filtered.map(async (a) => {
         const bal = await getAccountBalanceCents(tenantId, a.id);
         return {
           ...a,
           balance: centsToReais(bal ?? a.initial_balance_cents),
+          gateway_link: mapGatewayLinkDto(linkByAccount.get(a.id) ?? null),
         };
       })
     );
     res.json(withBalance);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] listFinancialAccountsHandler', e);
     res.status(500).json({ error: 'Erro ao listar contas' });
   }
@@ -291,13 +424,26 @@ export async function listFinancialAccountsHandler(req: AuthRequest, res: Respon
 
 export async function createFinancialAccountHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const parsed = createAccountBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'create', undefined, req);
+    const glIn = parsed.data.gateway_link;
+    if (glIn?.enabled && glIn.gateway) {
+      const existingLinks = await listGatewayLinksForTenant(tenantId);
+      const taken = existingLinks.some((l) => l.gateway === glIn.gateway && l.is_enabled);
+      if (taken) {
+        res.status(400).json({
+          error:
+            'Já existe uma conta financeira vinculada a este gateway. Cada gateway só pode estar associado a uma conta.',
+        });
+        return;
+      }
+    }
     const row = await createFinancialAccount(tenantId, {
       name: parsed.data.name,
       type: parsed.data.type as FinancialAccountType,
@@ -306,20 +452,371 @@ export async function createFinancialAccountHandler(req: AuthRequest, res: Respo
       initial_balance_date: parsed.data.initial_balance_date,
       is_active: parsed.data.is_active,
     });
+    const gl = parsed.data.gateway_link;
+    if (gl?.enabled && gl.gateway) {
+      await upsertGatewayLinkForAccount(tenantId, row.id, {
+        gateway: gl.gateway,
+        is_enabled: true,
+        is_default_receivables: gl.is_default_receivables ?? false,
+      });
+    }
     const bal = await getAccountBalanceCents(tenantId, row.id);
+    const linkOut = await getGatewayLinkForAccount(tenantId, row.id);
     res.status(201).json({
       ...row,
       balance: centsToReais(bal ?? row.initial_balance_cents),
+      gateway_link: mapGatewayLinkDto(linkOut),
     });
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] createFinancialAccountHandler', e);
     res.status(500).json({ error: 'Erro ao criar conta' });
   }
 }
 
-export async function listFinancialTransactionsHandler(req: AuthRequest, res: Response): Promise<void> {
+export async function getFinancialAccountByIdHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
+    const ok = await canUserViewFinancialAccountId(tenantId, req.userId, accountId, req);
+    if (!ok) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const row = await getFinancialAccount(tenantId, accountId);
+    if (!row) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const bal = await getAccountBalanceCents(tenantId, row.id);
+    const linkOut = await getGatewayLinkForAccount(tenantId, row.id);
+    res.json({
+      ...row,
+      balance: centsToReais(bal ?? row.initial_balance_cents),
+      gateway_link: mapGatewayLinkDto(linkOut),
+    });
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    console.error('[financial] getFinancialAccountByIdHandler', e);
+    res.status(500).json({ error: 'Erro ao carregar conta' });
+  }
+}
+
+export async function patchFinancialAccountSettingsHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  const parsed = patchAccountSettingsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+    return;
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    res.status(400).json({ error: 'Nenhum campo para actualizar' });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
+    const ok = await canUserViewFinancialAccountId(tenantId, req.userId, accountId, req);
+    if (!ok) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const row = await updateFinancialAccountSettings(tenantId, accountId, parsed.data);
+    if (!row) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const bal = await getAccountBalanceCents(tenantId, row.id);
+    const linkOut = await getGatewayLinkForAccount(tenantId, row.id);
+    res.json({
+      ...row,
+      balance: centsToReais(bal ?? row.initial_balance_cents),
+      gateway_link: mapGatewayLinkDto(linkOut),
+    });
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    console.error('[financial] patchFinancialAccountSettingsHandler', e);
+    res.status(500).json({ error: 'Erro ao actualizar conta' });
+  }
+}
+
+export async function deleteFinancialAccountHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
+    const okView = await canUserViewFinancialAccountId(tenantId, req.userId, accountId, req);
+    if (!okView) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const result = await deleteFinancialAccount(tenantId, accountId);
+    if (!result.ok) {
+      const msg: Record<string, string> = {
+        not_found: 'Conta não encontrada',
+        active: 'Desative a conta e guarde as alterações antes de a excluir.',
+        has_transactions: 'Não é possível excluir: existem movimentos associados a esta conta.',
+        has_transfers: 'Não é possível excluir: existem transferências envolvendo esta conta.',
+        has_recurring:
+          'Não é possível excluir: a conta é a conta padrão de despesas recorrentes. Altere essas despesas antes.',
+        has_occurrences: 'Não é possível excluir: existem ocorrências de despesas recorrentes nesta conta.',
+      };
+      const e = result.error;
+      if (e === 'not_found') {
+        res.status(404).json({ error: msg.not_found });
+        return;
+      }
+      if (e === 'active') {
+        res.status(400).json({ error: msg.active });
+        return;
+      }
+      res.status(400).json({ error: msg[e] ?? 'Não é possível excluir esta conta.' });
+      return;
+    }
+    res.status(204).end();
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    console.error('[financial] deleteFinancialAccountHandler', e);
+    res.status(500).json({ error: 'Erro ao excluir conta' });
+  }
+}
+
+export async function getFinancialAccountPermissionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
+    const ok = await canUserViewFinancialAccountId(tenantId, req.userId, accountId, req);
+    if (!ok) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const acc = await getFinancialAccount(tenantId, accountId);
+    if (!acc) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const grants = await listPermissionRowsForAccount(tenantId, accountId);
+    let tenant_users: Awaited<ReturnType<typeof listTenantUsersForPicker>> | undefined;
+    let teams: Awaited<ReturnType<typeof listTeamsForPicker>> | undefined;
+    const canManage = await checkPermission(
+      { userId: req.userId, tenantId, module: 'finance', action: 'edit' },
+      req
+    );
+    if (canManage) {
+      tenant_users = await listTenantUsersForPicker(tenantId);
+      teams = await listTeamsForPicker(tenantId);
+    }
+    res.json({
+      visibility_mode: acc.visibility_mode as FinancialAccountVisibilityMode,
+      grants,
+      tenant_users,
+      teams,
+    });
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    console.error('[financial] getFinancialAccountPermissionsHandler', e);
+    res.status(500).json({ error: 'Erro ao carregar permissões' });
+  }
+}
+
+export async function putFinancialAccountPermissionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  const parsed = putAccountPermissionsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
+    const ok = await canUserViewFinancialAccountId(tenantId, req.userId, accountId, req);
+    if (!ok) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    await replaceAccountPermissions(tenantId, accountId, parsed.data.visibility_mode, parsed.data.grants);
+    const acc = await getFinancialAccount(tenantId, accountId);
+    const grants = await listPermissionRowsForAccount(tenantId, accountId);
+    res.json({
+      visibility_mode: acc?.visibility_mode ?? parsed.data.visibility_mode,
+      grants,
+    });
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    const msg = e instanceof Error ? e.message : '';
+    if (msg.includes('inválid') || msg.includes('Utilizador') || msg.includes('Equipa')) {
+      res.status(400).json({ error: msg || 'Dados inválidos' });
+      return;
+    }
+    console.error('[financial] putFinancialAccountPermissionsHandler', e);
+    res.status(500).json({ error: 'Erro ao guardar permissões' });
+  }
+}
+
+export async function getFinancialAccountGatewayLinkHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
+    const ok = await canUserViewFinancialAccountId(tenantId, req.userId, accountId, req);
+    if (!ok) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const link = await getGatewayLinkForAccount(tenantId, accountId);
+    res.json({ link: mapGatewayLinkFullDto(link) });
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    console.error('[financial] getFinancialAccountGatewayLinkHandler', e);
+    res.status(500).json({ error: 'Erro ao carregar vínculo com gateway' });
+  }
+}
+
+export async function putFinancialAccountGatewayLinkHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  const parsed = putGatewayLinkExtendedBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
+    const ok = await canUserViewFinancialAccountId(tenantId, req.userId, accountId, req);
+    if (!ok) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const existing = await getGatewayLinkForAccount(tenantId, accountId);
+    if (!parsed.data.enabled) {
+      await disableGatewayLinkForAccount(tenantId, accountId);
+      res.json({ link: null });
+      return;
+    }
+    const gateway = parsed.data.gateway!;
+    if (
+      existing &&
+      existing.gateway !== gateway &&
+      existing.is_enabled &&
+      parsed.data.enabled
+    ) {
+      const confirmed =
+        req.headers['x-confirm-gateway-change'] === '1' ||
+        req.headers['x-confirm-gateway-change'] === 'true';
+      if (!confirmed) {
+        res.status(409).json({
+          error: 'CONFIRM_GATEWAY_CHANGE',
+          message:
+            'Alterar o gateway desta conta afecta novos recebimentos. Recebimentos antigos já sincronizados não serão movidos automaticamente.',
+        });
+        return;
+      }
+    }
+    const link = await upsertGatewayLinkForAccount(tenantId, accountId, {
+      gateway,
+      is_enabled: true,
+      is_default_receivables: parsed.data.is_default_receivables ?? false,
+    });
+    res.json({ link: mapGatewayLinkFullDto(link) });
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    const msg = e instanceof Error ? e.message : '';
+    if (msg.includes('conta') || msg.includes('gateway') || msg.includes('Já existe')) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error('[financial] putFinancialAccountGatewayLinkHandler', e);
+    res.status(500).json({ error: 'Erro ao actualizar vínculo com gateway' });
+  }
+}
+
+export async function patchFinancialAccountHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  const accountId =
+    typeof req.params.accountId === 'string' && req.params.accountId.trim()
+      ? req.params.accountId.trim()
+      : '';
+  if (!accountId) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  if ('gateway_link' in body) {
+    res.status(400).json({
+      error: 'Use PUT /api/financial/accounts/:accountId/gateway-link para alterar o vínculo com gateway.',
+    });
+    return;
+  }
+  const keys = Object.keys(body as Record<string, unknown>);
+  if (keys.length === 0) {
+    res.status(400).json({ error: 'Nenhum campo suportado para actualização neste endpoint.' });
+    return;
+  }
+  res.status(400).json({ error: 'Campos não suportados neste endpoint.' });
+}
+
+export async function listFinancialTransactionsHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
   const q = req.query;
   const type =
     q.type === 'income' || q.type === 'expense' ? (q.type as FinancialTransactionType) : undefined;
@@ -335,9 +832,28 @@ export async function listFinancialTransactionsHandler(req: AuthRequest, res: Re
   const to = typeof q.to === 'string' && q.to.trim() ? q.to.trim() : undefined;
   const account_id = typeof q.account_id === 'string' && q.account_id.trim() ? q.account_id.trim() : undefined;
   try {
-    const rows = await listFinancialTransactions(tenantId, { type, transaction_kind, status, from, to, account_id });
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
+    if (visible.size === 0) {
+      res.json([]);
+      return;
+    }
+    if (account_id && !visible.has(account_id)) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const rows = await listFinancialTransactions(tenantId, {
+      type,
+      transaction_kind,
+      status,
+      from,
+      to,
+      account_id,
+      restrict_to_account_ids: Array.from(visible),
+    });
     res.json(rows);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] listFinancialTransactionsHandler', e);
     res.status(500).json({ error: 'Erro ao listar movimentos' });
   }
@@ -392,7 +908,7 @@ export async function getPayablesHandler(req: AuthRequest, res: Response): Promi
 
 export async function patchFinancialTransactionHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const id = req.params.transactionId;
   if (!id) {
     res.status(400).json({ error: 'ID inválido' });
@@ -404,9 +920,19 @@ export async function patchFinancialTransactionHandler(req: AuthRequest, res: Re
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
     const cur = await getFinancialTransaction(tenantId, id);
     if (!cur) {
       res.status(404).json({ error: 'Movimento não encontrado' });
+      return;
+    }
+    if (!visible.has(cur.account_id)) {
+      res.status(404).json({ error: 'Movimento não encontrado' });
+      return;
+    }
+    if (parsed.data.account_id && !visible.has(parsed.data.account_id)) {
+      res.status(404).json({ error: 'Conta não encontrada' });
       return;
     }
     if (cur.type !== 'expense') {
@@ -420,6 +946,7 @@ export async function patchFinancialTransactionHandler(req: AuthRequest, res: Re
     }
     res.json(row);
   } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     const msg = e instanceof Error ? e.message : '';
     if (msg.includes('não encontrada') || msg.includes('inválid') || msg.includes('regular')) {
       res.status(400).json({ error: msg || 'Dados inválidos' });
@@ -432,13 +959,19 @@ export async function patchFinancialTransactionHandler(req: AuthRequest, res: Re
 
 export async function createFinancialTransactionHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const parsed = createTransactionBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'create', undefined, req);
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
+    if (!visible.has(parsed.data.account_id)) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
     const row = await createFinancialTransaction(tenantId, {
       account_id: parsed.data.account_id,
       type: parsed.data.type as FinancialTransactionType,
@@ -453,6 +986,7 @@ export async function createFinancialTransactionHandler(req: AuthRequest, res: R
     });
     res.status(201).json(row);
   } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     const msg = e instanceof Error ? e.message : '';
     if (msg.includes('não encontrada') || msg.includes('inválid')) {
       res.status(400).json({ error: msg || 'Dados inválidos' });
@@ -465,13 +999,19 @@ export async function createFinancialTransactionHandler(req: AuthRequest, res: R
 
 export async function createFinancialTransferHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const parsed = createTransferBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'create', undefined, req);
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
+    if (!visible.has(parsed.data.from_account_id) || !visible.has(parsed.data.to_account_id)) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
     const row = await createFinancialTransfer(tenantId, {
       from_account_id: parsed.data.from_account_id,
       to_account_id: parsed.data.to_account_id,
@@ -481,6 +1021,7 @@ export async function createFinancialTransferHandler(req: AuthRequest, res: Resp
     });
     res.status(201).json(row);
   } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     const msg = e instanceof Error ? e.message : '';
     if (msg.includes('inválida') || msg.includes('diferentes') || msg.includes('maior que zero')) {
       res.status(400).json({ error: msg });
@@ -493,18 +1034,30 @@ export async function createFinancialTransferHandler(req: AuthRequest, res: Resp
 
 export async function listFinancialTransfersHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const account_id = typeof req.query.account_id === 'string' ? req.query.account_id.trim() : undefined;
   const from = typeof req.query.from === 'string' ? req.query.from.trim() : undefined;
   const to = typeof req.query.to === 'string' ? req.query.to.trim() : undefined;
   try {
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
+    if (visible.size === 0) {
+      res.json([]);
+      return;
+    }
+    if (account_id && !visible.has(account_id)) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
     const rows = await listFinancialTransfers(tenantId, {
       account_id: account_id || null,
       from: from || null,
       to: to || null,
+      restrict_to_account_ids: Array.from(visible),
     });
     res.json(rows);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] listFinancialTransfersHandler', e);
     res.status(500).json({ error: 'Erro ao listar transferências' });
   }
@@ -546,16 +1099,19 @@ export async function createExpenseCategoryHandler(req: AuthRequest, res: Respon
 
 export async function getFinancialSummaryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const q = req.query as Record<string, unknown>;
   try {
+    await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
     const { from, to, preset } = resolveSummaryRange(q);
     const summary = await getFinancialSummary(tenantId, { from, to });
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
+    const accountsFiltered = summary.accounts.filter((a) => visible.has(a.id));
     res.json({
       total_income: summary.total_income,
       total_expense: summary.total_expense,
       total_profit: summary.total_profit,
-      accounts: summary.accounts,
+      accounts: accountsFiltered,
       monthly: summary.monthly,
       transaction_income: summary.transaction_income,
       transaction_expense: summary.transaction_expense,
@@ -570,7 +1126,8 @@ export async function getFinancialSummaryHandler(req: AuthRequest, res: Response
       from,
       to,
     });
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] getFinancialSummaryHandler', e);
     res.status(500).json({ error: 'Erro ao carregar resumo' });
   }
@@ -980,5 +1537,57 @@ export async function getFinancialReportsHandler(req: AuthRequest, res: Response
   } catch (e) {
     console.error('[financial] getFinancialReportsHandler', e);
     res.status(500).json({ error: 'Erro ao gerar relatórios' });
+  }
+}
+
+export async function postGatewayReceivablesSyncPaidInvoicesHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId || !req.userId) return;
+  const parsed = syncPaidGatewayReceivablesBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+    return;
+  }
+  const { gateway, account_id, from, to, dry_run } = parsed.data;
+  if (from > to) {
+    res.status(400).json({ error: 'Data inicial deve ser anterior ou igual à final' });
+    return;
+  }
+  try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
+    const visible = await getVisibleFinancialAccountIdsForUser(tenantId, req.userId, req);
+    if (!visible.has(account_id)) {
+      res.status(404).json({ error: 'Conta não encontrada' });
+      return;
+    }
+    const out = await syncPaidInvoicesForGatewayPeriod({
+      tenantId,
+      gateway,
+      financialAccountId: account_id,
+      from,
+      to,
+      dryRun: dry_run,
+    });
+    res.json({
+      total_paid_invoices_found: out.total_paid_invoices_found,
+      eligible_count: out.eligible_count,
+      eligible_amount: out.eligible_amount_cents,
+      created_count: out.created_count,
+      created_amount: out.created_amount_cents,
+      skipped_existing_count: out.skipped_existing_count,
+      skipped_no_gateway_count: out.skipped_no_gateway_count,
+      skipped_no_linked_account_count: out.skipped_no_linked_account_count,
+      skipped_other_count: out.skipped_other_count,
+      errors: out.errors,
+    });
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
+    const msg = e instanceof Error ? e.message : 'Erro desconhecido';
+    if (msg.includes('vínculo') || msg.includes('Conta')) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error('[financial] postGatewayReceivablesSyncPaidInvoicesHandler', e);
+    res.status(500).json({ error: 'Erro ao sincronizar recebimentos' });
   }
 }

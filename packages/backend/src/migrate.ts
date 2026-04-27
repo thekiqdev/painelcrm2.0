@@ -1,7 +1,8 @@
 /**
  * Script de migração: executa os SQLs de `database/init` **nesta ordem** (array `order` abaixo).
  * Ficheiros novos em `database/init` não são descobertos automaticamente — é obrigatório acrescentar o nome ao array.
- * Uso: na raiz do projeto, npm run migrate (ou cd packages/backend && npx tsx src/migrate.ts)
+ * Uso: `cd packages/backend && npm run migrate:tsx` (fonte atual, sem build) **ou** `npm run build && npm run migrate` (JavaScript em `dist/`).
+ * `npm run migrate` sozinho usa `dist/migrate.js`; se não tiver feito `build` depois de editar isto, o ficheiro `dist` pode estar desatualizado.
  */
 import dotenv from 'dotenv';
 import path from 'path';
@@ -214,6 +215,8 @@ const order = [
   '153_financial_cc_purchase_amount_mode.sql',
   /** Assinaturas CRM: ciclos ilimitados / max_cycles (relatórios e configuração) */
   '154_subscriptions_cycles_config.sql',
+  /** Módulo Anúncios / Atualizações (Super Admin → tenants; obrigatório antes de 156_notifications_announcement_entity) */
+  '154_announcements_module.sql',
   /** Financeiro: account_scope + transferências internas */
   '155_financial_accounts_scope_and_transfers.sql',
   /** Sininho: notificações de anúncio com entity_id/href (idempotência por user+announcement) */
@@ -228,6 +231,10 @@ const order = [
   '160_legal_pages.sql',
   /** Rascunho vs publicado + migração de content_html legado */
   '161_legal_pages_draft_publish.sql',
+  /** Contas financeiras ↔ gateway (Asaas, Mercado Pago) + transações automáticas */
+  '162_financial_gateway_account_links.sql',
+  /** Visibilidade por conta + permissões utilizador/equipa */
+  '163_financial_account_visibility.sql',
   'create-admin-user.sql',
 ];
 
@@ -280,8 +287,12 @@ async function runMigrations(pool: pg.Pool) {
       await pool.query(sql);
       console.log(`  OK: ${file}`);
     } catch (err: any) {
-      if (err.message && err.message.includes('already exists')) {
+      const msg = err?.message ? String(err.message) : '';
+      if (msg.includes('already exists')) {
+        // Ex.: tabela/índice/trigger/constraint em reexecução; ver linha se não for o esperado
+        const firstLine = msg.split('\n')[0];
         console.log(`  (já existe) ${file}`);
+        console.log(`     detalhe: ${firstLine}`);
       } else {
         console.error(`  ERRO em ${file}:`, err.message);
         throw err;

@@ -340,7 +340,7 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
       if (!isOwner && !isAssignee && !actorIsTenantAdmin) {
         await client.query('ROLLBACK');
         res.status(403).json({
-          error: 'Só o dono da conversa, o atendente atual ou um administrador do tenant pode encerrar',
+          error: 'Só o dono da conversa, o atendente atual ou um administrador da empresa pode encerrar',
         });
         return;
       }
@@ -372,14 +372,14 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
       );
       if (!okTarget) {
         await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Usuário alvo inválido ou fora do tenant' });
+        res.status(400).json({ error: 'Usuário alvo inválido ou fora da empresa' });
         return;
       }
       const actorIsTenantAdminRs = await isTenantAdmin(actorUserId);
       if (!isOwner && prev.assigned_to_user_id !== actorUserId && !actorIsTenantAdminRs) {
         await client.query('ROLLBACK');
         res.status(403).json({
-          error: 'Só o responsável atual, o dono da conversa ou um administrador do tenant pode transferir',
+          error: 'Só o responsável atual, o dono da conversa ou um administrador da empresa pode transferir',
         });
         return;
       }
@@ -397,14 +397,14 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
       const okTeam = await assertTargetTeamSameTenant(client, body.toTeamId, prev.owner_tenant_id);
       if (!okTeam) {
         await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Equipe inválida ou fora do tenant' });
+        res.status(400).json({ error: 'Equipe inválida ou fora da empresa' });
         return;
       }
       const actorIsTenantAdminRs = await isTenantAdmin(actorUserId);
       if (!isOwner && prev.assigned_to_user_id !== actorUserId && !actorIsTenantAdminRs) {
         await client.query('ROLLBACK');
         res.status(403).json({
-          error: 'Só o responsável atual, o dono da conversa ou um administrador do tenant pode transferir',
+          error: 'Só o responsável atual, o dono da conversa ou um administrador da empresa pode transferir',
         });
         return;
       }

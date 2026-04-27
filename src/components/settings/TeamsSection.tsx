@@ -364,7 +364,7 @@ export const TeamsSection: React.FC<SettingsSectionProps> = () => {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Adicionar membro</DialogTitle>
-              <DialogDescription>Escolha um usuário do tenant para adicionar à equipe.</DialogDescription>
+              <DialogDescription>Escolha um utilizador da empresa para adicionar à equipa.</DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <Select value={selectedUserId ?? ""} onValueChange={setSelectedUserId}>

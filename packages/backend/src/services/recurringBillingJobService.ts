@@ -674,7 +674,7 @@ export type TryEnqueueRenewalReason =
   | 'subscription_not_active'
   | 'subscription_type_unsupported'
   | 'next_billing_after_db_today'
-  /** Fase 2: `next_billing_date` no calendário local do tenant é futuro em relação a “hoje” local. */
+  /** Fase 2: `next_billing_date` no calendário local da empresa é futuro em relação a “hoje” local. */
   | 'future_local_date'
   /** Fase 2: mesmo dia local, mas ainda antes de `recurring_generate_time_local`. */
   | 'too_early_local_time'
@@ -702,9 +702,9 @@ export function renewalEnqueueBlockReasonMessagePt(reason: TryEnqueueRenewalReas
     next_billing_after_db_today:
       'A data de geração (próxima cobrança menos dias de antecipação) é posterior a CURRENT_DATE no PostgreSQL — o scheduler ainda não considera esta assinatura elegível pelo filtro SQL. Depois de um ciclo processado, a assinatura avança para o próximo vencimento.',
     future_local_date:
-      'No fuso do tenant, ainda não chegou o primeiro dia civil de geração (vencimento do ciclo menos dias de antecipação) — aguardar o dia local ou ajustar configuração.',
+      'No fuso horário da empresa, ainda não chegou o primeiro dia civil de geração (vencimento do ciclo menos dias de antecipação) — aguardar o dia local ou ajustar configuração.',
     too_early_local_time:
-      'Mesmo dia local, mas ainda antes do horário de geração configurado no tenant (Fase 2).',
+      'Mesmo dia local, mas ainda antes do horário de geração configurado na empresa (Fase 2).',
     outside_local_window: 'Fora da janela local de geração (Fase 2).',
     active_job_exists: 'Já existe job pendente ou em processamento para este ciclo (cycle_key).',
     completed_cycle_guard: 'Ciclo já consta como concluído na tabela de jobs — não reabre completed.',

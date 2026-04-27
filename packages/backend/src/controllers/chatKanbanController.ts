@@ -375,7 +375,7 @@ async function assertUserIdsBelongToTenant(
   );
   const c = Number(r.rows[0]?.c);
   if (c !== uniq.length) {
-    res.status(400).json({ error: 'Um ou mais utilizadores não pertencem ao tenant.' });
+    res.status(400).json({ error: 'Um ou mais utilizadores não pertencem à empresa.' });
     return false;
   }
   return true;
@@ -394,7 +394,7 @@ async function assertTeamIdsBelongToTenant(
   );
   const c = Number(r.rows[0]?.c);
   if (c !== uniq.length) {
-    res.status(400).json({ error: 'Uma ou mais equipes não pertencem ao tenant.' });
+    res.status(400).json({ error: 'Uma ou mais equipes não pertencem à empresa.' });
     return false;
   }
   return true;
@@ -489,7 +489,7 @@ export async function getBoard(req: AuthRequest, res: Response): Promise<void> {
   }
 }
 
-/** Definições do board (ACL + campos) — apenas criador ou admin do tenant. */
+/** Definições do board (ACL + campos) — apenas criador ou admin da empresa. */
 export async function getBoardSettings(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = requireTenantId(req, res);
@@ -507,7 +507,7 @@ export async function getBoardSettings(req: AuthRequest, res: Response): Promise
     }
     const accessRow = boardAccessFromRow(row as Record<string, unknown>);
     if (!(await userCanManageKanbanBoard(userId, accessRow))) {
-      res.status(403).json({ error: 'Apenas o criador do quadro ou administrador do tenant pode abrir estas definições.' });
+      res.status(403).json({ error: 'Apenas o criador do quadro ou administrador da empresa pode abrir estas definições.' });
       return;
     }
     const [usersR, teamsR] = await Promise.all([
@@ -539,7 +539,7 @@ export async function createBoard(req: AuthRequest, res: Response): Promise<void
     if (body.linked_sales_funnel_id) {
       const funnelOk = await validateLinkedFunnelBelongsToTenant(tenantId, body.linked_sales_funnel_id);
       if (!funnelOk) {
-        res.status(400).json({ error: 'Funil inválido para este tenant.' });
+        res.status(400).json({ error: 'Funil inválido para esta empresa.' });
         return;
       }
     }
@@ -564,7 +564,7 @@ export async function createBoard(req: AuthRequest, res: Response): Promise<void
       return;
     }
     if (e?.message === 'Tenant required') {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     console.error('[chatKanban] createBoard', e);
@@ -587,7 +587,7 @@ export async function patchBoard(req: AuthRequest, res: Response): Promise<void>
     const accessRow = boardAccessFromRow(existing as Record<string, unknown>);
     if (!(await userCanManageKanbanBoard(userId, accessRow))) {
       res.status(403).json({
-        error: 'Apenas o criador do quadro ou administrador do tenant pode alterar estas definições.',
+        error: 'Apenas o criador do quadro ou administrador da empresa pode alterar estas definições.',
       });
       return;
     }
@@ -620,7 +620,7 @@ export async function patchBoard(req: AuthRequest, res: Response): Promise<void>
       if (body.linked_sales_funnel_id) {
         const funnelOk = await validateLinkedFunnelBelongsToTenant(tenantId, body.linked_sales_funnel_id);
         if (!funnelOk) {
-          res.status(400).json({ error: 'Funil inválido para este tenant.' });
+          res.status(400).json({ error: 'Funil inválido para esta empresa.' });
           return;
         }
       }
@@ -838,7 +838,7 @@ export async function createColumn(req: AuthRequest, res: Response): Promise<voi
       return;
     }
     if (e?.message === 'Tenant required') {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     console.error('[chatKanban] createColumn', e);
@@ -1181,7 +1181,7 @@ export async function createCard(req: AuthRequest, res: Response): Promise<void>
     }
     const visible = await conversationVisibleToTenantUser(body.conversation_id, userId);
     if (!visible) {
-      res.status(403).json({ error: 'Conversa não encontrada ou sem acesso para este tenant' });
+      res.status(403).json({ error: 'Conversa não encontrada ou sem acesso para esta empresa' });
       return;
     }
     const position = body.position !== undefined ? Number(body.position) : await nextCardPosition(body.column_id);
@@ -1271,7 +1271,7 @@ export async function createCard(req: AuthRequest, res: Response): Promise<void>
       return;
     }
     if (e?.message === 'Tenant required' || e?.message === 'Authentication required') {
-      res.status(403).json({ error: 'Autenticação ou tenant obrigatório' });
+      res.status(403).json({ error: 'Autenticação ou empresa obrigatória' });
       return;
     }
     console.error('[chatKanban] createCard', e);

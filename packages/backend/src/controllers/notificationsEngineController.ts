@@ -95,7 +95,7 @@ export async function listNotificationDeliveriesFiltered(req: AuthRequest, res: 
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || '50'), 10) || 50));
@@ -127,7 +127,7 @@ export async function getTenantNotificationsEngineSummary(req: AuthRequest, res:
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const hours = Math.min(168, Math.max(1, parseInt(String(req.query.hours || '72'), 10) || 72));
@@ -149,7 +149,7 @@ export async function listNotificationDeliveries(req: AuthRequest, res: Response
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || '30'), 10) || 30));
@@ -174,7 +174,7 @@ export async function simulateNotification(req: AuthRequest, res: Response): Pro
     const tenantId = req.tenantId;
     const userId = req.userId;
     if (!tenantId || !userId) {
-      res.status(403).json({ ok: false, error: 'Autenticação/tenant obrigatórios.' });
+      res.status(403).json({ ok: false, error: 'Autenticação e empresa obrigatórios.' });
       return;
     }
 
@@ -246,7 +246,7 @@ export async function getTenantCatalogWithState(req: AuthRequest, res: Response)
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const locale =
@@ -274,7 +274,7 @@ export async function getTenantCatalogWithState(req: AuthRequest, res: Response)
     });
   } catch (e: unknown) {
     console.error('[notifications-engine] getTenantCatalogWithState', e);
-    res.status(500).json({ ok: false, error: 'Erro ao listar catálogo do tenant.' });
+    res.status(500).json({ ok: false, error: 'Erro ao listar catálogo da empresa.' });
   }
 }
 
@@ -287,7 +287,7 @@ export async function getTenantTemplateBundle(req: AuthRequest, res: Response): 
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const eventKey = String(req.params.eventKey || '').trim();
@@ -349,7 +349,7 @@ export async function putTenantNotificationPreference(req: AuthRequest, res: Res
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const eventKey = String(req.params.eventKey || '').trim();
@@ -388,7 +388,7 @@ export async function putTenantNotificationOverride(req: AuthRequest, res: Respo
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const eventKey = String(req.params.eventKey || '').trim();
@@ -466,7 +466,7 @@ export async function deleteTenantNotificationOverrideHandler(req: AuthRequest, 
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const eventKey = String(req.params.eventKey || '').trim();
@@ -513,7 +513,7 @@ export async function postTenantNotificationPreview(req: AuthRequest, res: Respo
     }
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ ok: false, error: 'Tenant obrigatório.' });
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
       return;
     }
     const parsed = tenantPreviewBodySchema.safeParse(req.body);

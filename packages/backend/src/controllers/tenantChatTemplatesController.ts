@@ -141,7 +141,7 @@ export async function listTenantChatTemplates(req: AuthRequest, res: Response): 
   try {
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant não disponível' });
+      res.status(403).json({ error: 'Empresa não disponível' });
       return;
     }
 
@@ -181,7 +181,7 @@ export async function listTenantChatTemplates(req: AuthRequest, res: Response): 
     res.json({ items: result.rows.map(rowToApi) });
   } catch (e: any) {
     if (e?.code === '42P01') {
-      res.status(503).json({ error: 'Migração pendente: tenant_chat_templates' });
+      res.status(503).json({ error: 'Migração pendente: modelos de chat da empresa' });
       return;
     }
     console.error('[tenantChatTemplates] list', e);
@@ -193,7 +193,7 @@ export async function getTenantChatTemplate(req: AuthRequest, res: Response): Pr
   try {
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant não disponível' });
+      res.status(403).json({ error: 'Empresa não disponível' });
       return;
     }
     const { id } = req.params;
@@ -279,7 +279,7 @@ export async function patchTenantChatTemplate(req: AuthRequest, res: Response): 
   try {
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant não disponível' });
+      res.status(403).json({ error: 'Empresa não disponível' });
       return;
     }
     const { id } = req.params;
@@ -394,7 +394,7 @@ export async function deleteTenantChatTemplate(req: AuthRequest, res: Response):
   try {
     const tenantId = req.tenantId;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant não disponível' });
+      res.status(403).json({ error: 'Empresa não disponível' });
       return;
     }
     const { id } = req.params;

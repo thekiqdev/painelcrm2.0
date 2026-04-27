@@ -18,7 +18,7 @@ type Props = {
   onManageColumnsClick?: () => void;
   manageColumnsDisabled?: boolean;
   disabledSelect?: boolean;
-  /** Definições do quadro (criador ou admin do tenant) */
+  /** Definições do quadro (criador ou admin da empresa) */
   onBoardSettingsClick?: () => void;
   boardSettingsDisabled?: boolean;
   showBoardSettings?: boolean;

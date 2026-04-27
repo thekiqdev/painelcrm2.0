@@ -210,7 +210,7 @@ async function applyCrmStageSync(
       [stageId, target.id, input.tenantId],
     );
     if (updated.rows.length === 0) {
-      const err = new Error('Falha ao sincronizar CRM: cliente não encontrado no tenant.');
+      const err = new Error('Falha ao sincronizar CRM: cliente não encontrado na empresa.');
       (err as Error & { code?: string }).code = 'BAD_REQUEST';
       throw err;
     }
@@ -232,7 +232,7 @@ async function applyCrmStageSync(
     [stageId, target.id, input.tenantId],
   );
   if (updatedLead.rows.length === 0) {
-    const err = new Error('Falha ao sincronizar CRM: lead não encontrado no tenant.');
+    const err = new Error('Falha ao sincronizar CRM: lead não encontrado na empresa.');
     (err as Error & { code?: string }).code = 'BAD_REQUEST';
     throw err;
   }
@@ -537,7 +537,7 @@ async function findExistingLeadForConversationDedupe(
     );
     if (r.rows.length > 1) {
       leadAutomationBadRequest(
-        'Dedupe ambígua: vários leads com o mesmo telefone no tenant. Corrija o CRM antes de automatizar.',
+        'Dedupe ambígua: vários leads com o mesmo telefone na empresa. Corrija o CRM antes de automatizar.',
       );
     }
     if (r.rows.length === 1) return r.rows[0]!.id;
@@ -556,7 +556,7 @@ async function findExistingLeadForConversationDedupe(
     );
     if (r.rows.length > 1) {
       leadAutomationBadRequest(
-        'Dedupe ambígua: vários leads com o mesmo e-mail no tenant. Corrija o CRM antes de automatizar.',
+        'Dedupe ambígua: vários leads com o mesmo e-mail na empresa. Corrija o CRM antes de automatizar.',
       );
     }
     if (r.rows.length === 1) return r.rows[0]!.id;
@@ -575,7 +575,7 @@ async function findExistingLeadForConversationDedupe(
     );
     if (r.rows.length > 1) {
       leadAutomationBadRequest(
-        'Dedupe ambígua: vários leads com o mesmo telefone e nome no tenant. Corrija o CRM antes de automatizar.',
+        'Dedupe ambígua: vários leads com o mesmo telefone e nome na empresa. Corrija o CRM antes de automatizar.',
       );
     }
     if (r.rows.length === 1) return r.rows[0]!.id;
@@ -590,7 +590,7 @@ async function assertActorInTenant(client: PoolClient, actorUserId: string, tena
     tenantId,
   ]);
   if (ok.rows.length === 0) {
-    leadAutomationBadRequest('Usuário ator inválido para o tenant ao criar lead.');
+    leadAutomationBadRequest('Usuário ator inválido para a empresa ao criar lead.');
   }
 }
 
@@ -603,7 +603,7 @@ async function assertLeadBelongsToTenant(client: PoolClient, leadId: string, ten
     [leadId, tenantId],
   );
   if (ok.rows.length === 0) {
-    leadAutomationBadRequest('Lead encontrado no dedupe não pertence ao tenant.');
+    leadAutomationBadRequest('Lead encontrado no dedupe não pertence à empresa.');
   }
 }
 
@@ -1124,7 +1124,7 @@ async function findExistingClientForConversation(
     );
     if (r.rows.length > 1) {
       ensureClientAutomationBadRequest(
-        'Dedupe ambígua: vários clientes com o mesmo telefone no tenant. Corrija o CRM antes de automatizar.',
+        'Dedupe ambígua: vários clientes com o mesmo telefone na empresa. Corrija o CRM antes de automatizar.',
       );
     }
     if (r.rows.length === 1) return r.rows[0]!.id;
@@ -1143,7 +1143,7 @@ async function findExistingClientForConversation(
     );
     if (r.rows.length > 1) {
       ensureClientAutomationBadRequest(
-        'Dedupe ambígua: vários clientes com o mesmo e-mail no tenant. Corrija o CRM antes de automatizar.',
+        'Dedupe ambígua: vários clientes com o mesmo e-mail na empresa. Corrija o CRM antes de automatizar.',
       );
     }
     if (r.rows.length === 1) return r.rows[0]!.id;
@@ -1261,7 +1261,7 @@ export async function runKanbanEnsureClientAutomationInTransaction(
     );
     const lead = leadRow.rows[0];
     if (!lead) {
-      ensureClientAutomationBadRequest('Lead vinculado à conversa não pertence ao tenant.');
+      ensureClientAutomationBadRequest('Lead vinculado à conversa não pertence à empresa.');
     }
 
     const existingByLead = await findExistingClientForConversation(client, input.tenantId, {
@@ -1755,7 +1755,7 @@ export async function runKanbanTaskAutomationInTransaction(
     input.tenantId,
   ]);
   if (assertActor.rows.length === 0) {
-    taskAutomationBadRequest('Usuário ator inválido para o tenant ao criar tarefa.');
+    taskAutomationBadRequest('Usuário ator inválido para a empresa ao criar tarefa.');
   }
 
   let taskId: string;

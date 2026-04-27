@@ -198,7 +198,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
     const tenantId = req.tenantId ?? null;
     const userId = req.userId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>

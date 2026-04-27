@@ -118,7 +118,7 @@ export function ChatKanbanAddCardDialog({
           <DialogDescription>
             {column ? (
               <>
-                Coluna <span className="font-medium text-foreground">{column.name}</span>. Só aparecem conversas do tenant
+                Coluna <span className="font-medium text-foreground">{column.name}</span>. Só aparecem conversas desta empresa
                 que ainda não estão neste quadro.
               </>
             ) : (

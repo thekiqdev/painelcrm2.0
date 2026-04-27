@@ -96,7 +96,12 @@ export async function createFinancialTransfer(
 
 export async function listFinancialTransfers(
   tenantId: string,
-  filters: { account_id?: string | null; from?: string | null; to?: string | null }
+  filters: {
+    account_id?: string | null;
+    from?: string | null;
+    to?: string | null;
+    restrict_to_account_ids?: string[] | null;
+  }
 ): Promise<FinancialTransferRow[]> {
   let q = `SELECT id::text, tenant_id::text, from_account_id::text, to_account_id::text, amount_cents,
                   transfer_date::text, description, out_transaction_id::text, in_transaction_id::text, created_at, updated_at
@@ -107,6 +112,13 @@ export async function listFinancialTransfers(
     q += ` AND (from_account_id = $${n}::uuid OR to_account_id = $${n}::uuid)`;
     params.push(filters.account_id);
     n++;
+  }
+  if (filters.restrict_to_account_ids && filters.restrict_to_account_ids.length > 0) {
+    /* Ambas as pontas devem ser contas visíveis para não expor transferências parciais. */
+    q += ` AND from_account_id = ANY($${n}::uuid[]) AND to_account_id = ANY($${n + 1}::uuid[])`;
+    params.push(filters.restrict_to_account_ids);
+    params.push(filters.restrict_to_account_ids);
+    n += 2;
   }
   if (filters.from) {
     q += ` AND transfer_date >= $${n}::date`;

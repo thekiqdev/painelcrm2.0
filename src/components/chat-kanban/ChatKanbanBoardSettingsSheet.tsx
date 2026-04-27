@@ -160,7 +160,7 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
           <SheetHeader>
             <SheetTitle>Configuração do quadro</SheetTitle>
             <SheetDescription>
-              Nome, funil e quem pode ver este Kanban. Apenas o criador do quadro ou administrador do tenant pode
+              Nome, funil e quem pode ver este Kanban. Apenas o criador do quadro ou administrador da empresa pode
               alterar estas opções.
             </SheetDescription>
           </SheetHeader>
@@ -233,7 +233,7 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
               </TabsContent>
               <TabsContent value="perm" className="flex min-h-0 flex-1 flex-col gap-4 py-4">
                 <p className="text-sm text-muted-foreground">
-                  Defina quem pode ver este quadro na listagem. Administradores do tenant e o criador do quadro
+                  Defina quem pode ver este quadro na listagem. Administradores da empresa e o criador do quadro
                   mantêm sempre acesso de gestão.
                 </p>
                 <RadioGroup
@@ -311,7 +311,7 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
                             </label>
                           ))}
                           {teams.length === 0 ? (
-                            <p className="text-xs text-muted-foreground">Sem equipes neste tenant.</p>
+                            <p className="text-xs text-muted-foreground">Sem equipes nesta empresa.</p>
                           ) : null}
                         </div>
                       </ScrollArea>

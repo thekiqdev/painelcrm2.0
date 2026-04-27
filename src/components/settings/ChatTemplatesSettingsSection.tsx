@@ -1,6 +1,6 @@
 import { WhatsappMessageTemplatesPanel } from '@/components/settings/WhatsappMessageTemplatesPanel';
 
-/** Secção própria em Configurações: Templates WhatsApp (sequências automáticas por tenant). */
+/** Secção própria em Configurações: Templates WhatsApp (sequências automáticas por empresa). */
 export function ChatTemplatesSettingsSection() {
   return (
     <div className="space-y-6">

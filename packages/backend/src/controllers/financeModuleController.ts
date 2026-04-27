@@ -70,7 +70,7 @@ const createExpenseBody = z.object({
 function tenantOr401(req: AuthRequest, res: Response): string | null {
   const tenantId = req.tenantId ?? null;
   if (!tenantId) {
-    res.status(401).json({ error: 'Tenant não identificado' });
+    res.status(401).json({ error: 'Empresa não identificada' });
     return null;
   }
   return tenantId;

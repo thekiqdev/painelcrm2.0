@@ -307,10 +307,10 @@ const CustomerInvoiceNew = ({
               toast.info(
                 "Esta fatura já está paga: não é possível editar a cobrança atual aqui. No detalhe da fatura use «Alterar próxima renovação» para mudar o ciclo da assinatura."
               );
-              navigate(`/customer-invoices/${editInvoiceId}`);
+          navigate(`/customer-invoices/${editInvoiceId}`);
             }
-            return;
-          }
+          return;
+        }
           // URL canónica: fatura paga de assinatura só edita ciclo com ?flow=renewal
           if (editFlowQuery !== "renewal") {
             if (!cancelled) {
@@ -523,7 +523,7 @@ const CustomerInvoiceNew = ({
     });
     if (embedded) {
       setCreationKind("one_off");
-      setStep("form");
+    setStep("form");
     } else {
       const kindFromUrl =
         billingKindQuery === "subscription"
@@ -609,31 +609,31 @@ const CustomerInvoiceNew = ({
 
   const appendLineFromCatalog = useCallback(
     (p: Product) => {
-      const unit =
-        resolvePublicCatalogUnitPrice({
-          price: p.price ?? null,
-          discount_price: p.discount_price ?? null,
-        }) ?? 0;
-      const desc =
-        [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
-      setLines((prev) => [
-        ...prev,
-        {
-          ...defaultLine(),
-          id: crypto.randomUUID(),
-          product_id: p.id,
-          description: desc.slice(0, 2000),
-          quantity: "1",
-          unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
-          discount: "0",
-          discount_kind: "fixed",
+    const unit =
+      resolvePublicCatalogUnitPrice({
+        price: p.price ?? null,
+        discount_price: p.discount_price ?? null,
+      }) ?? 0;
+    const desc =
+      [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
+    setLines((prev) => [
+      ...prev,
+      {
+        ...defaultLine(),
+        id: crypto.randomUUID(),
+        product_id: p.id,
+        description: desc.slice(0, 2000),
+        quantity: "1",
+        unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
+        discount: "0",
+        discount_kind: "fixed",
           ...(creationKind === "subscription"
             ? { is_recurring: true, recurring_interval: billingInterval }
             : {}),
-        },
-      ]);
-      setInvoicePickerOpen(null);
-      setInvoicePickerQuery("");
+      },
+    ]);
+    setInvoicePickerOpen(null);
+    setInvoicePickerQuery("");
     },
     [creationKind, billingInterval]
   );
@@ -685,11 +685,11 @@ const CustomerInvoiceNew = ({
           next_billing_after_db_today:
             "A data do ciclo ainda está à frente do calendário do servidor de base de dados; o scheduler enfileirará quando o dia for atingido.",
           future_local_date:
-            "No fuso do tenant o dia do ciclo ainda é futuro (Fase 2); o scheduler enfileirará quando a data local coincidir.",
+            "No fuso horário da empresa o dia do ciclo ainda é futuro (Fase 2); o scheduler enfileirará quando a data local coincidir.",
           too_early_local_time:
             "Mesmo dia local, mas ainda antes da hora mínima de geração configurada (Fase 2); o scheduler enfileirará depois.",
           outside_local_window:
-            "Fora da janela horária local do tenant; o scheduler enfileirará quando a janela Fase 2 permitir.",
+            "Fora da janela horária local da empresa; o scheduler enfileirará quando a janela Fase 2 permitir.",
           active_job_exists: "Já existe job pendente ou em processamento para este ciclo — não foi criada duplicidade.",
           completed_cycle_guard:
             "Já existe um job concluído para este mesmo ciclo; não foi criada duplicidade (idempotência).",
@@ -1239,7 +1239,7 @@ const CustomerInvoiceNew = ({
             {!mobileShell && (
               <CardDescription className="text-xs text-muted-foreground -mt-2">
                 Jobs pendentes obsoletos na fila são cancelados. Se a nova data já for elegível (calendário do servidor e
-                janela horária local do tenant), o backend pode enfileirar o job de imediato.
+                janela horária local da empresa), o backend pode enfileirar o job de imediato.
               </CardDescription>
             )}
             <div>
@@ -1276,7 +1276,7 @@ const CustomerInvoiceNew = ({
         <Alert className="border-orange-500/50 bg-orange-500/10 text-orange-950 dark:border-orange-500/40 dark:bg-orange-950/35 dark:text-orange-50">
           <AlertTriangle className="h-4 w-4 text-orange-600 dark:text-orange-400" />
           <AlertDescription>
-            Para emitir faturas com cobrança, o tenant precisa de uma configuração de <strong>pagamentos (CRM) ativa</strong>{" "}
+            Para emitir faturas com cobrança, a empresa precisa de uma configuração de <strong>pagamentos (CRM) ativa</strong>{" "}
             (<code className="text-xs">status = ativo</code> em Configurações). Isso não exige teste de conexão explícito
             nesta tela — apenas configuração válida e ativa.{" "}
             <Link to="/settings/payments" className="font-medium text-primary underline hover:no-underline">
@@ -1294,14 +1294,14 @@ const CustomerInvoiceNew = ({
           )}
         >
           {!mobileShell && (
-            <CardHeader>
-              <CardTitle>{crmGatewayActive === false ? "Cliente e pré-requisitos" : "Cliente"}</CardTitle>
-              <CardDescription>
-                {crmGatewayActive === false
-                  ? "Selecione o cliente. É necessário gateway de pagamentos (CRM) ativo para emitir cobrança."
+          <CardHeader>
+            <CardTitle>{crmGatewayActive === false ? "Cliente e pré-requisitos" : "Cliente"}</CardTitle>
+            <CardDescription>
+              {crmGatewayActive === false
+                ? "Selecione o cliente. É necessário gateway de pagamentos (CRM) ativo para emitir cobrança."
                   : "Escolha o tipo de fatura e, se for cliente existente, localize o contacto abaixo."}
-              </CardDescription>
-            </CardHeader>
+            </CardDescription>
+          </CardHeader>
           )}
           <CardContent className={cn("space-y-6", mobileShell && "space-y-5 p-0")}>
             {!embedded && (
@@ -1322,7 +1322,7 @@ const CustomerInvoiceNew = ({
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-foreground">
                       <User className="h-5 w-5 shrink-0" aria-hidden />
-                    </div>
+              </div>
                     <p className="mt-3 font-semibold text-foreground">Cliente existente</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       Para quem já está no CRM. Busque pelo nome, e-mail ou telefone.
@@ -1351,7 +1351,7 @@ const CustomerInvoiceNew = ({
                       Link público: a pessoa completa os dados e paga no gateway.
                     </p>
                   </button>
-                </div>
+              </div>
               </div>
             )}
 
@@ -1419,7 +1419,7 @@ const CustomerInvoiceNew = ({
                         <span className="truncate">{selectedClient.company}</span>
                       </p>
                     ) : null}
-                  </div>
+              </div>
                 </div>
                 <div className="space-y-2.5 px-4 py-3.5 text-sm">
                   {selectedClient.email ? (
@@ -1440,16 +1440,16 @@ const CustomerInvoiceNew = ({
                       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                         CPF / CNPJ
                       </p>
-                      {selectedClient.cpf_cnpj ? (
+                        {selectedClient.cpf_cnpj ? (
                         <p className="mt-1 font-mono text-sm text-foreground/90">{selectedClient.cpf_cnpj}</p>
                       ) : (
                         <p className="mt-1 text-xs leading-snug text-muted-foreground">
                           Não cadastrado. Se o gateway exigir documento, poderá ser pedido na página de pagamento.
-                        </p>
-                      )}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
               </div>
             ) : null}
 
@@ -1459,16 +1459,16 @@ const CustomerInvoiceNew = ({
                 <ul className="mt-2 list-none space-y-2 pl-0 text-muted-foreground">
                   <li className="flex flex-wrap items-center gap-2">
                     <X className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
-                    <span>Sem pagamentos (CRM) ativos neste tenant.</span>
-                    <Link
-                      to="/settings/payments"
+                    <span>Sem pagamentos (CRM) ativos nesta empresa.</span>
+                      <Link
+                        to="/settings/payments"
                       className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                    >
+                      >
                       Configurar <ExternalLink className="h-3 w-3" />
-                    </Link>
-                  </li>
-                </ul>
-              </div>
+                      </Link>
+                    </li>
+                  </ul>
+                </div>
             ) : null}
 
             {!(mobileShell && step === "client") && (
@@ -1478,8 +1478,8 @@ const CustomerInvoiceNew = ({
                     <Button type="button" variant="outline" onClick={cancelClientStep}>
                       Cancelar
                     </Button>
-                    <Button
-                      type="button"
+                  <Button
+                    type="button"
                       disabled={crmGatewayActive === false}
                       onClick={advanceClientStep}
                     >
@@ -1491,16 +1491,16 @@ const CustomerInvoiceNew = ({
                 {form.client_id && !invoiceByLink && (
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" variant="outline" onClick={cancelClientStep}>
-                      Cancelar
-                    </Button>
-                    <Button
-                      type="button"
-                      disabled={!invoiceByLink && crmGatewayActive === false}
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={!invoiceByLink && crmGatewayActive === false}
                       onClick={advanceClientStep}
-                    >
-                      Continuar
-                    </Button>
-                  </div>
+                  >
+                    Continuar
+                  </Button>
+                </div>
                 )}
               </>
             )}
@@ -1511,9 +1511,9 @@ const CustomerInvoiceNew = ({
           className={cn(mobileShell && "border-0 bg-transparent shadow-none")}
         >
           {!mobileShell && (
-            <CardHeader>
+          <CardHeader>
               <CardTitle>Tipo de cobrança</CardTitle>
-              <CardDescription>
+            <CardDescription>
                 {invoiceByLink ? (
                   <>
                     Cobrança por link — sem cliente selecionado neste momento. Escolha entre fatura única ou assinatura
@@ -1526,8 +1526,8 @@ const CustomerInvoiceNew = ({
                     deseja criar.
                   </>
                 )}
-              </CardDescription>
-            </CardHeader>
+            </CardDescription>
+          </CardHeader>
           )}
           <CardContent className={cn("space-y-6", mobileShell && "space-y-4 p-0")}>
             {mobileShell ? (
@@ -1737,9 +1737,9 @@ const CustomerInvoiceNew = ({
                   {mobileShell
                     ? form.client_id
                       ? "Busca no servidor, só deste cliente."
-                      : "Busca em todas as cobranças abertas do tenant."
+                      : "Busca em todas as cobranças abertas da empresa."
                     : `Busca no servidor por descrição, ID, nome/empresa/e-mail/telefone do cliente${
-                        form.client_id ? " (restrita ao cliente selecionado)" : " (todas as cobranças do tenant)"
+                        form.client_id ? " (restrita ao cliente selecionado)" : " (todas as cobranças da empresa)"
                       }.`}
                 </p>
                 <div className="mt-1 space-y-2">
@@ -1794,7 +1794,7 @@ const CustomerInvoiceNew = ({
                     {mobileShell ? "Assinatura" : "Dados da assinatura"}
                   </h3>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
+              <div>
                       <Label htmlFor="billing_interval_sub">Periodicidade</Label>
                       <Select
                         value={billingInterval}
@@ -1851,7 +1851,7 @@ const CustomerInvoiceNew = ({
                       </div>
                     )}
                     <p className="text-xs text-muted-foreground sm:col-span-2">
-                      Geração antecipada: quando existir configuração no tenant, o sistema aplica automaticamente nas
+                      Geração antecipada: quando existir configuração na empresa, o sistema aplica automaticamente nas
                       próximas emissões.
                     </p>
                   </div>
@@ -2255,251 +2255,251 @@ const CustomerInvoiceNew = ({
                     )}
                   </div>
                 ) : (
-                  <div className="rounded-md border overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b bg-muted/50">
-                          <th className="text-left p-2 font-medium">Descrição</th>
-                          <th className="text-right p-2 w-20">Qtd</th>
-                          <th className="text-right p-2 w-32">Valor un. (R$)</th>
-                          <th className="text-right p-2 min-w-[140px]">Desconto</th>
-                          <th className="text-right p-2 w-28">Total</th>
-                          <th className="w-10 p-2" />
+                <div className="rounded-md border overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="text-left p-2 font-medium">Descrição</th>
+                        <th className="text-right p-2 w-20">Qtd</th>
+                        <th className="text-right p-2 w-32">Valor un. (R$)</th>
+                        <th className="text-right p-2 min-w-[140px]">Desconto</th>
+                        <th className="text-right p-2 w-28">Total</th>
+                        <th className="w-10 p-2" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lines.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                            Nenhuma linha. Adicione itens manuais ou do catálogo — ou informe um valor único abaixo
+                            (quando não houver linhas).
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {lines.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
-                              Nenhuma linha. Adicione itens manuais ou do catálogo — ou informe um valor único abaixo
-                              (quando não houver linhas).
-                            </td>
-                          </tr>
-                        ) : null}
-                        {lines.flatMap((line) => [
-                          <tr key={`${line.id}-main`} className="border-b">
-                            <td className="p-2">
-                              <Input
-                                placeholder="Descrição"
-                                value={line.description}
-                                onChange={(e) => handleLineChange(line.id, "description", e.target.value)}
-                                className="h-8"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <Input
-                                type="text"
-                                inputMode="decimal"
-                                placeholder="1"
-                                value={line.quantity}
-                                onChange={(e) => handleLineChange(line.id, "quantity", e.target.value)}
-                                className="h-8 text-right"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <Input
-                                type="text"
-                                inputMode="decimal"
-                                placeholder="0,00"
-                                value={line.unit_price}
-                                onChange={(e) => handleLineChange(line.id, "unit_price", e.target.value)}
-                                onBlur={() =>
+                      ) : null}
+                      {lines.flatMap((line) => [
+                        <tr key={`${line.id}-main`} className="border-b">
+                          <td className="p-2">
+                            <Input
+                              placeholder="Descrição"
+                              value={line.description}
+                              onChange={(e) => handleLineChange(line.id, "description", e.target.value)}
+                              className="h-8"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="1"
+                              value={line.quantity}
+                              onChange={(e) => handleLineChange(line.id, "quantity", e.target.value)}
+                              className="h-8 text-right"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0,00"
+                              value={line.unit_price}
+                              onChange={(e) => handleLineChange(line.id, "unit_price", e.target.value)}
+                              onBlur={() =>
+                                setLines((prev) =>
+                                  prev.map((l) =>
+                                    l.id === line.id && l.unit_price.trim() !== ""
+                                      ? { ...l, unit_price: formatBrlDisplay(parseBrl(l.unit_price)) }
+                                      : l
+                                  )
+                                )
+                              }
+                              className="h-8 text-right font-mono text-xs"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-end">
+                              <Select
+                                value={line.discount_kind}
+                                onValueChange={(v) =>
                                   setLines((prev) =>
                                     prev.map((l) =>
-                                      l.id === line.id && l.unit_price.trim() !== ""
-                                        ? { ...l, unit_price: formatBrlDisplay(parseBrl(l.unit_price)) }
+                                      l.id === line.id
+                                        ? {
+                                            ...l,
+                                            discount_kind: v as InvoiceLineDiscountKind,
+                                            discount:
+                                              v === "percent"
+                                                ? l.discount_kind === "fixed"
+                                                  ? "0"
+                                                  : l.discount
+                                                : l.discount_kind === "percent"
+                                                  ? "0,00"
+                                                  : l.discount,
+                                          }
                                         : l
                                     )
                                   )
                                 }
-                                className="h-8 text-right font-mono text-xs"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-end">
-                                <Select
-                                  value={line.discount_kind}
-                                  onValueChange={(v) =>
-                                    setLines((prev) =>
-                                      prev.map((l) =>
-                                        l.id === line.id
-                                          ? {
-                                              ...l,
-                                              discount_kind: v as InvoiceLineDiscountKind,
-                                              discount:
-                                                v === "percent"
-                                                  ? l.discount_kind === "fixed"
-                                                    ? "0"
-                                                    : l.discount
-                                                  : l.discount_kind === "percent"
-                                                    ? "0,00"
-                                                    : l.discount,
-                                            }
-                                          : l
-                                      )
-                                    )
-                                  }
-                                >
-                                  <SelectTrigger className="h-8 w-full sm:w-[68px] text-xs shrink-0">
-                                    <SelectValue />
-                                  </SelectTrigger>
+                              >
+                                <SelectTrigger className="h-8 w-full sm:w-[68px] text-xs shrink-0">
+                                  <SelectValue />
+                                </SelectTrigger>
                                   <SelectContent className={radixOverlayAboveMobileShellClassName}>
-                                    <SelectItem value="fixed">R$</SelectItem>
-                                    <SelectItem value="percent">%</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <Input
-                                  type="text"
-                                  inputMode="decimal"
-                                  placeholder={line.discount_kind === "percent" ? "0" : "0,00"}
-                                  value={line.discount}
-                                  onChange={(e) => handleLineChange(line.id, "discount", e.target.value)}
-                                  onBlur={() =>
-                                    setLines((prev) =>
-                                      prev.map((l) => {
-                                        if (l.id !== line.id) return l;
-                                        if (l.discount.trim() === "") {
-                                          return { ...l, discount: l.discount_kind === "percent" ? "0" : "0,00" };
-                                        }
-                                        if (l.discount_kind === "percent") {
-                                          const p = Math.min(100, Math.max(0, parseBrl(l.discount)));
-                                          return {
-                                            ...l,
-                                            discount: p.toLocaleString("pt-BR", {
-                                              maximumFractionDigits: 2,
-                                              minimumFractionDigits: 0,
-                                            }),
-                                          };
-                                        }
-                                        return { ...l, discount: formatBrlDisplay(parseBrl(l.discount)) };
-                                      })
-                                    )
-                                  }
-                                  className="h-8 text-right font-mono text-xs sm:min-w-[4.5rem]"
-                                />
-                              </div>
-                            </td>
-                            <td className="p-2 text-right font-medium">
-                              R$ {(lineTotalCents(line) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="p-2">
-                              <div className="flex items-center justify-end gap-1">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-muted-foreground"
-                                  onClick={() =>
-                                    setLines((prev) =>
-                                      prev.map((l) => (l.id === line.id ? { ...l, show_advanced: !l.show_advanced } : l))
-                                    )
-                                  }
-                                  aria-label="Opções avançadas do item"
-                                  title="Opções avançadas do item"
-                                >
-                                  <Settings2 className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-muted-foreground"
-                                  onClick={() => handleRemoveLine(line.id)}
-                                  aria-label="Remover linha"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>,
-                          ...(line.show_advanced
-                            ? [
-                                <tr key={`${line.id}-adv`} className="border-b bg-muted/30">
-                                  <td colSpan={6} className="p-2 text-xs text-muted-foreground">
-                                    <div className="flex items-center gap-2 mb-2 font-medium text-foreground">
-                                      Opções avançadas do item
+                                  <SelectItem value="fixed">R$</SelectItem>
+                                  <SelectItem value="percent">%</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                placeholder={line.discount_kind === "percent" ? "0" : "0,00"}
+                                value={line.discount}
+                                onChange={(e) => handleLineChange(line.id, "discount", e.target.value)}
+                                onBlur={() =>
+                                  setLines((prev) =>
+                                    prev.map((l) => {
+                                      if (l.id !== line.id) return l;
+                                      if (l.discount.trim() === "") {
+                                        return { ...l, discount: l.discount_kind === "percent" ? "0" : "0,00" };
+                                      }
+                                      if (l.discount_kind === "percent") {
+                                        const p = Math.min(100, Math.max(0, parseBrl(l.discount)));
+                                        return {
+                                          ...l,
+                                          discount: p.toLocaleString("pt-BR", {
+                                            maximumFractionDigits: 2,
+                                            minimumFractionDigits: 0,
+                                          }),
+                                        };
+                                      }
+                                      return { ...l, discount: formatBrlDisplay(parseBrl(l.discount)) };
+                                    })
+                                  )
+                                }
+                                className="h-8 text-right font-mono text-xs sm:min-w-[4.5rem]"
+                              />
+                            </div>
+                          </td>
+                          <td className="p-2 text-right font-medium">
+                            R$ {(lineTotalCents(line) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground"
+                                onClick={() =>
+                                  setLines((prev) =>
+                                    prev.map((l) => (l.id === line.id ? { ...l, show_advanced: !l.show_advanced } : l))
+                                  )
+                                }
+                                aria-label="Opções avançadas do item"
+                                title="Opções avançadas do item"
+                              >
+                                <Settings2 className="h-4 w-4" />
+                              </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground"
+                              onClick={() => handleRemoveLine(line.id)}
+                              aria-label="Remover linha"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                            </div>
+                          </td>
+                        </tr>,
+                        ...(line.show_advanced
+                          ? [
+                              <tr key={`${line.id}-adv`} className="border-b bg-muted/30">
+                            <td colSpan={6} className="p-2 text-xs text-muted-foreground">
+                              <div className="flex items-center gap-2 mb-2 font-medium text-foreground">
+                                Opções avançadas do item
                                       {line.show_advanced ? (
                                         <ChevronUp className="h-3.5 w-3.5" />
                                       ) : (
                                         <ChevronDown className="h-3.5 w-3.5" />
                                       )}
-                                    </div>
-                                    <div className="grid gap-2 sm:grid-cols-3">
-                                      <div className="flex items-center gap-2">
-                                        <Checkbox
-                                          id={`line_is_recurring_${line.id}`}
-                                          checked={line.is_recurring}
+                              </div>
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    id={`line_is_recurring_${line.id}`}
+                                    checked={line.is_recurring}
                                           disabled={creationKind === "subscription"}
-                                          onCheckedChange={(v) =>
-                                            setLines((prev) =>
-                                              prev.map((l) =>
-                                                l.id === line.id ? { ...l, is_recurring: v === true } : l
-                                              )
-                                            )
-                                          }
-                                        />
+                                    onCheckedChange={(v) =>
+                                      setLines((prev) =>
+                                        prev.map((l) =>
+                                          l.id === line.id ? { ...l, is_recurring: v === true } : l
+                                        )
+                                      )
+                                    }
+                                  />
                                         <Label
                                           htmlFor={`line_is_recurring_${line.id}`}
                                           className="text-xs font-normal cursor-pointer"
                                         >
-                                          Participa da recorrência
-                                        </Label>
-                                      </div>
-                                      <div>
-                                        <Label className="text-xs">Intervalo por item</Label>
-                                        <Select
-                                          value={line.recurring_interval}
-                                          onValueChange={(v) =>
-                                            setLines((prev) =>
-                                              prev.map((l) =>
-                                                l.id === line.id
-                                                  ? {
-                                                      ...l,
-                                                      recurring_interval: v as InvoiceLineRow["recurring_interval"],
-                                                    }
-                                                  : l
-                                              )
-                                            )
-                                          }
+                                    Participa da recorrência
+                                  </Label>
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Intervalo por item</Label>
+                                  <Select
+                                    value={line.recurring_interval}
+                                    onValueChange={(v) =>
+                                      setLines((prev) =>
+                                        prev.map((l) =>
+                                          l.id === line.id
+                                            ? {
+                                                ...l,
+                                                recurring_interval: v as InvoiceLineRow["recurring_interval"],
+                                              }
+                                            : l
+                                        )
+                                      )
+                                    }
                                           disabled={!line.is_recurring || creationKind === "subscription"}
-                                        >
-                                          <SelectTrigger className="h-8 mt-1">
-                                            <SelectValue />
-                                          </SelectTrigger>
+                                  >
+                                    <SelectTrigger className="h-8 mt-1">
+                                      <SelectValue />
+                                    </SelectTrigger>
                                           <SelectContent className={radixOverlayAboveMobileShellClassName}>
-                                            <SelectItem value="daily">Diário</SelectItem>
-                                            <SelectItem value="weekly">Semanal</SelectItem>
-                                            <SelectItem value="monthly">Mensal</SelectItem>
-                                            <SelectItem value="quarterly">Trimestral</SelectItem>
-                                            <SelectItem value="semi_annual">Semestral</SelectItem>
-                                            <SelectItem value="yearly">Anual</SelectItem>
-                                          </SelectContent>
-                                        </Select>
-                                      </div>
-                                      <div>
-                                        <Label className="text-xs">Cobrar em outra data (opcional)</Label>
-                                        <Input
-                                          type="date"
-                                          value={line.scheduled_due_date}
-                                          onChange={(e) =>
-                                            setLines((prev) =>
-                                              prev.map((l) =>
-                                                l.id === line.id ? { ...l, scheduled_due_date: e.target.value } : l
-                                              )
-                                            )
-                                          }
-                                          className="h-8 mt-1"
-                                        />
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>,
-                              ]
-                            : []),
-                        ])}
-                      </tbody>
-                    </table>
-                  </div>
+                                      <SelectItem value="daily">Diário</SelectItem>
+                                      <SelectItem value="weekly">Semanal</SelectItem>
+                                      <SelectItem value="monthly">Mensal</SelectItem>
+                                      <SelectItem value="quarterly">Trimestral</SelectItem>
+                                      <SelectItem value="semi_annual">Semestral</SelectItem>
+                                      <SelectItem value="yearly">Anual</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Cobrar em outra data (opcional)</Label>
+                                  <Input
+                                    type="date"
+                                    value={line.scheduled_due_date}
+                                    onChange={(e) =>
+                                      setLines((prev) =>
+                                        prev.map((l) =>
+                                          l.id === line.id ? { ...l, scheduled_due_date: e.target.value } : l
+                                        )
+                                      )
+                                    }
+                                    className="h-8 mt-1"
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                          </tr>,
+                            ]
+                          : []),
+                      ])}
+                    </tbody>
+                  </table>
+                </div>
                 )}
                 <p className="text-xs text-muted-foreground mt-2">
                   Total:{" "}
@@ -2545,28 +2545,28 @@ const CustomerInvoiceNew = ({
                     </>
                   ) : (
                     <>
-                      Ou use valor único:{" "}
-                      <Input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0,00"
-                        value={form.amount}
-                        onChange={(e) =>
+                  Ou use valor único:{" "}
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={form.amount}
+                    onChange={(e) =>
                           setForm((f) => ({
                             ...f,
                             amount: formatBrlInputMask(sanitizeNumericFieldInput(e.target.value)),
                           }))
-                        }
-                        onBlur={() =>
-                          setForm((f) =>
-                            f.amount?.trim()
-                              ? { ...f, amount: formatBrlDisplay(parseBrl(f.amount)) }
-                              : f
-                          )
-                        }
-                        className="inline-block w-28 h-7 text-xs font-mono"
-                      />{" "}
-                      R$ (se preenchido, ignora a tabela de itens)
+                    }
+                    onBlur={() =>
+                      setForm((f) =>
+                        f.amount?.trim()
+                          ? { ...f, amount: formatBrlDisplay(parseBrl(f.amount)) }
+                          : f
+                      )
+                    }
+                    className="inline-block w-28 h-7 text-xs font-mono"
+                  />{" "}
+                  R$ (se preenchido, ignora a tabela de itens)
                     </>
                   )}
                 </p>
@@ -2679,10 +2679,10 @@ const CustomerInvoiceNew = ({
                         disabled={gatewaysLoading}
                       >
                         <SelectTrigger id="gateway_key" className="mt-1 max-w-[320px]">
-                          <SelectValue placeholder="Padrão do tenant" />
+                          <SelectValue placeholder="Padrão da empresa" />
                         </SelectTrigger>
                         <SelectContent className={radixOverlayAboveMobileShellClassName}>
-                          <SelectItem value="__none__">Padrão do tenant</SelectItem>
+                          <SelectItem value="__none__">Padrão da empresa</SelectItem>
                           {activeGatewaysForSelect.map((g) => (
                             <SelectItem key={g.key} value={g.key}>
                               {g.name}
@@ -2741,7 +2741,7 @@ const CustomerInvoiceNew = ({
                       ? "Salvar alterações"
                       : creationKind === "subscription"
                         ? "Criar assinatura e primeira fatura"
-                        : "Criar fatura"}
+                      : "Criar fatura"}
                 </Button>
               </div>
             </form>

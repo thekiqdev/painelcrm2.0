@@ -26,7 +26,7 @@ export async function createOrder(req: AuthRequest, res: Response): Promise<void
     const userId = req.userId!;
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const orderData = orderSchema.parse(req.body);
@@ -183,7 +183,7 @@ export async function getOrders(req: AuthRequest, res: Response): Promise<void> 
     const userId = req.userId!;
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
 
@@ -262,7 +262,7 @@ export async function getOrderById(req: AuthRequest, res: Response): Promise<voi
     const userId = req.userId!;
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const { id } = req.params;
@@ -330,7 +330,7 @@ export async function deleteOrder(req: AuthRequest, res: Response): Promise<void
     const userId = req.userId!;
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
     const { id } = req.params;

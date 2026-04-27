@@ -9,6 +9,8 @@ export type FinancialTransactionStatus = 'pending' | 'completed';
 export type FinancialTransactionKind = 'regular' | 'transfer';
 export type FinancialTransferDirection = 'in' | 'out';
 
+export type TransactionEntrySource = 'manual' | 'gateway_payment';
+
 export interface FinancialTransactionRow {
   id: string;
   tenant_id: string;
@@ -24,6 +26,13 @@ export interface FinancialTransactionRow {
   transaction_kind: FinancialTransactionKind;
   transfer_direction: FinancialTransferDirection | null;
   transfer_id: string | null;
+  entry_source: TransactionEntrySource | null;
+  reference_type: string | null;
+  reference_id: string | null;
+  gateway_provider: string | null;
+  gateway_reference_id: string | null;
+  external_event_id: string | null;
+  metadata: unknown | null;
   created_at: string;
   updated_at: string;
 }
@@ -37,11 +46,16 @@ export async function listFinancialTransactions(
     from?: string | null;
     to?: string | null;
     account_id?: string | null;
+    /** Restringe a estas contas (visibilidade); omitir = sem filtro extra. */
+    restrict_to_account_ids?: string[] | null;
   }
 ): Promise<FinancialTransactionRow[]> {
   let q = `SELECT id, tenant_id::text, account_id::text, type, amount_cents, description,
                   category_id::text, customer_id::text, reference_name, transaction_date::text,
-                  status, transaction_kind, transfer_direction, transfer_id::text, created_at, updated_at
+                  status, transaction_kind, transfer_direction, transfer_id::text,
+                  COALESCE(entry_source, 'manual') AS entry_source,
+                  reference_type, reference_id::text, gateway_provider, gateway_reference_id,
+                  external_event_id, metadata, created_at, updated_at
            FROM financial_transactions WHERE tenant_id = $1`;
   const params: unknown[] = [tenantId];
   let n = 2;
@@ -75,6 +89,11 @@ export async function listFinancialTransactions(
     params.push(filters.account_id);
     n++;
   }
+  if (filters.restrict_to_account_ids && filters.restrict_to_account_ids.length > 0) {
+    q += ` AND account_id = ANY($${n}::uuid[])`;
+    params.push(filters.restrict_to_account_ids);
+    n++;
+  }
   q += ` ORDER BY transaction_date DESC, created_at DESC LIMIT 1000`;
   const r = await pool.query<FinancialTransactionRow>(q, params);
   return r.rows.map((row) => ({ ...row, amount_cents: Number(row.amount_cents) }));
@@ -95,6 +114,13 @@ export async function createFinancialTransaction(
     transaction_kind?: FinancialTransactionKind;
     transfer_direction?: FinancialTransferDirection | null;
     transfer_id?: string | null;
+    entry_source?: TransactionEntrySource;
+    reference_type?: string | null;
+    reference_id?: string | null;
+    gateway_provider?: string | null;
+    gateway_reference_id?: string | null;
+    external_event_id?: string | null;
+    metadata?: Record<string, unknown> | null;
   }
 ): Promise<FinancialTransactionRow> {
   const acc = await getFinancialAccount(tenantId, body.account_id);
@@ -113,14 +139,24 @@ export async function createFinancialTransaction(
     ]);
     if (cl.rowCount === 0) throw new Error('Cliente inválido');
   }
+  const metaJson =
+    body.metadata && typeof body.metadata === 'object' ? JSON.stringify(body.metadata) : null;
+
   const r = await pool.query<FinancialTransactionRow>(
     `INSERT INTO financial_transactions (
        tenant_id, account_id, type, amount_cents, description, category_id, customer_id,
-       reference_name, transaction_date, status, transaction_kind, transfer_direction, transfer_id
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, COALESCE($10, 'pending'), COALESCE($11, 'regular'), $12, $13::uuid)
+       reference_name, transaction_date, status, transaction_kind, transfer_direction, transfer_id,
+       entry_source, reference_type, reference_id, gateway_provider, gateway_reference_id, external_event_id, metadata
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9::date, COALESCE($10, 'pending'), COALESCE($11, 'regular'), $12, $13::uuid,
+       COALESCE($14, 'manual'), $15, $16::uuid, $17, $18, $19, $20::jsonb
+     )
      RETURNING id, tenant_id::text, account_id::text, type, amount_cents, description,
                category_id::text, customer_id::text, reference_name, transaction_date::text,
-               status, transaction_kind, transfer_direction, transfer_id::text, created_at, updated_at`,
+               status, transaction_kind, transfer_direction, transfer_id::text,
+               COALESCE(entry_source, 'manual') AS entry_source,
+               reference_type, reference_id::text, gateway_provider, gateway_reference_id,
+               external_event_id, metadata, created_at, updated_at`,
     [
       tenantId,
       body.account_id,
@@ -135,6 +171,13 @@ export async function createFinancialTransaction(
       body.transaction_kind ?? 'regular',
       body.transfer_direction ?? null,
       body.transfer_id ?? null,
+      body.entry_source ?? 'manual',
+      body.reference_type ?? null,
+      body.reference_id ?? null,
+      body.gateway_provider ?? null,
+      body.gateway_reference_id ?? null,
+      body.external_event_id ?? null,
+      metaJson,
     ]
   );
   const row = r.rows[0]!;
@@ -145,7 +188,10 @@ export async function getFinancialTransaction(tenantId: string, id: string): Pro
   const r = await pool.query<FinancialTransactionRow>(
     `SELECT id, tenant_id::text, account_id::text, type, amount_cents, description,
             category_id::text, customer_id::text, reference_name, transaction_date::text,
-            status, transaction_kind, transfer_direction, transfer_id::text, created_at, updated_at
+            status, transaction_kind, transfer_direction, transfer_id::text,
+            COALESCE(entry_source, 'manual') AS entry_source,
+            reference_type, reference_id::text, gateway_provider, gateway_reference_id,
+            external_event_id, metadata, created_at, updated_at
      FROM financial_transactions
      WHERE tenant_id = $1 AND id = $2
      LIMIT 1`,
@@ -172,6 +218,9 @@ export async function updateFinancialTransaction(
   if (!cur) return null;
   if (cur.transaction_kind !== 'regular') {
     throw new Error('Só é possível editar movimentos do tipo regular por esta API');
+  }
+  if (cur.entry_source === 'gateway_payment') {
+    throw new Error('Movimento automático do gateway não pode ser editado por esta API');
   }
   const next = {
     description: patch.description !== undefined ? patch.description.trim() : cur.description,
@@ -204,7 +253,10 @@ export async function updateFinancialTransaction(
      WHERE tenant_id = $1 AND id = $8 AND transaction_kind = 'regular'
      RETURNING id, tenant_id::text, account_id::text, type, amount_cents, description,
                category_id::text, customer_id::text, reference_name, transaction_date::text,
-               status, transaction_kind, transfer_direction, transfer_id::text, created_at, updated_at`,
+               status, transaction_kind, transfer_direction, transfer_id::text,
+               COALESCE(entry_source, 'manual') AS entry_source,
+               reference_type, reference_id::text, gateway_provider, gateway_reference_id,
+               external_event_id, metadata, created_at, updated_at`,
     [
       tenantId,
       next.description,

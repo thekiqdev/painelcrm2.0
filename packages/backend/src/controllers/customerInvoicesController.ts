@@ -86,7 +86,7 @@ export async function getCustomerInvoicesGatewayStatus(req: AuthRequest, res: Re
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const gatewayConfigured = await isCrmGatewayActiveForTenant(tenantId);
@@ -108,7 +108,7 @@ export async function getCustomerInvoicePreconditions(req: AuthRequest, res: Res
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
 
@@ -126,7 +126,7 @@ export async function getCustomerInvoicePreconditions(req: AuthRequest, res: Res
 
     const belongs = await clientBelongsToTenant(tenantId, parsed.data);
     if (!belongs) {
-      res.status(404).json({ error: 'Cliente não encontrado ou não pertence ao tenant' });
+      res.status(404).json({ error: 'Cliente não encontrado ou não pertence à empresa' });
       return;
     }
 
@@ -143,7 +143,7 @@ export async function getCustomerInvoicesSummaryHandler(req: AuthRequest, res: R
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
@@ -162,7 +162,7 @@ export async function listCustomerInvoices(req: AuthRequest, res: Response): Pro
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
@@ -204,7 +204,7 @@ export async function getCustomerInvoiceById(req: AuthRequest, res: Response): P
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
@@ -230,7 +230,7 @@ export async function getCustomerInvoiceRecurrenceInsightHandler(req: AuthReques
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;
@@ -252,7 +252,7 @@ export async function getCustomerInvoiceRecurrenceHistory(req: AuthRequest, res:
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;
@@ -274,7 +274,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
 
@@ -318,7 +318,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
       subscription_id: result.subscription_id ?? undefined,
     });
   } catch (err) {
-    if (err instanceof Error && err.message === 'Cliente não pertence ao tenant') {
+    if (err instanceof Error && err.message === 'Cliente não pertence à empresa') {
       res.status(403).json({ error: err.message });
       return;
     }
@@ -385,7 +385,7 @@ export async function updateCustomerInvoice(req: AuthRequest, res: Response): Pr
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
 
@@ -438,7 +438,7 @@ export async function patchCustomerInvoiceRecurrenceNextBilling(req: AuthRequest
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
 
@@ -484,7 +484,7 @@ export async function deleteCustomerInvoice(req: AuthRequest, res: Response): Pr
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id } = req.params;

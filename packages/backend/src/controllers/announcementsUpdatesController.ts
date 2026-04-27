@@ -170,7 +170,7 @@ export async function postMarkUpdatesRead(req: AuthRequest, res: Response): Prom
     const tenantId = req.tenantId ?? null;
     const userId = req.userId ?? null;
     if (!tenantId || !userId) {
-      res.status(403).json({ error: 'Tenant necessário para marcar leituras' });
+      res.status(403).json({ error: 'Empresa necessária para marcar leituras' });
       return;
     }
     const body = markReadsBody.parse(req.body ?? {});

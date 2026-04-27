@@ -121,7 +121,7 @@ export const getProjects = async (req: Request, res: Response) => {
         [userId, teamId]
       );
       if (teamCheck.rows.length === 0) {
-        return res.status(400).json({ error: 'Equipe não encontrada ou não pertence ao seu tenant' });
+        return res.status(400).json({ error: 'Equipe não encontrada ou não pertence à sua empresa' });
       }
       try {
         result = await pool.query(
@@ -327,7 +327,7 @@ export const createProject = async (req: Request, res: Response) => {
         [userId, tid]
       );
       if (teamCheck.rows.length === 0) {
-        return res.status(400).json({ error: 'Equipe não encontrada ou não pertence ao seu tenant' });
+        return res.status(400).json({ error: 'Equipe não encontrada ou não pertence à sua empresa' });
       }
     }
     const primaryTeamId = teamIds[0] ?? null;
@@ -565,7 +565,7 @@ export const updateProject = async (req: Request, res: Response) => {
           [userId, tid]
         );
         if (teamCheck.rows.length === 0) {
-          return res.status(400).json({ error: 'Equipe não encontrada ou não pertence ao seu tenant' });
+          return res.status(400).json({ error: 'Equipe não encontrada ou não pertence à sua empresa' });
         }
       }
       const primaryTeamId = teamIds[0] ?? null;
@@ -581,7 +581,7 @@ export const updateProject = async (req: Request, res: Response) => {
           [userId, teamId]
         );
         if (teamCheck.rows.length === 0) {
-          return res.status(400).json({ error: 'Equipe não encontrada ou não pertence ao seu tenant' });
+          return res.status(400).json({ error: 'Equipe não encontrada ou não pertence à sua empresa' });
         }
       }
       updates.push(`team_id = $${paramCount++}`);

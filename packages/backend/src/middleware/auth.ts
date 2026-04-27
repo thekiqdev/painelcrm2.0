@@ -135,7 +135,7 @@ export function getCurrentTenantId(req: AuthRequest): string | null {
 export function requireTenantId(req: AuthRequest, res: Response): string | null {
   const tenantId = req.tenantId ?? null;
   if (!tenantId) {
-    res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
     return null;
   }
   return tenantId;
@@ -151,7 +151,7 @@ export function requireTenant(
   next: NextFunction
 ): void {
   if (req.tenantId == null) {
-    res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
     return;
   }
   next();

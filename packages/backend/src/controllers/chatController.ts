@@ -5032,7 +5032,7 @@ export async function linkConversation(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id: conversationId } = req.params;
@@ -5065,7 +5065,7 @@ export async function linkConversation(req: AuthRequest, res: Response) {
         [body.id, tenantId]
       );
       if ((client.rowCount ?? 0) === 0) {
-        res.status(404).json({ error: 'Cliente não encontrado para este tenant' });
+        res.status(404).json({ error: 'Cliente não encontrado para esta empresa' });
         return;
       }
       await pool.query(
@@ -5120,7 +5120,7 @@ export async function linkConversation(req: AuthRequest, res: Response) {
         [body.id, tenantId]
       );
       if ((lead.rowCount ?? 0) === 0) {
-        res.status(404).json({ error: 'Lead não encontrado para este tenant' });
+        res.status(404).json({ error: 'Lead não encontrado para esta empresa' });
         return;
       }
       await pool.query(
@@ -5169,7 +5169,7 @@ export async function unlinkConversation(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(401).json({ error: 'Tenant não identificado' });
+      res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
     const { id: conversationId } = req.params;
@@ -5227,7 +5227,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
   try {
     const tenantId = req.tenantId ?? null;
     if (!tenantId) {
-      res.status(403).json({ error: 'Tenant não identificado' });
+      res.status(403).json({ error: 'Empresa não identificada' });
       return;
     }
 

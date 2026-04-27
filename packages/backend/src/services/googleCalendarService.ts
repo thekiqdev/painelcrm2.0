@@ -9,10 +9,39 @@ import {
   type GoogleCalendarConnectionSecrets,
 } from './googleCalendarConnectionService.js';
 
-export const GOOGLE_CALENDAR_SCOPES = [
-  'https://www.googleapis.com/auth/calendar',
-  'https://www.googleapis.com/auth/calendar.events',
-].join(' ');
+/** Escopo mínimo: criar/listar eventos no calendário primário (evita o scope amplo `.../auth/calendar` na tela de consentimento) */
+export const GOOGLE_CALENDAR_SCOPES =
+  'https://www.googleapis.com/auth/calendar.events';
+
+/**
+ * Quando `GOOGLE_OAUTH_LOG_PARAMS=true`, regista parâmetros da URL de autorização (sem `client_secret`).
+ * `state` é um JWT: só comprimento e prefixo de formato (não o payload completo).
+ */
+function logGoogleOAuthAuthorizeParams(authorizeUrl: string, state: string): void {
+  if (String(process.env.GOOGLE_OAUTH_LOG_PARAMS || '').toLowerCase() !== 'true') return;
+  let parsed: URL;
+  try {
+    parsed = new URL(authorizeUrl);
+  } catch {
+    console.log('[google-oauth:params] (URL inválida)');
+    return;
+  }
+  const p = parsed.searchParams;
+  const clientId = p.get('client_id') || '';
+  const maskedId =
+    clientId.length > 20 ? `${clientId.slice(0, 12)}…${clientId.slice(-8)}` : clientId ? '***' : '';
+  console.log('[google-oauth:params]', {
+    client_id: maskedId,
+    redirect_uri: p.get('redirect_uri'),
+    response_type: p.get('response_type'),
+    scope: p.get('scope'),
+    access_type: p.get('access_type'),
+    prompt: p.get('prompt'),
+    include_granted_scopes: p.get('include_granted_scopes'),
+    state_length: state.length,
+    state_looks_like_jwt: state.startsWith('eyJ'),
+  });
+}
 
 export function buildGoogleAuthorizeUrl(state: string): string {
   const cfg = getGoogleOAuthClientConfig();
@@ -27,7 +56,9 @@ export function buildGoogleAuthorizeUrl(state: string): string {
     state,
     include_granted_scopes: 'true',
   });
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  logGoogleOAuthAuthorizeParams(url, state);
+  return url;
 }
 
 export async function exchangeAuthorizationCode(code: string): Promise<{

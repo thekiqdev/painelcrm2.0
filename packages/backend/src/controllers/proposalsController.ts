@@ -381,7 +381,7 @@ export const getProposals = async (req: Request, res: Response) => {
         params.push(...pLocal);
       };
 
-      if (status) {
+    if (status) {
         pc++;
         query += ` AND p.status = $${pc}`;
         pLocal.push(status);
@@ -690,7 +690,7 @@ export const createProposal = async (req: Request, res: Response) => {
         } as Record<string, unknown>);
         return res.status(422).json({
           error:
-            'Não foi possível gerar o link público obrigatório para enviar a proposta. Ela foi mantida como rascunho; corrija o ambiente (ex.: tenant, tabela de tokens) e tente enviar novamente.',
+            'Não foi possível gerar o link público obrigatório para enviar a proposta. Ela foi mantida como rascunho; corrija o ambiente (ex.: configuração da empresa, tabela de tokens) e tente enviar novamente.',
           code: 'PROPOSAL_SENT_REQUIRES_PUBLIC_LINK',
           details: {
             proposal: proposalAsDraft,
@@ -857,7 +857,7 @@ export const updateProposal = async (req: Request, res: Response) => {
       if (!linkOk) {
         return res.status(422).json({
           error:
-            'Não foi possível gerar o link público obrigatório para publicar a proposta. Corrija o ambiente (ex.: tenant, tabela de tokens) e tente novamente.',
+            'Não foi possível gerar o link público obrigatório para publicar a proposta. Corrija o ambiente (ex.: configuração da empresa, tabela de tokens) e tente novamente.',
           code: 'PROPOSAL_SENT_REQUIRES_PUBLIC_LINK',
         });
       }
@@ -1089,7 +1089,7 @@ export const convertProposalToInvoice = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Não autenticado' });
     }
     if (!tenantId) {
-      return res.status(401).json({ error: 'Tenant não identificado' });
+      return res.status(401).json({ error: 'Empresa não identificada' });
     }
 
     const existing = await pool.query<{ user_id: string }>(

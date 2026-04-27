@@ -96,11 +96,13 @@ import {
 } from './services/whatsappTemplateMediaStorageService.js';
 import { syncOverdueBillingStatuses } from './services/billingOverdueStatusService.js';
 import { processAnnouncementSendRecipientsBatch } from './services/announcements/announcementSendWorker.js';
+import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
 dotenv.config({ path: rootEnv });
 dotenv.config();
+logGoogleCalendarBootDiagnostics();
 
 const app = express();
 const httpServer = createServer(app);

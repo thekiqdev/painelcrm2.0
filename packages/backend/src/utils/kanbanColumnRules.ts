@@ -317,7 +317,7 @@ export async function applyKanbanColumnEnterRules(
     const actorIsTenantAdmin = await isTenantAdmin(opts.actorUserId);
     if (!isOwner && !isAssignee && !actorIsTenantAdmin) {
       const err = new Error(
-        'Só o dono da conversa, o atendente atual ou um administrador do tenant pode encerrar ao mover no Kanban'
+        'Só o dono da conversa, o atendente atual ou um administrador da empresa pode encerrar ao mover no Kanban'
       );
       (err as Error & { code?: string }).code = 'FORBIDDEN';
       throw err;
@@ -331,7 +331,7 @@ export async function applyKanbanColumnEnterRules(
   } else if (opts.rules.assign_team_id && hasTeamCol) {
     const okTeam = await assertTargetTeamSameTenant(client, opts.rules.assign_team_id, prev.owner_tenant_id);
     if (!okTeam) {
-      const err = new Error('Equipe configurada na coluna é inválida ou não pertence ao tenant');
+      const err = new Error('Equipe configurada na coluna é inválida ou não pertence à empresa');
       (err as Error & { code?: string }).code = 'BAD_REQUEST';
       throw err;
     }
@@ -355,7 +355,7 @@ export async function applyKanbanColumnEnterRules(
       prev.user_id
     );
     if (!okUser) {
-      const err = new Error('Operador configurado na coluna é inválido ou não pertence ao tenant');
+      const err = new Error('Operador configurado na coluna é inválido ou não pertence à empresa');
       (err as Error & { code?: string }).code = 'BAD_REQUEST';
       throw err;
     }

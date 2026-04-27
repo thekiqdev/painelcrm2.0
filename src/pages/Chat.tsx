@@ -2516,7 +2516,7 @@ const Chat = () => {
 
   const openTransferDialog = useCallback(async () => {
     if (!user?.tenant_id) {
-      toast.info('A transferência requer conta com equipa (tenant).');
+      toast.info('A transferência requer conta com equipa na empresa.');
       return;
     }
     setTransferMode('operator');
@@ -2999,7 +2999,7 @@ const Chat = () => {
                                     </SelectTrigger>
                                     <SelectContent>
                                       <SelectItem value="owner">Só as minhas (criador da conversa)</SelectItem>
-                                      <SelectItem value="tenant">Equipa — mesmo tenant</SelectItem>
+                                      <SelectItem value="tenant">Equipa — toda a empresa</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 </div>

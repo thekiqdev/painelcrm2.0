@@ -972,7 +972,7 @@ export function WhatsappMessageTemplatesPanel() {
             ) : (
               <div className="rounded-md border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
                 Novos templates são sempre do tipo <strong className="text-foreground">Modelo</strong> (reutilização
-                pelo tenant). Os <strong className="text-foreground">Automáticos</strong> são instalados como padrão do
+                pela empresa). Os <strong className="text-foreground">Automáticos</strong> são instalados como padrão do
                 sistema.
               </div>
             )}

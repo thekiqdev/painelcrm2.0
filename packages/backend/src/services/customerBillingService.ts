@@ -275,7 +275,7 @@ export async function createManualInvoice(
 
   const belongs = await clientBelongsToTenant(tenantId, clientId);
   if (!belongs) {
-    throw new Error('Cliente não pertence ao tenant');
+    throw new Error('Cliente não pertence à empresa');
   }
 
   const preconditions = await validateInvoicePreconditions(tenantId, clientId);
@@ -654,7 +654,7 @@ export async function completePaymentByToken(
     );
     const userId = userRow.rows[0]?.id;
     if (!userId) {
-      throw new Error('Tenant sem usuário para vincular cliente');
+      throw new Error('Empresa sem usuário para vincular cliente');
     }
     const companyTrim = (body.company || '').trim() || null;
     const clientResult = await pool.query<{ id: string; name: string; email: string | null; phone: string | null; cpf_cnpj: string | null }>(

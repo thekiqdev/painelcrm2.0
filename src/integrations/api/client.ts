@@ -285,10 +285,15 @@ class ApiClient {
     });
   }
 
-  async put<T>(endpoint: string, body?: any): Promise<ApiResponse<T>> {
+  async put<T>(
+    endpoint: string,
+    body?: any,
+    init?: Pick<RequestInit, 'headers'>
+  ): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, {
       method: 'PUT',
       body: JSON.stringify(body),
+      headers: init?.headers,
     });
   }
 

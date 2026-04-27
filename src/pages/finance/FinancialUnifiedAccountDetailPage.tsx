@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { NavLink, useParams } from "react-router-dom";
+import { NavLink, useNavigate, useParams } from "react-router-dom";
 import {
   financialService,
   type FinancialAccountDto,
+  type FinancialGatewayProvider,
   type FinancialTransactionDto,
   type FinancialTransactionType,
   type ExpenseCategoryDto,
@@ -23,11 +24,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/sonner";
 import { ArrowLeft, Plus } from "lucide-react";
+import { FinancialAccountSettingsButton } from "@/components/finance/FinancialAccountSettingsButton";
 
 const TYPE_LABEL: Record<string, string> = {
   bank: "Banco",
   cash: "Caixa",
   wallet: "Carteira",
+};
+
+const GATEWAY_LABEL: Record<FinancialGatewayProvider, string> = {
+  asaas: "Asaas",
+  mercado_pago: "Mercado Pago",
 };
 
 function formatBrlCents(cents: number): string {
@@ -46,6 +53,7 @@ function monthBounds(y: number, m0: number): { from: string; to: string } {
 }
 
 const FinancialUnifiedAccountDetailPage = () => {
+  const navigate = useNavigate();
   const { accountId } = useParams<{ accountId: string }>();
   const [account, setAccount] = useState<FinancialAccountDto | null>(null);
   const [categories, setCategories] = useState<ExpenseCategoryDto[]>([]);
@@ -265,6 +273,11 @@ const FinancialUnifiedAccountDetailPage = () => {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
+              <FinancialAccountSettingsButton
+                accountId={account.id}
+                onSaved={() => void load()}
+                onDeleted={() => navigate("/finance/accounts")}
+              />
               <h2 className="text-lg font-semibold">{account.name}</h2>
               <Badge variant={account.is_active ? "secondary" : "outline"}>
                 {account.is_active ? "Activa" : "Inactiva"}
@@ -298,6 +311,13 @@ const FinancialUnifiedAccountDetailPage = () => {
           <CardHeader className="pb-2">
             <CardDescription>Saldo actual</CardDescription>
             <CardTitle className="text-xl tabular-nums">{account ? formatBrl(account.balance) : "—"}</CardTitle>
+            {account?.gateway_link?.is_enabled ? (
+              <div className="pt-2">
+                <Badge variant="secondary" className="text-[10px] font-normal tabular-nums">
+                  Recebimento automático: {GATEWAY_LABEL[account.gateway_link.gateway]}
+                </Badge>
+              </div>
+            ) : null}
           </CardHeader>
         </Card>
         <Card>
@@ -372,6 +392,7 @@ const FinancialUnifiedAccountDetailPage = () => {
                   <TableHead>Descrição</TableHead>
                   <TableHead>Categoria</TableHead>
                   <TableHead className="text-right">Valor</TableHead>
+                  <TableHead>Origem</TableHead>
                   <TableHead>Estado</TableHead>
                 </TableRow>
               </TableHeader>
@@ -398,6 +419,15 @@ const FinancialUnifiedAccountDetailPage = () => {
                         }`}
                       >
                         {formatBrlCents(t.amount_cents)}
+                      </TableCell>
+                      <TableCell>
+                        {t.entry_source === "gateway_payment" ? (
+                          <Badge variant="outline" className="font-normal text-[10px] uppercase tracking-wide">
+                            Gateway
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">Manual</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-sm">{t.status === "completed" ? "Concluído" : "Pendente"}</TableCell>
                     </TableRow>

@@ -179,7 +179,7 @@ export function ContractCreateForm({
     };
   }, [id]);
 
-  /** Todos os modelos do tenant (inclui inativos) para edição de contrato já vinculado a modelo desativado. */
+  /** Todos os modelos da empresa (inclui inativos) para edição de contrato já vinculado a modelo desativado. */
   const loadTemplates = async () => {
     try {
       const data = await contractsService.getContractTemplates();

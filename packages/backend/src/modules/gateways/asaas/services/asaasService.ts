@@ -384,7 +384,7 @@ export async function ensureCustomerForTenant(
     [tenantId]
   );
   if (tenantRow.rows.length === 0) {
-    throw new Error('Tenant não encontrado');
+    throw new Error('Empresa não encontrada');
   }
   const tenant = tenantRow.rows[0];
   const tenantCpfDigits = normalizeTenantCpfDigits(tenant.cpf_cnpj);
@@ -417,7 +417,7 @@ export async function ensureCustomerForTenant(
     const userEmail = userRow.rows[0]?.email;
     if (!userEmail) {
       throw new Error(
-        'Tenant sem email de faturamento (billing_email) e sem usuário com email; informe dados no checkout ou cadastre um usuário.'
+        'Empresa sem email de faturamento (billing_email) e sem usuário com email; informe dados no checkout ou cadastre um usuário.'
       );
     }
     email = userEmail;

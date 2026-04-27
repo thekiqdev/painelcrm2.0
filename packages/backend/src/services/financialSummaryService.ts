@@ -81,10 +81,17 @@ export async function getFinancialSummary(
   );
 
   const inv = await pool.query<{ s: string }>(
-    `SELECT COALESCE(SUM(amount_cents), 0)::text AS s
-     FROM customer_invoices
-     WHERE tenant_id = $1 AND status = 'paid' AND paid_at IS NOT NULL
-       AND (paid_at::date) >= $2::date AND (paid_at::date) <= $3::date`,
+    `SELECT COALESCE(SUM(ci.amount_cents), 0)::text AS s
+     FROM customer_invoices ci
+     WHERE ci.tenant_id = $1 AND ci.status = 'paid' AND ci.paid_at IS NOT NULL
+       AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date
+       AND NOT EXISTS (
+         SELECT 1 FROM financial_transactions ft
+         WHERE ft.tenant_id = ci.tenant_id
+           AND ft.entry_source = 'gateway_payment'
+           AND ft.reference_type = 'customer_invoice'
+           AND ft.reference_id = ci.id
+       )`,
     [tenantId, from, to]
   );
 
@@ -129,12 +136,19 @@ export async function getFinancialSummary(
   );
 
   const invMonthly = await pool.query<{ ym: string; s: string }>(
-    `SELECT to_char(paid_at::date, 'YYYY-MM') AS ym,
-            COALESCE(SUM(amount_cents), 0)::text AS s
-     FROM customer_invoices
-     WHERE tenant_id = $1 AND status = 'paid' AND paid_at IS NOT NULL
-       AND (paid_at::date) >= $2::date AND (paid_at::date) <= $3::date
-     GROUP BY to_char(paid_at::date, 'YYYY-MM')
+    `SELECT to_char(ci.paid_at::date, 'YYYY-MM') AS ym,
+            COALESCE(SUM(ci.amount_cents), 0)::text AS s
+     FROM customer_invoices ci
+     WHERE ci.tenant_id = $1 AND ci.status = 'paid' AND ci.paid_at IS NOT NULL
+       AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date
+       AND NOT EXISTS (
+         SELECT 1 FROM financial_transactions ft
+         WHERE ft.tenant_id = ci.tenant_id
+           AND ft.entry_source = 'gateway_payment'
+           AND ft.reference_type = 'customer_invoice'
+           AND ft.reference_id = ci.id
+       )
+     GROUP BY to_char(ci.paid_at::date, 'YYYY-MM')
      ORDER BY ym`,
     [tenantId, from, to]
   );

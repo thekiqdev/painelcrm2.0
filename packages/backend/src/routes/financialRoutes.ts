@@ -3,6 +3,14 @@ import { tenantAuthCrm } from '../middleware/auth.js';
 import {
   listFinancialAccountsHandler,
   createFinancialAccountHandler,
+  getFinancialAccountByIdHandler,
+  patchFinancialAccountSettingsHandler,
+  getFinancialAccountPermissionsHandler,
+  putFinancialAccountPermissionsHandler,
+  getFinancialAccountGatewayLinkHandler,
+  putFinancialAccountGatewayLinkHandler,
+  patchFinancialAccountHandler,
+  deleteFinancialAccountHandler,
   listFinancialTransactionsHandler,
   patchFinancialTransactionHandler,
   createFinancialTransactionHandler,
@@ -29,6 +37,7 @@ import {
   getCreditCardStatementHandler,
   payCreditCardStatementHandler,
   getFinancialReportsHandler,
+  postGatewayReceivablesSyncPaidInvoicesHandler,
 } from '../controllers/financialController.js';
 
 const router = Router();
@@ -36,11 +45,20 @@ router.use(...tenantAuthCrm);
 
 router.get('/summary', getFinancialSummaryHandler);
 router.get('/reports', getFinancialReportsHandler);
+router.post('/gateway-receivables/sync-paid-invoices', postGatewayReceivablesSyncPaidInvoicesHandler);
 router.get('/payables', getPayablesHandler);
 router.get('/accounts-payable', getPayablesHandler);
 
 router.get('/accounts', listFinancialAccountsHandler);
 router.post('/accounts', createFinancialAccountHandler);
+router.patch('/accounts/:accountId/settings', patchFinancialAccountSettingsHandler);
+router.get('/accounts/:accountId/permissions', getFinancialAccountPermissionsHandler);
+router.put('/accounts/:accountId/permissions', putFinancialAccountPermissionsHandler);
+router.get('/accounts/:accountId/gateway-link', getFinancialAccountGatewayLinkHandler);
+router.put('/accounts/:accountId/gateway-link', putFinancialAccountGatewayLinkHandler);
+router.get('/accounts/:accountId', getFinancialAccountByIdHandler);
+router.delete('/accounts/:accountId', deleteFinancialAccountHandler);
+router.patch('/accounts/:accountId', patchFinancialAccountHandler);
 
 router.get('/transactions', listFinancialTransactionsHandler);
 router.post('/transactions', createFinancialTransactionHandler);

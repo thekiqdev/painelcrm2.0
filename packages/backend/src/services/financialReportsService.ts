@@ -221,6 +221,13 @@ export async function getFinancialEnterpriseReport(
        )
      WHERE ci.tenant_id = $1 AND ci.status = 'paid' AND ci.paid_at IS NOT NULL
        AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date
+       AND NOT EXISTS (
+         SELECT 1 FROM financial_transactions ft
+         WHERE ft.tenant_id = ci.tenant_id
+           AND ft.entry_source = 'gateway_payment'
+           AND ft.reference_type = 'customer_invoice'
+           AND ft.reference_id = ci.id
+       )
      GROUP BY c.id, c.name
      ORDER BY SUM(ci.amount_cents) DESC
      LIMIT 200`,

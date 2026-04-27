@@ -30,7 +30,7 @@ const teamMemberSchema = z.object({
 export const getTeams = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const result = await pool.query(
       `SELECT id, tenant_id, name, slug, description, created_at, updated_at
@@ -54,7 +54,7 @@ export const getTeamById = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { id } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const result = await pool.query(
       `SELECT id, tenant_id, name, slug, description, created_at, updated_at
@@ -87,7 +87,7 @@ export const createTeam = async (req: Request, res: Response) => {
     res.status(201).json(result.rows[0]);
   } catch (error: unknown) {
     if (error instanceof Error && error.message === 'Tenant required') {
-      return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+      return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
     }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Dados inválidos', details: error.errors });
@@ -111,7 +111,7 @@ export const updateTeam = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { id } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const bodyWithoutTenant = stripTenantIdFromBody((req.body || {}) as Record<string, unknown>);
     const validated = teamSchema.partial().parse(bodyWithoutTenant);
@@ -158,7 +158,7 @@ export const deleteTeam = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { id } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const result = await pool.query(
       'DELETE FROM teams WHERE id = $1 AND tenant_id = $2 RETURNING id',
@@ -177,7 +177,7 @@ export const getTeamMembers = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { teamId } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const teamCheck = await pool.query(
       'SELECT id FROM teams WHERE id = $1 AND tenant_id = $2',
@@ -218,7 +218,7 @@ export const addTeamMember = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { teamId } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const teamCheck = await pool.query(
       'SELECT id FROM teams WHERE id = $1 AND tenant_id = $2',
@@ -268,7 +268,7 @@ export const removeTeamMember = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { teamId, memberId } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const teamCheck = await pool.query(
       'SELECT id FROM teams WHERE id = $1 AND tenant_id = $2',
@@ -295,7 +295,7 @@ export const getUserTeams = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { userId: targetUserId } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const userTenantCheck = await pool.query(
       'SELECT id FROM users WHERE id = $1 AND tenant_id = $2',
@@ -327,7 +327,7 @@ export const setUserTeams = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as AuthRequest).tenantId ?? null;
     const { userId: targetUserId } = req.params;
-    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma conta (tenant)' });
+    if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
 
     const userTenantCheck = await pool.query(
       'SELECT id FROM users WHERE id = $1 AND tenant_id = $2',

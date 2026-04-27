@@ -24,7 +24,7 @@ export const CONTRACT_MERGE_FIELD_CATEGORIES: ContractMergeFieldCategory[] = [
   {
     id: 'system',
     title: 'Sistema',
-    description: 'Contexto da plataforma e do tenant (no congelamento: instante do servidor).',
+    description: 'Contexto da plataforma e da empresa (no congelamento: instante do servidor).',
     fields: [
       {
         key: 'system.name',
@@ -70,19 +70,19 @@ export const CONTRACT_MERGE_FIELD_CATEGORIES: ContractMergeFieldCategory[] = [
       },
       {
         key: 'system.tenant_name',
-        label: 'Nome do tenant',
+        label: 'Nome da empresa',
         description: 'Nome da conta (organização) no PainelCRM.',
         source: 'tenants.name via criador do contrato',
       },
       {
         key: 'system.tenant_domain',
-        label: 'Domínio do tenant',
-        description: 'Campo domain do tenant, se preenchido.',
+        label: 'Domínio da empresa',
+        description: 'Campo domain da empresa, se preenchido.',
         source: 'tenants.domain',
       },
       {
         key: 'system.tenant_slug',
-        label: 'Slug do tenant',
+        label: 'Slug da empresa',
         description: 'Identificador único slug da conta.',
         source: 'tenants.slug',
       },

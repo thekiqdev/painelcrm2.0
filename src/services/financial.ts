@@ -17,24 +17,62 @@ function qs(params: Record<string, string | undefined>): string {
 export type FinancialAccountType = "bank" | "cash" | "wallet";
 export type FinancialAccountScope = "business" | "personal";
 
+export type FinancialGatewayProvider = "asaas" | "mercado_pago";
+
+export interface FinancialAccountGatewayLinkDto {
+  gateway: FinancialGatewayProvider;
+  is_enabled: boolean;
+  is_default_receivables: boolean;
+}
+
+export type FinancialAccountVisibilityMode = "all_finance_users" | "admins_only" | "restricted";
+
 export interface FinancialAccountDto {
   id: string;
   tenant_id: string;
   name: string;
   type: FinancialAccountType;
   account_scope: FinancialAccountScope;
+  visibility_mode?: FinancialAccountVisibilityMode;
   initial_balance_cents: number;
   initial_balance_date: string;
   is_active: boolean;
   balance: number;
+  gateway_link?: FinancialAccountGatewayLinkDto | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface FinancialAccountPermissionGrantDto {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  user_id: string | null;
+  team_id: string | null;
+  permission: "view" | "manage";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinancialAccountPermissionsPayload {
+  visibility_mode: FinancialAccountVisibilityMode;
+  grants: FinancialAccountPermissionGrantDto[];
+  tenant_users?: { id: string; email: string | null; display_name: string | null }[];
+  teams?: { id: string; name: string }[];
+}
+
+export interface FinancialGatewayLinkFullDto {
+  gateway: FinancialGatewayProvider;
+  is_enabled: boolean;
+  is_default_receivables: boolean;
 }
 
 export type FinancialTransactionType = "income" | "expense";
 export type FinancialTransactionStatus = "pending" | "completed";
 export type FinancialTransactionKind = "regular" | "transfer";
 export type FinancialTransferDirection = "in" | "out";
+
+export type TransactionEntrySourceDto = "manual" | "gateway_payment";
 
 export interface FinancialTransactionDto {
   id: string;
@@ -51,6 +89,9 @@ export interface FinancialTransactionDto {
   transaction_kind: FinancialTransactionKind;
   transfer_direction: FinancialTransferDirection | null;
   transfer_id: string | null;
+  entry_source?: TransactionEntrySourceDto | null;
+  gateway_provider?: string | null;
+  gateway_reference_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -401,6 +442,19 @@ export interface FinancialPayablesListDto {
   items: FinancialPayableItemDto[];
 }
 
+export interface GatewayReceivablesSyncPaidInvoicesResult {
+  total_paid_invoices_found: number;
+  eligible_count: number;
+  eligible_amount: number;
+  created_count: number;
+  created_amount: number;
+  skipped_existing_count: number;
+  skipped_no_gateway_count: number;
+  skipped_no_linked_account_count: number;
+  skipped_other_count: number;
+  errors: { invoice_id: string; message: string }[];
+}
+
 export const financialService = {
   async getSummary(params?: { from?: string; to?: string; preset?: string }): Promise<FinancialSummaryDto> {
     const r = await apiClient.get<FinancialSummaryDto>(`${BASE}/summary${qs(params ?? {})}`);
@@ -435,10 +489,121 @@ export const financialService = {
     initial_balance_cents: number;
     initial_balance_date: string;
     is_active?: boolean;
+    gateway_link?: {
+      enabled: boolean;
+      gateway?: FinancialGatewayProvider;
+      is_default_receivables?: boolean;
+    };
   }): Promise<FinancialAccountDto> {
     const r = await apiClient.post<FinancialAccountDto>(`${BASE}/accounts`, body);
     if (r.error) throw new Error(r.error);
     if (!r.data) throw new Error("Erro ao criar conta");
+    return r.data;
+  },
+
+  async getAccount(accountId: string): Promise<FinancialAccountDto> {
+    const r = await apiClient.get<FinancialAccountDto>(
+      `${BASE}/accounts/${encodeURIComponent(accountId)}`
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Conta não encontrada");
+    return r.data;
+  },
+
+  async patchAccountSettings(
+    accountId: string,
+    body: { name?: string; type?: FinancialAccountType; is_active?: boolean }
+  ): Promise<FinancialAccountDto> {
+    const r = await apiClient.patch<FinancialAccountDto>(
+      `${BASE}/accounts/${encodeURIComponent(accountId)}/settings`,
+      body
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Erro ao actualizar conta");
+    return r.data;
+  },
+
+  async deleteAccount(accountId: string): Promise<void> {
+    const r = await apiClient.delete<unknown>(`${BASE}/accounts/${encodeURIComponent(accountId)}`);
+    if (r.error) throw new Error(r.error);
+  },
+
+  async getAccountPermissions(accountId: string): Promise<FinancialAccountPermissionsPayload> {
+    const r = await apiClient.get<FinancialAccountPermissionsPayload>(
+      `${BASE}/accounts/${encodeURIComponent(accountId)}/permissions`
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Permissões indisponíveis");
+    return r.data;
+  },
+
+  async putAccountPermissions(
+    accountId: string,
+    body: {
+      visibility_mode: FinancialAccountVisibilityMode;
+      grants: Array<{
+        user_id?: string;
+        team_id?: string;
+        permission: "view" | "manage";
+      }>;
+    }
+  ): Promise<{ visibility_mode: FinancialAccountVisibilityMode; grants: FinancialAccountPermissionGrantDto[] }> {
+    const r = await apiClient.put<{
+      visibility_mode: FinancialAccountVisibilityMode;
+      grants: FinancialAccountPermissionGrantDto[];
+    }>(`${BASE}/accounts/${encodeURIComponent(accountId)}/permissions`, body);
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Erro ao guardar permissões");
+    return r.data;
+  },
+
+  async getAccountGatewayLink(
+    accountId: string
+  ): Promise<{ link: FinancialGatewayLinkFullDto | null }> {
+    const r = await apiClient.get<{ link: FinancialGatewayLinkFullDto | null }>(
+      `${BASE}/accounts/${encodeURIComponent(accountId)}/gateway-link`
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Vínculo indisponível");
+    return r.data;
+  },
+
+  async putAccountGatewayLink(
+    accountId: string,
+    body: {
+      enabled: boolean;
+      gateway?: FinancialGatewayProvider;
+      is_default_receivables?: boolean;
+    },
+    options?: { confirmGatewayChange?: boolean }
+  ): Promise<{ link: FinancialGatewayLinkFullDto | null }> {
+    const headers: HeadersInit = {};
+    if (options?.confirmGatewayChange) {
+      (headers as Record<string, string>)["X-Confirm-Gateway-Change"] = "1";
+    }
+    const r = await apiClient.put<{ link: FinancialGatewayLinkFullDto | null }>(
+      `${BASE}/accounts/${encodeURIComponent(accountId)}/gateway-link`,
+      body,
+      Object.keys(headers).length ? { headers } : undefined
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Erro ao actualizar vínculo");
+    return r.data;
+  },
+
+  async syncGatewayPaidInvoices(body: {
+    gateway: FinancialGatewayProvider;
+    account_id: string;
+    from: string;
+    to: string;
+    dry_run: boolean;
+  }): Promise<GatewayReceivablesSyncPaidInvoicesResult> {
+    const r = await apiClient.post<GatewayReceivablesSyncPaidInvoicesResult>(
+      `${BASE}/gateway-receivables/sync-paid-invoices`,
+      body
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Resposta inválida");
     return r.data;
   },
 
