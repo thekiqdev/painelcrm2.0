@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -44,7 +44,30 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, CalendarIcon, Trash2, RefreshCw } from "lucide-react";
+import {
+  Search,
+  Plus,
+  FileText,
+  MoreVertical,
+  UserPlus,
+  ArrowDown,
+  ArrowUp,
+  Filter,
+  CalendarIcon,
+  Trash2,
+  RefreshCw,
+  MessageCircle,
+  CreditCard,
+  Building2,
+  Layers,
+  CheckCircle2,
+  Ban,
+  Eye,
+  Receipt,
+  CalendarSync,
+  FileSignature,
+  Pencil,
+} from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { clientsService } from "@/services/clients";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
@@ -63,8 +86,26 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { proposalsService, type Proposal } from "@/services/proposals";
-import { cn } from "@/lib/utils";
 import { applyUrlPatch } from "@/lib/listFiltersUrl";
+import { cn } from "@/lib/utils";
+import {
+  COMMERCIAL_FILTERS_PANEL,
+  COMMERCIAL_LIST_CONTAINER_CARD,
+  COMMERCIAL_SUMMARY_ACTIVE_RING,
+  COMMERCIAL_SUMMARY_CARD_CLASS,
+  COMMERCIAL_SUMMARY_GRID_3,
+  COMMERCIAL_TABLE_DESKTOP_WRAP,
+} from "@/lib/commercialListUi";
+import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
+import { CommercialListingPageHeader } from "@/components/listing/CommercialListingPageHeader";
+import { MobileClientsSearchSheet } from "@/components/clients/MobileClientsSearchSheet";
+import { chatOpenQueryWithReturn } from "@/lib/chatListNavigation";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
+import {
+  appendClientsListReturnPath,
+  consumeClientsListScrollPosition,
+  saveClientsListScrollPosition,
+} from "@/lib/clientsListRestore";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -109,11 +150,25 @@ function formatDialogProposalCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
+/** Resumo de observação em texto simples (ignora JSON de notas adesivas). */
+function clientNotesPreview(raw: unknown, maxLen = 72): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.startsWith("[") || s.startsWith("{")) return null;
+  const oneLine = s.replace(/\s+/g, " ");
+  if (oneLine.length <= maxLen) return oneLine;
+  return `${oneLine.slice(0, maxLen).trimEnd()}…`;
+}
+
 const Clients = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const clientsListHref = `${location.pathname}${location.search}`;
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { canCreate, canEdit, canDelete, canView } = useModulePermissions();
+  const hasChat = useFeatureFlag("chat");
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get("q") ?? "");
@@ -149,6 +204,7 @@ const Clients = () => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [dialogProposals, setDialogProposals] = useState<Proposal[]>([]);
   const [dialogProposalsLoading, setDialogProposalsLoading] = useState(false);
 
@@ -311,6 +367,17 @@ const Clients = () => {
     }
   }, [clientsData]);
 
+  /** Após voltar de fatura/proposta/etc., repõe o scroll da listagem (URL já traz filtros/página). */
+  useLayoutEffect(() => {
+    if (isLoading && clients.length === 0) return;
+    const y = consumeClientsListScrollPosition(clientsListHref);
+    if (y != null && y > 0) {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: y, left: 0, behavior: "auto" });
+      });
+    }
+  }, [clientsListHref, isLoading, clients.length]);
+
   // Carregar tarefas do cliente selecionado
   useEffect(() => {
     const fetchClientTasks = async () => {
@@ -371,14 +438,55 @@ const Clients = () => {
     }
   });
 
+  const clientMetrics = useMemo(() => {
+    return {
+      total: sortedClients.length,
+      ativos: sortedClients.filter((c) => c.status === "Ativo").length,
+      inativos: sortedClients.filter((c) => c.status === "Inativo").length,
+    };
+  }, [sortedClients]);
+
   // Apply pagination with dynamic itemsPerPage
-  const totalPages = Math.ceil(sortedClients.length / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(sortedClients.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedClients = sortedClients.slice(startIndex, startIndex + itemsPerPage);
 
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
   const handleViewClient = (client: any) => {
-    // Navegar para a página de perfil do cliente
+    saveClientsListScrollPosition();
     navigate(`/clients/${client.id}`);
+  };
+
+  /** Edição rápida a partir da lista (mobile): reutiliza o diálogo de ficha já existente. */
+  const openClientQuickEditFromList = (client: any) => {
+    setSelectedClient(client);
+    setEditedClient({
+      name: client.name,
+      company: client.company || "",
+      email: client.email || "",
+      phone: client.phone || "",
+      status: client.status,
+      group_id: client.group_id || "",
+      notes: typeof client.notes === "string" ? client.notes : "",
+      cpf_cnpj: client.cpf_cnpj ?? "",
+    });
+    setNewClientGroup(client.group_id || "");
+    try {
+      const raw = client.notes;
+      if (typeof raw === "string" && raw.trim().startsWith("[")) {
+        setNotes(JSON.parse(raw) as StickyNoteData[]);
+      } else {
+        setNotes([]);
+      }
+    } catch {
+      setNotes([]);
+    }
+    setIsEditMode(true);
+    setTabSelected("details");
+    setIsViewDialogOpen(true);
   };
   
   const handleEditClient = () => {
@@ -1078,226 +1186,388 @@ const Clients = () => {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Título e botões */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-4 sm:space-y-0">
-        <h1 className="text-2xl font-bold">Clientes</h1>
-        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-          <div className="relative hidden md:block">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Buscar clientes..."
-              className="pl-8 w-full sm:w-[250px]"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+    <CommercialListingPageShell>
+      <div className="contents" onPointerDownCapture={() => saveClientsListScrollPosition()}>
+      <CommercialListingPageHeader
+        eyebrow="Base comercial"
+        EyebrowIcon={Building2}
+        title="Clientes"
+        description="Carteira ativa: dados principais, grupos e atalhos para relacionamento e vendas."
+        mobileSecondaryActions={[
+          {
+            icon: <Search className="h-4 w-4" aria-hidden />,
+            ariaLabel: "Buscar clientes",
+            onClick: () => setMobileSearchOpen(true),
+          },
+          {
+            icon: <Filter className="h-4 w-4" aria-hidden />,
+            ariaLabel: "Filtros",
+            onClick: () => setMobileFiltersOpen(true),
+          },
+        ]}
+        mobilePrimaryAction={
+          canCreate(MODULE_CLIENTS)
+            ? {
+                label: "Novo cliente",
+                icon: <Plus className="h-4 w-4" aria-hidden />,
+                onClick: () => setIsAddDialogOpen(true),
+              }
+            : undefined
+        }
+        belowTitle={
+          <>
+            <MobileClientsSearchSheet
+              open={mobileSearchOpen}
+              onOpenChange={setMobileSearchOpen}
+              canCreateClient={canCreate(MODULE_CLIENTS)}
+              canUseChat={hasChat && canView("chat")}
+              onRequestCreateClient={() => setIsAddDialogOpen(true)}
+              clientsListHref={clientsListHref}
             />
-          </div>
-          <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-            <SheetTrigger asChild>
-              <Button type="button" variant="outline" className="md:hidden gap-2">
-                <Filter className="h-4 w-4" />
-                Busca e filtros
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="bottom" className="max-h-[88vh] overflow-y-auto rounded-t-2xl px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 md:hidden">
-              <SheetHeader className="text-left">
-                <SheetTitle>Busca e filtros</SheetTitle>
-                <SheetDescription>Refine a lista de clientes.</SheetDescription>
-              </SheetHeader>
-              <div className="mt-4 space-y-4">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    placeholder="Buscar por nome, empresa ou e-mail..."
-                    className="pl-8"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Situação</p>
-                  <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
-                      <TabsTrigger value="all">Todos</TabsTrigger>
-                      <TabsTrigger value="active">Ativos</TabsTrigger>
-                      <TabsTrigger value="inactive">Inativos</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Grupo</p>
-                  <Select
-                    value={selectedGroup || "all"}
-                    onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Grupo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos os grupos</SelectItem>
-                      {clientGroups.map((group) => (
-                        <SelectItem key={group.id} value={group.id}>
-                          {group.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Itens por página</p>
-                  <Select
-                    value={itemsPerPage.toString()}
-                    onValueChange={(value) => {
-                      setItemsPerPage(Number(value));
-                      setCurrentPage(1);
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {itemsPerPageOptions.map((option) => (
-                        <SelectItem key={option} value={option.toString()}>
-                          {option}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <SheetClose asChild>
-                  <Button type="button" className="w-full">
-                    Concluir
-                  </Button>
-                </SheetClose>
-              </div>
-            </SheetContent>
-          </Sheet>
-          {canCreate(MODULE_CLIENTS) && (
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Novo Cliente
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Adicionar Cliente</DialogTitle>
-                <DialogDescription>
-                  Preencha os dados para adicionar um novo cliente ao sistema.
-                </DialogDescription>
-              </DialogHeader>
-              <form onSubmit={handleAddClient}>
-                <div className="grid gap-6 py-4">
-                  <div className="grid grid-cols-2 gap-4">
+            <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+              <SheetContent
+                side="bottom"
+                className="max-h-[88vh] overflow-y-auto rounded-t-2xl px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 md:hidden"
+              >
+                  <SheetHeader className="text-left">
+                    <SheetTitle>Filtros</SheetTitle>
+                    <SheetDescription>
+                      Situação, grupo e itens por página. Use a busca no topo da página.
+                    </SheetDescription>
+                  </SheetHeader>
+                  <div className="mt-4 space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="name">Nome</Label>
-                      <Input 
-                        id="name" 
-                        placeholder="Nome completo" 
-                        required 
-                        value={newClient.name}
-                        onChange={handleInputChange}
-                      />
+                      <p className="text-xs font-medium text-muted-foreground">Situação</p>
+                      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                        <TabsList className="grid w-full grid-cols-3">
+                          <TabsTrigger value="all">Todos</TabsTrigger>
+                          <TabsTrigger value="active">Ativos</TabsTrigger>
+                          <TabsTrigger value="inactive">Inativos</TabsTrigger>
+                        </TabsList>
+                      </Tabs>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="company">Empresa</Label>
-                      <Input 
-                        id="company" 
-                        placeholder="Nome da empresa" 
-                        value={newClient.company}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="email">E-mail</Label>
-                      <Input 
-                        id="email" 
-                        type="email" 
-                        placeholder="email@exemplo.com" 
-                        required 
-                        value={newClient.email}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="phone">Telefone</Label>
-                      <Input 
-                        id="phone" 
-                        placeholder="(00) 00000-0000" 
-                        value={newClient.phone}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
-                      <Input 
-                        id="cpf_cnpj" 
-                        placeholder="000.000.000-00 ou 00.000.000/0000-00" 
-                        value={newClient.cpf_cnpj}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="status">Status</Label>
-                      <Select 
-                        defaultValue="Ativo"
-                        onValueChange={(value) => handleSelectChange("status", value)}
+                      <p className="text-xs font-medium text-muted-foreground">Grupo</p>
+                      <Select
+                        value={selectedGroup || "all"}
+                        onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}
                       >
-                        <SelectTrigger id="status">
-                          <SelectValue placeholder="Selecione" />
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Grupo" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Ativo">Ativo</SelectItem>
-                          <SelectItem value="Inativo">Inativo</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="group_id">Grupo</Label>
-                      <Select 
-                        defaultValue=""
-                        onValueChange={(value) => handleSelectChange("group_id", value)}
-                      >
-                        <SelectTrigger id="group_id">
-                          <SelectValue placeholder="Selecione um grupo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {clientGroups.map(group => (
-                            <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                          <SelectItem value="all">Todos os grupos</SelectItem>
+                          {clientGroups.map((group) => (
+                            <SelectItem key={group.id} value={group.id}>
+                              {group.name}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">Itens por página</p>
+                      <Select
+                        value={itemsPerPage.toString()}
+                        onValueChange={(value) => {
+                          setItemsPerPage(Number(value));
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {itemsPerPageOptions.map((option) => (
+                            <SelectItem key={option} value={option.toString()}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <SheetClose asChild>
+                      <Button type="button" className="w-full">
+                        Concluir
+                      </Button>
+                    </SheetClose>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="notes">Observações</Label>
-                    <Textarea 
-                      id="notes" 
-                      placeholder="Adicione informações relevantes sobre este cliente" 
-                      value={newClient.notes || ""}
-                      onChange={handleInputChange}
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit">Salvar Cliente</Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+                </SheetContent>
+              </Sheet>
+            <div className="hidden md:flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-2">
+              <div className="relative min-w-0 flex-1">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <Input
+                  type="search"
+                  placeholder="Buscar nome, empresa ou e-mail…"
+                  className="h-10 pl-9"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  aria-label="Buscar clientes"
+                />
+              </div>
+              {canCreate(MODULE_CLIENTS) && (
+                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button type="button" className="h-10 shrink-0 touch-manipulation sm:px-4">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Novo cliente
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                      <DialogTitle>Adicionar Cliente</DialogTitle>
+                      <DialogDescription>
+                        Preencha os dados para adicionar um novo cliente ao sistema.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleAddClient}>
+                      <div className="grid gap-6 py-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="name">Nome</Label>
+                            <Input
+                              id="name"
+                              placeholder="Nome completo"
+                              required
+                              value={newClient.name}
+                              onChange={handleInputChange}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="company">Empresa</Label>
+                            <Input
+                              id="company"
+                              placeholder="Nome da empresa"
+                              value={newClient.company}
+                              onChange={handleInputChange}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="email">E-mail</Label>
+                            <Input
+                              id="email"
+                              type="email"
+                              placeholder="email@exemplo.com"
+                              required
+                              value={newClient.email}
+                              onChange={handleInputChange}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="phone">Telefone</Label>
+                            <Input
+                              id="phone"
+                              placeholder="(00) 00000-0000"
+                              value={newClient.phone}
+                              onChange={handleInputChange}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+                            <Input
+                              id="cpf_cnpj"
+                              placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                              value={newClient.cpf_cnpj}
+                              onChange={handleInputChange}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="status">Status</Label>
+                            <Select
+                              defaultValue="Ativo"
+                              onValueChange={(value) => handleSelectChange("status", value)}
+                            >
+                              <SelectTrigger id="status">
+                                <SelectValue placeholder="Selecione" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Ativo">Ativo</SelectItem>
+                                <SelectItem value="Inativo">Inativo</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="group_id">Grupo</Label>
+                            <Select
+                              defaultValue=""
+                              onValueChange={(value) => handleSelectChange("group_id", value)}
+                            >
+                              <SelectTrigger id="group_id">
+                                <SelectValue placeholder="Selecione um grupo" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {clientGroups.map((group) => (
+                                  <SelectItem key={group.id} value={group.id}>
+                                    {group.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="notes">Observações</Label>
+                          <Textarea
+                            id="notes"
+                            placeholder="Adicione informações relevantes sobre este cliente"
+                            value={newClient.notes || ""}
+                            onChange={handleInputChange}
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                          Cancelar
+                        </Button>
+                        <Button type="submit">Salvar Cliente</Button>
+                      </DialogFooter>
+                    </form>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </div>
+          </>
+        }
+      />
+
+      <div className={COMMERCIAL_SUMMARY_GRID_3}>
+        <Card
+          role="button"
+          tabIndex={0}
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            activeTab === "all" && COMMERCIAL_SUMMARY_ACTIVE_RING,
           )}
+          onClick={() => {
+            setActiveTab("all");
+            setCurrentPage(1);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setActiveTab("all");
+              setCurrentPage(1);
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Total (filtro)</p>
+              <Layers className="h-4 w-4 shrink-0 text-muted-foreground opacity-80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{clientMetrics.total}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Todos nesta pesquisa e grupo</p>
+          </CardContent>
+        </Card>
+        <Card
+          role="button"
+          tabIndex={0}
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            activeTab === "active" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+          )}
+          onClick={() => {
+            setActiveTab("active");
+            setCurrentPage(1);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setActiveTab("active");
+              setCurrentPage(1);
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Ativos</p>
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600/80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{clientMetrics.ativos}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Em relacionamento comercial</p>
+          </CardContent>
+        </Card>
+        <Card
+          role="button"
+          tabIndex={0}
+          className={cn(
+            "col-span-2 sm:col-span-1",
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            activeTab === "inactive" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+          )}
+          onClick={() => {
+            setActiveTab("inactive");
+            setCurrentPage(1);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setActiveTab("inactive");
+              setCurrentPage(1);
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Inativos</p>
+              <Ban className="h-4 w-4 shrink-0 text-muted-foreground opacity-80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{clientMetrics.inativos}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Fora da operação atual</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className={cn(COMMERCIAL_FILTERS_PANEL, "hidden space-y-4 md:block")}>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Situação e grupo</p>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between xl:gap-6">
+          <Tabs defaultValue="all" value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0">
+            <TabsList className="h-auto w-full flex-wrap justify-start gap-1 bg-background/80 p-1 md:min-h-11">
+              <TabsTrigger value="all" className="px-3 text-xs sm:text-sm">
+                Todos
+              </TabsTrigger>
+              <TabsTrigger value="active" className="px-3 text-xs sm:text-sm">
+                Ativos
+              </TabsTrigger>
+              <TabsTrigger value="inactive" className="px-3 text-xs sm:text-sm">
+                Inativos
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <div className="flex w-full min-w-0 flex-col gap-1.5 border-border/50 xl:w-auto xl:max-w-sm xl:border-l xl:pl-6">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Grupo</span>
+            <Select
+              value={selectedGroup || "all"}
+              onValueChange={(value) => {
+                setSelectedGroup(value === "all" ? null : value);
+                setCurrentPage(1);
+              }}
+            >
+              <SelectTrigger className="h-10 w-full md:max-w-md">
+                <SelectValue placeholder="Filtrar por grupo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os grupos</SelectItem>
+                {clientGroups.map((group) => (
+                  <SelectItem key={group.id} value={group.id}>
+                    {group.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
 
           {/* Dialog para adicionar nova tarefa */}
           <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
@@ -1478,7 +1748,10 @@ const Clients = () => {
                             {canCreate("proposals") && selectedClient?.id ? (
                               <Button variant="outline" asChild className="mx-auto">
                                 <Link
-                                  to={`/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`}
+                                  to={appendClientsListReturnPath(
+                                    `/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`,
+                                    clientsListHref,
+                                  )}
                                   onClick={() => setIsViewDialogOpen(false)}
                                 >
                                   <Plus className="mr-2 h-4 w-4" />
@@ -1535,7 +1808,10 @@ const Clients = () => {
                         {dialogProposals.length > 0 && canCreate("proposals") && selectedClient?.id ? (
                           <Button className="w-full" variant="outline" asChild>
                             <Link
-                              to={`/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`}
+                              to={appendClientsListReturnPath(
+                                `/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`,
+                                clientsListHref,
+                              )}
                               onClick={() => setIsViewDialogOpen(false)}
                             >
                               <Plus className="mr-2 h-4 w-4" />
@@ -1612,77 +1888,40 @@ const Clients = () => {
               </DialogContent>
             )}
           </Dialog>
-        </div>
-      </div>
 
-      {/* Tabs e Filtros — desktop (no mobile ficam no sheet) */}
-      <div className="hidden flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 md:flex">
-        <Tabs defaultValue="all" value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="all">Todos</TabsTrigger>
-            <TabsTrigger value="active">Ativos</TabsTrigger>
-            <TabsTrigger value="inactive">Inativos</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        <div className="flex items-center gap-2">
-          <Select 
-            value={selectedGroup || "all"} 
-            onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filtrar por grupo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os grupos</SelectItem>
-              {clientGroups.map(group => (
-                <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Button variant="outline" size="sm" type="button" className="hidden lg:inline-flex">
-            <Filter className="h-4 w-4 mr-2" />
-            Mais Filtros
-          </Button>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader className="pb-0">
-          <CardTitle>Lista de Clientes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row justify-between mb-4">
-            <div className="mb-2 sm:mb-0">
-              <p className="text-sm text-muted-foreground">
-                Mostrando {paginatedClients.length} de {filteredClients.length} clientes
-              </p>
-            </div>
-            <div className="hidden items-center gap-2 md:flex">
-              <span className="text-sm">Mostrar</span>
-              <Select 
-                value={itemsPerPage.toString()} 
-                onValueChange={(value) => {
-                  setItemsPerPage(Number(value));
-                  setCurrentPage(1); // Reset to first page when changing items per page
-                }}
-              >
-                <SelectTrigger className="w-[80px] h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {itemsPerPageOptions.map(option => (
-                    <SelectItem key={option} value={option.toString()}>
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <span className="text-sm">por página</span>
-            </div>
+      <Card className={COMMERCIAL_LIST_CONTAINER_CARD}>
+        <CardHeader className="flex flex-col gap-2 border-b border-border/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="text-lg font-semibold tracking-tight">Lista de clientes</CardTitle>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {sortedClients.length === 0
+                ? "Nenhum resultado"
+                : `Mostrando ${paginatedClients.length} de ${sortedClients.length} neste filtro`}
+            </p>
           </div>
-          
+          <div className="hidden items-center gap-2 md:flex">
+            <span className="text-sm text-muted-foreground">Por página</span>
+            <Select
+              value={itemsPerPage.toString()}
+              onValueChange={(value) => {
+                setItemsPerPage(Number(value));
+                setCurrentPage(1);
+              }}
+            >
+              <SelectTrigger className="h-10 w-[88px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {itemsPerPageOptions.map((option) => (
+                  <SelectItem key={option} value={option.toString()}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-4">
           {isLoading && clients.length === 0 ? (
             <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
               <UserPlus className="h-7 w-7 text-muted-foreground/80" aria-hidden />
@@ -1691,28 +1930,40 @@ const Clients = () => {
             </div>
           ) : (
             <>
-              <div className="hidden overflow-x-auto md:block">
+              <div className={COMMERCIAL_TABLE_DESKTOP_WRAP}>
                 <Table>
                   <TableHeader>
-                    <TableRow>
+                    <TableRow className="border-b border-border/60 hover:bg-transparent">
                       <TableHead className="w-12" aria-label="Avatar" />
-                      <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
+                      <TableHead
+                        className="min-w-[200px] cursor-pointer text-xs font-medium text-muted-foreground"
+                        onClick={() => handleSort("name")}
+                      >
                         <div className="flex items-center">
-                          Nome
+                          Cliente
                           <SortIcon field="name" />
                         </div>
                       </TableHead>
-                      <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
+                      <TableHead
+                        className="hidden cursor-pointer text-xs font-medium text-muted-foreground lg:table-cell lg:min-w-[160px]"
+                        onClick={() => handleSort("company")}
+                      >
                         <div className="flex items-center">
                           Empresa
                           <SortIcon field="company" />
                         </div>
                       </TableHead>
-                      <TableHead>E-mail</TableHead>
-                      <TableHead>Telefone</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Grupo</TableHead>
-                      <TableHead>Ações</TableHead>
+                      <TableHead className="hidden text-xs font-medium text-muted-foreground xl:table-cell xl:max-w-[200px]">
+                        E-mail
+                      </TableHead>
+                      <TableHead className="hidden text-xs font-medium text-muted-foreground md:table-cell">
+                        Telefone
+                      </TableHead>
+                      <TableHead className="text-xs font-medium text-muted-foreground">Status</TableHead>
+                      <TableHead className="hidden text-xs font-medium text-muted-foreground lg:table-cell lg:max-w-[140px]">
+                        Grupo
+                      </TableHead>
+                      <TableHead className="w-[132px] text-right text-xs font-medium text-muted-foreground">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1729,74 +1980,169 @@ const Clients = () => {
                           client.whatsapp_avatar_url ?? null
                         );
                         return (
-                        <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
-                          <TableCell className="w-12">
-                            <Avatar className="h-8 w-8">
+                        <TableRow
+                          key={client.id}
+                          className="group/row border-border/40 transition-colors hover:bg-muted/50"
+                        >
+                          <TableCell className="w-12 align-middle">
+                            <Avatar className="h-9 w-9 ring-1 ring-border/60">
                               {listAvatar.src ? (
                                 <AvatarImage src={listAvatar.src} alt={client.name} />
                               ) : null}
                               <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
                             </Avatar>
                           </TableCell>
-                          <TableCell>{client.name}</TableCell>
-                          <TableCell>{client.company || "—"}</TableCell>
-                          <TableCell>{client.email || "—"}</TableCell>
-                          <TableCell>{client.phone || "—"}</TableCell>
-                          <TableCell>
-                            <Badge 
-                              variant={
-                                client.status === "Ativo" ? "default" :
-                                client.status === "Inativo" ? "destructive" :
-                                "outline"
-                              }
+                          <TableCell className="align-middle">
+                            <button
+                              type="button"
+                              className="block w-full text-left"
+                              onClick={() => handleViewClient(client)}
+                            >
+                              <span className="font-semibold text-foreground group-hover/row:text-primary">
+                                {client.name}
+                              </span>
+                              {client.company ? (
+                                <span className="mt-0.5 block truncate text-xs text-muted-foreground lg:hidden">
+                                  {client.company}
+                                </span>
+                              ) : null}
+                            </button>
+                          </TableCell>
+                          <TableCell className="hidden align-middle text-sm text-muted-foreground lg:table-cell">
+                            <span className="line-clamp-2 max-w-[200px]">{client.company || "—"}</span>
+                          </TableCell>
+                          <TableCell className="hidden align-middle xl:table-cell">
+                            <span className="line-clamp-2 max-w-[200px] text-sm text-muted-foreground">
+                              {client.email || "—"}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden align-middle text-sm tabular-nums text-muted-foreground md:table-cell">
+                            {client.phone || "—"}
+                          </TableCell>
+                          <TableCell className="align-middle">
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "rounded-md px-2.5 py-1 text-xs font-medium",
+                                client.status === "Ativo" &&
+                                  "border-emerald-200/80 bg-emerald-100 text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100",
+                                client.status === "Inativo" &&
+                                  "border-border/60 bg-muted/80 text-muted-foreground",
+                                client.status !== "Ativo" &&
+                                  client.status !== "Inativo" &&
+                                  "border-border/60",
+                              )}
                             >
                               {client.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>{client.group || "—"}</TableCell>
-                          <TableCell>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                <Button variant="ghost" size="icon">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate(`/clients/${client.id}/tasks`);
-                                }}>
-                                  <Plus className="h-4 w-4 mr-2" />
-                                  Adicionar Tarefa
-                                </DropdownMenuItem>
-                                {canCreate("proposals") && (
-                                  <DropdownMenuItem asChild>
-                                    <Link
-                                      to={`/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`}
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <UserPlus className="h-4 w-4 mr-2" />
-                                      Nova proposta
-                                    </Link>
+                          <TableCell className="hidden align-middle text-sm text-muted-foreground lg:table-cell">
+                            <span className="line-clamp-2 max-w-[160px]">{client.group || "—"}</span>
+                          </TableCell>
+                          <TableCell className="text-right align-middle" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex justify-end gap-0.5">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                aria-label="Abrir ficha"
+                                onClick={() => handleViewClient(client)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                  <Button variant="outline" size="sm" className="h-8 gap-1 px-2" aria-label="Mais ações">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuLabel>Mais ações</DropdownMenuLabel>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      saveClientsListScrollPosition();
+                                      navigate(`/clients/${client.id}/tasks`);
+                                    }}
+                                  >
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    Adicionar tarefa
                                   </DropdownMenuItem>
-                                )}
-                                <DropdownMenuSeparator />
-                                {canDelete(MODULE_CLIENTS) && (
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    confirmDeleteClient(client);
-                                  }}
-                                  className="text-destructive focus:text-destructive"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Excluir Cliente
-                                </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                                  {canCreate("proposals") && (
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={appendClientsListReturnPath(
+                                          `/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`,
+                                          clientsListHref,
+                                        )}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <UserPlus className="mr-2 h-4 w-4" />
+                                        Nova proposta
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canCreate("billing") ? (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem asChild>
+                                        <Link
+                                          to={appendClientsListReturnPath(
+                                            `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=one_off`,
+                                            clientsListHref,
+                                          )}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <Receipt className="mr-2 h-4 w-4" />
+                                          Nova fatura
+                                        </Link>
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem asChild>
+                                        <Link
+                                          to={appendClientsListReturnPath(
+                                            `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=subscription`,
+                                            clientsListHref,
+                                          )}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <CalendarSync className="mr-2 h-4 w-4" />
+                                          Nova assinatura
+                                        </Link>
+                                      </DropdownMenuItem>
+                                    </>
+                                  ) : null}
+                                  {canCreate("contracts") ? (
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={appendClientsListReturnPath(
+                                          `/contracts/new?clientId=${encodeURIComponent(client.id)}`,
+                                          clientsListHref,
+                                        )}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <FileSignature className="mr-2 h-4 w-4" />
+                                        Criar contrato
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  <DropdownMenuSeparator />
+                                  {canDelete(MODULE_CLIENTS) && (
+                                    <DropdownMenuItem
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        confirmDeleteClient(client);
+                                      }}
+                                      className="text-destructive focus:text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Excluir cliente
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
                           </TableCell>
                         </TableRow>
                         );
@@ -1806,9 +2152,9 @@ const Clients = () => {
                 </Table>
               </div>
 
-              <div className="space-y-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
+              <div className="space-y-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
                 {paginatedClients.length === 0 ? (
-                  <div className="flex min-h-[11rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
+                  <div className="flex min-h-[9rem] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/70 bg-card/50 px-3 py-8 text-center">
                     <Search className="h-7 w-7 text-muted-foreground/80" aria-hidden />
                     <p className="text-sm font-medium text-foreground">Nenhum cliente encontrado</p>
                     <p className="text-xs text-muted-foreground">Ajuste filtros ou termos de busca para continuar.</p>
@@ -1819,107 +2165,179 @@ const Clients = () => {
                       client,
                       client.whatsapp_avatar_url ?? null
                     );
+                    const notePreview = clientNotesPreview(client.notes);
+                    const contactLine = [client.phone, client.email].filter(Boolean).join(" · ");
+                    const opHint =
+                      client.group?.trim() ||
+                      (notePreview ? notePreview.slice(0, 72) + (notePreview.length > 72 ? "…" : "") : "");
+
                     return (
-                      <div
+                      <Card
                         key={`m-${client.id}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => handleViewClient(client)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            handleViewClient(client);
-                          }
-                        }}
-                        className={cn(
-                          "w-full min-h-[8.25rem] rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-colors",
-                          "active:bg-muted/50",
-                        )}
+                        className="overflow-hidden border-border/70 shadow-sm"
                       >
-                        <div className="flex gap-3">
-                          <Avatar className="h-11 w-11 shrink-0">
-                            {listAvatar.src ? (
-                              <AvatarImage src={listAvatar.src} alt={client.name} />
-                            ) : null}
-                            <AvatarFallback>{listAvatar.initials}</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="font-semibold leading-tight">{client.name}</p>
-                                {client.company ? (
-                                  <p className="mt-0.5 truncate text-sm text-muted-foreground">{client.company}</p>
-                                ) : null}
+                        <CardContent className="p-0">
+                          <button
+                            type="button"
+                            className="flex w-full min-h-[4.5rem] gap-2.5 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/20 focus-visible:bg-muted/25 active:bg-muted/35"
+                            onClick={() => handleViewClient(client)}
+                            aria-label={`Abrir ficha de ${client.name}`}
+                          >
+                            <Avatar className="h-10 w-10 shrink-0 ring-1 ring-border/50">
+                              {listAvatar.src ? (
+                                <AvatarImage src={listAvatar.src} alt={client.name} />
+                              ) : null}
+                              <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="truncate text-[15px] font-semibold leading-tight text-foreground">
+                                    {client.name}
+                                  </p>
+                                  {client.company ? (
+                                    <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
+                                      <Building2 className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                                      {client.company}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <Badge
+                                  variant={
+                                    client.status === "Ativo"
+                                      ? "default"
+                                      : client.status === "Inativo"
+                                        ? "destructive"
+                                        : "outline"
+                                  }
+                                  className="max-w-[6.5rem] shrink-0 truncate px-2 py-0.5 text-[11px]"
+                                >
+                                  {client.status}
+                                </Badge>
                               </div>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 -mr-1">
-                                    <MoreVertical className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      navigate(`/clients/${client.id}/tasks`);
-                                    }}
-                                  >
-                                    <Plus className="mr-2 h-4 w-4" />
-                                    Adicionar tarefa
-                                  </DropdownMenuItem>
-                                  {canCreate("proposals") && (
+                              {contactLine ? (
+                                <p className="mt-1 line-clamp-1 text-xs tabular-nums text-muted-foreground">
+                                  {contactLine}
+                                </p>
+                              ) : null}
+                              {opHint ? (
+                                <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{opHint}</p>
+                              ) : null}
+                            </div>
+                          </button>
+                          <div className="flex items-center gap-1.5 border-t border-border/50 bg-muted/15 px-2 py-1.5">
+                            <Button
+                              asChild
+                              size="sm"
+                              variant="secondary"
+                              className="h-8 min-w-0 flex-1 touch-manipulation px-2 text-xs"
+                            >
+                              <Link
+                                to={`/chat${chatOpenQueryWithReturn({ openClientId: client.id })}`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MessageCircle className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+                                Chat
+                              </Link>
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="outline"
+                                  className="h-8 w-8 shrink-0 touch-manipulation"
+                                  aria-label="Mais ações"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-56">
+                                <DropdownMenuLabel>Ações rápidas</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {canCreate("billing") ? (
+                                  <>
                                     <DropdownMenuItem asChild>
                                       <Link
-                                        to={`/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`}
-                                        onClick={(e) => e.stopPropagation()}
+                                        to={appendClientsListReturnPath(
+                                          `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=one_off`,
+                                          clientsListHref,
+                                        )}
                                       >
-                                        <UserPlus className="mr-2 h-4 w-4" />
-                                        Nova proposta
+                                        <Receipt className="mr-2 h-4 w-4" />
+                                        Nova fatura
                                       </Link>
                                     </DropdownMenuItem>
-                                  )}
-                                  {canDelete(MODULE_CLIENTS) && (
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={appendClientsListReturnPath(
+                                          `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=subscription`,
+                                          clientsListHref,
+                                        )}
+                                      >
+                                        <CalendarSync className="mr-2 h-4 w-4" />
+                                        Nova assinatura
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : null}
+                                {canCreate("proposals") ? (
+                                  <DropdownMenuItem asChild>
+                                    <Link
+                                      to={appendClientsListReturnPath(
+                                        `/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`,
+                                        clientsListHref,
+                                      )}
+                                    >
+                                      <FileText className="mr-2 h-4 w-4" />
+                                      Criar proposta
+                                    </Link>
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {canCreate("contracts") ? (
+                                  <DropdownMenuItem asChild>
+                                    <Link
+                                      to={appendClientsListReturnPath(
+                                        `/contracts/new?clientId=${encodeURIComponent(client.id)}`,
+                                        clientsListHref,
+                                      )}
+                                    >
+                                      <FileSignature className="mr-2 h-4 w-4" />
+                                      Criar contrato
+                                    </Link>
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {canEdit(MODULE_CLIENTS) ? (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        openClientQuickEditFromList(client);
+                                      }}
+                                    >
+                                      <Pencil className="mr-2 h-4 w-4" />
+                                      Editar
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : null}
+                                {canDelete(MODULE_CLIENTS) ? (
+                                  <>
+                                    <DropdownMenuSeparator />
                                     <DropdownMenuItem
                                       className="text-destructive focus:text-destructive"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        confirmDeleteClient(client);
-                                      }}
+                                      onClick={() => confirmDeleteClient(client)}
                                     >
                                       <Trash2 className="mr-2 h-4 w-4" />
                                       Excluir
                                     </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                              {client.phone ? <span>{client.phone}</span> : null}
-                              {client.email ? <span className="truncate max-w-[200px]">{client.email}</span> : null}
-                            </div>
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <Badge
-                                variant={
-                                  client.status === "Ativo"
-                                    ? "default"
-                                    : client.status === "Inativo"
-                                      ? "destructive"
-                                      : "outline"
-                                }
-                              >
-                                {client.status}
-                              </Badge>
-                              {client.group ? (
-                                <Badge variant="outline" className="max-w-[140px] truncate font-normal">
-                                  {client.group}
-                                </Badge>
-                              ) : null}
-                            </div>
+                                  </>
+                                ) : null}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
-                        </div>
-                      </div>
+                        </CardContent>
+                      </Card>
                     );
                   })
                 )}
@@ -1927,13 +2345,16 @@ const Clients = () => {
             </>
           )}
 
-          <div className="mt-4">
-            <Pagination>
-              <PaginationContent>
-                {renderPagination()}
-              </PaginationContent>
-            </Pagination>
-          </div>
+          {sortedClients.length > 0 ? (
+            <div className="mt-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-center text-xs text-muted-foreground sm:text-left">
+                Página {currentPage} de {totalPages}
+              </p>
+              <Pagination className="justify-center sm:justify-end">
+                <PaginationContent className="flex-wrap gap-1">{renderPagination()}</PaginationContent>
+              </Pagination>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -1968,7 +2389,8 @@ const Clients = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </CommercialListingPageShell>
   );
 };
 

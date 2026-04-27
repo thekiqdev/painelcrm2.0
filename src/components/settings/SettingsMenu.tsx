@@ -18,6 +18,7 @@ import {
   FileText,
   Shield,
   LayoutTemplate,
+  Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +37,8 @@ type SettingSection =
   | "chatTemplates"
   | "domain"
   | "messageTemplates"
-  | "paymentGateway";
+  | "paymentGateway"
+  | "googleCalendar";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -57,6 +59,7 @@ const INTEGRATIONS_SUBCATEGORY_ORDER = [
   "Marca e domínio",
   "Modelos (CRM)",
   "Recebimentos",
+  "Agenda",
 ] as const;
 
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSelect }) => {
@@ -109,6 +112,13 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
       icon: <CreditCard className="h-4 w-4" />,
       category: "Integrações",
       subcategory: "Recebimentos",
+    },
+    {
+      id: "googleCalendar",
+      label: "Google Agenda",
+      icon: <Calendar className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Agenda",
     },
   ];
 

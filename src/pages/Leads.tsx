@@ -1,11 +1,20 @@
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import {
+  Trash2,
+  Layers,
+  UserPlus,
+  Phone,
+  Target,
+  XCircle,
+  CheckCircle2,
+  type LucideIcon,
+} from "lucide-react";
 import { apiClient } from "@/integrations/api/client";
 import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -15,6 +24,7 @@ import { z } from "zod";
 import LeadHeader from "@/components/leads/LeadHeader";
 import LeadFilters from "@/components/leads/LeadFilters";
 import LeadListTable from "@/components/leads/LeadListTable";
+import LeadMobileCardList from "@/components/leads/LeadMobileCardList";
 import LeadAddDialog from "@/components/leads/LeadAddDialog";
 import LeadEditDialog from "@/components/leads/LeadEditDialog";
 import LeadDetailsDialog from "@/components/leads/LeadDetailsDialog";
@@ -29,6 +39,17 @@ import {
 import ProposalCreateForm, {
   type ProposalCreateSuccessPayload,
 } from "@/components/proposals/ProposalCreateForm";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+import {
+  COMMERCIAL_LIST_CONTAINER_CARD,
+  COMMERCIAL_SUMMARY_ACTIVE_RING,
+  COMMERCIAL_SUMMARY_CARD_CLASS,
+  COMMERCIAL_SUMMARY_GRID_6,
+  COMMERCIAL_TABLE_DESKTOP_WRAP,
+} from "@/lib/commercialListUi";
+import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
 
 // Schemas for form validation
 const leadFormSchema = z.object({
@@ -59,6 +80,7 @@ const DEFAULT_LEAD_STATUSES = [
 
 const Leads = () => {
   const queryClient = useQueryClient();
+
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -74,7 +96,15 @@ const Leads = () => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [leadToDelete, setLeadToDelete] = useState<any>(null);
   const [isProposalSheetOpen, setIsProposalSheetOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
   const { user } = useAuth();
+  const { canCreate } = useModulePermissions();
+  const canCreateProposals = canCreate("proposals");
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, activeStatusFilter]);
 
   // Statuses em cache
   const { data: statusesData } = useQuery({
@@ -104,6 +134,11 @@ const Leads = () => {
       if (response.error) throw new Error(response.error);
       let data = response.data || [];
       data = [...data].sort((a: any, b: any) => {
+        if (sortField === "updated_at") {
+          const ta = new Date(a.updated_at || 0).getTime();
+          const tb = new Date(b.updated_at || 0).getTime();
+          return sortDirection === "asc" ? ta - tb : tb - ta;
+        }
         const aVal = a[sortField] || "";
         const bVal = b[sortField] || "";
         if (sortDirection === "asc") return aVal > bVal ? 1 : -1;
@@ -417,6 +452,86 @@ const Leads = () => {
 
   const filteredLeads = getFilteredLeads();
 
+  type MetricFilter = "all" | "novo" | "em contato" | "qualificado" | "perdido" | "convertidos";
+
+  const funnelMetrics = useMemo(() => {
+    const sc = (label: string) =>
+      leads.filter((l: any) => (l.status || "").toLowerCase() === label.toLowerCase()).length;
+    const rows: {
+      key: string;
+      label: string;
+      hint: string;
+      value: number;
+      filter: MetricFilter;
+      Icon: LucideIcon;
+    }[] = [
+      {
+        key: "total",
+        label: "Total",
+        hint: "Todos os estágios nesta base",
+        value: leads.length,
+        filter: "all",
+        Icon: Layers,
+      },
+      {
+        key: "novo",
+        label: "Novos",
+        hint: "Primeiro contacto",
+        value: sc("novo"),
+        filter: "novo",
+        Icon: UserPlus,
+      },
+      {
+        key: "em",
+        label: "Em contato",
+        hint: "Qualificação em curso",
+        value: sc("em contato"),
+        filter: "em contato",
+        Icon: Phone,
+      },
+      {
+        key: "qual",
+        label: "Qualificados",
+        hint: "Prontos para avançar",
+        value: sc("qualificado"),
+        filter: "qualificado",
+        Icon: Target,
+      },
+      {
+        key: "perd",
+        label: "Perdidos",
+        hint: "Arquivados neste funil",
+        value: sc("perdido"),
+        filter: "perdido",
+        Icon: XCircle,
+      },
+      {
+        key: "conv",
+        label: "Convertidos",
+        hint: "Já viraram cliente",
+        value: sc("convertido"),
+        filter: "convertidos",
+        Icon: CheckCircle2,
+      },
+    ];
+    return rows;
+  }, [leads]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / itemsPerPage));
+  const paginatedLeads = filteredLeads.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage,
+  );
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const openProposalForLead = (lead: any) => {
+    setSelectedLead(lead);
+    setIsProposalSheetOpen(true);
+  };
+
   const handleProposalCreatedFromLead = (_created: ProposalCreateSuccessPayload, mode: "sent" | "draft") => {
     toast.success(mode === "draft" ? "Rascunho salvo." : "Proposta criada.");
     setIsProposalSheetOpen(false);
@@ -424,70 +539,200 @@ const Leads = () => {
     fetchLeads();
   };
 
+  const metricCardActive = (filter: MetricFilter) =>
+    (filter === "all" && activeStatusFilter === "all") || activeStatusFilter === filter;
+
   return (
-    <div className="space-y-6">
-      {/* Header with search and add button */}
-      <LeadHeader 
+    <CommercialListingPageShell>
+      <LeadHeader
         searchTerm={searchTerm}
         onSearchChange={(e) => setSearchTerm(e.target.value)}
-        onAddClick={() => setIsAddDialogOpen(true)} 
+        onAddClick={() => setIsAddDialogOpen(true)}
       />
 
-      {/* Status filter tabs */}
-      <LeadFilters 
+      <div className={COMMERCIAL_SUMMARY_GRID_6}>
+        {funnelMetrics.map((m) => {
+          const Icon = m.Icon;
+          const active = metricCardActive(m.filter);
+          return (
+            <Card
+              key={m.key}
+              role="button"
+              tabIndex={0}
+              className={cn(
+                COMMERCIAL_SUMMARY_CARD_CLASS,
+                active && COMMERCIAL_SUMMARY_ACTIVE_RING,
+              )}
+              onClick={() => {
+                setActiveStatusFilter(m.filter);
+                setCurrentPage(1);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setActiveStatusFilter(m.filter);
+                  setCurrentPage(1);
+                }
+              }}
+            >
+              <CardContent className="p-3.5">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium text-muted-foreground">{m.label}</p>
+                  <Icon className="h-4 w-4 shrink-0 text-muted-foreground opacity-80" aria-hidden />
+                </div>
+                <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{m.value}</p>
+                <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{m.hint}</p>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <LeadFilters
         activeStatusFilter={activeStatusFilter}
         setActiveStatusFilter={setActiveStatusFilter}
         leadStatuses={leadStatuses}
+        sortField={sortField}
+        setSortField={setSortField}
+        sortDirection={sortDirection}
+        setSortDirection={setSortDirection}
       />
 
-      {/* Main card with leads table */}
-      <Card>
-        <CardHeader className="pb-0">
-          <CardTitle>Lista de Leads</CardTitle>
+      <Card className={COMMERCIAL_LIST_CONTAINER_CARD}>
+        <CardHeader className="flex flex-col gap-2 border-b border-border/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="text-lg font-semibold tracking-tight">Lista de leads</CardTitle>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {filteredLeads.length === 0
+                ? "Nenhum resultado"
+                : `Mostrando ${paginatedLeads.length} de ${filteredLeads.length} neste filtro`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="hidden text-sm text-muted-foreground sm:inline">Por página</span>
+            <Select
+              value={String(itemsPerPage)}
+              onValueChange={(v) => {
+                setItemsPerPage(Number(v));
+                setCurrentPage(1);
+              }}
+            >
+              <SelectTrigger className="h-10 w-[88px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[10, 25, 50].map((n) => (
+                  <SelectItem key={n} value={String(n)}>
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
-        <CardContent>
-          <LeadListTable 
-            leads={filteredLeads}
-            sortField={sortField}
-            sortDirection={sortDirection}
-            handleSort={handleSort}
-            handleViewLead={handleViewLead}
-            handleEditLead={handleEditLead}
+        <CardContent className="pt-4">
+          <div className={COMMERCIAL_TABLE_DESKTOP_WRAP}>
+            <LeadListTable
+              leads={paginatedLeads}
+              sortField={sortField}
+              sortDirection={sortDirection}
+              handleSort={handleSort}
+              handleViewLead={handleViewLead}
+              handleEditLead={handleEditLead}
+              getStatusVariant={getStatusVariant}
+              onSelectLeadForTasks={(lead) => {
+                handleViewLead(lead);
+                setActiveTab("tasks");
+              }}
+              onSelectLeadForConversion={(lead) => {
+                setSelectedLead(lead);
+                fetchLeadTasks(lead.id);
+                setIsConvertDialogOpen(true);
+              }}
+              onDeleteLead={confirmDeleteLead}
+            />
+          </div>
+
+          <LeadMobileCardList
+            leads={paginatedLeads as any}
             getStatusVariant={getStatusVariant}
-            onSelectLeadForTasks={(lead) => {
+            onView={handleViewLead}
+            onEdit={handleEditLead}
+            onTasks={(lead) => {
               handleViewLead(lead);
               setActiveTab("tasks");
             }}
-            onSelectLeadForConversion={(lead) => {
+            onConvert={(lead) => {
               setSelectedLead(lead);
-              fetchLeadTasks(lead.id);
+              void fetchLeadTasks(lead.id);
               setIsConvertDialogOpen(true);
             }}
-            onDeleteLead={confirmDeleteLead}
+            onProposal={openProposalForLead}
+            onDelete={confirmDeleteLead}
+            canProposal={canCreateProposals}
           />
 
-          {/* Pagination */}
-          <div className="mt-4">
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious onClick={() => console.log('Previous page')} />
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationLink onClick={() => console.log('Page 1')} isActive>1</PaginationLink>
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationLink onClick={() => console.log('Page 2')}>2</PaginationLink>
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationEllipsis />
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationNext onClick={() => console.log('Next page')} />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
-          </div>
+          {filteredLeads.length > 0 ? (
+            <div className="mt-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-center text-xs text-muted-foreground sm:text-left">
+                Página {currentPage} de {totalPages}
+              </p>
+              <Pagination className="justify-center sm:justify-end">
+                <PaginationContent className="flex-wrap gap-1">
+                  <PaginationItem>
+                    <PaginationPrevious
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className={
+                        currentPage <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"
+                      }
+                      aria-disabled={currentPage <= 1}
+                    />
+                  </PaginationItem>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter((p) => {
+                      if (totalPages <= 5) return true;
+                      if (p === 1 || p === totalPages) return true;
+                      return Math.abs(p - currentPage) <= 1;
+                    })
+                    .flatMap((p, idx, arr) => {
+                      const prev = arr[idx - 1];
+                      const showEllipsis = Boolean(prev && p - prev > 1);
+                      const items: React.ReactElement[] = [];
+                      if (showEllipsis) {
+                        items.push(
+                          <PaginationItem key={`ellipsis-${p}`}>
+                            <PaginationEllipsis />
+                          </PaginationItem>
+                        );
+                      }
+                      items.push(
+                        <PaginationItem key={p}>
+                          <PaginationLink
+                            isActive={currentPage === p}
+                            onClick={() => setCurrentPage(p)}
+                            className="cursor-pointer"
+                          >
+                            {p}
+                          </PaginationLink>
+                        </PaginationItem>
+                      );
+                      return items;
+                    })}
+                  <PaginationItem>
+                    <PaginationNext
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className={
+                        currentPage >= totalPages
+                          ? "pointer-events-none opacity-50"
+                          : "cursor-pointer"
+                      }
+                      aria-disabled={currentPage >= totalPages}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -593,7 +838,7 @@ const Leads = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </CommercialListingPageShell>
   );
 };
 

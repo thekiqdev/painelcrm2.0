@@ -67,7 +67,7 @@ const FinancialUnifiedAccountDetailPage = lazy(() => import("./pages/finance/Fin
 const FinancialUnifiedTransactionsPage = lazy(() => import("./pages/finance/FinancialUnifiedTransactionsPage"));
 const FinancialUnifiedExpensesPage = lazy(() => import("./pages/finance/FinancialUnifiedExpensesPage"));
 const FinancialCategoriesPage = lazy(() => import("./pages/finance/FinancialCategoriesPage"));
-const FinancialRecurringExpensesPage = lazy(() => import("./pages/finance/FinancialRecurringExpensesPage"));
+const FinancialAccountsPayablePage = lazy(() => import("./pages/finance/FinancialAccountsPayablePage"));
 const FinanceCreditCardsPage = lazy(() => import("./pages/finance/FinanceCreditCardsPage"));
 const FinanceCreditCardDetailPage = lazy(() => import("./pages/finance/FinanceCreditCardDetailPage"));
 const FinanceCreditCardStatementPage = lazy(() => import("./pages/finance/FinanceCreditCardStatementPage"));
@@ -120,9 +120,17 @@ const SuperAdminAnnouncementSend = lazy(() => import("./pages/superadmin/SuperAd
 const SuperAdminAnnouncementSends = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSends"));
 const SuperAdminAnnouncementSendDetail = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSendDetail"));
 const SuperAdminAnnouncementGroups = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementGroups"));
+const SuperAdminLegalPages = lazy(() => import("./pages/superadmin/SuperAdminLegalPages"));
+const PublicPrivacyPolicyPage = lazy(() =>
+  import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
+);
+const PublicTermsOfServicePage = lazy(() =>
+  import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicTermsOfServicePage })),
+);
 const UpdatesPage = lazy(() => import("./pages/UpdatesPage"));
 const UpdateDetailPage = lazy(() => import("./pages/UpdateDetailPage"));
 
+const Profile = lazy(() => import("./pages/Profile"));
 const MeuPlano = lazy(() => import("./pages/MeuPlano"));
 const InternalBillingCheckout = lazy(() => import("./pages/InternalBillingCheckout"));
 const PlanCheckout = lazy(() => import("./pages/PlanCheckout"));
@@ -196,6 +204,23 @@ const App = () => (
             <Route path="/contract-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractView /></Suspense>} />
             <Route path="/proposal-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicProposalView /></Suspense>} />
             <Route path="/contract-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractSign /></Suspense>} />
+            <Route
+              path="/legal/privacy-policy"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicPrivacyPolicyPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/legal/terms-of-service"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicTermsOfServicePage />
+                </Suspense>
+              }
+            />
+            <Route path="/admin/configuracoes/legal" element={<Navigate to="/superadmin/configuracoes/legal" replace />} />
 
               {/* Protected routes - lazy loaded */}
             <Route path="/dashboard" element={
@@ -626,8 +651,12 @@ const App = () => (
               <Route path="accounts" element={<FinancialUnifiedAccountsPage />} />
               <Route path="transactions" element={<FinancialUnifiedTransactionsPage />} />
               <Route path="expenses" element={<FinancialUnifiedExpensesPage />} />
+              <Route path="accounts-payable" element={<FinancialAccountsPayablePage />} />
               <Route path="categories" element={<FinancialCategoriesPage />} />
-              <Route path="recurring-expenses" element={<FinancialRecurringExpensesPage />} />
+              <Route
+                path="recurring-expenses"
+                element={<Navigate to={{ pathname: "/finance/accounts-payable", hash: "hub-regras-recorrencia" }} replace />}
+              />
               <Route path="resumo" element={<FinanceSummaryPage />} />
               <Route path="contas" element={<FinanceAccountsPage />} />
               <Route path="contas/:accountId" element={<FinanceAccountDetailPage />} />
@@ -690,6 +719,15 @@ const App = () => (
                 </Suspense>
               } />
             </Route>
+            <Route path="/profile" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Profile />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
             <Route path="/meu-plano" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
@@ -773,6 +811,14 @@ const App = () => (
                 <Route path="announcements/:id/edit" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementEditor /></Suspense>} />
                 <Route path="announcements/:id/send" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSend /></Suspense>} />
                 <Route path="announcements" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncements /></Suspense>} />
+                <Route
+                  path="configuracoes/legal"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminLegalPages />
+                    </Suspense>
+                  }
+                />
               </Route>
             </Route>
             

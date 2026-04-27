@@ -1,10 +1,12 @@
 import { ArrowLeft } from "lucide-react";
+import { useMemo } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ContractCreateForm from "@/components/contracts/ContractCreateForm";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileCommerceScreenLayout } from "@/components/mobile/MobileCommerceScreenLayout";
 import { cn } from "@/lib/utils";
+import { parseClientsListReturnPath } from "@/lib/clientsListRestore";
 
 /**
  * Rotas `/contracts/new` e `/contracts/:id/edit` — delegam ao formulário compartilhado
@@ -19,7 +21,12 @@ export default function NewContract() {
     searchParams.get("clientId")?.trim() || searchParams.get("client_id")?.trim() || null;
   const returnToConversation = searchParams.get("return_to")?.trim() || "";
   const originChat = searchParams.get("origin") === "chat";
+  const listReturnPath = useMemo(
+    () => parseClientsListReturnPath(searchParams.get("return_path")),
+    [searchParams],
+  );
   const mobileShell = isMobile;
+  const mobileBackPath = returnToConversation || listReturnPath || "/contracts";
 
   return (
     <MobileCommerceScreenLayout
@@ -32,7 +39,7 @@ export default function NewContract() {
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => navigate(returnToConversation || "/contracts")}
+              onClick={() => navigate(mobileBackPath)}
               aria-label="Voltar"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -51,6 +58,7 @@ export default function NewContract() {
         <ContractCreateForm
           contractId={id}
           initialClientId={clientId}
+          listReturnPath={listReturnPath}
           onCreated={
             originChat && returnToConversation
               ? (contract) => {

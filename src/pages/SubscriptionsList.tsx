@@ -20,7 +20,8 @@ import { crmSubscriptionsService, type CrmSubscriptionListItem } from "@/service
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ArrowRight, CalendarSync, Eye, EyeOff, Filter } from "lucide-react";
+import { ArrowRight, CalendarSync, Eye, EyeOff, Filter, Plus } from "lucide-react";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 import { cn } from "@/lib/utils";
 
 const HIDE_ENDED_STORAGE_KEY = "crm_subscriptions_hide_ended";
@@ -101,7 +102,25 @@ const SubscriptionsList = () => {
 
   return (
     <div className="space-y-6 max-w-[1200px]">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Assinaturas"
+          secondaryActions={[
+            {
+              icon: hideEnded ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />,
+              ariaLabel: hideEnded ? "Mostrar assinaturas encerradas" : "Ocultar assinaturas encerradas",
+              onClick: () => setHideEnded((v) => !v),
+            },
+          ]}
+          primaryAction={{
+            label: "Nova cobrança",
+            icon: <Plus className="h-4 w-4" aria-hidden />,
+            href: "/customer-invoices/new",
+          }}
+        />
+      </div>
+
+      <div className="hidden md:flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
             <CalendarSync className="h-4 w-4" />

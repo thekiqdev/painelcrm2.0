@@ -9,14 +9,7 @@ import {
 } from "@/services/financial";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -28,8 +21,10 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { Badge } from "@/components/ui/badge";
-import { Landmark, Plus } from "lucide-react";
+import { ArrowLeftRight, Landmark, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
+import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
 
 const TYPE_LABEL: Record<FinancialAccountType, string> = {
   bank: "Banco",
@@ -122,6 +117,8 @@ const FinancialUnifiedAccountsPage = () => {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, loading]);
 
+  useFinanceBottomBarVisibility(open || transferOpen);
+
   const handleCreate = async () => {
     const cents = Math.round(parseFloat(initialCentsInput.replace(",", ".")) * 100);
     if (!name.trim()) {
@@ -190,7 +187,7 @@ const FinancialUnifiedAccountsPage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Bancos e contas</h2>
@@ -199,13 +196,16 @@ const FinancialUnifiedAccountsPage = () => {
             concluídos.
           </p>
         </div>
+        <div className="hidden md:flex flex-wrap gap-2">
+          <Button type="button" onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nova conta
+          </Button>
+          <Button type="button" variant="outline" onClick={() => setTransferOpen(true)}>
+            Transferir
+          </Button>
+        </div>
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Nova conta
-            </Button>
-          </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Nova conta</DialogTitle>
@@ -267,9 +267,6 @@ const FinancialUnifiedAccountsPage = () => {
           </DialogContent>
         </Dialog>
         <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline">Transferir</Button>
-          </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Transferir entre contas</DialogTitle>
@@ -319,6 +316,28 @@ const FinancialUnifiedAccountsPage = () => {
           </DialogContent>
         </Dialog>
       </div>
+
+      <FinanceMobileBottomBar
+        actions={[
+          {
+            key: "new-account",
+            label: "Nova conta",
+            variant: "primary",
+            icon: Plus,
+            onClick: () => setOpen(true),
+            loading: saving && open,
+          },
+          {
+            key: "transfer",
+            label: "Transferir",
+            variant: "outline",
+            icon: ArrowLeftRight,
+            onClick: () => setTransferOpen(true),
+            loading: transferSaving && transferOpen,
+          },
+        ]}
+      />
+
       <div className="flex justify-end">
         <div className="w-[220px]">
           <Label className="text-xs">Filtro tipo da conta</Label>

@@ -38,7 +38,6 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from "@/components/ui/sheet";
 import { contractsService } from "@/services/contracts";
 import { useAuth } from "@/contexts/AuthContext";
@@ -65,6 +64,7 @@ import type { Contract, ContractStatus, ContractFilters } from "@/types/contract
 import { getContractDocumentHtml } from "@/utils/contractDocument";
 import { canDeleteContractStatus } from "@/utils/contractStatusUi";
 import { applyUrlPatch } from "@/lib/listFiltersUrl";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 
 const CONTRACT_STATUS_URL = new Set<ContractStatus | "all">([
   "all",
@@ -326,118 +326,140 @@ const Contracts = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-bold">Contratos</h1>
-          <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
-            <SheetTrigger asChild>
-              <Button type="button" variant="outline" size="sm" className="gap-1 md:hidden">
-                <Filter className="h-4 w-4" />
-                Filtros
-                {filtersDirty ? <span className="h-2 w-2 rounded-full bg-primary" aria-hidden /> : null}
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto rounded-t-2xl pb-[max(1.25rem,env(safe-area-inset-bottom))] md:hidden">
-              <SheetHeader className="text-left">
-                <SheetTitle>Filtros</SheetTitle>
-                <SheetDescription>Status, período e depois aplicar à lista.</SheetDescription>
-              </SheetHeader>
-              <div className="mt-4 grid grid-cols-1 gap-4 px-1 pb-4">
-                <Select
-                  value={filters.status}
-                  onValueChange={(value) => setFilters({ ...filters, status: value as ContractStatus | "all" })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    <SelectItem value="DRAFT">Rascunho</SelectItem>
-                    <SelectItem value="PENDING_SIGNATURE">Pendente</SelectItem>
-                    <SelectItem value="PARTIALLY_SIGNED">Parcial</SelectItem>
-                    <SelectItem value="ACTIVE">Ativo</SelectItem>
-                    <SelectItem value="INACTIVE">Inativo</SelectItem>
-                    <SelectItem value="EXPIRED">Expirado</SelectItem>
-                    <SelectItem value="CANCELLED">Cancelado</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={filters.dateType}
-                  onValueChange={(value) => setFilters({ ...filters, dateType: value as "created" | "validity" })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="created">Data de Criação</SelectItem>
-                    <SelectItem value="validity">Período de Vigência</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="justify-start">
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {filters.startDate ? format(new Date(filters.startDate), "P", { locale: ptBR }) : "Data Início"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={filters.startDate ? new Date(filters.startDate) : undefined}
-                      onSelect={(date) => setFilters({ ...filters, startDate: date ? date.toISOString() : null })}
-                    />
-                  </PopoverContent>
-                </Popover>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="justify-start">
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {filters.endDate ? format(new Date(filters.endDate), "P", { locale: ptBR }) : "Data Fim"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={filters.endDate ? new Date(filters.endDate) : undefined}
-                      onSelect={(date) => setFilters({ ...filters, endDate: date ? date.toISOString() : null })}
-                    />
-                  </PopoverContent>
-                </Popover>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setFilters({
-                      status: "all",
-                      dateType: "created",
-                      startDate: null,
-                      endDate: null,
-                      clientId: null,
-                      responsibleId: null,
-                      tags: [],
-                      search: "",
-                    })
-                  }
-                >
-                  Limpar filtros
+      <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
+        <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto rounded-t-2xl pb-[max(1.25rem,env(safe-area-inset-bottom))] md:hidden">
+          <SheetHeader className="text-left">
+            <SheetTitle>Filtros</SheetTitle>
+            <SheetDescription>Status, período e depois aplicar à lista.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 grid grid-cols-1 gap-4 px-1 pb-4">
+            <Select
+              value={filters.status}
+              onValueChange={(value) => setFilters({ ...filters, status: value as ContractStatus | "all" })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="DRAFT">Rascunho</SelectItem>
+                <SelectItem value="PENDING_SIGNATURE">Pendente</SelectItem>
+                <SelectItem value="PARTIALLY_SIGNED">Parcial</SelectItem>
+                <SelectItem value="ACTIVE">Ativo</SelectItem>
+                <SelectItem value="INACTIVE">Inativo</SelectItem>
+                <SelectItem value="EXPIRED">Expirado</SelectItem>
+                <SelectItem value="CANCELLED">Cancelado</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={filters.dateType}
+              onValueChange={(value) => setFilters({ ...filters, dateType: value as "created" | "validity" })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="created">Data de Criação</SelectItem>
+                <SelectItem value="validity">Período de Vigência</SelectItem>
+              </SelectContent>
+            </Select>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="justify-start">
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {filters.startDate ? format(new Date(filters.startDate), "P", { locale: ptBR }) : "Data Início"}
                 </Button>
-                <SheetClose asChild>
-                  <Button
-                    type="button"
-                    className="w-full"
-                    onClick={() => {
-                      void loadContracts();
-                    }}
-                  >
-                    Aplicar e fechar
-                  </Button>
-                </SheetClose>
-              </div>
-            </SheetContent>
-          </Sheet>
-        </div>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={filters.startDate ? new Date(filters.startDate) : undefined}
+                  onSelect={(date) => setFilters({ ...filters, startDate: date ? date.toISOString() : null })}
+                />
+              </PopoverContent>
+            </Popover>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="justify-start">
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {filters.endDate ? format(new Date(filters.endDate), "P", { locale: ptBR }) : "Data Fim"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={filters.endDate ? new Date(filters.endDate) : undefined}
+                  onSelect={(date) => setFilters({ ...filters, endDate: date ? date.toISOString() : null })}
+                />
+              </PopoverContent>
+            </Popover>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setFilters({
+                  status: "all",
+                  dateType: "created",
+                  startDate: null,
+                  endDate: null,
+                  clientId: null,
+                  responsibleId: null,
+                  tags: [],
+                  search: "",
+                })
+              }
+            >
+              Limpar filtros
+            </Button>
+            <SheetClose asChild>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={() => {
+                  void loadContracts();
+                }}
+              >
+                Aplicar e fechar
+              </Button>
+            </SheetClose>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Contratos"
+          secondaryActions={[
+            {
+              icon: (
+                <span className="relative inline-flex">
+                  <Filter className="h-4 w-4" aria-hidden />
+                  {filtersDirty ? (
+                    <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary" aria-hidden />
+                  ) : null}
+                </span>
+              ),
+              ariaLabel: "Filtros",
+              onClick: () => setFilterSheetOpen(true),
+            },
+            {
+              icon: <FileText className="h-4 w-4" aria-hidden />,
+              ariaLabel: "Modelos de contrato",
+              onClick: () => navigate("/contracts/templates"),
+            },
+          ]}
+          primaryAction={{
+            label: "Novo contrato",
+            icon: <Plus className="h-4 w-4" aria-hidden />,
+            onClick: () => navigate("/contracts/new"),
+            disabled: !canCreateContractShortcut,
+          }}
+        />
+      </div>
+
+      <div className="hidden md:flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-2xl font-bold">Contratos</h1>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => navigate("/contracts/templates")}>
             <FileText className="mr-2 h-4 w-4" />

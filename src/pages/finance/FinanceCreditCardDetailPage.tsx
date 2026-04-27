@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { NavLink, useParams } from "react-router-dom";
+import { NavLink, useNavigate, useParams } from "react-router-dom";
 import {
   financialService,
   type FinancialCreditCardDto,
@@ -24,6 +24,13 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/sonner";
 import { ArrowLeft, Plus, Receipt } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  FinanceMobileBottomBar,
+  financeMobilePageBottomPad,
+  type FinanceMobileBottomAction,
+} from "@/components/finance/FinanceMobileBottomBar";
+import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
 
 function formatBrlCents(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -44,6 +51,7 @@ function statementLabel(ymd: string): string {
 }
 
 const FinanceCreditCardDetailPage = () => {
+  const navigate = useNavigate();
   const { cardId } = useParams<{ cardId: string }>();
   const [card, setCard] = useState<FinancialCreditCardDto | null>(null);
   const [purchases, setPurchases] = useState<FinancialCreditCardPurchaseDto[]>([]);
@@ -82,6 +90,8 @@ const FinanceCreditCardDetailPage = () => {
       .catch((e) => toast.error(e instanceof Error ? e.message : "Erro ao carregar"))
       .finally(() => setLoading(false));
   }, [cardId, loadAll]);
+
+  useFinanceBottomBarVisibility(purchaseOpen);
 
   const nextOpenStatement = useMemo(() => {
     const opens = statements.filter((x) => x.status === "open");
@@ -146,8 +156,38 @@ const FinanceCreditCardDetailPage = () => {
     return <p className="text-sm text-muted-foreground">Cartão não encontrado.</p>;
   }
 
+  const bottomActions = useMemo((): FinanceMobileBottomAction[] => {
+    const list: FinanceMobileBottomAction[] = [
+      {
+        key: "purchase",
+        label: "+ Nova compra",
+        variant: "outline",
+        icon: Plus,
+        onClick: () => setPurchaseOpen(true),
+        loading: savingPurchase && purchaseOpen,
+      },
+    ];
+    if (nextOpenStatement && cardId) {
+      list.push({
+        key: "pay",
+        label: "Pagar fatura",
+        variant: "primary",
+        icon: Receipt,
+        onClick: () =>
+          navigate(`/finance/credit-cards/${cardId}/faturas/${nextOpenStatement.id}`),
+      });
+    }
+    return list;
+  }, [
+    cardId,
+    navigate,
+    nextOpenStatement,
+    purchaseOpen,
+    savingPurchase,
+  ]);
+
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="sm" asChild>
           <NavLink to="/finance/credit-cards" className="gap-1">
@@ -165,7 +205,7 @@ const FinanceCreditCardDetailPage = () => {
             {card.due_day}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="hidden flex-wrap gap-2 md:flex">
           <Button type="button" variant="secondary" onClick={() => setPurchaseOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Nova compra
@@ -180,6 +220,8 @@ const FinanceCreditCardDetailPage = () => {
           )}
         </div>
       </div>
+
+      <FinanceMobileBottomBar actions={bottomActions} />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>

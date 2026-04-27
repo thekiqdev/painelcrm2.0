@@ -7,7 +7,14 @@ import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
 import { getContractDocumentHtml } from "@/utils/contractDocument";
 import { chatService, ChatMessage, normalizeChatMessage } from "@/services/chat";
-import { customerInvoicesService } from "@/services/customerInvoices";
+import { customerInvoicesService, type CustomerInvoice } from "@/services/customerInvoices";
+import { crmSubscriptionsService, type CrmSubscriptionListItem } from "@/services/crmSubscriptions";
+import {
+  ClientProfileFinanceHubSection,
+  ClientProfileInvoicesSection,
+  ClientProfileSubscriptionsSection,
+  computeClientBillingSummary,
+} from "@/components/clients/ClientProfileBillingPanels";
 import { ChatBubbleContent } from "@/components/chat/ChatBubbleContent";
 import { MessageStatusIndicator } from "@/components/chat/MessageStatusIndicator";
 import { toast } from "@/components/ui/sonner";
@@ -19,7 +26,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, Mail, Phone, Building, Calendar, User, MoreVertical, RefreshCw, Trash2, FileText, Clock, CheckSquare, Send, MessageSquare } from "lucide-react";
+import {
+  Plus,
+  Edit2,
+  Mail,
+  Phone,
+  Building,
+  Calendar,
+  User,
+  MoreVertical,
+  RefreshCw,
+  Trash2,
+  FileText,
+  Clock,
+  CheckSquare,
+  Send,
+  MessageSquare,
+  PieChart,
+  CalendarSync,
+} from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
@@ -35,6 +60,7 @@ import {
   getClientProfileReturnContext,
   navigateBackFromClientProfile,
 } from "@/utils/clientProfileNavigation";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useForm } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -165,8 +191,9 @@ const ClientProfile = () => {
   const [newClientGroup, setNewClientGroup] = useState("");
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
-  const [invoiceCount, setInvoiceCount] = useState(0);
-  const [isLoadingInvoiceCount, setIsLoadingInvoiceCount] = useState(false);
+  const [clientInvoices, setClientInvoices] = useState<CustomerInvoice[]>([]);
+  const [clientSubscriptions, setClientSubscriptions] = useState<CrmSubscriptionListItem[]>([]);
+  const [billingDataLoading, setBillingDataLoading] = useState(false);
   const [isEditingClientDetails, setIsEditingClientDetails] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
@@ -187,7 +214,8 @@ const ClientProfile = () => {
   const socketRef = useRef<Socket | null>(null);
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   const { session } = useAuth();
-  const { canDeleteRecord, canView, canCreate } = useModulePermissions();
+  const { canDeleteRecord, canView, canCreate, canEdit } = useModulePermissions();
+  const isMobile = useIsMobile();
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -235,6 +263,8 @@ const ClientProfile = () => {
     if (location.pathname.includes("/opportunities")) return "opportunities";
     if (location.pathname.includes("/messages")) return "messages";
     if (location.pathname.includes("/calendar")) return "calendar";
+    if (location.pathname.includes("/invoices")) return "invoices";
+    if (location.pathname.includes("/subscriptions")) return "subscriptions";
     if (location.pathname.includes("/finance")) return "finance";
     if (location.pathname.includes("/timeline")) return "timeline";
     if (location.pathname.includes("/contracts")) return "contracts";
@@ -243,6 +273,16 @@ const ClientProfile = () => {
   };
 
   const activeTab = getActiveTab();
+  const canViewBilling = canView("billing");
+  const canCreateBilling = canCreate("billing");
+  const canEditBilling = canEdit("billing");
+
+  const billingSummary = useMemo(() => computeClientBillingSummary(clientInvoices), [clientInvoices]);
+
+  const activeSubscriptionsCount = useMemo(
+    () => clientSubscriptions.filter((s) => s.status === "active").length,
+    [clientSubscriptions],
+  );
 
   const clientProposalStats = useMemo(() => {
     const pending = clientProposals.filter((p) => p.status === "draft" || p.status === "sent").length;
@@ -294,6 +334,16 @@ const ClientProfile = () => {
     );
   }, [id, location.pathname, location.search, location.hash, location.state, navigate]);
 
+  /** Mobile: conversa WhatsApp sai das abas — `/messages` redireciona para a visão geral. */
+  useEffect(() => {
+    if (!isMobile || !id) return;
+    if (!/\/messages\/?$/.test(location.pathname)) return;
+    navigate(
+      { pathname: `/clients/${id}`, search: location.search, hash: location.hash, state: location.state },
+      { replace: true },
+    );
+  }, [isMobile, id, location.pathname, location.search, location.hash, location.state, navigate]);
+
   useEffect(() => {
     if (id) {
       loadClientData();
@@ -324,17 +374,39 @@ const ClientProfile = () => {
   }, [selectedTask, taskDetailForm]);
 
   useEffect(() => {
-    if (activeTab === "contracts" && id) {
-      loadContracts();
-    }
-  }, [activeTab, id]);
-
-  useEffect(() => {
     if (id) {
       void loadContracts();
-      void loadInvoiceCount(id);
     }
   }, [id]);
+
+  const loadClientBillingData = useCallback(async () => {
+    if (!id || !canViewBilling) {
+      setClientInvoices([]);
+      setClientSubscriptions([]);
+      return;
+    }
+    setBillingDataLoading(true);
+    try {
+      const [inv, allSubs] = await Promise.all([
+        customerInvoicesService.list({ client_id: id, limit: 200 }),
+        crmSubscriptionsService.list(),
+      ]);
+      const subs = (allSubs || []).filter((s) => s.client_id === id);
+      setClientInvoices(inv);
+      setClientSubscriptions(subs);
+    } catch (e) {
+      console.error(e);
+      toast.error(e instanceof Error ? e.message : "Erro ao carregar dados financeiros do cliente");
+      setClientInvoices([]);
+      setClientSubscriptions([]);
+    } finally {
+      setBillingDataLoading(false);
+    }
+  }, [id, canViewBilling]);
+
+  useEffect(() => {
+    void loadClientBillingData();
+  }, [loadClientBillingData]);
 
   useEffect(() => {
     if (activeTab === "messages" && id) {
@@ -675,19 +747,6 @@ const ClientProfile = () => {
     }
   };
 
-  const loadInvoiceCount = async (clientId: string) => {
-    try {
-      setIsLoadingInvoiceCount(true);
-      const invoices = await customerInvoicesService.list({ client_id: clientId, limit: 200 });
-      setInvoiceCount(invoices.length);
-    } catch (error) {
-      console.error("Erro ao carregar faturas do cliente:", error);
-      setInvoiceCount(0);
-    } finally {
-      setIsLoadingInvoiceCount(false);
-    }
-  };
-
   const handleSaveClientDetails = async (values: z.infer<typeof clientEditSchema>) => {
     if (!client?.id) return;
     try {
@@ -1001,8 +1060,8 @@ const ClientProfile = () => {
     );
   };
 
-  const formatCurrency = (value: number | null, currency: string = 'BRL') => {
-    if (!value) return "—";
+  const formatCurrency = (value: number | null | undefined, currency: string = 'BRL') => {
+    if (value == null || Number.isNaN(value)) return "—";
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
       currency: currency,
@@ -1055,7 +1114,10 @@ const ClientProfile = () => {
           avatarSrc={profileAvatar.src}
           avatarInitials={profileAvatar.initials}
           phone={client.phone}
+          clientStatus={client.status}
+          clientCompany={client.company}
           backFromChat={profileReturn.fromChat}
+          showBilling={canViewBilling}
         />
       </aside>
 
@@ -1076,16 +1138,20 @@ const ClientProfile = () => {
         >
           {/* Conteúdo baseado na aba ativa */}
           {activeTab === "overview" && (
-            <div className="space-y-6 mb-6">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold">Resumo do Cliente</CardTitle>
+            <div className="mb-6 space-y-4 max-md:space-y-3 md:space-y-6">
+              <Card className="max-md:shadow-sm">
+                <CardHeader className="pb-2 pt-3 max-md:py-2.5 md:pb-3 md:pt-4">
+                  <CardTitle className="text-sm font-semibold md:text-base">
+                    <span className="md:hidden">Visão geral</span>
+                    <span className="hidden md:inline">Resumo</span>
+                  </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-3 max-md:space-y-2.5 md:space-y-4">
                   <div className="flex flex-wrap gap-2">
                     <Button
                       variant="default"
                       size="sm"
+                      className="hidden md:inline-flex"
                       onClick={() =>
                         navigate({
                           pathname: `/clients/${client.id}/messages`,
@@ -1097,39 +1163,126 @@ const ClientProfile = () => {
                       <MessageSquare className="mr-2 h-4 w-4" />
                       Ir para conversa
                     </Button>
+                    {canViewBilling ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            navigate({
+                              pathname: `/clients/${client.id}/invoices`,
+                              search: location.search,
+                              state: location.state,
+                            })
+                          }
+                        >
+                          <FileText className="mr-2 h-4 w-4" />
+                          Faturas
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            navigate({
+                              pathname: `/clients/${client.id}/subscriptions`,
+                              search: location.search,
+                              state: location.state,
+                            })
+                          }
+                        >
+                          <CalendarSync className="mr-2 h-4 w-4" />
+                          Assinaturas
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            navigate({
+                              pathname: `/clients/${client.id}/finance`,
+                              search: location.search,
+                              state: location.state,
+                            })
+                          }
+                        >
+                          <PieChart className="mr-2 h-4 w-4" />
+                          Financeiro
+                        </Button>
+                      </>
+                    ) : null}
+                    {canCreate("proposals") ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          navigate({
+                            pathname: `/clients/${client.id}/opportunities`,
+                            search: location.search,
+                            state: location.state,
+                          })
+                        }
+                      >
+                        Propostas
+                      </Button>
+                    ) : null}
                   </div>
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <Card>
-                      <CardContent className="pt-6">
-                        <Label className="text-xs text-muted-foreground">Contratos</Label>
-                        <p className="mt-1 text-2xl font-bold">{contracts.length}</p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-6">
+                    <Card className="max-md:border-border/70 max-md:shadow-none">
+                      <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
+                        <Label className="text-[10px] text-muted-foreground md:text-xs">Contratos</Label>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums md:mt-1 md:text-2xl">{contracts.length}</p>
                       </CardContent>
                     </Card>
-                    <Card>
-                      <CardContent className="pt-6">
-                        <Label className="text-xs text-muted-foreground">Faturas</Label>
-                        <p className="mt-1 text-2xl font-bold">
-                          {isLoadingInvoiceCount ? "..." : invoiceCount}
+                    <Card className="max-md:border-border/70 max-md:shadow-none">
+                      <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
+                        <Label className="text-[10px] text-muted-foreground md:text-xs">Faturas</Label>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums md:mt-1 md:text-2xl">
+                          {billingDataLoading ? "…" : clientInvoices.length}
                         </p>
                       </CardContent>
                     </Card>
-                    <Card>
-                      <CardContent className="pt-6">
-                        <Label className="text-xs text-muted-foreground">Tarefas</Label>
-                        <p className="mt-1 text-2xl font-bold">{clientTasks.length}</p>
+                    {canViewBilling ? (
+                      <>
+                        <Card className="max-md:border-border/70 max-md:shadow-none">
+                          <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
+                            <Label className="text-[10px] text-muted-foreground md:text-xs">Assinaturas</Label>
+                            <p className="mt-0.5 text-lg font-bold tabular-nums md:mt-1 md:text-2xl">
+                              {billingDataLoading ? "…" : clientSubscriptions.length}
+                            </p>
                       </CardContent>
                     </Card>
-                    <Card>
-                      <CardContent className="pt-6">
-                        <Label className="text-xs text-muted-foreground">Notas</Label>
-                        <p className="mt-1 text-2xl font-bold">{notes.length}</p>
+                        <Card className="max-md:border-border/70 max-md:shadow-none">
+                          <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
+                            <Label className="text-[10px] text-muted-foreground md:text-xs">Em aberto</Label>
+                            <p className="mt-0.5 text-base font-bold tabular-nums text-amber-700 dark:text-amber-400 md:mt-1 md:text-lg">
+                              {billingDataLoading ? "…" : formatCurrency(billingSummary.openCents / 100)}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      </>
+                    ) : null}
+                    <Card className="max-md:border-border/70 max-md:shadow-none">
+                      <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
+                        <Label className="text-[10px] text-muted-foreground md:text-xs">Tarefas</Label>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums md:mt-1 md:text-2xl">{clientTasks.length}</p>
+                      </CardContent>
+                    </Card>
+                    <Card className="max-md:border-border/70 max-md:shadow-none">
+                      <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
+                        <Label className="text-[10px] text-muted-foreground md:text-xs">Notas</Label>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums md:mt-1 md:text-2xl">{notes.length}</p>
                       </CardContent>
                     </Card>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="space-y-2 rounded-md border p-4">
-                      <h3 className="text-sm font-semibold">Informações de contato</h3>
-                      <div className="space-y-2 text-sm">
+                  {client?.updated_at ? (
+                    <p className="text-xs text-muted-foreground">
+                      Última atualização no CRM:{" "}
+                      {formatDateOnlyPtBr(String(client.updated_at).slice(0, 10))}
+                    </p>
+                  ) : null}
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
+                    <div className="space-y-1.5 rounded-md border p-3 md:space-y-2 md:p-4">
+                      <h3 className="text-xs font-semibold md:text-sm">Informações de contato</h3>
+                      <div className="space-y-1.5 text-xs md:space-y-2 md:text-sm">
                         <div className="flex items-center gap-2">
                           <Mail className="h-4 w-4 text-muted-foreground" />
                           <span>{client.email || "Não informado"}</span>
@@ -1144,9 +1297,9 @@ const ClientProfile = () => {
                         </div>
                       </div>
                     </div>
-                    <div className="space-y-3 rounded-md border p-4">
-                      <h3 className="text-sm font-semibold">Grupo e status</h3>
-                      <div className="space-y-3">
+                    <div className="space-y-2 rounded-md border p-3 md:space-y-3 md:p-4">
+                      <h3 className="text-xs font-semibold md:text-sm">Grupo e status</h3>
+                      <div className="space-y-2 md:space-y-3">
                         <div>
                           <Label className="text-xs text-muted-foreground">Status</Label>
                           <Badge variant="outline" className="mt-1 ml-2">
@@ -1178,10 +1331,10 @@ const ClientProfile = () => {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
+              <Card className="max-md:border-dashed max-md:bg-muted/25 max-md:shadow-none md:bg-card">
+                <CardHeader className="max-md:py-3 md:py-6">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <CardTitle>Cadastro Completo do Cliente</CardTitle>
+                    <CardTitle className="max-md:text-sm max-md:font-semibold">Cadastro Completo do Cliente</CardTitle>
                     {isEditingClientDetails ? (
                       <div className="flex gap-2">
                         <Button type="button" variant="outline" onClick={() => setIsEditingClientDetails(false)}>
@@ -1812,14 +1965,14 @@ const ClientProfile = () => {
                                 )}
                                 {canDeleteContractInUi(contract) ? (
                                   <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem 
-                                      onClick={() => handleDeleteContract(contract.id)}
-                                      className="text-destructive focus:text-destructive"
-                                    >
-                                      <Trash2 className="h-4 w-4 mr-2" />
-                                      Excluir
-                                    </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                  onClick={() => handleDeleteContract(contract.id)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Excluir
+                                </DropdownMenuItem>
                                   </>
                                 ) : null}
                               </DropdownMenuContent>
@@ -2094,14 +2247,76 @@ const ClientProfile = () => {
             </Card>
           )}
 
-          {(activeTab === "calendar" || activeTab === "finance" || activeTab === "settings") && (
+          {activeTab === "invoices" && canViewBilling && id ? (
+            <ClientProfileInvoicesSection
+              clientId={id}
+              invoices={clientInvoices}
+              loading={billingDataLoading}
+              location={location}
+              navigate={navigate}
+              conversationId={conversationId}
+              canCreateBilling={canCreateBilling}
+              canEditBilling={canEditBilling}
+              onReload={() => void loadClientBillingData()}
+            />
+          ) : null}
+
+          {activeTab === "invoices" && !canViewBilling ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                Sem permissão para ver faturas deste cliente.
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {activeTab === "subscriptions" && canViewBilling && id ? (
+            <ClientProfileSubscriptionsSection
+              subscriptions={clientSubscriptions}
+              loading={billingDataLoading}
+              onReload={() => void loadClientBillingData()}
+            />
+          ) : null}
+
+          {activeTab === "subscriptions" && !canViewBilling ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                Sem permissão para ver assinaturas.
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {activeTab === "finance" && canViewBilling && id ? (
+            <ClientProfileFinanceHubSection
+              clientId={id}
+              clientName={client.name}
+              invoices={clientInvoices}
+              loading={billingDataLoading}
+              location={location}
+              navigate={navigate}
+              canCreateBilling={canCreateBilling}
+              activeSubscriptionsCount={activeSubscriptionsCount}
+              onReload={() => void loadClientBillingData()}
+            />
+          ) : null}
+
+          {activeTab === "finance" && !canViewBilling ? (
             <Card>
               <CardHeader>
-                <CardTitle>
-                  {activeTab === "calendar" && "Agenda"}
-                  {activeTab === "finance" && "Financeiro"}
-                  {activeTab === "settings" && "Configurações"}
-                </CardTitle>
+                <CardTitle>Financeiro</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 py-6 text-center text-sm text-muted-foreground">
+                <p>Sem permissão para o módulo de faturação.</p>
+                <Button asChild variant="secondary">
+                  <Link to="/finance">Abrir financeiro da organização</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {(activeTab === "calendar" || activeTab === "settings") && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{activeTab === "calendar" ? "Agenda" : "Configurações"}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4 py-6 text-center text-sm text-muted-foreground">
                 {activeTab === "calendar" && (
@@ -2109,14 +2324,6 @@ const ClientProfile = () => {
                     <p>Use as tarefas para acompanhar prazos e compromissos da equipa.</p>
                     <Button asChild variant="secondary">
                       <Link to="/tasks">Abrir tarefas</Link>
-                    </Button>
-                  </>
-                )}
-                {activeTab === "finance" && (
-                  <>
-                    <p>O módulo financeiro unificado está disponível no menu principal.</p>
-                    <Button asChild variant="secondary">
-                      <Link to="/finance">Abrir financeiro</Link>
                     </Button>
                   </>
                 )}

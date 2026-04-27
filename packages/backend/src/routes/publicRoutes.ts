@@ -29,8 +29,19 @@ import {
   getPublicSaasBillingStatus,
   postPublicSaasBillingPayWithCard,
 } from '../controllers/publicSaasBillingController.js';
+import { getPublicLegalPage } from '../controllers/publicLegalController.js';
 
 const router = Router();
+
+const legalPublicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_LEGAL_MAX || '300', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => String(req.ip || req.socket.remoteAddress || ''),
+});
 
 const catalogMediaPublicRawLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -43,6 +54,8 @@ const catalogMediaPublicRawLimiter = rateLimit({
 });
 
 router.get('/catalog-media/raw', catalogMediaPublicRawLimiter, getPublicCatalogMediaRaw);
+
+router.get('/legal/:page', legalPublicLimiter, getPublicLegalPage);
 
 const contractPublicViewLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

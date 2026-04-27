@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import ProposalCreateForm from "@/components/proposals/ProposalCreateForm";
 import { ArrowLeft } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -7,6 +7,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileCommerceScreenLayout } from "@/components/mobile/MobileCommerceScreenLayout";
 import { useMobileShellChrome } from "@/contexts/MobileShellChromeContext";
 import { cn } from "@/lib/utils";
+import { parseClientsListReturnPath } from "@/lib/clientsListRestore";
 
 /**
  * Página `/proposals/new` — delega ao formulário compartilhado usado também no Chat (painel embutido).
@@ -24,8 +25,17 @@ const NewProposal = () => {
   const from = searchParams.get("from")?.trim() ?? "";
   const returnToConversation = searchParams.get("return_to")?.trim() || "";
   const originChat = searchParams.get("origin") === "chat";
+  const listReturnPath = useMemo(
+    () => parseClientsListReturnPath(searchParams.get("return_path")),
+    [searchParams],
+  );
   const clientReturnPath =
-    from === "client" && clientId ? `/clients/${clientId}/opportunities` : null;
+    listReturnPath ?? (from === "client" && clientId ? `/clients/${clientId}/opportunities` : null);
+  const mobileBackPath =
+    returnToConversation ||
+    listReturnPath ||
+    (from === "client" && clientId ? `/clients/${clientId}/opportunities` : "") ||
+    "/proposals";
   const lockClientPicker = from === "client" && Boolean(clientId);
   const lockLeadPicker = from === "lead" && Boolean(leadId) && !clientId;
   const mobileShell = isMobile;
@@ -50,7 +60,7 @@ const NewProposal = () => {
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => navigate(returnToConversation || "/proposals")}
+              onClick={() => navigate(mobileBackPath)}
               aria-label="Voltar"
             >
               <ArrowLeft className="h-4 w-4" />

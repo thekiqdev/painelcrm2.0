@@ -14,6 +14,7 @@ import * as superadminPlatformWhatsAppController from '../controllers/superadmin
 import * as superadminPlatformBillingsController from '../controllers/superadminPlatformBillingsController.js';
 import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsService.js';
 import superadminAnnouncementRoutes from './superadminAnnouncementRoutes.js';
+import * as superadminLegalPagesController from '../controllers/superadminLegalPagesController.js';
 
 const router = Router();
 
@@ -130,6 +131,10 @@ router.post('/platform-whatsapp/instances/:id/connect', superadminPlatformWhatsA
 router.get('/platform-whatsapp/instances/:id/status', superadminPlatformWhatsAppController.getInstanceStatus);
 router.patch('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.patchInstance);
 router.delete('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.deleteSuperadminPlatformWhatsAppInstance);
+
+router.put('/legal/:page/draft', superadminLegalPagesController.putSuperadminLegalDraft);
+router.post('/legal/:page/publish', superadminLegalPagesController.postSuperadminLegalPublish);
+router.get('/legal/:page', superadminLegalPagesController.getSuperadminLegalPage);
 
 router.use('/announcements', superadminAnnouncementRoutes);
 

@@ -62,6 +62,14 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
+import {
+  COMMERCIAL_FILTERS_PANEL,
+  COMMERCIAL_SUMMARY_ACTIVE_RING,
+  COMMERCIAL_SUMMARY_CARD_CLASS,
+  COMMERCIAL_SUMMARY_GRID_4,
+} from "@/lib/commercialListUi";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { CustomerInvoiceStatusBadge } from "@/lib/customerInvoiceStatusUi";
 import {
@@ -248,7 +256,7 @@ const CustomerInvoices = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <CommercialListingPageShell>
       {crmGatewayActive === false && (
         <Alert className="border-orange-500/60 bg-orange-50 text-orange-950 dark:bg-orange-950/30 dark:text-orange-100 dark:border-orange-500/50">
           <AlertTriangle className="h-4 w-4 text-orange-600 dark:text-orange-400" />
@@ -262,7 +270,34 @@ const CustomerInvoices = () => {
         </Alert>
       )}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Faturas"
+          secondarySlot={
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" className="h-10 w-10" aria-label="Mais ações">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          }
+          primaryAction={
+            canCreateInvoice
+              ? { label: "Nova fatura", icon: <Plus className="h-4 w-4" aria-hidden />, href: "/customer-invoices/new" }
+              : undefined
+          }
+        />
+      </div>
+      <div className="hidden md:flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">Faturas</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">Operação rápida de cobranças e acompanhamento.</p>
@@ -294,7 +329,111 @@ const CustomerInvoices = () => {
         </div>
       </div>
 
-      <div className="space-y-2">
+      {summary && (
+        <div className={COMMERCIAL_SUMMARY_GRID_4}>
+          <Card
+            className={cn(
+              COMMERCIAL_SUMMARY_CARD_CLASS,
+              statusFilter === "paid" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+            )}
+            onClick={() => setStatusFilter("paid")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter("paid");
+              }
+            }}
+          >
+            <CardContent className="p-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Pagas</p>
+                <CheckCircle2 className="h-4 w-4 text-emerald-600/80 shrink-0" aria-hidden />
+              </div>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.paid_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.paid_amount_cents)}</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={cn(
+              COMMERCIAL_SUMMARY_CARD_CLASS,
+              statusFilter === PENDING_OPEN_FILTER && COMMERCIAL_SUMMARY_ACTIVE_RING,
+            )}
+            onClick={() => setStatusFilter(PENDING_OPEN_FILTER)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter(PENDING_OPEN_FILTER);
+              }
+            }}
+          >
+            <CardContent className="p-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Pendentes</p>
+                <Clock className="h-4 w-4 text-amber-600/85 shrink-0" aria-hidden />
+              </div>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.pending_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.pending_amount_cents)}</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={cn(
+              COMMERCIAL_SUMMARY_CARD_CLASS,
+              statusFilter === "overdue" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+            )}
+            onClick={() => setStatusFilter("overdue")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter("overdue");
+              }
+            }}
+          >
+            <CardContent className="p-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
+                <AlertCircle className="h-4 w-4 text-red-600/75 shrink-0" aria-hidden />
+              </div>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.overdue_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.overdue_amount_cents)}</p>
+            </CardContent>
+          </Card>
+          <Card
+            className={cn(
+              COMMERCIAL_SUMMARY_CARD_CLASS,
+              statusFilter === "" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+            )}
+            onClick={() => setStatusFilter("")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setStatusFilter("");
+              }
+            }}
+          >
+            <CardContent className="p-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-muted-foreground">Total</p>
+                <Layers className="h-4 w-4 text-muted-foreground shrink-0 opacity-70" aria-hidden />
+              </div>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.total_count}</p>
+              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.total_amount_cents)}</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <div className={cn(COMMERCIAL_FILTERS_PANEL, "space-y-2")}>
+        <p className="hidden text-xs font-medium uppercase tracking-wide text-muted-foreground md:block">
+          Busca e filtros da listagem
+        </p>
         <div className="flex gap-2">
           <Input
             value={search}
@@ -406,107 +545,6 @@ const CustomerInvoices = () => {
           </select>
         </div>
       </div>
-
-      {summary && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Card
-            className={cn(
-              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-              statusFilter === "paid" && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
-            )}
-            onClick={() => setStatusFilter("paid")}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setStatusFilter("paid");
-              }
-            }}
-          >
-            <CardContent className="p-3.5">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium text-muted-foreground">Pagas</p>
-                <CheckCircle2 className="h-4 w-4 text-emerald-600/80 shrink-0" aria-hidden />
-              </div>
-              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.paid_count}</p>
-              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.paid_amount_cents)}</p>
-            </CardContent>
-          </Card>
-          <Card
-            className={cn(
-              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-              statusFilter === PENDING_OPEN_FILTER && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
-            )}
-            onClick={() => setStatusFilter(PENDING_OPEN_FILTER)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setStatusFilter(PENDING_OPEN_FILTER);
-              }
-            }}
-          >
-            <CardContent className="p-3.5">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium text-muted-foreground">Pendentes</p>
-                <Clock className="h-4 w-4 text-amber-600/85 shrink-0" aria-hidden />
-              </div>
-              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.pending_count}</p>
-              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.pending_amount_cents)}</p>
-            </CardContent>
-          </Card>
-          <Card
-            className={cn(
-              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-              statusFilter === "overdue" && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
-            )}
-            onClick={() => setStatusFilter("overdue")}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setStatusFilter("overdue");
-              }
-            }}
-          >
-            <CardContent className="p-3.5">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
-                <AlertCircle className="h-4 w-4 text-red-600/75 shrink-0" aria-hidden />
-              </div>
-              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.overdue_count}</p>
-              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.overdue_amount_cents)}</p>
-            </CardContent>
-          </Card>
-          <Card
-            className={cn(
-              "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-              statusFilter === "" && "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]"
-            )}
-            onClick={() => setStatusFilter("")}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setStatusFilter("");
-              }
-            }}
-          >
-            <CardContent className="p-3.5">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium text-muted-foreground">Total</p>
-                <Layers className="h-4 w-4 text-muted-foreground shrink-0 opacity-70" aria-hidden />
-              </div>
-              <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{summary.total_count}</p>
-              <p className="text-xs text-muted-foreground mt-1">{formatAmount(summary.total_amount_cents)}</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       <div className="hidden overflow-hidden rounded-lg border bg-card md:block">
         <Table>
@@ -834,7 +872,7 @@ const CustomerInvoices = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </CommercialListingPageShell>
   );
 };
 

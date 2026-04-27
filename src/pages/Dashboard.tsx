@@ -32,12 +32,14 @@ import {
   computeOrderedQuickActions,
 } from "@/lib/dashboardQuickActions";
 import { useDashboardQuickActionsPreferences } from "@/hooks/useDashboardQuickActionsPreferences";
+import { useMobileShellChrome } from "@/contexts/MobileShellChromeContext";
 
 const axisTickProps = { fill: "hsl(var(--muted-foreground))", fontSize: 11 };
 type PeriodPreset = "current_month" | "last_month" | "ytd";
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const { setShowMobileGlobalHeader } = useMobileShellChrome();
   const { canView, canCreate, canEdit } = useModulePermissions();
   const hasClients = useFeatureFlag("clients");
   const hasInvoices = useFeatureFlag("invoices");
@@ -70,6 +72,11 @@ const Dashboard = () => {
   useEffect(() => {
     if (error) toast.error("Erro ao carregar dados do dashboard");
   }, [error]);
+
+  useEffect(() => {
+    setShowMobileGlobalHeader(true);
+    return () => setShowMobileGlobalHeader(false);
+  }, [setShowMobileGlobalHeader]);
 
   const monthLabel = (ym: string): string => {
     const [y, m] = ym.split("-");
@@ -265,7 +272,7 @@ const Dashboard = () => {
               <p className="text-xs text-muted-foreground">Próximos 7 dias</p>
             </div>
             <Button asChild size="sm" variant="outline" className="h-8">
-              <Link to="/finance/expenses">Ver despesas</Link>
+              <Link to="/finance/accounts-payable?preset=week">Ver contas a pagar</Link>
             </Button>
           </div>
           <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
@@ -274,7 +281,7 @@ const Dashboard = () => {
             ) : (
               <div className="space-y-2.5">
                 {(overview.accounts_payable_next_7_days ?? []).map((item) => (
-                  <div key={item.id} className="rounded-lg border p-2.5">
+                  <div key={`${item.source}-${item.id}`} className="rounded-lg border p-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium truncate">{item.description}</p>
                       <Badge variant="outline" className="text-[10px]">{payableTag(item.due_date)}</Badge>
@@ -1103,7 +1110,11 @@ const Dashboard = () => {
               <p className="text-sm text-muted-foreground">Nenhuma conta a vencer nos próximos 7 dias.</p>
             ) : (
               (overview?.accounts_payable_next_7_days ?? []).map((item) => (
-                <Link key={item.id} to="/finance/expenses" className="flex items-start justify-between gap-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+                <Link
+                  key={`${item.source}-${item.id}`}
+                  to="/finance/accounts-payable?preset=week"
+                  className="flex items-start justify-between gap-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors"
+                >
                   <div>
                     <p className="text-sm font-medium">{item.description}</p>
                     <p className="text-xs text-muted-foreground">

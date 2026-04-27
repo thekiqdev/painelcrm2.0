@@ -25,6 +25,7 @@ import { globalTaskToUnified, type UnifiedTask } from "@/lib/taskUnified";
 import { SystemRichEditor, SystemRichEditorReadOnly } from "@/components/editor";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 
 const TASKS_QUERY_KEY = ["tasks", "list"] as const;
 
@@ -64,6 +65,20 @@ const Tasks = () => {
       { replace: true }
     );
   }, [setSearchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setIsAddTaskDialogOpen(true);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("new");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     const tid = searchParams.get("task");
@@ -401,18 +416,29 @@ const closeTaskDetail = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-2xl font-bold">Tarefas</h1>
-
-        <div className="flex gap-2">
-          <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
+      <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
+        <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+          <MobilePageHeader
+            title="Tarefas"
+            primaryAction={{
+              label: "Nova tarefa",
+              icon: <Plus className="h-4 w-4" aria-hidden />,
+              onClick: () => setIsAddTaskDialogOpen(true),
+            }}
+          />
+        </div>
+        <div className="hidden md:flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <h1 className="text-2xl font-bold">Tarefas</h1>
+          <div className="flex gap-2">
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
                 Nova Tarefa
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[550px]">
+          </div>
+        </div>
+        <DialogContent className="sm:max-w-[550px]">
               <DialogHeader>
                 <DialogTitle>Adicionar Nova Tarefa</DialogTitle>
                 <DialogDescription>
@@ -542,10 +568,8 @@ const closeTaskDetail = () => {
                   <Button type="submit">Adicionar</Button>
                 </DialogFooter>
               </form>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
 
       <Tabs defaultValue="all">
         <TabsList>

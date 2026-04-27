@@ -177,6 +177,11 @@ const FinancialRecurringExpensesPage = () => {
       toast.error("Use dia do mês entre 1 e 31");
       return;
     }
+    const endTrim = endDate.trim();
+    if (endTrim && startDate && endTrim < startDate) {
+      toast.error("A data de fim não pode ser anterior à data de início");
+      return;
+    }
     try {
       setSaving(true);
       const body = {

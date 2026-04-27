@@ -62,6 +62,14 @@ import { getStoredProposalPublicUrl, setStoredProposalPublicUrl } from "@/utils/
 import { applyUrlPatch } from "@/lib/listFiltersUrl";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
+import {
+  COMMERCIAL_FILTERS_PANEL,
+  COMMERCIAL_SUMMARY_ACTIVE_RING as summaryCardActiveRing,
+  COMMERCIAL_SUMMARY_CARD_CLASS,
+  COMMERCIAL_SUMMARY_GRID_4,
+} from "@/lib/commercialListUi";
 
 const STATUS_LABELS: Record<Proposal["status"], string> = {
   draft: "Rascunho",
@@ -180,9 +188,6 @@ function ValidadeTableCell({ p }: { p: Proposal }) {
   }
   return <span className="text-sm text-muted-foreground tabular-nums">{dateStr}</span>;
 }
-
-const summaryCardActiveRing =
-  "ring-2 ring-crm-primary/50 border-crm-primary/35 bg-crm-primary/[0.06]";
 
 const Proposals = () => {
   const navigate = useNavigate();
@@ -409,10 +414,27 @@ const Proposals = () => {
   const cardAbertasActive = statusFilter === "sent";
   const cardAceitasActive = statusFilter === "accepted" || statusFilter === "invoiced";
   const cardVencidasActive = validityFilter === "expired";
-
+  
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <CommercialListingPageShell>
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Propostas"
+          secondaryActions={[
+            {
+              icon: <FileText className="h-4 w-4" aria-hidden />,
+              ariaLabel: "Modelos de proposta",
+              onClick: () => navigate("/proposals/templates"),
+            },
+          ]}
+          primaryAction={
+            canCreateProposal
+              ? { label: "Nova proposta", icon: <Plus className="h-4 w-4" aria-hidden />, href: "/proposals/new" }
+              : { label: "Nova proposta", icon: <Plus className="h-4 w-4" aria-hidden />, disabled: true }
+          }
+        />
+      </div>
+      <div className="hidden md:flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">Propostas</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
@@ -440,7 +462,121 @@ const Proposals = () => {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className={COMMERCIAL_SUMMARY_GRID_4}>
+        <Card
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            cardTotalActive && summaryCardActiveRing,
+          )}
+          onClick={() => clearFilters()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              clearFilters();
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Total (lista)</p>
+              <Layers className="h-4 w-4 shrink-0 text-muted-foreground opacity-70" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.total}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Limpar filtros e ver tudo</p>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            cardAbertasActive && summaryCardActiveRing,
+          )}
+          onClick={() => {
+            setStatusFilter("sent");
+            setValidityFilter("__all__");
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setStatusFilter("sent");
+              setValidityFilter("__all__");
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Abertas</p>
+              <Send className="h-4 w-4 shrink-0 text-amber-600/85" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.abertas}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Enviadas aguardando resposta</p>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            cardAceitasActive && summaryCardActiveRing,
+          )}
+          onClick={() => {
+            setStatusFilter("accepted");
+            setValidityFilter("__all__");
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setStatusFilter("accepted");
+              setValidityFilter("__all__");
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Aceitas / ganhas</p>
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600/80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.aceitas}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Aceitas e faturadas nesta lista</p>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            cardVencidasActive && summaryCardActiveRing,
+          )}
+          onClick={() => {
+            setValidityFilter("expired");
+            setStatusFilter("__all__");
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setValidityFilter("expired");
+              setStatusFilter("__all__");
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600/75" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.vencidas}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Por data ou status expirado</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className={cn(COMMERCIAL_FILTERS_PANEL, "space-y-2")}>
+        <p className="hidden text-xs font-medium uppercase tracking-wide text-muted-foreground md:block">
+          Busca e filtros da listagem
+        </p>
         <div className="flex gap-2">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -486,17 +622,17 @@ const Proposals = () => {
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
+                      </SelectTrigger>
+                      <SelectContent>
                       <SelectItem value="__all__">Todos</SelectItem>
                       {(Object.keys(STATUS_LABELS) as Proposal["status"][]).map((s) => (
                         <SelectItem key={s} value={s}>
                           {STATUS_LABELS[s]}
                         </SelectItem>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Cliente</Label>
                   <ClientSearchCombobox
@@ -531,13 +667,13 @@ const Proposals = () => {
                   <Select value={validityFilter} onValueChange={setValidityFilter}>
                     <SelectTrigger className="w-full">
                       <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
+                      </SelectTrigger>
+                      <SelectContent>
                       <SelectItem value="__all__">Todas</SelectItem>
                       <SelectItem value="valid">Dentro do prazo / sem data</SelectItem>
                       <SelectItem value="expired">Vencidas (por data)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                      </SelectContent>
+                    </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Faturamento</Label>
@@ -566,7 +702,7 @@ const Proposals = () => {
               </div>
             </SheetContent>
           </Sheet>
-        </div>
+      </div>
 
         <div className="hidden md:grid md:grid-cols-4 md:gap-2">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -628,7 +764,7 @@ const Proposals = () => {
             placeholderTrigger="Qualquer cliente"
             className="w-full"
           />
-        </div>
+            </div>
         {hasActiveFilters ? (
           <div className="hidden justify-end md:flex">
             <Button type="button" variant="ghost" size="sm" className="h-9 text-muted-foreground" onClick={clearFilters}>
@@ -637,131 +773,20 @@ const Proposals = () => {
             </Button>
           </div>
         ) : null}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Card
-          className={cn(
-            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-            cardTotalActive && summaryCardActiveRing,
-          )}
-          onClick={() => clearFilters()}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              clearFilters();
-            }
-          }}
-        >
-          <CardContent className="p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-muted-foreground">Total (lista)</p>
-              <Layers className="h-4 w-4 shrink-0 text-muted-foreground opacity-70" aria-hidden />
-            </div>
-            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.total}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Limpar filtros e ver tudo</p>
-          </CardContent>
-        </Card>
-        <Card
-          className={cn(
-            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-            cardAbertasActive && summaryCardActiveRing,
-          )}
-          onClick={() => {
-            setStatusFilter("sent");
-            setValidityFilter("__all__");
-          }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setStatusFilter("sent");
-              setValidityFilter("__all__");
-            }
-          }}
-        >
-          <CardContent className="p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-muted-foreground">Abertas</p>
-              <Send className="h-4 w-4 shrink-0 text-amber-600/85" aria-hidden />
-            </div>
-            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.abertas}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Enviadas aguardando resposta</p>
-          </CardContent>
-        </Card>
-        <Card
-          className={cn(
-            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-            cardAceitasActive && summaryCardActiveRing,
-          )}
-          onClick={() => {
-            setStatusFilter("accepted");
-            setValidityFilter("__all__");
-          }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setStatusFilter("accepted");
-              setValidityFilter("__all__");
-            }
-          }}
-        >
-          <CardContent className="p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-muted-foreground">Aceitas / ganhas</p>
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600/80" aria-hidden />
-            </div>
-            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.aceitas}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Aceitas e faturadas nesta lista</p>
-          </CardContent>
-        </Card>
-        <Card
-          className={cn(
-            "cursor-pointer border shadow-sm transition-all hover:bg-muted/40",
-            cardVencidasActive && summaryCardActiveRing,
-          )}
-          onClick={() => {
-            setValidityFilter("expired");
-            setStatusFilter("__all__");
-          }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setValidityFilter("expired");
-              setStatusFilter("__all__");
-            }
-          }}
-        >
-          <CardContent className="p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-600/75" aria-hidden />
-            </div>
-            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.vencidas}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Por data ou status expirado</p>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
 
       {loading ? (
         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center text-muted-foreground">
           <Loader2 className="h-7 w-7 animate-spin" />
           <p className="text-sm font-medium text-foreground">Carregando propostas</p>
           <p className="text-xs text-muted-foreground">Estamos preparando sua lista.</p>
-        </div>
+            </div>
       ) : list.length === 0 ? (
         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
           <FileText className="h-7 w-7 text-muted-foreground/80" aria-hidden />
           <p className="text-sm font-medium text-foreground">Nenhuma proposta com estes filtros</p>
           <p className="text-xs text-muted-foreground">Ajuste os filtros ou crie uma nova proposta.</p>
-        </div>
+          </div>
       ) : (
         <>
         <div className="hidden overflow-hidden rounded-lg border bg-card md:block">
@@ -903,7 +928,7 @@ const Proposals = () => {
               })}
             </TableBody>
           </Table>
-        </div>
+          </div>
 
         <div className="space-y-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
           {list.map((p) => {
@@ -925,7 +950,7 @@ const Proposals = () => {
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                     <span className={proposalStatusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(p.amount)}</span>
-                  </div>
+            </div>
                   <p className="mt-2 text-xs text-muted-foreground">
                     {p.valid_until ? `Validade ${formatDateOnlyPtBr(p.valid_until)}` : "Sem data de validade"}
                     {p.updated_at ? ` · Atual. ${format(new Date(p.updated_at), "dd/MM/yyyy")}` : ""}
@@ -940,7 +965,7 @@ const Proposals = () => {
                     <Button variant="outline" size="sm" className="h-9 gap-1 px-3">
                         Ações
                         <MoreHorizontal className="h-4 w-4" />
-                      </Button>
+              </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem onClick={() => navigate(`/proposals/${p.id}`)}>
@@ -948,7 +973,7 @@ const Proposals = () => {
                         Abrir
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => openProposalPublicPage(p)}>
-                        <ExternalLink className="mr-2 h-4 w-4" />
+                  <ExternalLink className="mr-2 h-4 w-4" />
                         Proposta pública
                       </DropdownMenuItem>
                       {canPublishDraftRow && (
@@ -980,9 +1005,9 @@ const Proposals = () => {
                       )}
                     </DropdownMenuContent>
                   </DropdownMenu>
-                </div>
-              </div>
-            );
+            </div>
+    </div>
+  );
           })}
         </div>
         </>
@@ -995,9 +1020,9 @@ const Proposals = () => {
             <FileText className="mr-2 h-4 w-4" />
             Ver funis
           </Link>
-        </Button>
-      </div>
-    </div>
+          </Button>
+        </div>
+    </CommercialListingPageShell>
   );
 };
 

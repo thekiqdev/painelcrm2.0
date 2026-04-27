@@ -726,9 +726,9 @@ const ContractDetails = () => {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
+          <Button 
+            variant="ghost" 
+            size="icon" 
             className="shrink-0"
             onClick={() => {
               // Se veio do perfil do cliente, voltar para o perfil

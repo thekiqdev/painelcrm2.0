@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import { Logo } from "@/components/Logo";
 
+const legalLinksEnabled = import.meta.env.VITE_ENABLE_LEGAL_PAGES !== "false";
+
 const Footer = () => {
   return (
     <footer className="border-t border-border/50 bg-background py-12">
@@ -15,8 +17,21 @@ const Footer = () => {
             <a href="#recursos" className="transition-colors hover:text-foreground">Recursos</a>
             <a href="#planos" className="transition-colors hover:text-foreground">Preços</a>
             <Link to="/login" className="transition-colors hover:text-foreground">Contato</Link>
-            <a href="#" className="transition-colors hover:text-foreground">Termos</a>
-            <a href="#" className="transition-colors hover:text-foreground">Privacidade</a>
+            {legalLinksEnabled ? (
+              <>
+                <Link to="/legal/terms-of-service" className="transition-colors hover:text-foreground">
+                  Termos de Uso
+                </Link>
+                <Link to="/legal/privacy-policy" className="transition-colors hover:text-foreground">
+                  Privacidade
+                </Link>
+              </>
+            ) : (
+              <>
+                <span className="text-muted-foreground/80">Termos</span>
+                <span className="text-muted-foreground/80">Privacidade</span>
+              </>
+            )}
           </nav>
         </div>
 

@@ -1,5 +1,6 @@
 /**
- * Script de migração: executa os SQLs de database/init em ordem.
+ * Script de migração: executa os SQLs de `database/init` **nesta ordem** (array `order` abaixo).
+ * Ficheiros novos em `database/init` não são descobertos automaticamente — é obrigatório acrescentar o nome ao array.
  * Uso: na raiz do projeto, npm run migrate (ou cd packages/backend && npx tsx src/migrate.ts)
  */
 import dotenv from 'dotenv';
@@ -217,6 +218,16 @@ const order = [
   '155_financial_accounts_scope_and_transfers.sql',
   /** Sininho: notificações de anúncio com entity_id/href (idempotência por user+announcement) */
   '156_notifications_announcement_entity.sql',
+  /** Perfil: profiles (avatar, cargo, locale, timezone), tenants extra, user_password_change_codes */
+  '157_profile_personal_and_password_change.sql',
+  /** Perfil: users.avatar_url (fallback de avatar) */
+  '158_users_avatar_url.sql',
+  /** Google Calendar: OAuth por utilizador/tenant (tokens cifrados no backend) */
+  '159_google_calendar_connections.sql',
+  /** Páginas legais públicas (privacidade / termos), editadas pelo Super Admin */
+  '160_legal_pages.sql',
+  /** Rascunho vs publicado + migração de content_html legado */
+  '161_legal_pages_draft_publish.sql',
   'create-admin-user.sql',
 ];
 

@@ -15,7 +15,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,8 +27,10 @@ import {
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/sonner";
-import { Plus } from "lucide-react";
+import { Plus, TrendingDown, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
+import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
 
 function formatBrlCents(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -120,6 +121,8 @@ const FinancialUnifiedTransactionsPage = () => {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, loading, openCreate]);
 
+  useFinanceBottomBarVisibility(open);
+
   const handleCreate = async () => {
     const cents = Math.round(parseFloat(formAmount.replace(",", ".")) * 100);
     if (!formAccount) {
@@ -156,15 +159,15 @@ const FinancialUnifiedTransactionsPage = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
+      <div className="flex flex-col gap-4 md:gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Entradas e saídas</h2>
           <p className="text-sm text-muted-foreground">Todos os movimentos manuais nas suas contas.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:flex-wrap md:items-center md:justify-end md:gap-2">
           <Select value={filter} onValueChange={(v) => changeFilter(v as "all" | FinancialTransactionType)}>
-            <SelectTrigger className="w-[200px]">
+            <SelectTrigger className="h-12 w-full md:h-10 md:w-[200px]">
               <SelectValue placeholder="Filtrar" />
             </SelectTrigger>
             <SelectContent>
@@ -173,16 +176,37 @@ const FinancialUnifiedTransactionsPage = () => {
               <SelectItem value="expense">Só despesas</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline" onClick={() => openCreate("income")}>
-            <Plus className="h-4 w-4 mr-1" />
-            Entrada
-          </Button>
-          <Button onClick={() => openCreate("expense")}>
-            <Plus className="h-4 w-4 mr-1" />
-            Despesa
-          </Button>
+          <div className="hidden md:flex md:flex-wrap md:gap-2">
+            <Button variant="outline" className="min-h-10" onClick={() => openCreate("income")}>
+              <Plus className="h-4 w-4 mr-1" />
+              Entrada
+            </Button>
+            <Button className="min-h-10" onClick={() => openCreate("expense")}>
+              <Plus className="h-4 w-4 mr-1" />
+              Despesa
+            </Button>
+          </div>
         </div>
       </div>
+
+      <FinanceMobileBottomBar
+        actions={[
+          {
+            key: "income",
+            label: "+ Entrada",
+            variant: "success",
+            icon: TrendingUp,
+            onClick: () => openCreate("income"),
+          },
+          {
+            key: "expense",
+            label: "+ Saída",
+            variant: "danger",
+            icon: TrendingDown,
+            onClick: () => openCreate("expense"),
+          },
+        ]}
+      />
 
       <Card>
         <CardHeader className="pb-3">

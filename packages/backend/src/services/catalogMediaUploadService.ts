@@ -24,7 +24,8 @@ export type CatalogMediaScope =
   | 'store_logo'
   | 'store_banner'
   | 'tenant_logo_light'
-  | 'tenant_logo_dark';
+  | 'tenant_logo_dark'
+  | 'user_avatar';
 
 /**
  * Raiz física dos arquivos (volume persistente no EasyPanel).
@@ -111,6 +112,7 @@ const KNOWN_SCOPES: CatalogMediaScope[] = [
   'store_banner',
   'tenant_logo_light',
   'tenant_logo_dark',
+  'user_avatar',
 ];
 
 /** Valida estrutura tenants/{tid}/users/{uid}/{scope}/... */

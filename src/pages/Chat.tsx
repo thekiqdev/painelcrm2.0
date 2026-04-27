@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
-import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/components/ui/sonner';
 import {
@@ -105,6 +105,7 @@ import { consumeKanbanProposalColumnContextIfMatch } from '@/utils/kanbanProposa
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useVisualKeyboardInset } from '@/hooks/useVisualKeyboardInset';
 import { cn } from '@/lib/utils';
+import { isChatClientProfileReturn, isChatListReturnPath } from '@/lib/chatListNavigation';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
@@ -281,6 +282,7 @@ const Chat = () => {
   const canCreateInvoicesInChat = canCreate('billing') && !modulePermLoading;
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { conversationId: routeConversationId } = useParams<{ conversationId: string }>();
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
@@ -346,6 +348,13 @@ const Chat = () => {
   const pendingConversationRestoreRef = useRef<PendingConversationRestore | null>(null);
   /** Evita restaurar no primeiro paint com lista vazia e loading=false (race antes do primeiro setLoading(true) aplicar). */
   const conversationsHydratedRef = useRef(false);
+  /**
+   * `/clients` ou `/leads` quando a conversa foi aberta a partir dessas listas (mobile).
+   * Mantém o destino de «voltar» se `location.state` se perder (ex.: botão físico «voltar»).
+   */
+  const chatCrmListReturnPathRef = useRef<string | null>(null);
+  /** `/clients/:id` quando a thread foi aberta a partir do perfil (mobile). */
+  const chatClientProfileReturnIdRef = useRef<string | null>(null);
   /** FIFO: um id otimista por envio em voo; o WebSocket remove o mais antigo ao chegar a mensagem real. */
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   /** Evita GET /messages em rajada quando `conversation_updated` chega muitas vezes sem mudar o histórico visível. */
@@ -1114,6 +1123,7 @@ const Chat = () => {
       }
       setMessages([]);
       if (isMobile && routeConversationId) {
+        chatCrmListReturnPathRef.current = null;
         navigate('/chat', { replace: true });
       }
       return;
@@ -1446,9 +1456,30 @@ const Chat = () => {
     [activeInstance],
   );
 
-  const handleSelectConversation = (conversationId: string) => {
+  type SelectConversationOpts = { chatListReturn?: string; clientProfileReturnId?: string };
+
+  const handleSelectConversation = (conversationId: string, opts?: SelectConversationOpts) => {
+    const listReturn = opts?.chatListReturn;
+    if (isChatListReturnPath(listReturn)) {
+      chatCrmListReturnPathRef.current = listReturn;
+    }
+
+    if (opts?.clientProfileReturnId) {
+      chatClientProfileReturnIdRef.current = opts.clientProfileReturnId;
+    } else {
+      chatClientProfileReturnIdRef.current = null;
+    }
+
     if (isMobile) {
-      navigate(`/chat/${conversationId}`);
+      const navState: { chatListReturn?: string; clientProfileReturnId?: string } = {
+        ...(isChatListReturnPath(listReturn) ? { chatListReturn: listReturn } : {}),
+        ...(opts?.clientProfileReturnId ? { clientProfileReturnId: opts.clientProfileReturnId } : {}),
+      };
+      navigate(`/chat/${conversationId}`, {
+        // `replace` evita empilhar `/chat` entre a lista CRM e a thread — o «voltar» do sistema regressa à lista.
+        replace: isChatListReturnPath(listReturn),
+        state: Object.keys(navState).length > 0 ? navState : undefined,
+      });
     }
     setSelectedConversationId(conversationId);
 
@@ -1501,6 +1532,34 @@ const Chat = () => {
   const handleSelectConversationRef = useRef(handleSelectConversation);
   handleSelectConversationRef.current = handleSelectConversation;
 
+  /** Mobile: voltar da thread para o perfil do cliente, lista CRM (`/leads` / `/clients`) ou inbox. */
+  const handleMobileThreadHeaderBack = useCallback(() => {
+    const st = location.state as { chatListReturn?: string; clientProfileReturnId?: string } | null;
+    const profileId = st?.clientProfileReturnId?.trim() || chatClientProfileReturnIdRef.current?.trim() || null;
+    if (profileId) {
+      chatClientProfileReturnIdRef.current = null;
+      chatCrmListReturnPathRef.current = null;
+      navigate(`/clients/${profileId}`, { replace: true });
+      return;
+    }
+
+    const fromState = st?.chatListReturn;
+    const fromRef = chatCrmListReturnPathRef.current;
+    const ret = isChatListReturnPath(fromState)
+      ? fromState
+      : isChatListReturnPath(fromRef)
+        ? fromRef
+        : null;
+    if (isChatListReturnPath(ret)) {
+      chatCrmListReturnPathRef.current = null;
+      navigate(ret, { replace: true });
+      return;
+    }
+    chatCrmListReturnPathRef.current = null;
+    setViewMode('conversation');
+    navigate('/chat', { replace: true });
+  }, [location.state, navigate]);
+
   /** Após lista hidratada, resolve uuid (incl. após deduplicação) e aplica o mesmo fluxo do clique na conversa. */
   useEffect(() => {
     const pending = pendingConversationRestoreRef.current;
@@ -1520,6 +1579,72 @@ const Chat = () => {
     void handleSelectConversationRef.current(resolved);
   }, [conversations, loadingConversations, enabledInstanceIds.size]);
 
+  /** Listas CRM: `/chat?openLeadId=` ou `?openClientId=` abre a conversa WhatsApp ligada ao registo. */
+  const openLeadIdQ = searchParams.get('openLeadId')?.trim() ?? '';
+  const openClientIdQ = searchParams.get('openClientId')?.trim() ?? '';
+  useEffect(() => {
+    if (!openLeadIdQ && !openClientIdQ) return;
+    if (loadingConversations) return;
+    if (!conversationsHydratedRef.current) return;
+    if (enabledInstanceIds.size === 0) return;
+
+    const returnRaw = searchParams.get('returnTo')?.trim() ?? '';
+    const chatListReturn = isChatListReturnPath(returnRaw) ? returnRaw : undefined;
+    const clientProfileReturn =
+      isChatClientProfileReturn(returnRaw) && openClientIdQ ? openClientIdQ : undefined;
+
+    const norm = (a: string | null | undefined, b: string) =>
+      Boolean(a && b && String(a).toLowerCase() === String(b).toLowerCase());
+
+    let targetId: string | null = null;
+    if (openLeadIdQ) {
+      targetId =
+        conversations.find((x) => norm(x.leadId, openLeadIdQ))?.id ??
+        conversations.find((x) => x.leadId === openLeadIdQ)?.id ??
+        null;
+    } else if (openClientIdQ) {
+      targetId =
+        conversations.find((x) => norm(x.client_id, openClientIdQ))?.id ??
+        conversations.find((x) => x.client_id === openClientIdQ)?.id ??
+        null;
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('openLeadId');
+    next.delete('openClientId');
+    next.delete('returnTo');
+    setSearchParams(next, { replace: true });
+
+    if (targetId) {
+      void handleSelectConversationRef.current(
+        targetId,
+        chatListReturn
+          ? { chatListReturn }
+          : clientProfileReturn
+            ? { clientProfileReturnId: clientProfileReturn }
+            : undefined,
+      );
+    } else {
+      toast.info('Nenhuma conversa WhatsApp encontrada para este registo.');
+      if (chatListReturn) {
+        chatCrmListReturnPathRef.current = null;
+        navigate(chatListReturn, { replace: true });
+      } else if (clientProfileReturn) {
+        chatClientProfileReturnIdRef.current = null;
+        navigate(`/clients/${clientProfileReturn}`, { replace: true });
+      }
+    }
+  }, [
+    openLeadIdQ,
+    openClientIdQ,
+    conversations,
+    loadingConversations,
+    enabledInstanceIds.size,
+    searchParams,
+    setSearchParams,
+    navigate,
+  ]);
+
   /** Mobile: apenas lista em `/chat` — limpa thread ao voltar ou ao abrir a lista. */
   useEffect(() => {
     if (!isMobile) return;
@@ -1532,8 +1657,22 @@ const Chat = () => {
   useEffect(() => {
     if (!routeConversationId) return;
     if (selectedConversationId === routeConversationId) return;
-    void handleSelectConversationRef.current(routeConversationId);
-  }, [routeConversationId, selectedConversationId]);
+    const crmReturn = isChatListReturnPath(chatCrmListReturnPathRef.current)
+      ? chatCrmListReturnPathRef.current
+      : undefined;
+    const st = location.state as { clientProfileReturnId?: string } | null;
+    const profileReturn =
+      st?.clientProfileReturnId?.trim() || chatClientProfileReturnIdRef.current?.trim() || undefined;
+    if (crmReturn) {
+      void handleSelectConversationRef.current(routeConversationId, { chatListReturn: crmReturn });
+    } else if (profileReturn) {
+      void handleSelectConversationRef.current(routeConversationId, {
+        clientProfileReturnId: profileReturn,
+      });
+    } else {
+      void handleSelectConversationRef.current(routeConversationId, undefined);
+    }
+  }, [routeConversationId, selectedConversationId, location.state]);
 
   useLayoutEffect(() => {
     const el = composerTextareaRef.current;
@@ -2486,7 +2625,10 @@ const Chat = () => {
       <button
         key={conversation.id}
         type="button"
-        onClick={() => handleSelectConversation(conversation.id)}
+        onClick={() => {
+          chatCrmListReturnPathRef.current = null;
+          handleSelectConversation(conversation.id);
+        }}
         className={cn(
           'my-1 box-border w-full max-w-full min-w-0 rounded-xl border border-transparent px-3 py-3 text-left transition-colors active:bg-muted/40 md:min-h-0 md:py-2.5',
           'min-h-[4.5rem] touch-manipulation',
@@ -3092,11 +3234,13 @@ const Chat = () => {
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 shrink-0 md:hidden"
-                                aria-label="Voltar às conversas"
-                                onClick={() => {
-                                  setViewMode('conversation');
-                                  navigate('/chat');
-                                }}
+                                aria-label={
+                                  (location.state as { clientProfileReturnId?: string } | null)
+                                    ?.clientProfileReturnId
+                                    ? 'Voltar para o perfil do cliente'
+                                    : 'Voltar'
+                                }
+                                onClick={handleMobileThreadHeaderBack}
                               >
                                 <ChevronLeft className="h-5 w-5" />
                               </Button>

@@ -18,7 +18,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/sonner";
 import { Download, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import { cn } from "@/lib/utils";
+import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
 import {
   Bar,
   BarChart,
@@ -232,6 +234,7 @@ function downloadReportCsv(data: FinancialEnterpriseReportDto): void {
 }
 
 const FinancialReportsPage = () => {
+  const navigate = useNavigate();
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
@@ -334,7 +337,7 @@ const FinancialReportsPage = () => {
     : { income: 0, expense: 0, net: 0, balance: 0 };
 
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Relatórios</h2>
@@ -1043,7 +1046,7 @@ const FinancialReportsPage = () => {
                 <CardTitle className="text-base">Despesas recorrentes (período)</CardTitle>
                 <CardDescription>
                   Valores com vencimento no período ainda em aberto, e valores pagos no período.{" "}
-                  <NavLink to="/finance/recurring-expenses" className="text-primary underline-offset-2 hover:underline">
+                  <NavLink to="/finance/accounts-payable#hub-regras-recorrencia" className="text-primary underline-offset-2 hover:underline">
                     Gerir recorrências
                   </NavLink>
                 </CardDescription>
@@ -1066,6 +1069,25 @@ const FinancialReportsPage = () => {
           </TabsContent>
         </Tabs>
       )}
+
+      <FinanceMobileBottomBar
+        actions={[
+          {
+            key: "income",
+            label: "+ Entrada",
+            variant: "success",
+            icon: TrendingUp,
+            onClick: () => navigate("/finance/transactions?new=income"),
+          },
+          {
+            key: "expense",
+            label: "+ Saída",
+            variant: "danger",
+            icon: TrendingDown,
+            onClick: () => navigate("/finance/transactions?new=expense"),
+          },
+        ]}
+      />
     </div>
   );
 };

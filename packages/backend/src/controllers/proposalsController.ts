@@ -401,15 +401,15 @@ export const getProposals = async (req: Request, res: Response) => {
         } else {
           query += ` AND 1=0`;
         }
-      }
+    }
 
-      if (funnel_id) {
+    if (funnel_id) {
         pc++;
         query += ` AND p.funnel_id = $${pc}`;
         pLocal.push(funnel_id);
-      }
+    }
 
-      if (stage_id) {
+    if (stage_id) {
         pc++;
         query += ` AND p.stage_id = $${pc}`;
         pLocal.push(stage_id);
@@ -443,9 +443,9 @@ export const getProposals = async (req: Request, res: Response) => {
         } else {
           query += ` AND p.converted_invoice_id IS NULL`;
         }
-      }
+    }
 
-      query += ` ORDER BY p.created_at DESC`;
+    query += ` ORDER BY p.created_at DESC`;
       appendWhere();
 
       try {
@@ -536,8 +536,8 @@ export const getProposalById = async (req: Request, res: Response) => {
               CASE WHEN uclient.id IS NOT NULL THEN c.name ELSE NULL END AS client_name,
               CASE WHEN ulead.id IS NOT NULL THEN ld.name ELSE NULL END AS lead_name
        ${PROPOSAL_DETAIL_FROM}`,
-          [id, userId]
-        );
+      [id, userId]
+    );
       } else {
         throw e;
       }

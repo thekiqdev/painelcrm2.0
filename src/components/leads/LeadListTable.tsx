@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MoreVertical, Edit, Plus, UserPlus, Trash2 } from "lucide-react";
+import { MoreVertical, Edit, Plus, UserPlus, Trash2, Eye } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 type SortIconProps = {
   field: string;
@@ -63,6 +64,9 @@ const SortIcon: React.FC<SortIconProps> = ({ field, sortField, sortDirection }) 
   );
 };
 
+const leadStatusBadgeCn =
+  "inline-flex max-w-full items-center truncate rounded-md border-0 px-2.5 py-1 text-xs font-medium text-white shadow-sm";
+
 interface LeadListTableProps {
   leads: any[];
   sortField: string;
@@ -91,114 +95,174 @@ const LeadListTable: React.FC<LeadListTableProps> = ({
   return (
     <Table>
       <TableHeader>
-        <TableRow>
+        <TableRow className="border-b border-border/60 hover:bg-transparent">
           <TableHead className="w-12" aria-label="Avatar" />
-          <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
+          <TableHead
+            className="min-w-[200px] cursor-pointer text-xs font-medium text-muted-foreground"
+            onClick={() => handleSort("name")}
+          >
             <div className="flex items-center">
-              Nome
+              Lead
               <SortIcon field="name" sortField={sortField} sortDirection={sortDirection} />
             </div>
           </TableHead>
-          <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
+          <TableHead
+            className="hidden cursor-pointer md:table-cell md:min-w-[140px] text-xs font-medium text-muted-foreground lg:min-w-[180px]"
+            onClick={() => handleSort("company")}
+          >
             <div className="flex items-center">
               Empresa
               <SortIcon field="company" sortField={sortField} sortDirection={sortDirection} />
             </div>
           </TableHead>
-          <TableHead>E-mail</TableHead>
-          <TableHead>Fonte</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Ações</TableHead>
+          <TableHead className="hidden text-xs font-medium text-muted-foreground md:table-cell md:max-w-[220px]">
+            E-mail
+          </TableHead>
+          <TableHead className="hidden text-xs font-medium text-muted-foreground lg:table-cell lg:max-w-[120px]">
+            Origem
+          </TableHead>
+          <TableHead className="text-xs font-medium text-muted-foreground">Status</TableHead>
+          <TableHead className="hidden text-xs font-medium text-muted-foreground lg:table-cell whitespace-nowrap">
+            Atualizado
+          </TableHead>
+          <TableHead className="w-[132px] text-right text-xs font-medium text-muted-foreground">Ações</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {leads.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={7} className="text-center text-muted-foreground">
+            <TableCell colSpan={8} className="text-center text-muted-foreground">
               Nenhum lead encontrado com os critérios de busca
             </TableCell>
           </TableRow>
         ) : (
           leads.map((lead) => {
             const listAvatar = resolveProfileAvatarUrl(lead, lead.whatsapp_avatar_url ?? null);
+            const stColor = getStatusVariant(lead.status).color;
             return (
-            <TableRow key={lead.id}>
-              <TableCell className="w-12">
-                <Avatar className="h-8 w-8">
-                  {listAvatar.src ? <AvatarImage src={listAvatar.src} alt={lead.name} /> : null}
-                  <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
-                </Avatar>
-              </TableCell>
-              <TableCell 
-                className="cursor-pointer hover:underline"
-                onClick={() => handleViewLead(lead)}
+              <TableRow
+                key={lead.id}
+                className="group/row border-border/40 transition-colors hover:bg-muted/50"
               >
-                {lead.name}
-              </TableCell>
-              <TableCell>{lead.company || "-"}</TableCell>
-              <TableCell>{lead.email || "-"}</TableCell>
-              <TableCell>{lead.source || "Direto"}</TableCell>
-              <TableCell>
-                <Badge 
-                  variant="outline"
-                  style={{ 
-                    backgroundColor: getStatusVariant(lead.status).color,
-                    color: '#fff'
-                  }}
-                >
-                  {lead.status}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                    <Button variant="ghost" size="icon">
-                      <MoreVertical className="h-4 w-4" />
+                <TableCell className="w-12 align-middle">
+                  <Avatar className="h-9 w-9 ring-1 ring-border/60">
+                    {listAvatar.src ? <AvatarImage src={listAvatar.src} alt={lead.name} /> : null}
+                    <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                  </Avatar>
+                </TableCell>
+                <TableCell className="align-middle">
+                  <button
+                    type="button"
+                    className="block w-full text-left"
+                    onClick={() => handleViewLead(lead)}
+                  >
+                    <span className="font-semibold text-foreground group-hover/row:text-primary">
+                      {lead.name}
+                    </span>
+                    {lead.phone ? (
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground tabular-nums">
+                        {lead.phone}
+                      </span>
+                    ) : null}
+                  </button>
+                </TableCell>
+                <TableCell className="hidden align-middle text-sm text-muted-foreground md:table-cell">
+                  <span className="line-clamp-2 max-w-[220px]">{lead.company || "—"}</span>
+                </TableCell>
+                <TableCell className="hidden align-middle md:table-cell">
+                  <span className="line-clamp-2 max-w-[220px] text-sm text-muted-foreground">
+                    {lead.email || "—"}
+                  </span>
+                </TableCell>
+                <TableCell className="hidden align-middle lg:table-cell">
+                  <span className="text-xs text-muted-foreground">{lead.source || "Direto"}</span>
+                </TableCell>
+                <TableCell className="align-middle">
+                  <Badge
+                    variant="outline"
+                    className={leadStatusBadgeCn}
+                    style={{
+                      backgroundColor: stColor,
+                      color: "#fff",
+                    }}
+                  >
+                    {lead.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="hidden align-middle text-xs tabular-nums text-muted-foreground lg:table-cell">
+                  {lead.updated_at
+                    ? formatDateOnlyPtBr(String(lead.updated_at).slice(0, 10))
+                    : "—"}
+                </TableCell>
+                <TableCell className="text-right align-middle" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex justify-end gap-0.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      aria-label="Ver detalhes"
+                      onClick={() => handleViewLead(lead)}
+                    >
+                      <Eye className="h-4 w-4" />
                     </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuLabel>Ações</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditLead(lead);
-                    }}>
-                      <Edit className="h-4 w-4 mr-2" />
-                      Editar Lead
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectLeadForTasks(lead);
-                    }}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Adicionar Tarefa
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectLeadForConversion(lead);
-                    }}>
-                      <UserPlus className="h-4 w-4 mr-2" />
-                      Converter para Cliente
-                    </DropdownMenuItem>
-                    {onDeleteLead && (
-                      <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      aria-label="Editar"
+                      onClick={() => handleEditLead(lead)}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                        <Button variant="outline" size="sm" className="h-8 gap-1 px-2" aria-label="Mais ações">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Mais ações</DropdownMenuLabel>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem 
+                        <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();
-                            onDeleteLead(lead);
+                            onSelectLeadForTasks(lead);
                           }}
-                          className="text-destructive focus:text-destructive"
                         >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Excluir Lead
+                          <Plus className="mr-2 h-4 w-4" />
+                          Adicionar tarefa
                         </DropdownMenuItem>
-                      </>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableCell>
-            </TableRow>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectLeadForConversion(lead);
+                          }}
+                        >
+                          <UserPlus className="mr-2 h-4 w-4" />
+                          Converter para cliente
+                        </DropdownMenuItem>
+                        {onDeleteLead ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteLead(lead);
+                              }}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Excluir lead
+                            </DropdownMenuItem>
+                          </>
+                        ) : null}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </TableCell>
+              </TableRow>
             );
           })
         )}

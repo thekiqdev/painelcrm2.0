@@ -8,6 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/sonner";
 import { Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
+import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
 
 const FinancialCategoriesPage = () => {
   const [rows, setRows] = useState<ExpenseCategoryDto[]>([]);
@@ -32,6 +35,8 @@ const FinancialCategoriesPage = () => {
     load();
   }, []);
 
+  useFinanceBottomBarVisibility(open);
+
   const handleCreate = async () => {
     if (!name.trim()) {
       toast.error("Indique o nome");
@@ -52,7 +57,7 @@ const FinancialCategoriesPage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Categorias de despesa</h2>
@@ -60,11 +65,24 @@ const FinancialCategoriesPage = () => {
             Sugestões já vêm prontas; pode criar as suas para organizar melhor.
           </p>
         </div>
-        <Button onClick={() => setOpen(true)}>
+        <Button type="button" className="hidden md:inline-flex" onClick={() => setOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
           Nova categoria
         </Button>
       </div>
+
+      <FinanceMobileBottomBar
+        actions={[
+          {
+            key: "nova-cat",
+            label: "+ Nova categoria",
+            variant: "primary",
+            icon: Plus,
+            onClick: () => setOpen(true),
+            loading: saving && open,
+          },
+        ]}
+      />
 
       <Card>
         <CardHeader className="pb-3">

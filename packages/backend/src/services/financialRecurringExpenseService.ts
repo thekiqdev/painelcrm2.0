@@ -131,7 +131,7 @@ export async function insertOccurrencesForRecurring(
       `INSERT INTO financial_recurring_expense_occurrences (
          recurring_expense_id, tenant_id, account_id, category_id, due_date, amount_cents, status
        ) VALUES ($1, $2, $3, $4, $5::date, $6, $7)
-       ON CONFLICT ON CONSTRAINT financial_recurring_expense_occurrences_unique_due DO NOTHING`,
+       ON CONFLICT (recurring_expense_id, due_date) DO NOTHING`,
       [row.id, tenantId, row.default_account_id, row.category_id, due, row.amount_cents, st]
     );
     if (ins.rowCount && ins.rowCount > 0) inserted += ins.rowCount;
@@ -163,26 +163,32 @@ export async function createRecurringExpense(
   }
 ): Promise<FinancialRecurringExpenseRow> {
   await assertCategoryAndAccount(tenantId, body.category_id, body.default_account_id);
+  const dueDayInt = Math.trunc(Number(body.due_day));
+  const amountCentsInt = Math.trunc(Number(body.amount_cents));
+  const maxOccInsert =
+    body.schedule_type === 'finite' && body.max_occurrences != null
+      ? Math.trunc(Number(body.max_occurrences))
+      : null;
   const r = await pool.query<FinancialRecurringExpenseRow>(
     `INSERT INTO financial_recurring_expenses (
        tenant_id, description, amount_cents, category_id, default_account_id, periodicity, due_day,
        start_date, end_date, schedule_type, max_occurrences, is_active
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, $10, $11, COALESCE($12, true))
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7::integer, $8::date, $9::date, $10, $11::integer, COALESCE($12, true))
      RETURNING id, tenant_id::text, description, amount_cents, category_id::text, default_account_id::text,
                periodicity, due_day, start_date::text, end_date::text, schedule_type, max_occurrences,
                is_active, created_at, updated_at`,
     [
       tenantId,
       body.description.trim(),
-      body.amount_cents,
+      amountCentsInt,
       body.category_id,
       body.default_account_id,
       body.periodicity,
-      body.due_day,
+      dueDayInt,
       body.start_date,
       body.end_date ?? null,
       body.schedule_type,
-      body.schedule_type === 'finite' ? body.max_occurrences ?? null : null,
+      body.schedule_type === 'finite' ? maxOccInsert : null,
       body.is_active,
     ]
   );
@@ -240,9 +246,28 @@ export async function updateRecurringExpense(
     max_occurrences,
     is_active: patch.is_active ?? cur.is_active,
   };
-  if (next.schedule_type === 'finite' && (next.max_occurrences == null || next.max_occurrences < 1)) {
-    throw new Error('Despesas finitas precisam de quantidade de ocorrências');
+  if (next.schedule_type === 'finite') {
+    const n = Number(next.max_occurrences);
+    if (!Number.isFinite(n) || n < 1) {
+      throw new Error('Despesas finitas precisam de quantidade de ocorrências');
+    }
   }
+  if (next.end_date != null && compareYmd(next.end_date, next.start_date) < 0) {
+    throw new Error('Data de fim inválida: deve ser igual ou posterior à data de início');
+  }
+  const w = next.periodicity === 'weekly' || next.periodicity === 'biweekly';
+  if (w && (next.due_day < 1 || next.due_day > 7)) {
+    throw new Error('Dia de vencimento inválido para periodicidade semanal/quinzenal (use 1–7)');
+  }
+  if (!w && (next.due_day < 1 || next.due_day > 31)) {
+    throw new Error('Dia de vencimento inválido (use 1–31 para o dia do mês)');
+  }
+  const dueDayInt = Math.trunc(Number(next.due_day));
+  const amountCentsInt = Math.trunc(Number(next.amount_cents));
+  const maxOccForDb =
+    next.schedule_type === 'finite' && next.max_occurrences != null
+      ? Math.trunc(Number(next.max_occurrences))
+      : null;
   const r = await pool.query<FinancialRecurringExpenseRow>(
     `UPDATE financial_recurring_expenses SET
        description = $2,
@@ -250,11 +275,11 @@ export async function updateRecurringExpense(
        category_id = $4,
        default_account_id = $5,
        periodicity = $6,
-       due_day = $7,
+       due_day = $7::integer,
        start_date = $8::date,
        end_date = $9::date,
        schedule_type = $10,
-       max_occurrences = CASE WHEN $10 = 'finite' THEN $11 ELSE NULL END,
+       max_occurrences = CASE WHEN $10::text = 'finite' THEN $11::integer ELSE NULL END,
        is_active = $12,
        updated_at = now()
      WHERE tenant_id = $1 AND id = $13
@@ -264,15 +289,15 @@ export async function updateRecurringExpense(
     [
       tenantId,
       next.description.trim(),
-      next.amount_cents,
+      amountCentsInt,
       next.category_id,
       next.default_account_id,
       next.periodicity,
-      next.due_day,
+      dueDayInt,
       next.start_date,
       next.end_date,
       next.schedule_type,
-      next.schedule_type === 'finite' ? next.max_occurrences : null,
+      maxOccForDb,
       next.is_active,
       id,
     ]

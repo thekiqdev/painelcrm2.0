@@ -348,6 +348,59 @@ export interface FinancialRecurringOccurrenceDto {
   updated_at: string;
 }
 
+export type PayableSourceDto = "expense_transaction" | "recurring_occurrence";
+
+export type PayableOperationalStatusDto =
+  | "forecast"
+  | "open"
+  | "due_today"
+  | "overdue"
+  | "paid"
+  | "cancelled";
+
+export interface FinancialPayableItemDto {
+  source: PayableSourceDto;
+  id: string;
+  description: string;
+  amount_cents: number;
+  due_date: string;
+  category_id: string | null;
+  category_name: string | null;
+  operational_status: PayableOperationalStatusDto;
+  is_recurring: boolean;
+  recurring_expense_id: string | null;
+  recurrence_title: string | null;
+  payment_account_id: string | null;
+  payment_account_name: string | null;
+  transaction_id: string | null;
+  paid_at: string | null;
+  raw_occurrence_status: string | null;
+  raw_transaction_status: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinancialPayablesSummaryDto {
+  due_today_cents: number;
+  due_today_count: number;
+  due_week_cents: number;
+  due_week_count: number;
+  pending_not_paid_cents: number;
+  pending_not_paid_count: number;
+  recurring_active_rules_count: number;
+  paid_in_period_cents: number;
+  paid_in_period_count: number;
+  total_outstanding_cents: number;
+  week_start: string;
+  week_end: string;
+}
+
+export interface FinancialPayablesListDto {
+  period: { from: string; to: string };
+  summary: FinancialPayablesSummaryDto;
+  items: FinancialPayableItemDto[];
+}
+
 export const financialService = {
   async getSummary(params?: { from?: string; to?: string; preset?: string }): Promise<FinancialSummaryDto> {
     const r = await apiClient.get<FinancialSummaryDto>(`${BASE}/summary${qs(params ?? {})}`);
@@ -426,6 +479,61 @@ export const financialService = {
     const r = await apiClient.post<FinancialTransactionDto>(`${BASE}/transactions`, body);
     if (r.error) throw new Error(r.error);
     if (!r.data) throw new Error("Erro ao criar movimento");
+    return r.data;
+  },
+
+  async getPayables(params?: {
+    from?: string;
+    to?: string;
+    preset?: "today" | "week" | "month";
+  }): Promise<FinancialPayablesListDto> {
+    const r = await apiClient.get<FinancialPayablesListDto>(
+      `${BASE}/payables${qs({
+        from: params?.from,
+        to: params?.to,
+        preset: params?.preset,
+      })}`
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Erro ao carregar contas a pagar");
+    return r.data;
+  },
+
+  /** Alias de `getPayables` — mesmo payload em `GET /accounts-payable`. */
+  async getAccountsPayable(params?: {
+    from?: string;
+    to?: string;
+    preset?: "today" | "week" | "month";
+  }): Promise<FinancialPayablesListDto> {
+    const r = await apiClient.get<FinancialPayablesListDto>(
+      `${BASE}/accounts-payable${qs({
+        from: params?.from,
+        to: params?.to,
+        preset: params?.preset,
+      })}`
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Erro ao carregar contas a pagar");
+    return r.data;
+  },
+
+  async updateTransaction(
+    id: string,
+    body: Partial<{
+      description: string;
+      amount_cents: number;
+      transaction_date: string;
+      status: FinancialTransactionStatus;
+      category_id: string | null;
+      account_id: string;
+    }>
+  ): Promise<FinancialTransactionDto> {
+    const r = await apiClient.patch<FinancialTransactionDto>(
+      `${BASE}/transactions/${encodeURIComponent(id)}`,
+      body
+    );
+    if (r.error) throw new Error(r.error);
+    if (!r.data) throw new Error("Erro ao actualizar movimento");
     return r.data;
   },
 

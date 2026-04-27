@@ -23,6 +23,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 import {
   ChevronDown,
   ExternalLink,
@@ -140,6 +142,7 @@ const Orders = () => {
   const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
   const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const { toast } = useToast();
 
   const loadOrders = useCallback(async () => {
@@ -256,7 +259,71 @@ const Orders = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="mb-4 md:mb-5">
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[85vh] overflow-y-auto rounded-t-2xl px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 md:hidden"
+        >
+          <SheetHeader className="text-left">
+            <SheetTitle>Busca e filtros</SheetTitle>
+          </SheetHeader>
+          <div className="mt-4 flex flex-col gap-3">
+            <div className="relative min-w-0">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Buscar número, cliente ou e-mail…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-10 pl-9"
+              />
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-10 w-full">
+                <Filter className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+                <SelectValue placeholder="Status pedido" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos (pedido)</SelectItem>
+                <SelectItem value="pending">Pendente</SelectItem>
+                <SelectItem value="processing">Em processamento</SelectItem>
+                <SelectItem value="completed">Concluído</SelectItem>
+                <SelectItem value="cancelled">Cancelado</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={paymentStatusFilter} onValueChange={setPaymentStatusFilter}>
+              <SelectTrigger className="h-10 w-full">
+                <SelectValue placeholder="Pagamento" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos (pagamento)</SelectItem>
+                <SelectItem value="pending">Pagamento pendente</SelectItem>
+                <SelectItem value="paid">Pago</SelectItem>
+                <SelectItem value="failed">Falhou / cancelado</SelectItem>
+              </SelectContent>
+            </Select>
+            <SheetClose asChild>
+              <Button type="button" className="w-full">
+                Concluir
+              </Button>
+            </SheetClose>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Pedidos"
+          secondaryActions={[
+            {
+              icon: <Filter className="h-4 w-4" aria-hidden />,
+              ariaLabel: "Busca e filtros",
+              onClick: () => setMobileFiltersOpen(true),
+            },
+          ]}
+        />
+      </div>
+
+      <div className="mb-4 hidden md:block md:mb-5">
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight md:text-3xl">
           <Package className="h-7 w-7 shrink-0 md:h-8 md:w-8" />
           Pedidos da loja
@@ -267,7 +334,7 @@ const Orders = () => {
         </p>
       </div>
 
-      <Card className="mb-4 border shadow-sm">
+      <Card className="mb-4 hidden border shadow-sm md:block">
         <CardContent className="p-3 sm:p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="relative min-w-0 flex-1">

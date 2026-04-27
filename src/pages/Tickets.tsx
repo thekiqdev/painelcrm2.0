@@ -18,6 +18,7 @@ import {
 } from '@/types/tickets';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { MobilePageHeader } from '@/components/mobile/MobilePageHeader';
 
 export default function Tickets() {
   const navigate = useNavigate();
@@ -91,8 +92,29 @@ export default function Tickets() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Tickets"
+          secondaryActions={[
+            {
+              icon: <List className="h-4 w-4" aria-hidden />,
+              ariaLabel: 'Vista em lista',
+              onClick: () => setViewMode('table'),
+            },
+            {
+              icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
+              ariaLabel: 'Vista em kanban',
+              onClick: () => setViewMode('kanban'),
+            },
+          ]}
+          primaryAction={{
+            label: 'Novo ticket',
+            icon: <Plus className="h-4 w-4" aria-hidden />,
+            onClick: () => navigate('/support/tickets/new'),
+          }}
+        />
+      </div>
+      <div className="hidden md:flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Tickets</h1>
           <p className="text-muted-foreground">Gerencie seus chamados e atendimentos</p>

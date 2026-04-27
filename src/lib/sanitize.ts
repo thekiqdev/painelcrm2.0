@@ -6,7 +6,7 @@ import DOMPurify from 'dompurify';
  */
 export function sanitizeHtml(html: string): string {
   if (!html) return '';
-  
+
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [
       'p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li',
@@ -16,4 +16,14 @@ export function sanitizeHtml(html: string): string {
     ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
   });
+}
+
+/** Texto visível aproximado (validação client-side alinhada ao backend). */
+export function stripVisibleTextFromHtml(html: string): string {
+  if (!html) return '';
+  const s = sanitizeHtml(html);
+  return s
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

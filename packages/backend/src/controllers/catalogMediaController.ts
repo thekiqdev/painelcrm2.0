@@ -15,7 +15,14 @@ import {
 } from '../services/catalogMediaUploadService.js';
 import { extractCatalogMediaRelativeKeyFromStoredUrl } from '../utils/catalogMediaPublicSignedUrl.js';
 
-const scopeSchema = z.enum(['product', 'store_logo', 'store_banner', 'tenant_logo_light', 'tenant_logo_dark']);
+const scopeSchema = z.enum([
+  'product',
+  'store_logo',
+  'store_banner',
+  'tenant_logo_light',
+  'tenant_logo_dark',
+  'user_avatar',
+]);
 
 const deleteBodySchema = z.object({
   key: z.string().min(1).max(2048),
@@ -71,6 +78,8 @@ export async function postCatalogMediaUpload(req: AuthRequest, res: Response): P
     const scope = scopeRaw as CatalogMediaScope;
     if (scope === 'tenant_logo_light' || scope === 'tenant_logo_dark') {
       await assertModulePermission(userId, 'settings', 'edit', undefined, req);
+    } else if (scope === 'user_avatar') {
+      /* avatar pessoal — sem permissão de módulo */
     } else {
       await assertModulePermission(userId, 'products', 'edit', undefined, req);
     }
@@ -166,6 +175,8 @@ export async function postCatalogMediaDelete(req: AuthRequest, res: Response): P
 
     if (scope === 'tenant_logo_light' || scope === 'tenant_logo_dark') {
       await assertModulePermission(userId, 'settings', 'edit', undefined, req);
+    } else if (scope === 'user_avatar') {
+      /* permitido se a chave for do próprio utilizador (validado em isCatalogMediaKeyOwnedByTenantUser) */
     } else {
       await assertModulePermission(userId, 'products', 'edit', undefined, req);
     }

@@ -77,6 +77,7 @@ import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { parseClientsListReturnPath } from "@/lib/clientsListRestore";
 import { MobileCommerceScreenLayout } from "@/components/mobile/MobileCommerceScreenLayout";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -217,8 +218,14 @@ const CustomerInvoiceNew = ({
   const [searchParams] = useSearchParams();
   const editFlowQuery = searchParams.get("flow");
   const queryClientId = searchParams.get("client_id");
+  /** `one_off` | `subscription` — pré-seleciona o tipo ao entrar com `client_id`. */
+  const billingKindQuery = (searchParams.get("billing") || "").trim().toLowerCase();
   const returnToConversation = searchParams.get("return_to")?.trim() || "";
   const originChat = searchParams.get("origin") === "chat";
+  const listReturnPath = useMemo(
+    () => parseClientsListReturnPath(searchParams.get("return_path")),
+    [searchParams],
+  );
   const prefillClientId = (initialClientId ?? queryClientId ?? "").trim();
   const forcedEmbeddedClientId = embedded ? prefillClientId : "";
   const [step, setStep] = useState<"client" | "billing_type" | "form">(() => (isEditMode ? "form" : "client"));
@@ -518,10 +525,16 @@ const CustomerInvoiceNew = ({
       setCreationKind("one_off");
       setStep("form");
     } else {
-      setCreationKind(null);
-      setStep("billing_type");
+      const kindFromUrl =
+        billingKindQuery === "subscription"
+          ? "subscription"
+          : billingKindQuery === "one_off"
+            ? "one_off"
+            : null;
+      setCreationKind(kindFromUrl);
+      setStep(kindFromUrl ? "form" : "billing_type");
     }
-  }, [prefillClientId, isEditMode, embedded]);
+  }, [prefillClientId, isEditMode, embedded, billingKindQuery]);
 
   useEffect(() => {
     if (embedded && !isEditMode) {
@@ -890,6 +903,7 @@ const CustomerInvoiceNew = ({
     }
     if (returnToConversation) navigate(returnToConversation);
     else if (isEditMode && editInvoiceId) navigate(`/customer-invoices/${editInvoiceId}`);
+    else if (listReturnPath) navigate(listReturnPath);
     else navigate("/customer-invoices");
   };
 
@@ -910,6 +924,7 @@ const CustomerInvoiceNew = ({
   const cancelClientStep = () => {
     if (embedded) onBack?.();
     else if (returnToConversation) navigate(returnToConversation);
+    else if (listReturnPath) navigate(listReturnPath);
     else navigate("/customer-invoices");
   };
 
@@ -919,6 +934,10 @@ const CustomerInvoiceNew = ({
   };
 
   const goBackBillingTypeStep = () => {
+    if (listReturnPath && prefillClientId && !embedded) {
+      navigate(listReturnPath);
+      return;
+    }
     setCreationKind(null);
     setStep("client");
   };
@@ -926,6 +945,14 @@ const CustomerInvoiceNew = ({
   const goBackFormStep = () => {
     if (embedded) {
       onBack?.();
+      return;
+    }
+    const directFromClientsList =
+      Boolean(listReturnPath) &&
+      Boolean(prefillClientId) &&
+      (billingKindQuery === "one_off" || billingKindQuery === "subscription");
+    if (directFromClientsList) {
+      navigate(listReturnPath);
       return;
     }
     setStep("billing_type");
@@ -1150,7 +1177,15 @@ const CustomerInvoiceNew = ({
     <div className={cn("space-y-6", mobileShell && "px-2 pt-1")}>
       {!embedded && !mobileShell && (
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/customer-invoices")} aria-label="Voltar">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              if (!isEditMode && listReturnPath) navigate(listReturnPath);
+              else navigate("/customer-invoices");
+            }}
+            aria-label="Voltar"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-2xl font-bold">

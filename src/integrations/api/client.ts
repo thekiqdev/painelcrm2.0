@@ -36,10 +36,17 @@ export const getApiUrl = () => {
 const API_URL = getApiUrl();
 
 /** GET público sem header Authorization (ex.: visualização de contrato por token). */
-export async function publicApiGet<T>(endpoint: string): Promise<ApiResponse<T>> {
+export async function publicApiGet<T>(
+  endpoint: string,
+  init?: Pick<RequestInit, 'cache' | 'signal'>,
+): Promise<ApiResponse<T>> {
   const url = `${API_URL}${endpoint}`;
   try {
-    const response = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      ...init,
+    });
     let data: unknown;
     const contentType = response.headers.get('content-type');
     if (contentType && contentType.includes('application/json')) {
@@ -261,8 +268,8 @@ class ApiClient {
     }
   }
 
-  async get<T>(endpoint: string): Promise<ApiResponse<T>> {
-    return this.request<T>(endpoint, { method: 'GET' });
+  async get<T>(endpoint: string, init?: Pick<RequestInit, 'signal'>): Promise<ApiResponse<T>> {
+    return this.request<T>(endpoint, { method: 'GET', ...init });
   }
 
   async post<T>(

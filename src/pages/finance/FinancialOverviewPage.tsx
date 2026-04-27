@@ -13,7 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/sonner";
 import { TrendingDown, TrendingUp, Wallet, CalendarClock, Target } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import { cn } from "@/lib/utils";
+import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
 
 function formatBrl(n: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
@@ -39,6 +41,7 @@ type OverviewChartRow = {
 };
 
 const FinancialOverviewPage = () => {
+  const navigate = useNavigate();
   const currentYear = new Date().getFullYear();
   const defaultMonth = useMemo(() => {
     const d = new Date();
@@ -174,7 +177,7 @@ const FinancialOverviewPage = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Visão geral</h2>
@@ -330,7 +333,7 @@ const FinancialOverviewPage = () => {
               onChange={(e) => setUpcomingMonth(e.target.value)}
             />
             <Button variant="outline" size="sm" asChild>
-              <NavLink to="/finance/recurring-expenses">Gerir recorrentes</NavLink>
+              <NavLink to="/finance/accounts-payable#hub-regras-recorrencia">Gerir recorrentes</NavLink>
             </Button>
           </div>
         </CardHeader>
@@ -340,7 +343,7 @@ const FinancialOverviewPage = () => {
           ) : occurrences.filter((o) => o.status === "planned" || o.status === "pending").length === 0 ? (
             <p className="text-sm text-muted-foreground py-4">
               Nada em aberto neste mês.{" "}
-              <NavLink to="/finance/recurring-expenses" className="text-primary underline-offset-2 hover:underline">
+              <NavLink to="/finance/accounts-payable#hub-regras-recorrencia" className="text-primary underline-offset-2 hover:underline">
                 Criar despesa recorrente
               </NavLink>
             </p>
@@ -536,6 +539,25 @@ const FinancialOverviewPage = () => {
         </NavLink>
         .
       </p>
+
+      <FinanceMobileBottomBar
+        actions={[
+          {
+            key: "income",
+            label: "+ Entrada",
+            variant: "success",
+            icon: TrendingUp,
+            onClick: () => navigate("/finance/transactions?new=income"),
+          },
+          {
+            key: "expense",
+            label: "+ Saída",
+            variant: "danger",
+            icon: TrendingDown,
+            onClick: () => navigate("/finance/transactions?new=expense"),
+          },
+        ]}
+      />
     </div>
   );
 };

@@ -368,7 +368,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
            WHERE ft.tenant_id = $1
              AND ft.type = 'expense'
              AND ft.status IN ('pending')
-             AND COALESCE(ft.transaction_kind, 'regular') <> 'transfer'
+             AND COALESCE(ft.transaction_kind, 'regular') = 'regular'
              AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
            UNION ALL
            SELECT
@@ -379,7 +379,8 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
              'recurring'::text AS source,
              fro.status::text AS status
            FROM financial_recurring_expense_occurrences fro
-           INNER JOIN financial_recurring_expenses fre ON fre.id = fro.recurring_expense_id
+           INNER JOIN financial_recurring_expenses fre
+             ON fre.id = fro.recurring_expense_id AND fre.tenant_id = fro.tenant_id
            WHERE fro.tenant_id = $1
              AND fro.status IN ('planned', 'pending')
              AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')
@@ -396,11 +397,13 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
            WHERE ft.tenant_id = $1
              AND ft.type = 'expense'
              AND ft.status IN ('pending')
-             AND COALESCE(ft.transaction_kind, 'regular') <> 'transfer'
+             AND COALESCE(ft.transaction_kind, 'regular') = 'regular'
              AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
            UNION ALL
            SELECT fro.amount_cents
            FROM financial_recurring_expense_occurrences fro
+           INNER JOIN financial_recurring_expenses fre
+             ON fre.id = fro.recurring_expense_id AND fre.tenant_id = fro.tenant_id
            WHERE fro.tenant_id = $1
              AND fro.status IN ('planned', 'pending')
              AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')

@@ -31,6 +31,7 @@
     "multer": "^2.0.2",
     "pdfkit": "^0.18.0",
     "pg": "^8.11.3",
+    "sanitize-html": "^2.13.1",
     "socket.io": "^4.7.5",
     "zod": "^3.23.8"
   },
@@ -43,6 +44,7 @@
     "@types/node": "^20.10.5",
     "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.10.9",
+    "@types/sanitize-html": "^2.16.1",
     "nodemon": "^3.1.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",

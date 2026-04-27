@@ -16,6 +16,7 @@ import {
   Repeat2,
   Receipt,
   Megaphone,
+  Scale,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -169,6 +170,14 @@ export default function SuperAdminLayout() {
                     <NavLink to="/superadmin/subscription-cycles" className={getNavClass}>
                       <Repeat2 className="mr-2 h-5 w-5" />
                       <span>Ciclos de assinatura</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/superadmin/configuracoes/legal" className={getNavClass}>
+                      <Scale className="mr-2 h-5 w-5" />
+                      <span>Páginas legais</span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

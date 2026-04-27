@@ -14,6 +14,7 @@ import { DomainSection } from "@/components/settings/DomainSection";
 import { UserManagementSection } from "@/components/settings/UserManagementSection";
 import { TeamsSection } from "@/components/settings/TeamsSection";
 import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesSection";
+import { GoogleCalendarSection } from "@/components/settings/GoogleCalendarSection";
 import { toast } from "@/components/ui/sonner";
 
 const Settings = () => {
@@ -57,6 +58,8 @@ const Settings = () => {
       return <MessageTemplatesSection handleSave={handleSave} />;
     case "paymentGateway":
       return null;
+    case "googleCalendar":
+      return <GoogleCalendarSection />;
     default:
       return <CompanyDataSection handleSave={handleSave} />;
   }

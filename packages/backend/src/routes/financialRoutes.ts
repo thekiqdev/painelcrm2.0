@@ -4,7 +4,9 @@ import {
   listFinancialAccountsHandler,
   createFinancialAccountHandler,
   listFinancialTransactionsHandler,
+  patchFinancialTransactionHandler,
   createFinancialTransactionHandler,
+  getPayablesHandler,
   listFinancialTransfersHandler,
   createFinancialTransferHandler,
   listExpenseCategoriesHandler,
@@ -34,12 +36,15 @@ router.use(...tenantAuthCrm);
 
 router.get('/summary', getFinancialSummaryHandler);
 router.get('/reports', getFinancialReportsHandler);
+router.get('/payables', getPayablesHandler);
+router.get('/accounts-payable', getPayablesHandler);
 
 router.get('/accounts', listFinancialAccountsHandler);
 router.post('/accounts', createFinancialAccountHandler);
 
 router.get('/transactions', listFinancialTransactionsHandler);
 router.post('/transactions', createFinancialTransactionHandler);
+router.patch('/transactions/:transactionId', patchFinancialTransactionHandler);
 router.get('/transfers', listFinancialTransfersHandler);
 router.post('/transfers', createFinancialTransferHandler);
 

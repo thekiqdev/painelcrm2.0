@@ -140,3 +140,83 @@ export async function createFinancialTransaction(
   const row = r.rows[0]!;
   return { ...row, amount_cents: Number(row.amount_cents) };
 }
+
+export async function getFinancialTransaction(tenantId: string, id: string): Promise<FinancialTransactionRow | null> {
+  const r = await pool.query<FinancialTransactionRow>(
+    `SELECT id, tenant_id::text, account_id::text, type, amount_cents, description,
+            category_id::text, customer_id::text, reference_name, transaction_date::text,
+            status, transaction_kind, transfer_direction, transfer_id::text, created_at, updated_at
+     FROM financial_transactions
+     WHERE tenant_id = $1 AND id = $2
+     LIMIT 1`,
+    [tenantId, id]
+  );
+  if (r.rowCount === 0) return null;
+  const row = r.rows[0]!;
+  return { ...row, amount_cents: Number(row.amount_cents) };
+}
+
+export async function updateFinancialTransaction(
+  tenantId: string,
+  id: string,
+  patch: Partial<{
+    description: string;
+    amount_cents: number;
+    transaction_date: string;
+    status: FinancialTransactionStatus;
+    category_id: string | null;
+    account_id: string;
+  }>
+): Promise<FinancialTransactionRow | null> {
+  const cur = await getFinancialTransaction(tenantId, id);
+  if (!cur) return null;
+  if (cur.transaction_kind !== 'regular') {
+    throw new Error('Só é possível editar movimentos do tipo regular por esta API');
+  }
+  const next = {
+    description: patch.description !== undefined ? patch.description.trim() : cur.description,
+    amount_cents: patch.amount_cents !== undefined ? patch.amount_cents : cur.amount_cents,
+    transaction_date: patch.transaction_date !== undefined ? patch.transaction_date : cur.transaction_date,
+    status: patch.status !== undefined ? patch.status : cur.status,
+    category_id: patch.category_id !== undefined ? patch.category_id : cur.category_id,
+    account_id: patch.account_id !== undefined ? patch.account_id : cur.account_id,
+  };
+  if (next.description.length === 0) throw new Error('Descrição inválida');
+  if (next.amount_cents < 0) throw new Error('Valor inválido');
+  const acc = await getFinancialAccount(tenantId, next.account_id);
+  if (!acc) throw new Error('Conta não encontrada');
+  if (next.category_id) {
+    const c = await pool.query(
+      `SELECT 1 FROM expense_categories WHERE id = $1 AND (tenant_id IS NULL OR tenant_id = $2)`,
+      [next.category_id, tenantId]
+    );
+    if (c.rowCount === 0) throw new Error('Categoria inválida');
+  }
+  const r = await pool.query<FinancialTransactionRow>(
+    `UPDATE financial_transactions SET
+       description = $2,
+       amount_cents = $3,
+       transaction_date = $4::date,
+       status = $5,
+       category_id = $6,
+       account_id = $7::uuid,
+       updated_at = now()
+     WHERE tenant_id = $1 AND id = $8 AND transaction_kind = 'regular'
+     RETURNING id, tenant_id::text, account_id::text, type, amount_cents, description,
+               category_id::text, customer_id::text, reference_name, transaction_date::text,
+               status, transaction_kind, transfer_direction, transfer_id::text, created_at, updated_at`,
+    [
+      tenantId,
+      next.description,
+      next.amount_cents,
+      next.transaction_date,
+      next.status,
+      next.category_id,
+      next.account_id,
+      id,
+    ]
+  );
+  if (r.rowCount === 0) return null;
+  const row = r.rows[0]!;
+  return { ...row, amount_cents: Number(row.amount_cents) };
+}

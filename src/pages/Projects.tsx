@@ -40,6 +40,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const MODULE_PROJECTS = 'projects';
@@ -67,6 +69,7 @@ const Projects = () => {
     { id: "done", name: "Concluído", tasks: [], order: 3 },
   ]);
   const [hideCompletedTasks, setHideCompletedTasks] = useState(false);
+  const [teamFilterSheetOpen, setTeamFilterSheetOpen] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
 
   // Estados de diálogos
@@ -1499,7 +1502,80 @@ const Projects = () => {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      {viewMode === "list" ? (
+        <>
+          <Sheet open={teamFilterSheetOpen} onOpenChange={setTeamFilterSheetOpen}>
+            <SheetContent
+              side="bottom"
+              className="max-h-[70vh] rounded-t-2xl px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 md:hidden"
+            >
+              <SheetHeader className="text-left">
+                <SheetTitle>Equipe</SheetTitle>
+              </SheetHeader>
+              <div className="mt-4">
+                <Select
+                  value={teamFilter ?? "all"}
+                  onValueChange={(v) => {
+                    setTeamFilter(v === "all" ? null : v);
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Equipe" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as equipes</SelectItem>
+                    {teams.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <SheetClose asChild>
+                <Button type="button" className="mt-4 w-full">
+                  Concluir
+                </Button>
+              </SheetClose>
+            </SheetContent>
+          </Sheet>
+          <div className="md:hidden sticky top-0 z-30 -mx-0.5 mb-6 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+            <MobilePageHeader
+              title="Projetos"
+              secondaryActions={[
+                {
+                  icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Vista em grade",
+                  onClick: () => setProjectsViewType("grid"),
+                },
+                {
+                  icon: <Kanban className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Vista em kanban",
+                  onClick: () => setProjectsViewType("kanban"),
+                },
+                {
+                  icon: <Users className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Filtrar por equipe",
+                  onClick: () => setTeamFilterSheetOpen(true),
+                },
+              ]}
+              primaryAction={
+                canCreateProject(MODULE_PROJECTS)
+                  ? { label: "Novo projeto", icon: <Plus className="h-4 w-4" aria-hidden />, href: "/projects/new" }
+                  : undefined
+              }
+            />
+          </div>
+        </>
+      ) : null}
+
+      <div
+        className={
+          viewMode === "list"
+            ? "mb-6 hidden md:flex md:items-center md:justify-between"
+            : "mb-6 flex items-center justify-between"
+        }
+      >
         <h1 className="text-2xl font-bold">Gerenciamento de Projetos</h1>
         {viewMode === "list" && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -1510,23 +1586,25 @@ const Projects = () => {
               <SelectContent>
                 <SelectItem value="all">Todas as equipes</SelectItem>
                 {teams.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <div className="border rounded-md p-0.5 flex">
-              <Button 
-                variant={projectsViewType === "grid" ? "default" : "ghost"} 
-                size="sm" 
+              <Button
+                variant={projectsViewType === "grid" ? "default" : "ghost"}
+                size="sm"
                 onClick={() => setProjectsViewType("grid")}
                 className="rounded-r-none"
               >
                 <LayoutGrid className="h-4 w-4 mr-1" />
                 Grade
               </Button>
-              <Button 
-                variant={projectsViewType === "kanban" ? "default" : "ghost"} 
-                size="sm" 
+              <Button
+                variant={projectsViewType === "kanban" ? "default" : "ghost"}
+                size="sm"
                 onClick={() => setProjectsViewType("kanban")}
                 className="rounded-l-none"
               >
@@ -1535,12 +1613,12 @@ const Projects = () => {
               </Button>
             </div>
             {canCreateProject(MODULE_PROJECTS) && (
-            <Button asChild>
-              <Link to="/projects/new">
-                <Plus className="mr-2 h-4 w-4" />
-                Novo Projeto
-              </Link>
-            </Button>
+              <Button asChild>
+                <Link to="/projects/new">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Novo Projeto
+                </Link>
+              </Button>
             )}
           </div>
         )}

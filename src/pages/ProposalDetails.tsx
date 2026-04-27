@@ -114,10 +114,10 @@ const ProposalDetails = () => {
   }, [funnelId, navigate]);
 
   const fetchProposal = useCallback(async () => {
-    if (!proposalId) {
-      toast.error("ID da proposta não fornecido");
+      if (!proposalId) {
+        toast.error("ID da proposta não fornecido");
       goBack();
-      return;
+        return;
     }
     setLoading(true);
     try {
@@ -175,14 +175,14 @@ const ProposalDetails = () => {
         } else {
           setLastPublicUrl(getStoredProposalPublicUrl(proposalId));
         }
-      }
-    } catch (error) {
-      console.error("Erro ao carregar proposta:", error);
-      toast.error("Erro ao carregar proposta");
+        }
+      } catch (error) {
+        console.error("Erro ao carregar proposta:", error);
+        toast.error("Erro ao carregar proposta");
       goBack();
-    } finally {
-      setLoading(false);
-    }
+      } finally {
+        setLoading(false);
+      }
   }, [proposalId, goBack]);
 
   useEffect(() => {
@@ -530,11 +530,11 @@ const ProposalDetails = () => {
             </p>
           </div>
         </div>
-
+        
         <div className="hidden shrink-0 flex-wrap items-center justify-end gap-2 md:flex">
             <Button variant="outline" asChild size="sm">
               <Link to="/proposals">
-                <FileText className="mr-2 h-4 w-4" />
+            <FileText className="mr-2 h-4 w-4" />
                 Lista
               </Link>
             </Button>
@@ -579,18 +579,18 @@ const ProposalDetails = () => {
             >
               <Copy className="mr-2 h-4 w-4" />
               Copiar link
-            </Button>
+          </Button>
             {canPublishDraft && (
               <Button variant="default" size="sm" disabled={publishingProposal} onClick={() => void handlePublishProposal()}>
                 {publishingProposal ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                 Publicar
-              </Button>
+          </Button>
             )}
             {canConvertToInvoice && (
               <Button size="sm" onClick={() => setConvertOpen(true)}>
                 <Receipt className="mr-2 h-4 w-4" />
                 Gerar fatura
-              </Button>
+          </Button>
             )}
         </div>
       </div>
@@ -627,7 +627,7 @@ const ProposalDetails = () => {
             Valor total
           </div>
           <p className="mt-2 text-lg font-bold tabular-nums leading-none sm:text-xl">{formatCurrency(proposal.amount)}</p>
-        </div>
+            </div>
         <div className="rounded-xl border bg-card p-3 shadow-sm sm:p-4">
           <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
             <Calendar className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
@@ -641,8 +641,8 @@ const ProposalDetails = () => {
               Enviada em {formatDateOnlyPtBr(proposal.sent_date)}
             </p>
           ) : null}
-        </div>
-      </div>
+            </div>
+              </div>
       <p className="text-[11px] text-muted-foreground sm:text-xs">
         O destinatário (cliente ou lead) é definido na criação da proposta e não pode ser alterado.
       </p>
@@ -669,7 +669,7 @@ const ProposalDetails = () => {
             )}
             Publicar proposta
           </Button>
-        </div>
+          </div>
       ) : null}
 
       <div className="grid items-start gap-6 lg:grid-cols-12 lg:gap-8">
@@ -733,7 +733,7 @@ const ProposalDetails = () => {
                   <div className="min-w-[640px]">
                     <div className="grid grid-cols-12 gap-2 bg-muted/80 px-4 py-2.5 text-xs font-medium text-muted-foreground sm:text-sm">
                       <div className="col-span-4">Descrição</div>
-                      <div className="col-span-2 text-center">Qtd</div>
+                <div className="col-span-2 text-center">Qtd</div>
                       <div className="col-span-2 text-right">Unit.</div>
                       <div className="col-span-2 text-right">Desc.</div>
                       <div className="col-span-2 text-right">Total linha</div>
@@ -780,7 +780,7 @@ const ProposalDetails = () => {
                         <span>{formatCurrency(proposal.amount)}</span>
                       </div>
                     </div>
-                  </div>
+              </div>
                 </div>
 
                 <div className="space-y-2 md:hidden">
@@ -824,11 +824,11 @@ const ProposalDetails = () => {
                     <div className="flex justify-between gap-2 border-t border-border/60 pt-2 font-semibold tabular-nums">
                       <span>Total</span>
                       <span>{formatCurrency(proposal.amount)}</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
           </section>
 
           <section>

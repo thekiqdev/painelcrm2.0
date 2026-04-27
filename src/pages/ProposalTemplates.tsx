@@ -28,6 +28,7 @@ import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ArrowLeft, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 
 export default function ProposalTemplates() {
   const navigate = useNavigate();
@@ -90,13 +91,32 @@ export default function ProposalTemplates() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Modelos"
+          leading={
+            <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" onClick={() => navigate("/proposals")}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          }
+          primaryAction={{
+            icon: <Plus className="h-5 w-5" aria-hidden />,
+            ariaLabel: "Novo modelo",
+            onClick: () => {
+              if (canAdd) navigate("/proposals/templates/new");
+            },
+            disabled: !canAdd,
+          }}
+        />
+      </div>
+
+      <div className="hidden md:flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate("/proposals")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
+            <h1 className="flex items-center gap-2 text-2xl font-bold">
               <FileText className="h-7 w-7" />
               Modelos de proposta
             </h1>

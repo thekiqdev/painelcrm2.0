@@ -140,6 +140,20 @@ const CustomerCharges = () => {
     clientsService.getClients().then(setClients).catch(() => setClients([]));
   }, []);
 
+  /** Atalho a partir da lista de clientes: `?forClient=<uuid>&create=1` abre o diálogo com cliente pré-selecionado. */
+  useEffect(() => {
+    const forClient = searchParams.get('forClient')?.trim();
+    const wantCreate = searchParams.get('create') === '1';
+    if (!forClient || !wantCreate) return;
+    if (!/^[0-9a-f-]{36}$/i.test(forClient)) return;
+    setCreateClientId(forClient);
+    setCreateOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('forClient');
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   useEffect(() => {
     const s = searchParams.get("status") ?? "";
     const nextStatus = STATUS_URL_VALUES.has(s) ? s : "";

@@ -68,7 +68,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       visibleToasts={3}
       gap={10}
       expand={false}
-      className="toaster group"
+      /** O contentor do Sonner fica `position:fixed` com z-index muito alto; sem isto pode bloquear cliques no resto da app (Select, Popover, etc.). */
+      className="toaster group pointer-events-none [&_[data-sonner-toast]]:pointer-events-auto"
       toastOptions={{
         classNames: {
           toast:

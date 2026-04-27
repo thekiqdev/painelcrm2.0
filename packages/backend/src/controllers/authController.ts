@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
+import { isPgUndefinedColumn } from '../utils/pgErrors.js';
 import { isTenantAdmin } from '../utils/tenant.js';
 import { insertTenantPlanHistory } from '../services/auditLogService.js';
 import { hashPassword, comparePassword } from '../utils/bcrypt.js';
@@ -435,16 +436,45 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Get user with profile and is_super_admin
-    const userResult = await pool.query(
-      `SELECT u.id, u.email, u.whatsapp_number, u.created_at, u.tenant_id, COALESCE(u.is_super_admin, false) AS is_super_admin,
-              p.first_name, p.last_name, p.company_name, 
+    // Get user with profile and is_super_admin (fallback se migração 157 ainda não foi aplicada)
+    const sqlMeWithProfileExtras = `SELECT u.id, u.email, u.whatsapp_number, u.created_at, u.tenant_id, COALESCE(u.is_super_admin, false) AS is_super_admin,
+              p.first_name, p.last_name, p.company_name,
+              p.avatar_url, p.job_title, p.locale, p.timezone,
               p.whatsapp_connected, p.registration_complete
        FROM users u
        LEFT JOIN profiles p ON u.id = p.id
-       WHERE u.id = $1`,
-      [userId]
-    );
+       WHERE u.id = $1`;
+    const sqlMeLegacyUserAvatar = `SELECT u.id, u.email, u.whatsapp_number, u.created_at, u.tenant_id, COALESCE(u.is_super_admin, false) AS is_super_admin,
+              p.first_name, p.last_name, p.company_name,
+              u.avatar_url,
+              p.whatsapp_connected, p.registration_complete
+       FROM users u
+       LEFT JOIN profiles p ON u.id = p.id
+       WHERE u.id = $1`;
+    const sqlMeLegacyProfile = `SELECT u.id, u.email, u.whatsapp_number, u.created_at, u.tenant_id, COALESCE(u.is_super_admin, false) AS is_super_admin,
+              p.first_name, p.last_name, p.company_name,
+              p.whatsapp_connected, p.registration_complete
+       FROM users u
+       LEFT JOIN profiles p ON u.id = p.id
+       WHERE u.id = $1`;
+    let userResult;
+    try {
+      userResult = await pool.query(sqlMeWithProfileExtras, [userId]);
+    } catch (e) {
+      if (isPgUndefinedColumn(e)) {
+        try {
+          userResult = await pool.query(sqlMeLegacyUserAvatar, [userId]);
+        } catch (e2) {
+          if (isPgUndefinedColumn(e2)) {
+            userResult = await pool.query(sqlMeLegacyProfile, [userId]);
+          } else {
+            throw e2;
+          }
+        }
+      } else {
+        throw e;
+      }
+    }
 
     if (userResult.rows.length === 0) {
       res.status(404).json({ error: 'User not found' });
@@ -482,7 +512,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
        FROM users u
        JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = $1 AND u.tenant_id IS NOT NULL`,
-      [userId]
+      [userId as string]
     );
     if (tenantCheck.rows.length > 0) {
       const row = tenantCheck.rows[0];
@@ -548,6 +578,10 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       first_name: user.first_name,
       last_name: user.last_name,
       company_name: user.company_name,
+      avatar_url: user.avatar_url ?? null,
+      job_title: user.job_title ?? null,
+      locale: user.locale ?? null,
+      timezone: user.timezone ?? null,
       whatsapp_connected: user.whatsapp_connected,
       registration_complete: user.registration_complete,
       created_at: user.created_at,

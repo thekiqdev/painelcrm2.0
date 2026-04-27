@@ -19,6 +19,9 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { CreditCard, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
+import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
 
 function formatBrlCents(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -60,6 +63,8 @@ const FinanceCreditCardsPage = () => {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [load]);
+
+  useFinanceBottomBarVisibility(open);
 
   const resetForm = () => {
     setName("");
@@ -108,7 +113,7 @@ const FinanceCreditCardsPage = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Cartões de crédito</h2>
@@ -116,11 +121,34 @@ const FinanceCreditCardsPage = () => {
             Controle de cartões, compras parceladas e pagamento da fatura a partir de uma conta.
           </p>
         </div>
-        <Button type="button" onClick={() => { resetForm(); setOpen(true); }} className="shrink-0">
+        <Button
+          type="button"
+          onClick={() => {
+            resetForm();
+            setOpen(true);
+          }}
+          className="hidden shrink-0 md:inline-flex"
+        >
           <Plus className="h-4 w-4 mr-2" />
           Novo cartão
         </Button>
       </div>
+
+      <FinanceMobileBottomBar
+        actions={[
+          {
+            key: "novo-cartao",
+            label: "+ Novo cartão",
+            variant: "primary",
+            icon: Plus,
+            onClick: () => {
+              resetForm();
+              setOpen(true);
+            },
+            loading: saving && open,
+          },
+        ]}
+      />
 
       {cards.length === 0 ? (
         <Card>

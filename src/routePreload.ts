@@ -12,6 +12,7 @@ export const routePreload = {
   projectTemplates: () => import("./pages/ProjectTemplates"),
   products: () => import("./pages/Products"),
   orders: () => import("./pages/Orders"),
+  /** Configuração da loja pública (rota legada/tenant: `/admin/loja`). */
   storeSettings: () => import("./pages/StoreSettings"),
   proposals: () => import("./pages/Proposals"),
   contracts: () => import("./pages/Contracts"),

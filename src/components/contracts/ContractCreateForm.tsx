@@ -80,6 +80,8 @@ export interface ContractCreateFormProps {
    * Quando definido (chat), após criar rascunho ou enviar para assinatura substitui a navegação padrão.
    */
   onCreated?: (contract: Contract, mode: "draft" | "signature") => void;
+  /** Voltar da criação (ex.: listagem de clientes com scroll restaurado). */
+  listReturnPath?: string | null;
 }
 
 interface ContractFormData {
@@ -112,11 +114,13 @@ export function ContractCreateForm({
   initialTitleHint,
   onBack,
   onCreated,
+  listReturnPath = null,
 }: ContractCreateFormProps) {
   const id = contractId;
   const isEditMode = !!id;
   const navigate = useNavigate();
   const location = useLocation();
+  const contractsIndexFallback = listReturnPath?.trim() || "/contracts";
   const { user } = useAuth();
   const { canCreate, canEdit, loading: permLoading } = useModulePermissions();
   const permissionOk = isEditMode ? canEdit("contracts") : canCreate("contracts");
@@ -673,7 +677,7 @@ export function ContractCreateForm({
           </Button>
         ) : (
           <Button variant="outline" size="sm" asChild>
-            <Link to="/contracts">
+            <Link to={contractsIndexFallback}>
               <ArrowLeft className="mr-2 h-4 w-4" />
               Voltar
             </Link>
@@ -692,7 +696,7 @@ export function ContractCreateForm({
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/contracts')}>
+          <Button variant="ghost" size="icon" onClick={() => navigate(contractsIndexFallback)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-2xl font-bold">Novo Contrato</h1>
@@ -771,7 +775,7 @@ export function ContractCreateForm({
         )}
 
         <div className="flex gap-2">
-          <Button onClick={() => navigate('/contracts')} variant="outline">
+          <Button onClick={() => navigate(contractsIndexFallback)} variant="outline">
             Cancelar
           </Button>
           <Button

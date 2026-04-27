@@ -13,11 +13,14 @@ import {
 } from '../services/financialAccountsService.js';
 import {
   createFinancialTransaction,
+  getFinancialTransaction,
   listFinancialTransactions,
+  updateFinancialTransaction,
   type FinancialTransactionKind,
   type FinancialTransactionStatus,
   type FinancialTransactionType,
 } from '../services/financialTransactionsService.js';
+import { listPayablesForTenant } from '../services/financialPayablesService.js';
 import { createExpenseCategory, listExpenseCategories } from '../services/expenseCategoriesService.js';
 import { getFinancialSummary } from '../services/financialSummaryService.js';
 import {
@@ -28,7 +31,7 @@ import {
   regenerateOccurrences,
   updateRecurringExpense,
 } from '../services/financialRecurringExpenseService.js';
-import type { RecurringPeriodicity } from '../services/financialRecurringDateUtils.js';
+import { addUtcDays, todayYmdUTC, utcDateFromYmd, type RecurringPeriodicity } from '../services/financialRecurringDateUtils.js';
 import {
   createCreditCard,
   createCreditCardPurchase,
@@ -71,6 +74,15 @@ const createTransactionBody = z.object({
   reference_name: z.string().nullable().optional(),
   transaction_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   status: transactionStatusSchema.optional(),
+});
+
+const patchTransactionBody = z.object({
+  description: z.string().min(1).optional(),
+  amount_cents: z.number().int().nonnegative().optional(),
+  transaction_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  status: transactionStatusSchema.optional(),
+  category_id: z.string().uuid().nullable().optional(),
+  account_id: z.string().uuid().optional(),
 });
 
 const createTransferBody = z.object({
@@ -331,6 +343,93 @@ export async function listFinancialTransactionsHandler(req: AuthRequest, res: Re
   }
 }
 
+function defaultMonthRangeUtc(): { from: string; to: string } {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m0 = d.getUTCMonth();
+  const from = `${y}-${String(m0 + 1).padStart(2, '0')}-01`;
+  const last = new Date(Date.UTC(y, m0 + 1, 0)).getUTCDate();
+  const to = `${y}-${String(m0 + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+  return { from, to };
+}
+
+export async function getPayablesHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId) return;
+  const q = req.query;
+  const fromQ = typeof q.from === 'string' && q.from.trim() ? q.from.trim() : undefined;
+  const toQ = typeof q.to === 'string' && q.to.trim() ? q.to.trim() : undefined;
+  const preset = typeof q.preset === 'string' ? q.preset.trim() : '';
+  let from: string;
+  let to: string;
+  if (fromQ && toQ) {
+    from = fromQ;
+    to = toQ;
+  } else if (preset === 'today') {
+    const t = todayYmdUTC();
+    from = t;
+    to = t;
+  } else if (preset === 'week') {
+    const t = todayYmdUTC();
+    const d = utcDateFromYmd(t);
+    const dow = d.getUTCDay();
+    const weekStart = addUtcDays(t, dow === 0 ? -6 : 1 - dow);
+    from = weekStart;
+    to = addUtcDays(weekStart, 6);
+  } else {
+    const def = defaultMonthRangeUtc();
+    from = def.from;
+    to = def.to;
+  }
+  try {
+    const data = await listPayablesForTenant(tenantId, from, to);
+    res.json(data);
+  } catch (e) {
+    console.error('[financial] getPayablesHandler', e);
+    res.status(500).json({ error: 'Erro ao carregar contas a pagar' });
+  }
+}
+
+export async function patchFinancialTransactionHandler(req: AuthRequest, res: Response): Promise<void> {
+  const tenantId = tenantOr401(req, res);
+  if (!tenantId) return;
+  const id = req.params.transactionId;
+  if (!id) {
+    res.status(400).json({ error: 'ID inválido' });
+    return;
+  }
+  const parsed = patchTransactionBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const cur = await getFinancialTransaction(tenantId, id);
+    if (!cur) {
+      res.status(404).json({ error: 'Movimento não encontrado' });
+      return;
+    }
+    if (cur.type !== 'expense') {
+      res.status(400).json({ error: 'Apenas despesas podem ser actualizadas por este fluxo' });
+      return;
+    }
+    const row = await updateFinancialTransaction(tenantId, id, parsed.data);
+    if (!row) {
+      res.status(404).json({ error: 'Movimento não encontrado' });
+      return;
+    }
+    res.json(row);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '';
+    if (msg.includes('não encontrada') || msg.includes('inválid') || msg.includes('regular')) {
+      res.status(400).json({ error: msg || 'Dados inválidos' });
+      return;
+    }
+    console.error('[financial] patchFinancialTransactionHandler', e);
+    res.status(500).json({ error: 'Erro ao actualizar movimento' });
+  }
+}
+
 export async function createFinancialTransactionHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
@@ -544,6 +643,15 @@ export async function updateRecurringExpenseHandler(req: AuthRequest, res: Respo
     const msg = e instanceof Error ? e.message : '';
     if (msg.includes('inválid') || msg.includes('finitas')) {
       res.status(400).json({ error: msg });
+      return;
+    }
+    const pgCode =
+      typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
+    if (pgCode === '23514' || pgCode === '23503') {
+      res.status(400).json({
+        error:
+          'Não foi possível guardar: verifique data de fim ≥ início, tipo finito com quantidade válida, conta e categoria.',
+      });
       return;
     }
     console.error('[financial] updateRecurringExpenseHandler', e);
