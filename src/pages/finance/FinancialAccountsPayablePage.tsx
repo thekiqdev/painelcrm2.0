@@ -1180,7 +1180,7 @@ const FinancialAccountsPayablePage = () => {
                       <Button variant="outline" className="h-11 w-full justify-between gap-2 font-normal md:h-10">
                         <span className="flex items-center gap-2 text-sm font-medium">
                           <Repeat className="h-4 w-4 opacity-80" />
-                          Regras recorrentes
+                          Despesas recorrentes
                         </span>
                         <ChevronDown
                           className={cn("h-4 w-4 shrink-0 opacity-70 transition-transform", secRulesOpen && "rotate-180")}
@@ -1282,78 +1282,13 @@ const FinancialAccountsPayablePage = () => {
                   </Collapsible>
                 ) : null}
 
-                <Collapsible open={secHistoricoOpen} onOpenChange={setSecHistoricoOpen}>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="outline" className="h-11 w-full justify-between gap-2 font-normal md:h-10">
-                      <span className="flex items-center gap-2 text-sm font-medium">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600 opacity-90" />
-                        Histórico — pagas no período
-                        {paidHistoricoItems.length > 0 ? (
-                          <Badge variant="secondary" className="ml-1 font-normal">
-                            {paidHistoricoItems.length}
-                          </Badge>
-                        ) : null}
-                      </span>
-                      <ChevronDown
-                        className={cn(
-                          "h-4 w-4 shrink-0 opacity-70 transition-transform",
-                          secHistoricoOpen && "rotate-180"
-                        )}
-                      />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="data-[state=closed]:animate-none pt-3">
-                    {paidHistoricoItems.length === 0 ? (
-                      <p className="text-sm text-muted-foreground py-4 text-center rounded-lg border border-dashed border-border/70 bg-muted/10 px-3">
-                        Nenhuma despesa paga neste período com os filtros actuais.
-                      </p>
-                    ) : isDesktop ? (
-                      <div className="rounded-md border overflow-x-auto bg-background">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Pagamento</TableHead>
-                              <TableHead>Descrição</TableHead>
-                              <TableHead>Categoria</TableHead>
-                              <TableHead className="text-right">Valor</TableHead>
-                              <TableHead>Estado</TableHead>
-                              <TableHead>Rec.</TableHead>
-                              <TableHead>Origem</TableHead>
-                              <TableHead className="text-right">Acções</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            <PayableDesktopRows
-                              items={paidHistoricoItems}
-                              showRecurrenceCol
-                              periodicityOf={periodicityOf}
-                              onDetail={setDetailItem}
-                              onPay={openPay}
-                              onEdit={openEdit}
-                            />
-                          </TableBody>
-                        </Table>
-                      </div>
-                    ) : (
-                      <PayableMobileCards
-                        items={paidHistoricoItems}
-                        variant="auto"
-                        periodicityOf={periodicityOf}
-                        onDetail={setDetailItem}
-                        onPay={openPay}
-                        onEdit={openEdit}
-                      />
-                    )}
-                  </CollapsibleContent>
-                </Collapsible>
-
                 {showCollapsibleAvulsas ? (
                   <Collapsible open={secAvulsasOpen} onOpenChange={setSecAvulsasOpen}>
                     <CollapsibleTrigger asChild>
                       <Button variant="outline" className="h-11 w-full justify-between gap-2 font-normal md:h-10">
                         <span className="flex items-center gap-2 text-sm font-medium">
                           <Layers className="h-4 w-4 opacity-80" />
-                          Despesas avulsas cadastradas
+                          Despesas avulsas
                           {filteredAvulsas.length > 0 ? (
                             <Badge variant="secondary" className="ml-1 font-normal">
                               {filteredAvulsas.length}
@@ -1413,6 +1348,71 @@ const FinancialAccountsPayablePage = () => {
                     </CollapsibleContent>
                   </Collapsible>
                 ) : null}
+
+                <Collapsible open={secHistoricoOpen} onOpenChange={setSecHistoricoOpen}>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="outline" className="h-11 w-full justify-between gap-2 font-normal md:h-10">
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 opacity-90" />
+                        Histórico de pagamento
+                        {paidHistoricoItems.length > 0 ? (
+                          <Badge variant="secondary" className="ml-1 font-normal">
+                            {paidHistoricoItems.length}
+                          </Badge>
+                        ) : null}
+                      </span>
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 shrink-0 opacity-70 transition-transform",
+                          secHistoricoOpen && "rotate-180"
+                        )}
+                      />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="data-[state=closed]:animate-none pt-3">
+                    {paidHistoricoItems.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center rounded-lg border border-dashed border-border/70 bg-muted/10 px-3">
+                        Nenhuma despesa paga neste período com os filtros actuais.
+                      </p>
+                    ) : isDesktop ? (
+                      <div className="rounded-md border overflow-x-auto bg-background">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Pagamento</TableHead>
+                              <TableHead>Descrição</TableHead>
+                              <TableHead>Categoria</TableHead>
+                              <TableHead className="text-right">Valor</TableHead>
+                              <TableHead>Estado</TableHead>
+                              <TableHead>Rec.</TableHead>
+                              <TableHead>Origem</TableHead>
+                              <TableHead className="text-right">Acções</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            <PayableDesktopRows
+                              items={paidHistoricoItems}
+                              showRecurrenceCol
+                              periodicityOf={periodicityOf}
+                              onDetail={setDetailItem}
+                              onPay={openPay}
+                              onEdit={openEdit}
+                            />
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <PayableMobileCards
+                        items={paidHistoricoItems}
+                        variant="auto"
+                        periodicityOf={periodicityOf}
+                        onDetail={setDetailItem}
+                        onPay={openPay}
+                        onEdit={openEdit}
+                      />
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             </div>
           )}
