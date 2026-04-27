@@ -26,6 +26,7 @@ const ClientProfile = lazy(() => import("./pages/ClientProfile"));
 const Leads = lazy(() => import("./pages/Leads"));
 const Funnel = lazy(() => import("./pages/Funnel"));
 const Tasks = lazy(() => import("./pages/Tasks"));
+const Agenda = lazy(() => import("./pages/Agenda"));
 const Projects = lazy(() => import("./pages/Projects"));
 const ProjectWizardPage = lazy(() => import("./pages/ProjectWizardPage"));
 const ProjectAreaPage = lazy(() => import("./pages/ProjectAreaPage"));
@@ -346,6 +347,15 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>
                       <Tasks />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/agenda" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Agenda />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>

@@ -92,6 +92,7 @@ export function MobileAppNavigation() {
   const hasProposals = useFeatureFlag("proposals");
   const hasContracts = useFeatureFlag("contracts");
   const hasTasks = useFeatureFlag("tasks");
+  const hasAgenda = useFeatureFlag("agenda");
   const hasProjects = useFeatureFlag("projects");
   const hasTickets = useFeatureFlag("tickets");
   const hasSettings = useFeatureFlag("settings");
@@ -109,6 +110,7 @@ export function MobileAppNavigation() {
         products: hasProducts,
         projects: hasProjects,
         tasks: hasTasks,
+        agenda: hasAgenda,
         chat: hasChat,
         tickets: hasTickets,
         proposals: hasProposals,
@@ -128,6 +130,7 @@ export function MobileAppNavigation() {
       hasProducts,
       hasProjects,
       hasTasks,
+      hasAgenda,
       hasChat,
       hasTickets,
       hasProposals,

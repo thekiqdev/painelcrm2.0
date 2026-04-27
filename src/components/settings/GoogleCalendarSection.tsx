@@ -38,7 +38,7 @@ export function GoogleCalendarSection() {
       } else if (reason === 'denied') {
         toast.error('Autorização Google cancelada ou negada.');
       } else if (reason === 'misconfigured') {
-        toast.error('Servidor sem configuração OAuth / cifra. Contacte o suporte.');
+        toast.error('A integração Google neste ambiente ainda não está concluída. Contacte o suporte.');
       } else if (reason === 'disabled' || reason === 'invalid') {
         toast.error('Ligação inválida ou integração desativada.');
       } else {
@@ -114,8 +114,7 @@ export function GoogleCalendarSection() {
               Google Agenda
             </CardTitle>
             <CardDescription className="mt-1.5 max-w-xl">
-              Conecte a sua conta Google para criar eventos, convites e reuniões com Meet a partir do PainelCRM (tokens
-              ficam apenas no servidor, cifrados).
+              Conecte sua conta Google para criar eventos, convites e reuniões com Meet a partir do PainelCRM.
             </CardDescription>
           </div>
           {data.connected ? (
@@ -131,8 +130,7 @@ export function GoogleCalendarSection() {
       <CardContent className="space-y-4">
         {misconfigured ? (
           <p className="text-sm text-amber-700 dark:text-amber-400">
-            O servidor não tem todas as variáveis necessárias (OAuth Google e chave de cifra dos tokens). Contacte o
-            suporte técnico.
+            A integração Google neste ambiente ainda não está concluída. Contacte o suporte.
           </p>
         ) : null}
 

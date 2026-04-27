@@ -35,6 +35,7 @@ import {
   Plus,
   TrendingUp,
   TrendingDown,
+  CalendarDays,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -121,6 +122,7 @@ const usePrefetchRoutes = () => {
       routePreload.dashboard();
       routePreload.clients();
       routePreload.tasks();
+      routePreload.agenda();
       routePreload.projects();
       routePreload.products();
     }, 1500);
@@ -140,6 +142,7 @@ const Nav = () => {
   const hasProducts = useFeatureFlag('products');
   const hasProjects = useFeatureFlag('projects');
   const hasTasks = useFeatureFlag('tasks');
+  const hasAgenda = useFeatureFlag('agenda');
   const hasChat = useFeatureFlag('chat');
   const hasTickets = useFeatureFlag('tickets');
   const hasProposals = useFeatureFlag('proposals');
@@ -293,6 +296,9 @@ const Nav = () => {
               {show(hasTasks, 'tasks') && (
                 <NavLinkItem to="/tasks" icon={ClipboardCheck} label="Tarefas" preload={() => routePreload.tasks()} />
               )}
+              {show(hasAgenda, 'agenda') && (
+                <NavLinkItem to="/agenda" icon={CalendarDays} label="Agenda" preload={() => routePreload.agenda()} />
+              )}
               {show(hasTasks, 'project_templates') && (
                 <NavLinkItem
                   to="/project-templates"
@@ -409,6 +415,7 @@ const Header = () => {
   const hasProposals = useFeatureFlag('proposals');
   const hasContracts = useFeatureFlag('contracts');
   const hasTasks = useFeatureFlag('tasks');
+  const hasAgenda = useFeatureFlag('agenda');
   const hasInvoices = useFeatureFlag('invoices');
   const hasExpenses = useFeatureFlag('expenses');
   const hasTickets = useFeatureFlag('tickets');
@@ -421,6 +428,7 @@ const Header = () => {
   const showCreateProposal = hasProposals && canView('proposals') && canCreate('proposals');
   const showCreateContract = hasContracts && canView('contracts') && canCreate('contracts');
   const showCreateTask = hasTasks && canView('tasks') && canCreate('tasks');
+  const showCreateAppointment = hasAgenda && canView('agenda') && canCreate('agenda');
   const showCreateFinanceTx = hasExpenses && canView('finance') && canCreate('finance');
   const showTransfer = showCreateFinanceTx;
   const showCreateMenu =
@@ -429,6 +437,7 @@ const Header = () => {
     showCreateProposal ||
     showCreateContract ||
     showCreateTask ||
+    showCreateAppointment ||
     showCreateFinanceTx;
 
   const createMenuContent = useMemo(() => {
@@ -518,6 +527,22 @@ const Header = () => {
         ),
       });
     }
+    if (showCreateAppointment) {
+      rows.push({
+        tier: pathname.startsWith('/agenda') ? 0 : 1,
+        sort: 52,
+        node: (
+          <DropdownMenuItem
+            key="create-appointment"
+            className={CREATE_MENU_ITEM_CLASS}
+            onClick={() => navigate('/agenda?new=1')}
+          >
+            <CalendarDays className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+            Novo compromisso
+          </DropdownMenuItem>
+        ),
+      });
+    }
     if (showCreateFinanceTx) {
       rows.push({
         tier: onFinance ? 0 : 1,
@@ -575,6 +600,7 @@ const Header = () => {
     showCreateProposal,
     showCreateContract,
     showCreateTask,
+    showCreateAppointment,
     showCreateFinanceTx,
     showTransfer,
   ]);

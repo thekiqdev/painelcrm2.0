@@ -417,6 +417,17 @@ export const tenantAuthCrm = [
   setRequestDb,
 ];
 
+/** CRM com feature "agenda" (módulo Agenda / compromissos). */
+export const appointmentsAuth = [
+  authenticateToken,
+  setCurrentTenant,
+  requireTenantForBusinessApp,
+  requireTenantCommercialAccess,
+  requireActivePlanPeriod,
+  requireFeature('agenda'),
+  setRequestDb,
+];
+
 /** Cadeia para rotas superadmin: auth + superadmin + RLS (bypass). */
 export const superadminAuth = [authenticateToken, requireSuperAdmin, setRequestDb];
 

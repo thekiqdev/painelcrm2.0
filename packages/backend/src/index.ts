@@ -64,6 +64,7 @@ import meProfileRoutes from './routes/meProfileRoutes.js';
 import { authenticateToken, setCurrentTenant, setRequestDb } from './middleware/auth.js';
 import announcementsUpdatesRoutes from './routes/announcementsUpdatesRoutes.js';
 import googleCalendarIntegrationRoutes from './routes/googleCalendarIntegrationRoutes.js';
+import appointmentsRoutes from './routes/appointmentsRoutes.js';
 import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
 import billingRoutes from './routes/billingRoutes.js';
@@ -414,6 +415,7 @@ app.use('/api/me/tenant', myTenantPlanRoutes);
 /** Perfil pessoal / negócio: GET|PUT /api/me/profile, avatar, senha por WhatsApp, business-profile */
 app.use('/api/me', meProfileRoutes);
 app.use('/api/integrations/google', googleCalendarIntegrationRoutes);
+app.use('/api/appointments', appointmentsRoutes);
 app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);

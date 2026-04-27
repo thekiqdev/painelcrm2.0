@@ -4,6 +4,7 @@ import {
   Calendar,
   CalendarSync,
   ClipboardCheck,
+  CalendarDays,
   CreditCard,
   FileSearch,
   FileText,
@@ -53,6 +54,7 @@ export type MobileMoreMenuFlags = {
   products: boolean;
   projects: boolean;
   tasks: boolean;
+  agenda: boolean;
   chat: boolean;
   tickets: boolean;
   proposals: boolean;
@@ -87,6 +89,7 @@ export const MOBILE_MORE_ICONS = {
   Store,
   Calendar,
   ClipboardCheck,
+  CalendarDays,
   LayoutTemplate,
   Newspaper,
   Landmark,
@@ -362,6 +365,19 @@ export const MOBILE_MORE_ITEM_DEFS = [
     quickRank: 35,
     tone: "bg-cyan-500/10 text-cyan-800 dark:text-cyan-200",
     preload: "tasks",
+  },
+  {
+    id: "agenda",
+    label: "Agenda",
+    to: "/agenda",
+    description: "Compromissos e calendário",
+    icon: "CalendarDays" as const,
+    group: "Projetos",
+    featureFlag: "agenda" as const,
+    moduleView: "agenda",
+    quickRank: 33,
+    tone: "bg-violet-500/10 text-violet-800 dark:text-violet-200",
+    preload: "agenda",
   },
   {
     id: "updates",

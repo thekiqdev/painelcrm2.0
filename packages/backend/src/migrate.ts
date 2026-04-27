@@ -237,6 +237,8 @@ const order = [
   '163_financial_account_visibility.sql',
   /** Google Calendar: colunas opcionais google_name / google_picture (userinfo) */
   '164_google_calendar_oauth_profile.sql',
+  /** Módulo Agenda: compromissos, attendees, RLS, permissões e feature "agenda" */
+  '165_appointments_module.sql',
   'create-admin-user.sql',
 ];
 

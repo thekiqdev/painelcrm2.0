@@ -11,7 +11,10 @@ export type ClientTimelineEventName =
   | 'chat_proposal_draft_saved'
   | 'chat_contract_draft_saved'
   | 'chat_contract_sent_for_signature'
-  | 'invoice_paid';
+  | 'invoice_paid'
+  | 'agenda_appointment_created'
+  | 'agenda_appointment_updated'
+  | 'agenda_appointment_cancelled';
 
 export interface CreateClientTimelineEventInput {
   tenantId: string;

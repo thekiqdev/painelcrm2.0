@@ -8,6 +8,7 @@ export const routePreload = {
   leads: () => import("./pages/Leads"),
   funnel: () => import("./pages/Funnel"),
   tasks: () => import("./pages/Tasks"),
+  agenda: () => import("./pages/Agenda"),
   projects: () => import("./pages/Projects"),
   projectTemplates: () => import("./pages/ProjectTemplates"),
   products: () => import("./pages/Products"),

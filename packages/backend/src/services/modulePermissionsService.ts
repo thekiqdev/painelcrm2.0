@@ -28,6 +28,7 @@ export const MODULE_IDS = [
   'finance',
   'settings',
   'meu_plano',
+  'agenda',
 ] as const;
 
 export type ModuleId = (typeof MODULE_IDS)[number];
@@ -56,6 +57,7 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   finance: 'Financeiro (Despesas)',
   settings: 'Configurações',
   meu_plano: 'Meu Plano',
+  agenda: 'Agenda',
 };
 
 const MODULES_SUPPORT_OWN: Partial<Record<ModuleId, { editOwn: boolean; deleteOwn: boolean }>> = {
@@ -68,6 +70,7 @@ const MODULES_SUPPORT_OWN: Partial<Record<ModuleId, { editOwn: boolean; deleteOw
   tickets: { editOwn: true, deleteOwn: true },
   proposals: { editOwn: true, deleteOwn: true },
   contracts: { editOwn: true, deleteOwn: true },
+  agenda: { editOwn: true, deleteOwn: true },
 };
 
 /** Retorna o schema de módulos para a UI (lista de módulos com labels e se suportam edit_own/delete_own). */

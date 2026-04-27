@@ -78,6 +78,8 @@ const TENANT_SCOPED_TABLES = [
   'financial_credit_card_purchases',
   'financial_credit_card_installments',
   'financial_credit_card_statements',
+  'appointments',
+  'appointment_attendees',
 ] as const;
 
 /** Padrões que indicam filtro por tenant (query considerada segura se algum estiver presente). */

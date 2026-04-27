@@ -249,6 +249,8 @@ export async function refreshTokenIfNeeded(
   };
 }
 
+export type GoogleCalendarReminder = { method: 'email' | 'popup'; minutes: number };
+
 export type CreateGoogleCalendarEventInput = {
   title: string;
   description?: string;
@@ -256,13 +258,13 @@ export type CreateGoogleCalendarEventInput = {
   end: string;
   attendees?: { email: string }[];
   createMeet?: boolean;
+  /** Se definido, desativa o lembrete padrão e aplica estes. */
+  reminders?: GoogleCalendarReminder[] | null;
 };
 
-export async function createEvent(
-  conn: GoogleCalendarConnectionSecrets,
-  data: CreateGoogleCalendarEventInput,
-): Promise<{ id: string; htmlLink?: string; hangoutLink?: string }> {
-  const c = await refreshTokenIfNeeded(conn);
+function buildEventResourceBody(
+  data: CreateGoogleCalendarEventInput & { createMeet?: boolean },
+): Record<string, unknown> {
   const event: Record<string, unknown> = {
     summary: data.title,
     description: data.description ?? '',
@@ -280,7 +282,40 @@ export async function createEvent(
       },
     };
   }
-  const q = data.createMeet ? '?conferenceDataVersion=1' : '';
+  if (data.reminders && data.reminders.length > 0) {
+    event.reminders = { useDefault: false, overrides: data.reminders };
+  } else {
+    event.reminders = { useDefault: true };
+  }
+  return event;
+}
+
+/** Extrai link Meet e link HTML a partir do JSON de evento da API Calendar. */
+export function extractMeetAndLinksFromEventJson(
+  json: Record<string, unknown>,
+): { htmlLink?: string; meetLink?: string } {
+  const htmlLink = typeof json.htmlLink === 'string' ? json.htmlLink : undefined;
+  const hang = typeof json.hangoutLink === 'string' ? json.hangoutLink : undefined;
+  if (hang) {
+    return { htmlLink, meetLink: hang };
+  }
+  const conf = json.conferenceData as
+    | { entryPoints?: { entryPointType?: string; uri?: string }[] }
+    | undefined;
+  const fromConf = conf?.entryPoints?.find(
+    (e) => (e.entryPointType === 'video' || e.entryPointType === 'more') && e.uri,
+  )?.uri;
+  return { htmlLink, meetLink: fromConf || undefined };
+}
+
+export async function createEvent(
+  conn: GoogleCalendarConnectionSecrets,
+  data: CreateGoogleCalendarEventInput,
+): Promise<{ id: string; htmlLink?: string; hangoutLink?: string }> {
+  const c = await refreshTokenIfNeeded(conn);
+  const event = buildEventResourceBody(data);
+  const createMeet = Boolean(data.createMeet);
+  const q = createMeet ? '?conferenceDataVersion=1' : '';
   const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events${q}`, {
     method: 'POST',
     headers: {
@@ -300,11 +335,83 @@ export async function createEvent(
           : JSON.stringify(json);
     throw new Error(`Google Calendar: ${msg}`);
   }
+  const links = extractMeetAndLinksFromEventJson(json);
   return {
     id: String(json.id || ''),
-    htmlLink: typeof json.htmlLink === 'string' ? json.htmlLink : undefined,
-    hangoutLink: typeof json.hangoutLink === 'string' ? json.hangoutLink : undefined,
+    htmlLink: links.htmlLink,
+    hangoutLink: links.meetLink,
   };
+}
+
+export type UpdateGoogleCalendarEventInput = {
+  title: string;
+  description?: string;
+  start: string;
+  end: string;
+  attendees?: { email: string }[];
+  createMeet?: boolean;
+  reminders?: GoogleCalendarReminder[] | null;
+};
+
+export async function updateCalendarEvent(
+  conn: GoogleCalendarConnectionSecrets,
+  eventId: string,
+  data: UpdateGoogleCalendarEventInput,
+): Promise<{ id: string; htmlLink?: string; hangoutLink?: string }> {
+  if (!eventId) throw new Error('Google Calendar: eventId vazio');
+  const c = await refreshTokenIfNeeded(conn);
+  const event = buildEventResourceBody({ ...data, createMeet: data.createMeet });
+  const createMeet = Boolean(data.createMeet);
+  const q = createMeet ? '?conferenceDataVersion=1' : '';
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}${q}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${c.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(event),
+    },
+  );
+  const json = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = json.error as { message?: string } | string | undefined;
+    const msg =
+      typeof err === 'object' && err && typeof err.message === 'string'
+        ? err.message
+        : typeof err === 'string'
+          ? err
+          : JSON.stringify(json);
+    throw new Error(`Google Calendar: ${msg}`);
+  }
+  const links = extractMeetAndLinksFromEventJson(json);
+  return {
+    id: String(json.id || eventId),
+    htmlLink: links.htmlLink,
+    hangoutLink: links.meetLink,
+  };
+}
+
+export async function deleteCalendarEvent(
+  conn: GoogleCalendarConnectionSecrets,
+  eventId: string,
+): Promise<void> {
+  if (!eventId) return;
+  const c = await refreshTokenIfNeeded(conn);
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${c.accessToken}` },
+    },
+  );
+  if (res.status === 404) return;
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    const msg = j.error?.message || res.statusText;
+    throw new Error(`Google Calendar: ${msg}`);
+  }
 }
 
 export type ListGoogleCalendarEventsFilters = {
