@@ -31,7 +31,9 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeftRight, Landmark, Plus } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ArrowLeftRight, Filter, Landmark, Plus } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
@@ -62,6 +64,84 @@ function monthBoundsNow(): { from: string; to: string } {
   return { from, to };
 }
 
+const SCOPE_FILTER_OPTIONS: { value: "all" | FinancialAccountScope; label: string }[] = [
+  { value: "all", label: "Todas" },
+  { value: "business", label: "Empresarial" },
+  { value: "personal", label: "Pessoal" },
+];
+
+const TYPE_FILTER_OPTIONS: { value: "all" | FinancialAccountType; label: string }[] = [
+  { value: "all", label: "Todas" },
+  { value: "bank", label: "Banco" },
+  { value: "cash", label: "Caixa" },
+  { value: "wallet", label: "Carteira" },
+];
+
+type AccountsListFilterContentProps = {
+  idPrefix: string;
+  scopeFilter: "all" | FinancialAccountScope;
+  onScopeFilter: (v: "all" | FinancialAccountScope) => void;
+  typeFilter: "all" | FinancialAccountType;
+  onTypeFilter: (v: "all" | FinancialAccountType) => void;
+  onClear: () => void;
+};
+
+function AccountsListFilterContent({
+  idPrefix,
+  scopeFilter,
+  onScopeFilter,
+  typeFilter,
+  onTypeFilter,
+  onClear,
+}: AccountsListFilterContentProps) {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2.5">
+        <Label className="text-sm font-medium">Âmbito da conta</Label>
+        <RadioGroup
+          value={scopeFilter}
+          onValueChange={(v) => onScopeFilter(v as "all" | FinancialAccountScope)}
+          className="grid gap-2.5"
+        >
+          {SCOPE_FILTER_OPTIONS.map((o) => (
+            <div key={o.value} className="flex items-center gap-2.5">
+              <RadioGroupItem value={o.value} id={`${idPrefix}-scope-${o.value}`} />
+              <Label htmlFor={`${idPrefix}-scope-${o.value}`} className="font-normal cursor-pointer">
+                {o.label}
+              </Label>
+            </div>
+          ))}
+        </RadioGroup>
+      </div>
+      <div className="space-y-2.5">
+        <div>
+          <Label className="text-sm font-medium">Tipo (Banco / Caixa / Carteira)</Label>
+          <p className="text-xs text-muted-foreground mt-0.5">Refina a lista; não altera a API que já filtra por âmbito.</p>
+        </div>
+        <RadioGroup
+          value={typeFilter}
+          onValueChange={(v) => onTypeFilter(v as "all" | FinancialAccountType)}
+          className="grid gap-2.5"
+        >
+          {TYPE_FILTER_OPTIONS.map((o) => (
+            <div key={o.value} className="flex items-center gap-2.5">
+              <RadioGroupItem value={o.value} id={`${idPrefix}-type-${o.value}`} />
+              <Label htmlFor={`${idPrefix}-type-${o.value}`} className="font-normal cursor-pointer">
+                {o.label}
+              </Label>
+            </div>
+          ))}
+        </RadioGroup>
+      </div>
+      <div className="pt-1">
+        <Button type="button" variant="ghost" size="sm" onClick={onClear} className="text-muted-foreground h-8 px-2 -ml-2">
+          Limpar filtros
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 const FinancialUnifiedAccountsPage = () => {
   const isMobile = useIsMobile();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -74,6 +154,9 @@ const FinancialUnifiedAccountsPage = () => {
   const [type, setType] = useState<FinancialAccountType>("bank");
   const [scope, setScope] = useState<FinancialAccountScope>("business");
   const [scopeFilter, setScopeFilter] = useState<"all" | FinancialAccountScope>("all");
+  /** Filtro de tipo (Banco/Caixa) só no cliente; backend continua a filtrar só por âmbito. */
+  const [typeFilter, setTypeFilter] = useState<"all" | FinancialAccountType>("all");
+  const [filterOpen, setFilterOpen] = useState(false);
   const [initialCentsInput, setInitialCentsInput] = useState("0");
   const [initialDate, setInitialDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [transferOpen, setTransferOpen] = useState(false);
@@ -108,6 +191,25 @@ const FinancialUnifiedAccountsPage = () => {
       setGwProvider(availableGw[0].key as FinancialGatewayProvider);
     }
   }, [availableGw, gwProvider]);
+
+  const displayedAccounts = useMemo(() => {
+    if (typeFilter === "all") return accounts;
+    return accounts.filter((a) => a.type === typeFilter);
+  }, [accounts, typeFilter]);
+
+  const filterActive = scopeFilter !== "all" || typeFilter !== "all";
+
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (scopeFilter !== "all") parts.push(SCOPE_LABEL[scopeFilter]);
+    if (typeFilter !== "all") parts.push(TYPE_LABEL[typeFilter]);
+    return parts.join(" · ");
+  }, [scopeFilter, typeFilter]);
+
+  const clearFilters = useCallback(() => {
+    setScopeFilter("all");
+    setTypeFilter("all");
+  }, []);
 
   const statsByAccount = useMemo(() => {
     const m = new Map<string, { inc: number; exp: number }>();
@@ -153,7 +255,7 @@ const FinancialUnifiedAccountsPage = () => {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, loading]);
 
-  useFinanceBottomBarVisibility(open || transferOpen);
+  useFinanceBottomBarVisibility(open || transferOpen || filterOpen);
 
   const handleCreate = async () => {
     const cents = Math.round(parseFloat(initialCentsInput.replace(",", ".")) * 100);
@@ -241,8 +343,16 @@ const FinancialUnifiedAccountsPage = () => {
             Onde entra e sai o dinheiro da empresa. Entradas e saídas do mês ({monthFrom.slice(0, 7)}): só movimentos
             concluídos.
           </p>
+          {filterActive ? (
+            <div className="md:hidden flex flex-wrap items-center gap-2 pt-0.5">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Filtro</span>
+              <Badge variant="secondary" className="text-xs font-normal max-w-full truncate" title={filterSummary}>
+                {filterSummary}
+              </Badge>
+            </div>
+          ) : null}
         </div>
-        <div className="hidden md:flex flex-wrap gap-2">
+        <div className="hidden md:flex flex-wrap items-center justify-end gap-2">
           <Button type="button" onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Nova conta
@@ -250,6 +360,46 @@ const FinancialUnifiedAccountsPage = () => {
           <Button type="button" variant="outline" onClick={() => setTransferOpen(true)}>
             Transferir
           </Button>
+          <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="shrink-0 relative"
+                aria-label="Filtros da lista"
+                aria-pressed={filterOpen}
+              >
+                <Filter className="h-4 w-4" />
+                {filterActive ? (
+                  <span
+                    className="absolute end-1.5 top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
+                    aria-hidden
+                  />
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[min(20.5rem,calc(100vw-1.5rem))] p-4" align="end" sideOffset={8}>
+              <p className="text-sm font-semibold mb-3 pr-2">Filtros</p>
+              <AccountsListFilterContent
+                idPrefix="fin-ac-desk"
+                scopeFilter={scopeFilter}
+                onScopeFilter={setScopeFilter}
+                typeFilter={typeFilter}
+                onTypeFilter={setTypeFilter}
+                onClear={clearFilters}
+              />
+            </PopoverContent>
+          </Popover>
+          {filterActive && filterSummary ? (
+            <Badge
+              variant="secondary"
+              className="text-xs font-normal max-w-[14rem] truncate"
+              title={filterSummary}
+            >
+              {filterSummary}
+            </Badge>
+          ) : null}
         </div>
         <Sheet
           open={open}
@@ -430,6 +580,38 @@ const FinancialUnifiedAccountsPage = () => {
         </Dialog>
       </div>
 
+      {isMobile ? (
+        <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
+          <SheetContent
+            side="bottom"
+            className={cn(
+              "max-h-[88dvh] flex flex-col gap-0 p-0 rounded-t-2xl",
+              isMobile ? "h-auto max-w-none w-full" : ""
+            )}
+          >
+            <SheetHeader className="px-5 pt-4 pb-2 text-left space-y-1 border-b">
+              <SheetTitle>Filtros</SheetTitle>
+              <SheetDescription>Âmbito, tipo (Banco/Caixa) e limpar.</SheetDescription>
+            </SheetHeader>
+            <div className="overflow-y-auto px-5 py-4 flex-1 min-h-0">
+              <AccountsListFilterContent
+                idPrefix="fin-ac-mob"
+                scopeFilter={scopeFilter}
+                onScopeFilter={setScopeFilter}
+                typeFilter={typeFilter}
+                onTypeFilter={setTypeFilter}
+                onClear={clearFilters}
+              />
+            </div>
+            <div className="p-4 pt-2 border-t border-border/60 shrink-0">
+              <Button type="button" className="w-full" onClick={() => setFilterOpen(false)}>
+                Concluir
+              </Button>
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
       <FinanceMobileBottomBar
         actions={[
           {
@@ -448,24 +630,15 @@ const FinancialUnifiedAccountsPage = () => {
             onClick: () => setTransferOpen(true),
             loading: transferSaving && transferOpen,
           },
+          {
+            key: "filter",
+            label: "Filtro",
+            variant: "outline",
+            icon: Filter,
+            onClick: () => setFilterOpen(true),
+          },
         ]}
       />
-
-      <div className="flex justify-end">
-        <div className="w-[220px]">
-          <Label className="text-xs">Filtro tipo da conta</Label>
-          <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v as "all" | FinancialAccountScope)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas</SelectItem>
-              <SelectItem value="business">Empresarial</SelectItem>
-              <SelectItem value="personal">Pessoal</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
 
       {loading ? (
         <p className="text-sm text-muted-foreground py-8 text-center">A carregar…</p>
@@ -475,9 +648,18 @@ const FinancialUnifiedAccountsPage = () => {
             Sem contas ainda. Crie a primeira para começar a registar movimentos.
           </CardContent>
         </Card>
+      ) : displayedAccounts.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground text-sm space-y-3 max-w-md mx-auto">
+            <p>Nenhuma conta corresponde aos filtros actuais.</p>
+            <Button type="button" variant="outline" size="sm" onClick={clearFilters}>
+              Remover filtros
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {accounts.map((a) => {
+          {displayedAccounts.map((a) => {
             const st = statsByAccount.get(a.id) ?? { inc: 0, exp: 0 };
             return (
               <NavLink key={a.id} to={`/finance/accounts/${a.id}`} className="block group">

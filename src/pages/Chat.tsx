@@ -397,7 +397,7 @@ const Chat = () => {
   // Estados para formulários
   const [clients, setClients] = useState<any[]>([]);
   const [ticketCategories, setTicketCategories] = useState<any[]>([]);
-  
+
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
     try {
@@ -869,7 +869,7 @@ const Chat = () => {
         conversationUpdatedReloadTimerRef.current = setTimeout(() => {
           conversationUpdatedReloadTimerRef.current = null;
           if (selectedConversationIdRef.current !== updatedConversation.id) return;
-          void loadMessages(updatedConversation.id, { silent: true });
+        void loadMessages(updatedConversation.id, { silent: true });
         }, 650);
       }
     });
@@ -2200,7 +2200,7 @@ const Chat = () => {
           }),
           proposal_link: proposalLink,
         }, created.id);
-      } catch (error) {
+    } catch (error) {
         console.error('Erro ao notificar proposta criada no chat:', error);
       }
     }
@@ -2414,7 +2414,7 @@ const Chat = () => {
               ? `${window.location.origin}/contract-view/${createdWithView.public_view.token}`
               : undefined),
         }, createdWithView.id);
-      } catch (error) {
+    } catch (error) {
         console.error('Erro ao notificar contrato criado no chat:', error);
       }
     }
@@ -2623,7 +2623,7 @@ const Chat = () => {
 
     return (
       <button
-        key={conversation.id}
+      key={conversation.id}
         type="button"
         onClick={() => {
           chatCrmListReturnPathRef.current = null;
@@ -2637,23 +2637,23 @@ const Chat = () => {
             : 'bg-background/50 hover:border-border/40 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         )}
       >
-        <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3">
           <div className="relative shrink-0">
-            <Avatar
+          <Avatar 
               className={cn(
                 'h-11 w-11 md:h-10 md:w-10',
                 hasProfile ? 'cursor-pointer transition-opacity hover:opacity-85' : '',
               )}
-              onClick={hasProfile ? handleAvatarClick : undefined}
-            >
-              {identity.avatarUrl ? (
+            onClick={hasProfile ? handleAvatarClick : undefined}
+          >
+            {identity.avatarUrl ? (
                 <AvatarImage src={identity.avatarUrl} alt={identity.displayName || 'Contato'} />
-              ) : (
+            ) : (
                 <AvatarFallback className="bg-primary/10 text-sm font-semibold uppercase text-primary">
-                  {identity.initials}
-                </AvatarFallback>
-              )}
-            </Avatar>
+              {identity.initials}
+              </AvatarFallback>
+            )}
+        </Avatar>
             {unread > 0 ? (
               <span
                 className="absolute -right-1 -top-1 flex h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-none text-primary-foreground shadow-sm"
@@ -2677,14 +2677,14 @@ const Chat = () => {
               </div>
               <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
                 {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
-              </span>
-            </div>
+            </span>
+          </div>
             {showPhoneRow ? (
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{identity.phoneLine}</p>
             ) : null}
             <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-muted-foreground md:text-xs">
               {conversation.lastMessagePreview || 'Sem mensagens recentes'}
-            </p>
+          </p>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {conversation.client_id ? (
                 <Badge variant="default" className="px-1.5 py-0 text-[10px] font-medium">
@@ -2699,7 +2699,7 @@ const Chat = () => {
               {conversation.status ? (
                 <Badge variant="outline" className={cn('px-1.5 py-0 text-[10px]', statusBadgeClass(conversation.status))}>
                   {conversation.status}
-                </Badge>
+              </Badge>
               ) : null}
               {conversation.assigned_team_id &&
               !conversation.assignee_display &&
@@ -2729,11 +2729,11 @@ const Chat = () => {
                   {attendanceStatusLabel(conversation.attendance_status)}
                 </Badge>
               ) : null}
-            </div>
           </div>
         </div>
+        </div>
       </button>
-    );
+  );
   };
 
   return (
@@ -2777,9 +2777,9 @@ const Chat = () => {
                         />
                       </div>
                       <Popover open={filtersPopoverOpen} onOpenChange={setFiltersPopoverOpen}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
                             variant={filtersPopoverOpen ? 'secondary' : 'outline'}
                             size="icon"
                             className="h-9 w-9 shrink-0 rounded-lg"
@@ -2799,149 +2799,149 @@ const Chat = () => {
                               <>
                                 <div className="border-b border-border bg-muted/20 px-3 py-2.5">
                                   <div className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border/60 bg-card/90 px-2.5 py-2 shadow-sm">
-                                    {activeInstance ? (
-                                      <>
-                                        <div className="relative shrink-0">
+                      {activeInstance ? (
+                        <>
+                          <div className="relative shrink-0">
                                           <Avatar className="h-9 w-9 rounded-lg shadow-sm ring-2 ring-background">
-                                            {instanceConnectionUi.avatarUrl ? (
-                                              <AvatarImage
-                                                src={instanceConnectionUi.avatarUrl}
-                                                alt=""
-                                                className="object-cover"
-                                              />
-                                            ) : (
+                              {instanceConnectionUi.avatarUrl ? (
+                                <AvatarImage
+                                  src={instanceConnectionUi.avatarUrl}
+                                  alt=""
+                                  className="object-cover"
+                                />
+                              ) : (
                                               <AvatarFallback className="rounded-lg bg-emerald-600/12 text-sm font-semibold uppercase text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-                                                {(instanceConnectionUi.displayName || '?').slice(0, 2)}
-                                              </AvatarFallback>
-                                            )}
-                                          </Avatar>
-                                          <span
+                                  {(instanceConnectionUi.displayName || '?').slice(0, 2)}
+                                </AvatarFallback>
+                              )}
+                            </Avatar>
+                            <span
                                             className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card ${
-                                              activeInstance.status === 'connected'
-                                                ? 'bg-emerald-500'
-                                                : activeInstance.status === 'connecting'
-                                                  ? 'bg-amber-500'
-                                                  : 'bg-muted-foreground/50'
-                                            }`}
-                                            aria-hidden
-                                          />
-                                        </div>
+                                activeInstance.status === 'connected'
+                                  ? 'bg-emerald-500'
+                                  : activeInstance.status === 'connecting'
+                                    ? 'bg-amber-500'
+                                    : 'bg-muted-foreground/50'
+                              }`}
+                              aria-hidden
+                            />
+                          </div>
                                         <div className="min-w-0 flex-1 text-left">
                                           <div className="flex min-w-0 items-center gap-2">
                                             <span className="truncate text-sm font-semibold leading-snug">
-                                              {instanceConnectionUi.displayName}
-                                            </span>
-                                            {enabledInstanceIds.size > 1 && (
-                                              <Badge
-                                                variant="secondary"
+                                {instanceConnectionUi.displayName}
+                              </span>
+                              {enabledInstanceIds.size > 1 && (
+                                <Badge
+                                  variant="secondary"
                                                 className="h-4 shrink-0 px-1.5 py-0 text-[10px]"
-                                              >
-                                                +{enabledInstanceIds.size - 1}
-                                              </Badge>
-                                            )}
-                                          </div>
-                                          {instanceConnectionUi.phoneDisplay ? (
+                                >
+                                  +{enabledInstanceIds.size - 1}
+                                </Badge>
+                              )}
+                            </div>
+                            {instanceConnectionUi.phoneDisplay ? (
                                             <p className="mt-0.5 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
-                                              {instanceConnectionUi.phoneDisplay}
-                                            </p>
-                                          ) : (
+                                {instanceConnectionUi.phoneDisplay}
+                              </p>
+                            ) : (
                                             <p className="mt-0.5 text-[11px] text-muted-foreground">
-                                              {activeInstance.status === 'connected'
-                                                ? 'Conectado'
-                                                : activeInstance.status === 'connecting'
-                                                  ? 'A conectar…'
-                                                  : 'Desconectado'}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </>
-                                    ) : (
-                                      <span className="text-sm text-muted-foreground">Selecione uma instância</span>
-                                    )}
-                                  </div>
+                                {activeInstance.status === 'connected'
+                                  ? 'Conectado'
+                                  : activeInstance.status === 'connecting'
+                                    ? 'A conectar…'
+                                    : 'Desconectado'}
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Selecione uma instância</span>
+                      )}
+                    </div>
                                 </div>
-                                <div className="p-2">
+                  <div className="p-2">
                                   <div className="border-b border-border px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                                    Conexões WhatsApp
-                                  </div>
+                      Conexões WhatsApp
+            </div>
                                   <div className="max-h-[240px] overflow-y-auto">
-                                    {instances.map((instance) => {
-                                      const isEnabled = enabledInstanceIds.has(instance.id);
-                                      const rowUi = resolveInstanceConnectionUi(instance);
-                                      const statusLine =
-                                        instance.status === 'connected'
-                                          ? 'Conectado'
-                                          : instance.status === 'connecting'
-                                            ? 'A conectar…'
-                                            : 'Desconectado';
-                                      return (
-                                        <div
-                                          key={instance.id}
+                      {instances.map((instance) => {
+                        const isEnabled = enabledInstanceIds.has(instance.id);
+                        const rowUi = resolveInstanceConnectionUi(instance);
+                        const statusLine =
+                          instance.status === 'connected'
+                            ? 'Conectado'
+                            : instance.status === 'connecting'
+                              ? 'A conectar…'
+                              : 'Desconectado';
+                        return (
+                          <div
+                            key={instance.id}
                                           className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50"
-                                          onClick={() => {
+                            onClick={() => {
                                             void handleToggleInstance(instance.id);
-                                            if (!isEnabled) {
-                                              setSelectedInstanceId(instance.id);
-                                            }
-                                          }}
-                                        >
-                                          <Checkbox
-                                            checked={isEnabled}
-                                            disabled={instance.can_manage === false}
-                                            className="shrink-0"
-                                            onCheckedChange={() => {
-                                              if (instance.can_manage === false) return;
+                              if (!isEnabled) {
+                                setSelectedInstanceId(instance.id);
+                              }
+                            }}
+                          >
+                            <Checkbox
+                              checked={isEnabled}
+                              disabled={instance.can_manage === false}
+                              className="shrink-0"
+                              onCheckedChange={() => {
+                                if (instance.can_manage === false) return;
                                               void handleToggleInstance(instance.id);
-                                              if (!isEnabled) {
-                                                setSelectedInstanceId(instance.id);
-                                              }
-                                            }}
-                                          />
-                                          <div className="relative h-9 w-9 shrink-0">
-                                            <Avatar className="h-9 w-9 rounded-lg ring-1 ring-border">
-                                              {rowUi.avatarUrl ? (
+                                if (!isEnabled) {
+                                  setSelectedInstanceId(instance.id);
+                                }
+                              }}
+                            />
+                            <div className="relative h-9 w-9 shrink-0">
+                              <Avatar className="h-9 w-9 rounded-lg ring-1 ring-border">
+                                {rowUi.avatarUrl ? (
                                                 <AvatarImage src={rowUi.avatarUrl} alt="" className="object-cover" />
                                               ) : (
                                                 <AvatarFallback className="rounded-lg bg-emerald-600/12 text-xs font-semibold uppercase text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-                                                  {(rowUi.displayName || '?').slice(0, 2)}
-                                                </AvatarFallback>
-                                              )}
-                                            </Avatar>
-                                            <span
-                                              className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-popover ${
-                                                instance.status === 'connected'
-                                                  ? 'bg-emerald-500'
-                                                  : instance.status === 'connecting'
-                                                    ? 'bg-amber-500'
-                                                    : 'bg-muted-foreground/50'
-                                              }`}
-                                              aria-hidden
-                                            />
-                                          </div>
-                                          <div className="min-w-0 flex-1 text-left">
+                                    {(rowUi.displayName || '?').slice(0, 2)}
+                                  </AvatarFallback>
+                                )}
+                              </Avatar>
+                              <span
+                                className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-popover ${
+                                  instance.status === 'connected'
+                                    ? 'bg-emerald-500'
+                                    : instance.status === 'connecting'
+                                      ? 'bg-amber-500'
+                                      : 'bg-muted-foreground/50'
+                                }`}
+                                aria-hidden
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1 text-left">
                                             <div className="truncate text-sm font-semibold leading-snug">
-                                              {rowUi.displayName}
-                                            </div>
+                                {rowUi.displayName}
+                              </div>
                                             <div className="truncate text-xs tabular-nums text-muted-foreground">
-                                              {rowUi.phoneDisplay || statusLine}
-                                            </div>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
+                                {rowUi.phoneDisplay || statusLine}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                                   <div className="mt-1 border-t border-border">
-                                    <div
+                      <div
                                       className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50"
-                                      onClick={handleAddConnection}
-                                    >
+                        onClick={handleAddConnection}
+                      >
                                       <div className="flex h-4 w-4 items-center justify-center rounded border-2 border-dashed border-muted-foreground/50">
-                                        <Plus className="h-3 w-3 text-muted-foreground" />
-                                      </div>
-                                      <span className="text-sm text-muted-foreground">Adicionar conexão</span>
-                                    </div>
-                                  </div>
-                                </div>
+                          <Plus className="h-3 w-3 text-muted-foreground" />
+            </div>
+                        <span className="text-sm text-muted-foreground">Adicionar conexão</span>
+          </div>
+              </div>
+                  </div>
                               </>
                             ) : null}
                             <div
@@ -2950,66 +2950,66 @@ const Chat = () => {
                                 instances.length > 0 && 'border-t border-border',
                               )}
                             >
-                              <div className="space-y-1.5">
+                    <div className="space-y-1.5">
                                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                  Tipo de conversa
-                                </p>
-                                <Tabs
-                                  value={activeTab}
-                                  onValueChange={(value) =>
-                                    setActiveTab(value as 'all' | 'unread' | 'leads' | 'clients')
-                                  }
-                                  className="w-full"
-                                >
+                        Tipo de conversa
+                      </p>
+                      <Tabs
+                        value={activeTab}
+                        onValueChange={(value) =>
+                          setActiveTab(value as 'all' | 'unread' | 'leads' | 'clients')
+                        }
+                        className="w-full"
+                      >
                                   <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-muted/50 p-1">
                                     <TabsTrigger value="all" className="h-8 px-2.5 py-1.5 text-xs">
-                                      Todas
-                                    </TabsTrigger>
+                            Todas
+                          </TabsTrigger>
                                     <TabsTrigger value="unread" className="h-8 gap-1 px-2.5 py-1.5 text-xs">
-                                      Não lidas
-                                      {attendanceCounts.unread > 0 && (
-                                        <Badge
-                                          variant="destructive"
+                            Não lidas
+                            {attendanceCounts.unread > 0 && (
+                              <Badge
+                                variant="destructive"
                                           className="h-4 min-w-[1.25rem] justify-center px-1.5 py-0 text-[10px]"
-                                        >
-                                          {attendanceCounts.unread > 99 ? '99+' : attendanceCounts.unread}
-                                        </Badge>
-                                      )}
-                                    </TabsTrigger>
+                              >
+                                {attendanceCounts.unread > 99 ? '99+' : attendanceCounts.unread}
+                              </Badge>
+                            )}
+                          </TabsTrigger>
                                     <TabsTrigger value="leads" className="h-8 px-2.5 py-1.5 text-xs">
-                                      Leads
-                                    </TabsTrigger>
+                            Leads
+                          </TabsTrigger>
                                     <TabsTrigger value="clients" className="h-8 px-2.5 py-1.5 text-xs">
-                                      Clientes
-                                    </TabsTrigger>
-                                  </TabsList>
-                                </Tabs>
-                              </div>
-                              {user?.tenant_id ? (
-                                <div className="space-y-1.5">
-                                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                    Inbox
-                                  </p>
-                                  <Select
-                                    value={chatInboxScope}
-                                    onValueChange={(v) => setChatInboxScope(v as 'owner' | 'tenant')}
-                                  >
-                                    <SelectTrigger className="h-9 w-full text-xs">
-                                      <SelectValue placeholder="Inbox" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="owner">Só as minhas (criador da conversa)</SelectItem>
-                                      <SelectItem value="tenant">Equipa — toda a empresa</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
+                            Clientes
+                          </TabsTrigger>
+                        </TabsList>
+                      </Tabs>
                     </div>
-                    <div className="overflow-x-auto -mx-0.5 px-0.5 pb-0.5">
+                    {user?.tenant_id ? (
+                      <div className="space-y-1.5">
+                                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Inbox
+                        </p>
+                        <Select
+                          value={chatInboxScope}
+                          onValueChange={(v) => setChatInboxScope(v as 'owner' | 'tenant')}
+                        >
+                          <SelectTrigger className="h-9 w-full text-xs">
+                            <SelectValue placeholder="Inbox" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="owner">Só as minhas (criador da conversa)</SelectItem>
+                                      <SelectItem value="tenant">Equipa — toda a empresa</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                            </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+                      <div className="overflow-x-auto -mx-0.5 px-0.5 pb-0.5">
                         <ToggleGroup
                           type="single"
                           value={chatAttendanceFilter === '' ? 'all' : chatAttendanceFilter}
@@ -3086,7 +3086,7 @@ const Chat = () => {
                               Use o botão de filtro ao lado da pesquisa e marque pelo menos uma conexão.
                             </p>
                           </div>
-                        </div>
+                          </div>
                       ) : conversationsToShow.length === 0 ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
                           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
@@ -3118,11 +3118,11 @@ const Chat = () => {
                       {viewMode === 'invoice-create' ? (
                         <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0')}>
                           {!isMobile ? (
-                            <div className="mb-3">
-                              <Button variant="ghost" size="sm" onClick={handleBackFromInvoiceCreate}>
-                                Voltar para conversa
-                              </Button>
-                            </div>
+                          <div className="mb-3">
+                            <Button variant="ghost" size="sm" onClick={handleBackFromInvoiceCreate}>
+                              Voltar para conversa
+                            </Button>
+                          </div>
                           ) : null}
                           <CustomerInvoiceNew
                             embedded
@@ -3245,7 +3245,7 @@ const Chat = () => {
                                 <ChevronLeft className="h-5 w-5" />
                               </Button>
                             ) : null}
-                            <Avatar
+                            <Avatar 
                               className={cn(
                                 'h-8 w-8 shrink-0 md:h-11 md:w-11',
                                 (currentClient || currentLead) && 'cursor-pointer transition-opacity hover:opacity-80',
@@ -3269,7 +3269,7 @@ const Chat = () => {
                                 </AvatarFallback>
                               )}
                             </Avatar>
-                            <div
+                            <div 
                               className={cn(
                                 'min-w-0 flex-1',
                                 (currentClient || currentLead)
@@ -3286,8 +3286,8 @@ const Chat = () => {
                             >
                               <div className="flex min-w-0 items-center gap-1.5 md:gap-2">
                                 <h3 className="truncate text-[15px] font-semibold leading-tight md:text-lg">
-                                  {selectedIdentity?.displayName ?? '—'}
-                                </h3>
+                                {selectedIdentity?.displayName ?? '—'}
+                              </h3>
                                 {selectedConversation.client_id && (
                                   <Badge variant="default" className="hidden text-xs md:inline-flex">
                                     Cliente
@@ -3342,9 +3342,9 @@ const Chat = () => {
                               {selectedIdentity?.phoneLine &&
                                 selectedIdentity.displayName.trim() !== selectedIdentity.phoneLine.trim() && (
                                   <p className="hidden text-xs text-muted-foreground md:block">
-                                    {selectedIdentity.phoneLine}
-                                  </p>
-                                )}
+                                  {selectedIdentity.phoneLine}
+                              </p>
+                              )}
                               <div className="mt-2 hidden flex-wrap items-center gap-2 md:flex">
                                 <span className="inline-flex items-center rounded-md border border-border/60 bg-background/90 px-2 py-0.5 text-[11px] text-muted-foreground">
                                   WhatsApp
@@ -3511,27 +3511,27 @@ const Chat = () => {
                                   <p className="text-sm font-medium text-foreground">Carregando mensagens</p>
                                   <p className="mt-1 text-xs">Histórico da conversa.</p>
                                 </div>
-                              </div>
+                          </div>
                             ) : messages.length === 0 ? (
                               <div className="flex min-h-[10rem] flex-col items-center justify-center gap-2 px-4 py-10 text-center">
                                 <MessageSquare className="h-8 w-8 text-muted-foreground/80" aria-hidden />
                                 <p className="text-sm font-medium text-foreground">Sem mensagens ainda</p>
                                 <p className="text-xs text-muted-foreground">Envie a primeira mensagem abaixo.</p>
-                              </div>
-                            ) : (
+                        </div>
+                      ) : (
                               <div className="mx-auto w-full max-w-3xl space-y-3.5 pb-6 md:space-y-3">
-                                {messages.map((message) => (
-                                  <div
+                            {messages.map((message) => (
+                              <div 
                                     key={message.id}
                                     className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
-                                  >
-                                    <div
+                              >
+                                <div 
                                       className={`max-w-[min(88%,28rem)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm md:max-w-[min(82%,28rem)] md:rounded-xl ${
                                         message.direction === 'outgoing'
                                           ? 'bg-primary text-primary-foreground ring-1 ring-primary/20'
                                           : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
-                                      }`}
-                                    >
+                                  }`}
+                                >
                                       <ChatBubbleContent message={message} />
                                       <span
                                         className={`text-[10px] mt-1 flex items-center gap-1 ${
@@ -3639,9 +3639,9 @@ const Chat = () => {
                             <Textarea
                               ref={composerTextareaRef}
                               rows={1}
-                              placeholder="Mensagem ou legenda da imagem..."
+                            placeholder="Mensagem ou legenda da imagem..."
                               value={newMessage}
-                              onChange={(event) => setNewMessage(event.target.value)}
+                            onChange={(event) => setNewMessage(event.target.value)}
                               onKeyDown={(e) => {
                                 if (!isMobile) return;
                                 if (e.key !== 'Enter' || e.shiftKey) return;

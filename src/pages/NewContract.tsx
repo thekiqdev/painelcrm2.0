@@ -35,15 +35,15 @@ export default function NewContract() {
       header={
         mobileShell ? (
           <div className="flex items-center gap-2 px-3 py-2">
-            <Button
+          <Button 
               type="button"
-              variant="ghost"
-              size="icon"
+            variant="ghost" 
+            size="icon" 
               onClick={() => navigate(mobileBackPath)}
               aria-label="Voltar"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-base font-semibold">{id ? "Editar contrato" : "Novo contrato"}</h1>
               {originChat && returnToConversation ? (
@@ -69,7 +69,7 @@ export default function NewContract() {
               : undefined
           }
         />
-      </div>
+              </div>
     </MobileCommerceScreenLayout>
   );
 }

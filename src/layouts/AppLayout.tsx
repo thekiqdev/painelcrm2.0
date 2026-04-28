@@ -29,7 +29,6 @@ import {
   PieChart,
   ArrowLeftRight,
   Tags,
-  Repeat,
   ClipboardList,
   Newspaper,
   Plus,
@@ -209,7 +208,7 @@ const Nav = () => {
 
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
-            Vendas
+            Relacionamento
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
@@ -219,30 +218,8 @@ const Nav = () => {
               {show(hasLeads, 'leads') && (
                 <NavLinkItem to="/leads" icon={UserPlus} label="Leads" preload={() => routePreload.leads()} />
               )}
-              {show(hasFunnels, 'funnels') && (
-                <NavLinkItem to="/funnel" icon={List} label="Funil de Vendas" preload={() => routePreload.funnel()} />
-              )}
-              {show(hasInvoices, 'billing') && (
-                <>
-                  <NavLinkItem
-                    to="/customer-invoices"
-                    icon={FileText}
-                    label="Faturas"
-                    preload={() => routePreload.customerInvoices()}
-                  />
-                  <NavLinkItem
-                    to="/customer-charges"
-                    icon={CreditCard}
-                    label="Cobranças"
-                    preload={() => routePreload.customerCharges()}
-                  />
-                  <NavLinkItem
-                    to="/crm-subscriptions"
-                    icon={CalendarSync}
-                    label="Assinaturas"
-                    preload={() => routePreload.crmSubscriptions()}
-                  />
-                </>
+              {show(hasAgenda, 'agenda') && (
+                <NavLinkItem to="/agenda" icon={CalendarDays} label="Agenda" preload={() => routePreload.agenda()} />
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -266,6 +243,49 @@ const Nav = () => {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {show(hasInvoices, 'billing') && (
+          <SidebarGroup className="py-1.5">
+            <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
+              Faturamento
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                <NavLinkItem
+                  to="/customer-invoices"
+                  icon={FileText}
+                  label="Faturas"
+                  preload={() => routePreload.customerInvoices()}
+                />
+                <NavLinkItem
+                  to="/customer-charges"
+                  icon={CreditCard}
+                  label="Cobranças"
+                  preload={() => routePreload.customerCharges()}
+                />
+                <NavLinkItem
+                  to="/crm-subscriptions"
+                  icon={CalendarSync}
+                  label="Assinaturas"
+                  preload={() => routePreload.crmSubscriptions()}
+                />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {show(hasFunnels, 'funnels') && (
+          <SidebarGroup className="py-1.5">
+            <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
+              Vendas
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                <NavLinkItem to="/funnel" icon={List} label="Funil de Vendas" preload={() => routePreload.funnel()} />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
@@ -295,9 +315,6 @@ const Nav = () => {
               )}
               {show(hasTasks, 'tasks') && (
                 <NavLinkItem to="/tasks" icon={ClipboardCheck} label="Tarefas" preload={() => routePreload.tasks()} />
-              )}
-              {show(hasAgenda, 'agenda') && (
-                <NavLinkItem to="/agenda" icon={CalendarDays} label="Agenda" preload={() => routePreload.agenda()} />
               )}
               {show(hasTasks, 'project_templates') && (
                 <NavLinkItem
@@ -356,12 +373,6 @@ const Nav = () => {
                     preload={() => routePreload.finance()}
                   />
                   <NavLinkItem to="/finance/categories" icon={Tags} label="Categorias" preload={() => routePreload.finance()} />
-                  <NavLinkItem
-                    to="/finance/accounts-payable#hub-regras-recorrencia"
-                    icon={Repeat}
-                    label="Despesas recorrentes"
-                    preload={() => routePreload.finance()}
-                  />
                   <NavLinkItem to="/finance/relatorios" icon={PieChart} label="Relatórios" preload={() => routePreload.finance()} />
                 </>
               )}

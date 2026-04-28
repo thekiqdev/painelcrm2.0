@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Input } from '@/components/ui/input';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { cn } from '@/lib/utils';
 
 const checkoutResumeEnabled = import.meta.env.VITE_CHECKOUT_RESUME_V1 === 'true';
 
@@ -62,7 +65,19 @@ const BENEFIT_ICON_MAP: Record<string, React.ComponentType<{ className?: string 
   CreditCard,
   Building2,
   Calendar,
+  LayoutGrid,
+  Banknote,
 };
+
+/** Preço de referência no catálogo (comparação e rotulagem). */
+function catalogListPriceCents(p: Plan, intervalKey: string, seats: number): number {
+  if (p.plan_type === 'custom' && p.interval_prices && p.interval_prices.length) {
+    const row =
+      p.interval_prices.find((r) => r.billing_interval === intervalKey) ?? p.interval_prices[0];
+    return row.price_per_user_cents * Math.max(1, seats);
+  }
+  return p.price_cents;
+}
 
 const INTERVALS = [
   { key: 'monthly', label: 'Mensal' },
@@ -292,14 +307,69 @@ function paymentMethodLabelPt(method: string | null | undefined): string {
   return method;
 }
 
+/** Forma de pagamento para exibição em resumos (quando desconhecido, traço). */
+function paymentMethodOrDash(method: string | null | undefined): string {
+  if (!method) return '—';
+  return paymentMethodLabelPt(method);
+}
+
+/** Apenas dia/mês, para compactar o período no mobile. */
+function formatDateShortDm(iso: string | null | undefined): string {
+  if (iso == null || typeof iso !== 'string') return '—';
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+  if (ymd) {
+    return `${ymd[3]}/${ymd[2]}`;
+  }
+  const t = Date.parse(iso);
+  if (!Number.isNaN(t)) {
+    return new Date(t).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  }
+  return '—';
+}
+
+function mobileBillingStatusStyles(status: string): { className: string; shortLabel: string } {
+  if (status === 'paid') {
+    return { className: 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-200', shortLabel: 'Pago' };
+  }
+  if (['pending', 'waiting_payment', 'processing'].includes(status)) {
+    return { className: 'bg-amber-500/20 text-amber-950 dark:text-amber-100', shortLabel: 'Pendente' };
+  }
+  if (status === 'overdue') {
+    return { className: 'bg-destructive/10 text-destructive', shortLabel: 'Vencido' };
+  }
+  if (status === 'cancelled') {
+    return { className: 'bg-muted text-muted-foreground', shortLabel: 'Cancelada' };
+  }
+  if (status === 'refunded') {
+    return { className: 'bg-muted text-muted-foreground', shortLabel: 'Estornada' };
+  }
+  if (status === 'failed') {
+    return { className: 'bg-destructive/10 text-destructive', shortLabel: 'Falhou' };
+  }
+  return { className: 'bg-muted/60 text-foreground', shortLabel: billingStatusLabelPt(status) };
+}
+
 function billingIntervalLabelPt(key: string): string {
   const row = INTERVALS.find((i) => i.key === key);
   return row?.label ?? key;
 }
 
-/** Contratar mais assentos: pró-rata até o fim do ciclo atual, pago no checkout. Reduzir: próxima renovação, sem estorno. */
-const SEATS_COMMERCIAL_SUMMARY =
-  'Novos assentos exigem pagamento da diferença proporcional ao tempo restante do ciclo. Reduções entram na próxima cobrança, sem estorno.';
+/** Texto curto para o cartão de assentos (restante fica no fluxo de compra). */
+const SEATS_SHORT_HINT =
+  'Usuários extras podem gerar custo adicional. Reduções valem para o próximo ciclo.';
+
+/** Checklist padrão quando o plano não traz `benefits` do catálogo — alinhado ao posicionamento do produto. */
+const DEFAULT_INCLUDED_FEATURES: { icon: string; label: string }[] = [
+  { icon: 'Check', label: 'Acesso a todos os módulos' },
+  { icon: 'MessageCircle', label: 'WhatsApp integrado' },
+  { icon: 'Smartphone', label: 'Notificações por WhatsApp' },
+  { icon: 'Calendar', label: 'Agenda online' },
+  { icon: 'BarChart3', label: 'Relatórios e dashboards' },
+  { icon: 'LayoutGrid', label: 'Funil de vendas' },
+  { icon: 'FileText', label: 'Propostas e contratos' },
+  { icon: 'Lock', label: 'Segurança dos dados' },
+  { icon: 'Banknote', label: 'Faturas e controle financeiro' },
+];
 
 function billingReasonLabelPt(reason: string): string {
   const m: Record<string, string> = {
@@ -364,6 +434,21 @@ export default function MeuPlano() {
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [commercialBillings, setCommercialBillings] = useState<CommercialBillingHubRow[]>([]);
   const seatAddonPreviewSeq = useRef(0);
+  const isMobile = useIsMobile();
+  const canManage = authUser?.can_manage_plan === true;
+
+  const inferredNextPaymentMethodLabel = useMemo(() => {
+    if (myPlan?.pending_billing?.payment_method) {
+      return paymentMethodOrDash(myPlan.pending_billing.payment_method);
+    }
+    const sorted = [...commercialBillings].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    const fromPaid = sorted.find((b) => b.status === 'paid' && b.effective_payment_method);
+    if (fromPaid) return paymentMethodOrDash(fromPaid.effective_payment_method);
+    const any = sorted.find((b) => b.effective_payment_method);
+    return paymentMethodOrDash(any?.effective_payment_method);
+  }, [myPlan, commercialBillings]);
 
   const refreshAfterMutation = useCallback(async () => {
     const [resPlan, resSub, resLimits, resBill] = await Promise.all([
@@ -509,10 +594,14 @@ export default function MeuPlano() {
   }, [myPlan, intervalIdx, subscription]);
 
   const goToCheckoutWithPlan = useCallback(() => {
+    if (!canManage) {
+      toast.error('Apenas quem administra a conta pode aceder ao pagamento do plano.');
+      return;
+    }
     const state = buildCheckoutState();
     if (!state) return;
     navigate('/checkout', { state });
-  }, [navigate, buildCheckoutState]);
+  }, [navigate, buildCheckoutState, canManage]);
 
   /** Pagamento de cobrança interna SaaS (tenant_billing) — fluxo dedicado, fora do PlanCheckout. */
   const goOpenSaasBillingPay = useCallback(
@@ -554,6 +643,10 @@ export default function MeuPlano() {
 
   const changePlan = async (planId: string) => {
     if (!myPlan || saving) return;
+    if (!canManage) {
+      toast.error('Apenas quem administra a conta pode alterar o plano.');
+      return;
+    }
     setSaving(true);
     const res = await apiClient.put('/api/me/tenant/plan', { plan_id: planId });
     setSaving(false);
@@ -567,6 +660,10 @@ export default function MeuPlano() {
 
   const runSeatAddonCheckout = async () => {
     if (!myPlan || seatAddonExtra < 1) return;
+    if (!canManage) {
+      toast.error('Apenas quem administra a conta pode contrair assentos adicionais.');
+      return;
+    }
     setSeatAddonLoading(true);
 
     // Recalcula o preview imediatamente antes de criar a cobrança para garantir que o quote
@@ -599,6 +696,10 @@ export default function MeuPlano() {
 
   const runScheduleDowngrade = async () => {
     if (!myPlan) return;
+    if (!canManage) {
+      toast.error('Apenas quem administra a conta pode agendar a redução de assentos.');
+      return;
+    }
     setSaving(true);
     const res = await apiClient.put<{ scheduled_next_cycle: number | null; message: string }>(
       '/api/me/tenant/seats/schedule-next-cycle',
@@ -615,6 +716,10 @@ export default function MeuPlano() {
   };
 
   const confirmCancelAtPeriodEnd = async () => {
+    if (!canManage) {
+      toast.error('Apenas quem administra a conta pode cancelar a assinatura.');
+      return;
+    }
     setCancelSubmitting(true);
     const res = await apiClient.post('/api/me/tenant/subscription/cancel', { immediate: false });
     setCancelSubmitting(false);
@@ -791,6 +896,7 @@ export default function MeuPlano() {
   const currentPriceCents =
     isCustom && priceRow ? priceRow.price_per_user_cents * contractedSeats : plan.price_cents;
   const otherPlans = allPlans.filter((p) => p.id !== plan.id);
+  const selectedIntervalKey = (INTERVALS[intervalIdx] ?? INTERVALS[0]).key;
   const planPeriodEnd = myPlan.plan_period_end;
   /** Primeira cobrança de plano já ativou a conta — hub não deve parecer trial/grátis nem negar ciclo pago. */
   const isPostFirstPaidActivation =
@@ -921,260 +1027,312 @@ export default function MeuPlano() {
   })();
 
   const HeroIcon = hero.icon;
+  const mainDisplayPriceCents =
+    subscription != null && subscription.amount_cents > 0 ? subscription.amount_cents : currentPriceCents;
+  const nextBillingLine =
+    subscription?.next_billing_date != null ? formatDate(subscription.next_billing_date) : '—';
+  const periodLineArrow =
+    subscription?.current_period_start && subscription?.current_period_end
+      ? `${formatDate(subscription.current_period_start)} → ${formatDate(subscription.current_period_end)}`
+      : myPlan.plan_period_start && myPlan.plan_period_end
+        ? `${formatDate(myPlan.plan_period_start)} → ${formatDate(myPlan.plan_period_end)}`
+        : planPeriodEnd
+          ? `Vigente até ${formatDate(planPeriodEnd)}`
+          : '—';
+  const periodLineMobile =
+    subscription?.current_period_start && subscription?.current_period_end
+      ? `${formatDateShortDm(subscription.current_period_start)} → ${formatDateShortDm(subscription.current_period_end)}`
+      : myPlan.plan_period_start && myPlan.plan_period_end
+        ? `${formatDateShortDm(myPlan.plan_period_start)} → ${formatDateShortDm(myPlan.plan_period_end)}`
+        : planPeriodEnd
+          ? `até ${formatDateShortDm(planPeriodEnd)}`
+          : '—';
+  const usersCompactLine =
+    limitsUsers != null
+      ? limitsUsers.limit != null
+        ? `${limitsUsers.current}/${limitsUsers.limit} usuários`
+        : `${limitsUsers.current} usuário${limitsUsers.current === 1 ? '' : 's'} (sem teto no plano)`
+      : isCustom
+        ? `${contractedSeats} assentos`
+        : '—';
+  const availableSeats =
+    limitsUsers != null && limitsUsers.limit != null
+      ? Math.max(0, limitsUsers.limit - limitsUsers.current)
+      : null;
+  const nextRenewalStatusLabel = subscription
+    ? subscription.renewal_overdue
+      ? 'A regularizar'
+      : subscription.will_cancel_at_period_end
+        ? 'Sem renovação (cancelada)'
+        : 'Em dia'
+    : '—';
+  const includedFeatures =
+    Array.isArray(plan.benefits) && plan.benefits.length > 0
+      ? plan.benefits.map((b) => ({ icon: b.icon ?? 'Check', label: b.label }))
+      : DEFAULT_INCLUDED_FEATURES;
+  const showCancelSubscriptionBtn =
+    canManage &&
+    commercialMode === 'active' &&
+    subscription?.status === 'active' &&
+    !subscription?.cancel_at_period_end;
+
+  const planCapacityHints: string[] = [];
+  if (availableSeats != null && availableSeats > 0) {
+    planCapacityHints.push(
+      `Você ainda tem ${availableSeats} usuário${availableSeats === 1 ? '' : 's'} disponível${availableSeats === 1 ? '' : 'is'}.`
+    );
+  }
+  if (limitsUsers != null && limitsUsers.limit != null && limitsUsers.current >= limitsUsers.limit) {
+    planCapacityHints.push('Você atingiu o limite de usuários do plano.');
+  }
 
   return (
-    <div className="p-6 space-y-8 max-w-5xl">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 md:gap-6 md:px-6 md:py-8">
+      <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Meu plano</h1>
-          <p className="text-muted-foreground">
-            Acompanhe seu plano, renovação e equipe. Quando houver pagamento a concluir, você será direcionado à página
-            segura de pagamento.
+          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Meu plano</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Gerencie sua assinatura, usuários e cobranças.
           </p>
+          <div className="mt-3 md:hidden">
+            <span
+              className={cn(
+                'inline-flex w-fit items-center rounded-full px-3 py-1 text-xs font-medium',
+                statusBadge.className
+              )}
+            >
+              {statusBadge.label}
+            </span>
+          </div>
         </div>
         <span
-          className={`inline-flex w-fit items-center rounded-full px-3 py-1 text-xs font-medium ${statusBadge.className}`}
+          className={cn(
+            'hidden w-fit items-center rounded-full px-3 py-1.5 text-xs font-medium md:inline-flex',
+            statusBadge.className
+          )}
         >
           {statusBadge.label}
         </span>
-      </div>
+      </header>
 
-      <Card className={hero.variant}>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-xl">
-            <HeroIcon className="h-6 w-6 shrink-0 text-primary" />
-            {hero.title}
-          </CardTitle>
-          <CardDescription className="text-base text-muted-foreground">{hero.description}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button type="button" size="lg" className="gap-2" onClick={hero.onPrimary}>
-            <CreditCard className="h-4 w-4" />
-            {hero.primaryLabel}
-          </Button>
-          {hero.secondaryLabel && hero.onSecondary && (
-            <Button type="button" size="lg" variant="outline" onClick={hero.onSecondary}>
-              {hero.secondaryLabel}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {showPendingDetailCard && (
-        <Card className="border-amber-500/35 bg-amber-500/[0.03]">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Banknote className="h-5 w-5 text-amber-700 dark:text-amber-300" />
-              {pendingBilling ? 'Detalhes da cobrança em aberto' : 'Próximo passo: pagamento'}
-            </CardTitle>
-            <CardDescription>
-              Resumo da cobrança pendente. Para pagar com PIX, boleto ou cartão, use a opção de abrir a tela de pagamento
-              abaixo.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {pendingBilling ? (
-              <>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">Valor</p>
-                    <p className="font-semibold text-lg">{formatPrice(pendingBilling.amount_cents)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Status</p>
-                    <p className="font-medium">{billingStatusLabelPt(pendingBilling.status)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Forma de pagamento</p>
-                    <p className="font-medium">{paymentMethodLabelPt(pendingBilling.payment_method)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Vencimento</p>
-                    <p className="font-medium">
-                      {pendingBilling.due_date ? formatDate(pendingBilling.due_date) : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Fatura</p>
-                    <p className="font-medium">{pendingBilling.invoice_number ?? '—'}</p>
-                  </div>
-                </div>
-                {pendingBilling.is_activated_billing && (
-                  <p className="text-sm text-muted-foreground">
-                    Esta cobrança está associada à ativação do seu plano atual.
-                  </p>
-                )}
-                <p className="text-sm text-muted-foreground">
-                  Use o botão <strong>Concluir pagamento</strong> ou <strong>Ver link de pagamento</strong> no topo desta
-                  página para abrir a tela de pagamento e finalizar com PIX, boleto ou cartão.
-                </p>
-              </>
-            ) : (
-              <div className="rounded-lg border border-dashed bg-background/60 px-4 py-3 text-sm text-muted-foreground">
-                <p>
-                  Não há cobrança em aberto no momento. Se você acabou de contratar ou precisa retomar um pagamento, use{' '}
-                  <strong>Concluir pagamento</strong> ou <strong>Ver link de pagamento</strong> acima.
-                </p>
+      {commercialMode !== 'active' && (
+        <Card className={cn(hero.variant, 'border')}>
+          <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:p-5">
+            <div className="flex min-w-0 gap-3">
+              <HeroIcon className="h-10 w-10 shrink-0 text-primary" aria-hidden />
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground">{hero.title}</p>
+                <p className="mt-1 line-clamp-4 text-sm text-muted-foreground">{hero.description}</p>
               </div>
+            </div>
+            {canManage ? (
+              <div className="flex w-full flex-col gap-2 sm:max-w-xs sm:flex-shrink-0">
+                <Button type="button" className="w-full gap-2" size="lg" onClick={hero.onPrimary}>
+                  <CreditCard className="h-4 w-4" />
+                  {hero.primaryLabel}
+                </Button>
+                {hero.secondaryLabel && hero.onSecondary ? (
+                  <Button type="button" variant="outline" className="w-full" onClick={hero.onSecondary}>
+                    {hero.secondaryLabel}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <p className="w-full text-sm text-muted-foreground sm:max-w-sm">
+                A gestão de pagamento e de plano é feita pelo administrador da conta. Peça a essa pessoa que abra a
+                tela <strong>Meu plano</strong> e conclua a regularização.
+              </p>
             )}
           </CardContent>
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card id="meu-plano-assinatura">
-          <CardHeader>
-            <CardTitle className="text-lg">Assinatura</CardTitle>
-            <CardDescription>Plano ativo, valor da renovação e situação da sua conta.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            {!subscription ? (
-              isPostFirstPaidActivation ? (
-                <div className="space-y-2 text-muted-foreground">
-                  <p>
-                    Seu plano está <strong className="text-foreground">ativo</strong> e vinculado ao ciclo atual. Os
-                    detalhes da renovação (valor e próxima data) podem levar alguns instantes para aparecer aqui — tente
-                    atualizar a página em breve.
-                  </p>
-                </div>
-              ) : (
-                <p className="text-muted-foreground">
-                  Assim que você concluir a contratação, verá aqui o plano, o valor da renovação e a próxima data de
-                  cobrança. Em período de avaliação, isso aparece após a ativação do plano pago.
-                </p>
-              )
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center gap-2">
-                  {subscription.will_cancel_at_period_end ? (
-                    <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-900 dark:text-amber-100">
-                      Cancelamento ao fim do período
-                    </span>
-                  ) : subscription.renewal_overdue ? (
-                    <span className="rounded-full bg-destructive/10 px-2.5 py-0.5 text-xs font-medium text-destructive">
-                      Renovação a regularizar
-                    </span>
-                  ) : subscription.status === 'active' ? (
-                    <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
-                      Assinatura ativa
-                    </span>
-                  ) : (
-                    <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">{subscription.status}</span>
-                  )}
-                </div>
-                <p>
-                  <span className="text-muted-foreground">Plano contratado</span>
-                  <br />
-                  <span className="font-medium text-base">{subscription.plan_name ?? '—'}</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Valor da renovação</span>
-                  <br />
-                  <span className="font-semibold text-lg">{formatPrice(subscription.amount_cents)}</span>
-                  <span className="text-muted-foreground"> ({billingIntervalLabelPt(subscription.billing_interval)})</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Próxima cobrança</span>
-                  <br />
-                  <span className="font-medium">{formatDate(subscription.next_billing_date)}</span>
-                </p>
-                {subscription.will_cancel_at_period_end && (
-                  <p className="rounded-md border border-amber-500/35 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
-                    Não haverá nova cobrança após o fim do período atual. Você continua com acesso até essa data.
-                  </p>
-                )}
-                {commercialMode === 'active' &&
-                  subscription.status === 'active' &&
-                  !subscription.cancel_at_period_end && (
-                    <Button type="button" variant="outline" size="sm" onClick={() => setCancelDialogOpen(true)}>
-                      Cancelar ao fim do período
-                    </Button>
-                  )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card id="meu-plano-ciclo">
-          <CardHeader>
-            <CardTitle className="text-lg">Ciclo e próxima cobrança</CardTitle>
-            <CardDescription>Período em que seu plano está vigente e quando ocorre a próxima renovação.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            {subscription ? (
-              <>
-                <div>
-                  <p className="text-muted-foreground">Período atual</p>
-                  <p className="font-medium">
-                    {subscription.current_period_start && subscription.current_period_end
-                      ? `${formatDate(subscription.current_period_start)} — ${formatDate(subscription.current_period_end)}`
-                      : '—'}
-                  </p>
-                </div>
-                {(() => {
-                  const nb = nextBillingCopy(subscription);
-                  return (
-                    <div>
-                      <p className="text-muted-foreground">{nb.title}</p>
-                      <p className="font-medium">{nb.detail}</p>
-                    </div>
-                  );
-                })()}
-                <p className="text-xs text-muted-foreground">
-                  Se aparecer uma cobrança pendente nesta página, conclua o pagamento na etapa seguinte para manter o plano
-                  em dia.
-                </p>
-              </>
-            ) : (
-              <>
-                <div>
-                  <p className="text-muted-foreground">Período vigente</p>
-                  <p className="font-medium">
-                    {myPlan.plan_period_start && myPlan.plan_period_end
-                      ? `${formatDate(myPlan.plan_period_start)} — ${formatDate(myPlan.plan_period_end)}`
-                      : planPeriodEnd
-                        ? `Até ${formatDate(planPeriodEnd)}`
-                        : '—'}
-                  </p>
-                </div>
-                <p className="text-muted-foreground">
-                  {isPostFirstPaidActivation
-                    ? 'Em breve este bloco mostrará também o calendário de renovação junto com os dados da assinatura ao lado.'
-                    : 'Após a confirmação do pagamento, você verá aqui o calendário completo de renovação.'}
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card id="meu-plano-usuarios-assentos">
-        <CardHeader>
-          <CardTitle>Usuários e assentos</CardTitle>
-          <CardDescription>
-            {SEATS_COMMERCIAL_SUMMARY} Não é possível alterar a quantidade livremente no mesmo ciclo para pagar menos na
-            renovação: redução só vale na próxima cobrança; aumento exige pagamento da diferença.
+      <Card
+        id="meu-plano-resumo"
+        className="overflow-hidden border-2 border-primary/15 bg-gradient-to-b from-primary/[0.05] to-card shadow-sm"
+      >
+        <CardHeader className="space-y-1 pb-2 md:pb-3">
+          <CardDescription className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Plano atual
           </CardDescription>
+          <CardTitle className="text-xl font-bold leading-tight md:text-2xl lg:text-3xl">{plan.name}</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 text-sm">
+        <CardContent className="space-y-4 text-sm md:space-y-5">
+          {commercialMode === 'active' && !showPendingDetailCard && (
+            <div className="flex items-start gap-2.5 rounded-xl bg-emerald-500/10 px-3 py-2.5 text-emerald-900 dark:text-emerald-200">
+              <Check className="mt-0.5 h-4 w-4 shrink-0 md:h-5 md:w-5" />
+              <div>
+                <p className="text-sm font-medium leading-tight">Tudo certo com sua assinatura.</p>
+                <p className="mt-0.5 text-xs text-emerald-800/80 dark:text-emerald-200/80">
+                  Seu plano está ativo e pronto para uso.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {pendingBilling && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+              <p className="font-medium text-amber-950 dark:text-amber-100">Cobrança em aberto</p>
+              <p className="mt-1 text-sm text-amber-900/90 dark:text-amber-100">
+                Existe uma cobrança pendente para manter seu plano ativo.
+              </p>
+              <p className="mt-1 text-sm text-amber-900/90 dark:text-amber-50">
+                {formatPrice(pendingBilling.amount_cents)} — {billingStatusLabelPt(pendingBilling.status)}.
+                {pendingBilling.due_date ? ` Vence em ${formatDate(pendingBilling.due_date)}.` : ''}
+              </p>
+              {canManage && (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-3 w-full sm:w-auto"
+                  variant="secondary"
+                  onClick={goToPaymentOrResume}
+                >
+                  Regularizar pagamento
+                </Button>
+              )}
+            </div>
+          )}
+
+          <div className="md:hidden space-y-2.5 border-b border-border/50 pb-4 text-sm">
+            <div>
+              <p className="text-3xl font-bold tabular-nums tracking-tight text-foreground">
+                {showPlanAsGratis ? 'Grátis' : formatPrice(mainDisplayPriceCents)}
+                {!showPlanAsGratis ? (
+                  <span className="text-base font-normal text-muted-foreground"> / {billingIntervalLabel}</span>
+                ) : null}
+              </p>
+            </div>
+            <p className="text-[15px] text-muted-foreground">{usersCompactLine}</p>
+            <p>
+              <span className="text-muted-foreground">Próxima cobrança </span>
+              <span className="font-medium tabular-nums text-foreground">{nextBillingLine}</span>
+            </p>
+            <p>
+              <span className="text-muted-foreground">Período </span>
+              <span className="font-medium tabular-nums text-foreground">{periodLineMobile}</span>
+            </p>
+          </div>
+
+          <div className="hidden gap-3 md:grid md:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl bg-muted/50 px-4 py-3">
+              <p className="text-xs font-medium text-muted-foreground">Valor</p>
+              <p className="mt-1 text-2xl font-bold tabular-nums tracking-tight">
+                {showPlanAsGratis ? 'Grátis' : formatPrice(mainDisplayPriceCents)}
+                {!showPlanAsGratis ? (
+                  <span className="ml-1 text-sm font-medium text-muted-foreground">/ {billingIntervalLabel}</span>
+                ) : null}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-muted/50 px-4 py-3">
+              <p className="text-xs font-medium text-muted-foreground">Usuários</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{usersCompactLine}</p>
+            </div>
+            <div className="rounded-2xl bg-muted/50 px-4 py-3">
+              <p className="text-xs font-medium text-muted-foreground">Próxima cobrança</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums leading-snug">{nextBillingLine}</p>
+            </div>
+            <div className="rounded-2xl bg-muted/50 px-4 py-3">
+              <p className="text-xs font-medium text-muted-foreground">Período</p>
+              <p className="mt-1 text-sm font-semibold leading-snug text-foreground">{periodLineArrow}</p>
+            </div>
+          </div>
+
+          {planCapacityHints.length > 0 && (
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {planCapacityHints.map((h, i) => (
+                <li key={i}>• {h}</li>
+              ))}
+            </ul>
+          )}
+
+          {!canManage && (
+            <p className="text-xs text-muted-foreground">
+              Só o administrador principal da conta pode alterar o plano, contrair usuários extras ou trocar de oferta.
+            </p>
+          )}
+
+          <div className="flex flex-col gap-2 pt-0.5 sm:flex-row sm:flex-wrap sm:items-center">
+            {canManage && (commercialMode === 'active' || commercialMode === 'trial_active') && (
+              <>
+                <Button
+                  type="button"
+                  className="h-11 w-full min-w-[10rem] sm:w-auto"
+                  onClick={() => scrollToId('meu-plano-catalogo')}
+                >
+                  Trocar plano
+                </Button>
+                {isCustom && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-11 w-full sm:w-auto"
+                    onClick={() => scrollToId('meu-plano-usuarios-assentos')}
+                  >
+                    Gerenciar usuários
+                  </Button>
+                )}
+                {showCancelSubscriptionBtn ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full border-destructive/25 text-destructive hover:bg-destructive/5 sm:ml-0 sm:w-auto"
+                    onClick={() => setCancelDialogOpen(true)}
+                  >
+                    Cancelar no fim do período
+                  </Button>
+                ) : null}
+              </>
+            )}
+            {canManage && (commercialMode === 'trial_resume_required' || commercialMode === 'payment_pending') && (
+              <Button type="button" className="h-11 w-full sm:w-auto" onClick={goToPaymentOrResume}>
+                {commercialMode === 'payment_pending' ? 'Ver link de pagamento' : 'Regularizar pagamento'}
+              </Button>
+            )}
+            {!subscription && isPostFirstPaidActivation && (
+              <p className="w-full text-xs text-muted-foreground">
+                Os detalhes da assinatura podem levar alguns instantes para atualizar.
+              </p>
+            )}
+            {subscription?.will_cancel_at_period_end && (
+              <p className="w-full text-xs text-amber-800 dark:text-amber-200">
+                A assinatura não renova após o fim do período. O acesso permanece até essa data.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4 md:items-start">
+        <Card
+          id="meu-plano-usuarios-assentos"
+          className="order-2 min-w-0 border-border/80 md:order-1"
+        >
+        <CardHeader className="space-y-1 pb-2">
+          <CardTitle className="text-base md:text-lg">Usuários e assentos</CardTitle>
+          <CardDescription className="text-xs leading-relaxed">{SEATS_SHORT_HINT}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
           {limitsUsers != null ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-lg border bg-muted/30 px-4 py-3">
-                <p className="text-muted-foreground text-xs uppercase tracking-wide">Usuários em uso</p>
-                <p className="text-lg font-semibold">
-                  {limitsUsers.current}
-                  {limitsUsers.limit != null ? ` / ${limitsUsers.limit}` : ''}{' '}
-                  {limitsUsers.limit === 1 && limitsUsers.current === 1 ? 'usuário' : 'usuários'}
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Usuários em uso</p>
+                <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                  {limitsUsers.limit != null
+                    ? `${limitsUsers.current} / ${limitsUsers.limit} usuários`
+                    : `${limitsUsers.current} usuário${limitsUsers.current === 1 ? '' : 's'}`}
                 </p>
                 {limitsUsers.limit == null && (
-                  <p className="text-xs text-muted-foreground mt-1">Sem teto numérico neste plano.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Sem teto numérico neste plano.</p>
                 )}
               </div>
               {isCustom && (
-                <div className="rounded-lg border bg-muted/30 px-4 py-3">
-                  <p className="text-muted-foreground text-xs uppercase tracking-wide">Assentos contratados (vigente)</p>
-                  <p className="text-lg font-semibold">{contractedSeats}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
+                <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Assentos contratados
+                  </p>
+                  <p className="mt-0.5 text-lg font-semibold tabular-nums">{contractedSeats} contratados</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
                     Próxima renovação:{' '}
                     {subscription?.next_billing_date
                       ? formatDate(subscription.next_billing_date)
@@ -1185,25 +1343,33 @@ export default function MeuPlano() {
                 </div>
               )}
               {isCustom && myPlan.max_users_scheduled_next_cycle != null && (
-                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-amber-950 dark:text-amber-100 font-medium">
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 sm:col-span-2 lg:col-span-1 md:px-4 md:py-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-amber-950 dark:text-amber-100">
                     Redução agendada
                   </p>
-                  <p className="text-lg font-semibold text-foreground">
+                  <p className="mt-0.5 text-lg font-semibold text-foreground">
                     {contractedSeats} → {myPlan.max_users_scheduled_next_cycle} assentos
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Sem estorno. Passa a valer na próxima cobrança ({subscription?.next_billing_date ? formatDate(subscription.next_billing_date) : 'data da renovação'}).
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Efeito na próxima cobrança (
+                    {subscription?.next_billing_date ? formatDate(subscription.next_billing_date) : 'data da renovação'}
+                    ).
                   </p>
                 </div>
               )}
-              <div className="rounded-lg border border-dashed px-4 py-3 sm:col-span-2 lg:col-span-1">
-                <p className="text-xs font-medium text-foreground">Resumo comercial</p>
-                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{SEATS_COMMERCIAL_SUMMARY}</p>
-              </div>
+              {limitsUsers.limit != null && (
+                <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Assentos disponíveis
+                  </p>
+                  <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                    {availableSeats ?? 0} disponíveis
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
-            <p className="text-muted-foreground">Limites de uso não disponíveis neste momento.</p>
+            <p className="text-muted-foreground">Limites de uso não disponíveis no momento.</p>
           )}
 
           {myPlan.pending_seat_addon_billing && commercialMode === 'active' && (
@@ -1217,15 +1383,17 @@ export default function MeuPlano() {
                 {billingStatusLabelPt(myPlan.pending_seat_addon_billing.status)}. Os novos assentos só ficam ativos após a
                 confirmação do pagamento.
               </p>
-              <Button
-                type="button"
-                size="sm"
-                className="mt-3"
-                variant="secondary"
-                onClick={() => goOpenSaasBillingPay(myPlan.pending_seat_addon_billing!.billing_id)}
-              >
-                Continuar para pagamento
-              </Button>
+              {canManage ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-3"
+                  variant="secondary"
+                  onClick={() => goOpenSaasBillingPay(myPlan.pending_seat_addon_billing!.billing_id)}
+                >
+                  Continuar para pagamento
+                </Button>
+              ) : null}
             </div>
           )}
 
@@ -1236,11 +1404,12 @@ export default function MeuPlano() {
             </p>
           )}
 
-          {isCustom && commercialMode === 'active' && (
+          {isCustom && commercialMode === 'active' && canManage && (
             <div className="space-y-4 pt-2 border-t">
-              <div className="flex flex-wrap gap-2 items-start">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
                 <Button
                   type="button"
+                  className="h-11 w-full sm:w-auto"
                   variant={seatAddonInlineExpanded ? 'secondary' : 'default'}
                   disabled={!!myPlan.pending_seat_addon_billing || seatAddonCapacityReached}
                   aria-expanded={seatAddonInlineExpanded}
@@ -1255,7 +1424,7 @@ export default function MeuPlano() {
                     }
                   }}
                 >
-                  {seatAddonInlineExpanded ? 'Fechar' : 'Contratar novos usuários'}
+                  {seatAddonInlineExpanded ? 'Fechar' : 'Adicionar usuários'}
                 </Button>
                 {seatAddonCapacityReached && (
                   <p className="text-xs text-muted-foreground w-full">
@@ -1264,6 +1433,7 @@ export default function MeuPlano() {
                 )}
                 <Button
                   type="button"
+                  className="h-11 w-full sm:w-auto"
                   variant="outline"
                   disabled={saving || !!myPlan.pending_seat_addon_billing || !canScheduleSeatDowngrade}
                   onClick={() => {
@@ -1272,12 +1442,12 @@ export default function MeuPlano() {
                     setDowngradeOpen(true);
                   }}
                 >
-                  Reduzir usuários no próximo ciclo
+                  Reduzir no próximo ciclo
                 </Button>
                 {!canScheduleSeatDowngrade && (
                   <p className="text-xs text-muted-foreground w-full">
-                    Redução agendada só é possível quando há mais assentos contratados do que usuários em uso (ou remova
-                    usuários antes).
+                    Só é possível agendar a redução quando existem assentos contratados além do uso real (ou remova
+                    utilizadores antes).
                   </p>
                 )}
               </div>
@@ -1397,6 +1567,69 @@ export default function MeuPlano() {
         </CardContent>
       </Card>
 
+        <Card
+          id="meu-plano-proxima-cobranca"
+          className="order-1 min-w-0 border-border/80 md:order-2"
+        >
+          <CardHeader className="space-y-1 pb-2">
+            <CardTitle className="text-base md:text-lg">Próxima cobrança</CardTitle>
+            <CardDescription className="text-xs leading-relaxed">Próxima renovação da sua assinatura.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            {subscription ? (
+              <>
+                <div className="space-y-2.5 rounded-2xl bg-muted/40 px-3.5 py-3 md:px-4">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">Valor previsto</span>
+                    <span className="text-lg font-bold tabular-nums text-foreground">
+                      {formatPrice(subscription.amount_cents)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">Data</span>
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {formatDate(subscription.next_billing_date)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">Status</span>
+                    <span className="font-medium text-foreground">{nextRenewalStatusLabel}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2 border-t border-border/50 pt-2.5">
+                    <span className="text-xs text-muted-foreground">Pagamento</span>
+                    <span className="text-right text-sm font-medium text-foreground">
+                      {inferredNextPaymentMethodLabel}
+                    </span>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="h-11 w-full"
+                  onClick={() => scrollToId('meu-plano-cobrancas')}
+                >
+                  Ver cobranças
+                </Button>
+              </>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                {isPostFirstPaidActivation
+                  ? 'Em breve você verá a data e o valor. Atualize a página se continuar vazio.'
+                  : 'Conclua a ativação paga para ver a próxima data aqui.'}
+              </p>
+            )}
+            {showPendingDetailCard && pendingBilling && !subscription && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                <p className="text-muted-foreground">Em aberto</p>
+                <p className="mt-0.5 font-medium">
+                  {formatPrice(pendingBilling.amount_cents)} — {pendingBilling.due_date ? formatDate(pendingBilling.due_date) : '—'}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       <Dialog open={downgradeOpen} onOpenChange={setDowngradeOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1438,130 +1671,107 @@ export default function MeuPlano() {
         </DialogContent>
       </Dialog>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Ações rápidas</CardTitle>
-          <CardDescription>Atalhos para o fluxo comercial sem sair desta central.</CardDescription>
+      <Card id="meu-plano-beneficios" className="border-border/80">
+        <CardHeader className="space-y-1 pb-2">
+          <CardTitle className="text-base md:text-lg">O que está incluído</CardTitle>
+          <CardDescription className="text-xs">Recursos disponíveis no seu plano.</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          {commercialMode === 'trial_resume_required' && (
-            <Button type="button" variant="secondary" className="gap-2" onClick={goToPaymentOrResume}>
-              Concluir pagamento
-            </Button>
-          )}
-          {commercialMode === 'payment_pending' && (
-            <Button type="button" variant="secondary" className="gap-2" onClick={goToPaymentOrResume}>
-              Ver link de pagamento
-            </Button>
-          )}
-          <Button type="button" variant="outline" className="gap-2" onClick={() => scrollToId('meu-plano-assinatura')}>
-            Ver assinatura e ciclo
-          </Button>
-          <Button type="button" variant="outline" className="gap-2" onClick={() => scrollToId('meu-plano-catalogo')}>
-            <LayoutGrid className="h-4 w-4" />
-            Catálogo de planos
-          </Button>
-          <Button type="button" variant="outline" className="gap-2" onClick={() => scrollToId('meu-plano-usuarios-assentos')}>
-            <Users className="h-4 w-4" />
-            Usuários e assentos
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card id="meu-plano-detalhes">
-        <CardHeader>
-          <CardTitle>Plano atual</CardTitle>
-          <CardDescription>
-            {plan.name} — benefícios e preço de referência. Assentos e ajuste de lugares ficam na seção{' '}
-            <strong>Usuários e assentos</strong>; cobranças emitidas, em <strong>Cobranças</strong>.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {plan.description && <p className="text-sm text-muted-foreground">{plan.description}</p>}
-          <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <div>
-              <span className="text-muted-foreground">Faturamento</span>
-              <p className="font-medium">{billingIntervalLabel}</p>
-            </div>
-            {subscription?.next_billing_date && commercialMode === 'active' && (
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <span className="text-muted-foreground">Próxima cobrança (recorrência)</span>
-                  <p className="font-medium">{formatDate(subscription.next_billing_date)}</p>
-                </div>
-              </div>
-            )}
-            {!subscription?.next_billing_date && planPeriodEnd && commercialMode === 'active' && (
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <span className="text-muted-foreground">Referência de período (conta)</span>
-                  <p className="font-medium">{formatDate(planPeriodEnd)}</p>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {showPlanAsGratis ? (
-              <span className="text-2xl font-bold text-green-600">Grátis</span>
-            ) : (
-              <span className="text-2xl font-bold">
-                {formatPrice(
-                  subscription != null && subscription.amount_cents > 0
-                    ? subscription.amount_cents
-                    : currentPriceCents
-                )}
-              </span>
-            )}
-            {showPlanAsGratis && myPlan.trial_ends_at && commercialMode === 'trial_active' && (
-              <span className="text-sm text-muted-foreground">até {formatDate(myPlan.trial_ends_at)}</span>
-            )}
-            {isPostFirstPaidActivation && plan.is_free && (
-              <span className="text-sm text-muted-foreground">
-                Plano contratado (catálogo pode marcar avaliação gratuita; sua conta está em ciclo pago).
-              </span>
-            )}
-          </div>
-
-          <ul className="space-y-2">
-            {Array.isArray(plan.benefits) &&
-              plan.benefits.map((b, i) => {
-                const IconC = b.icon ? BENEFIT_ICON_MAP[b.icon] ?? Check : Check;
-                return (
-                  <li key={i} className="flex items-center gap-2 text-sm">
-                    <IconC className="h-4 w-4 shrink-0 text-primary" />
-                    {b.label}
-                  </li>
-                );
-              })}
+        <CardContent className="pt-0">
+          <ul
+            className={cn('grid text-sm', isMobile ? 'grid-cols-1 gap-1.5' : 'sm:grid-cols-2 sm:gap-x-4 sm:gap-y-1.5')}
+          >
+            {includedFeatures.map((b, i) => {
+              const IconC = BENEFIT_ICON_MAP[b.icon] ?? Check;
+              return (
+                <li key={i} className="flex items-start gap-2 py-1.5 sm:py-1">
+                  <IconC className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/80" />
+                  <span className="leading-tight text-foreground/90">{b.label}</span>
+                </li>
+              );
+            })}
           </ul>
         </CardContent>
       </Card>
 
-      <Card id="meu-plano-cobrancas">
-        <CardHeader>
-          <CardTitle>Cobranças</CardTitle>
-          <CardDescription>
-            Histórico comercial: uma linha por fatura principal emitida para a conta. Tentativas técnicas de pagamento
-            (vários PIX/boletos) não são listadas separadamente.
-          </CardDescription>
+      <Card id="meu-plano-cobrancas" className="border-border/80">
+        <CardHeader className="space-y-1 pb-2">
+          <CardTitle className="text-base md:text-lg">Cobranças</CardTitle>
+          <CardDescription className="text-xs">Histórico de pagamentos da sua assinatura.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {commercialBillings.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhuma cobrança comercial registrada ainda para esta conta.</p>
+            <p className="text-sm text-muted-foreground">Ainda não há faturas para esta conta.</p>
+          ) : isMobile ? (
+            <div className="space-y-2.5">
+              {commercialBillings.map((b) => {
+                const canReopenGateway =
+                  ['pending', 'waiting_payment', 'processing'].includes(b.status) && b.has_gateway_reference;
+                const openCommercially = ['pending', 'waiting_payment', 'processing', 'overdue'].includes(b.status);
+                const tone = mobileBillingStatusStyles(b.status);
+                return (
+                  <div
+                    key={b.id}
+                    className={cn(
+                      'overflow-hidden rounded-xl border border-border/60 text-sm',
+                      b.status === 'paid' && 'bg-emerald-500/[0.04]',
+                      ['pending', 'waiting_payment', 'processing'].includes(b.status) && 'bg-amber-500/[0.06]',
+                      b.status === 'overdue' && 'bg-destructive/[0.04]'
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2 border-b border-border/40 bg-muted/20 px-3 py-2.5">
+                      <p className="min-w-0 text-[13px] font-medium leading-snug">{competenceLineForBilling(b)}</p>
+                      <Badge
+                        variant="secondary"
+                        className={cn('shrink-0 text-[10px] font-medium', tone.className)}
+                      >
+                        {tone.shortLabel}
+                      </Badge>
+                    </div>
+                    <div className="space-y-1 px-3 py-3">
+                      <p>
+                        <span className="text-xs text-muted-foreground">Vencimento </span>
+                        <span className="text-xs font-medium tabular-nums text-foreground">{formatDate(b.due_date)}</span>
+                      </p>
+                      <p className="text-2xl font-bold tabular-nums text-foreground">{formatPrice(b.amount_cents)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {paymentMethodOrDash(b.effective_payment_method)}
+                      </p>
+                    </div>
+                    <div className="border-t border-border/40 bg-background/30 px-3 py-1.5">
+                      <p className="text-[10px] text-muted-foreground">
+                        {b.invoice_number ? `Ref. ${b.invoice_number}` : `ID ${b.id.slice(0, 8)}…`}
+                      </p>
+                    </div>
+                    {canReopenGateway || (openCommercially && !canReopenGateway) ? (
+                      <div className="p-3 pt-0">
+                        <Button
+                          type="button"
+                          className="h-10 w-full"
+                          size="sm"
+                          variant={canReopenGateway ? 'default' : 'outline'}
+                          onClick={() => goOpenSaasBillingPay(b.id)}
+                        >
+                          {canReopenGateway ? 'Pagar agora' : 'Abrir'}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-sm min-w-[720px]">
+            <div className="overflow-hidden rounded-lg border border-border/80">
+              <div className="max-w-full overflow-x-auto">
+                <table className="w-full min-w-[820px] text-sm">
                 <thead>
-                  <tr className="border-b bg-muted/40 text-left">
-                    <th className="p-3 font-medium">Período / referência</th>
-                    <th className="p-3 font-medium">Tipo</th>
-                    <th className="p-3 font-medium">Valor</th>
-                    <th className="p-3 font-medium">Vencimento</th>
-                    <th className="p-3 font-medium">Status</th>
-                    <th className="p-3 font-medium">Forma (efetiva)</th>
-                    <th className="p-3 font-medium text-right">Ação</th>
+                  <tr className="border-b bg-muted/40 text-left text-xs">
+                    <th className="px-2 py-2.5 font-medium">Referência</th>
+                    <th className="px-2 py-2.5 font-medium">Tipo</th>
+                    <th className="px-2 py-2.5 font-medium">Valor</th>
+                    <th className="px-2 py-2.5 font-medium">Vencimento</th>
+                    <th className="px-2 py-2.5 font-medium">Status</th>
+                    <th className="px-2 py-2.5 font-medium">Pagamento</th>
+                    <th className="px-2 py-2.5 font-medium text-right">Ação</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1571,39 +1781,34 @@ export default function MeuPlano() {
                     const openCommercially = ['pending', 'waiting_payment', 'processing', 'overdue'].includes(b.status);
                     return (
                       <tr key={b.id} className="border-b last:border-0">
-                        <td className="p-3 align-top">
-                          <div className="font-medium">{competenceLineForBilling(b)}</div>
-                          {b.plan_name_snapshot && (
-                            <div className="text-xs text-muted-foreground">{b.plan_name_snapshot}</div>
-                          )}
-                          {b.invoice_number && (
-                            <div className="text-xs text-muted-foreground font-mono">{b.invoice_number}</div>
-                          )}
+                        <td className="max-w-[10rem] px-2 py-2 align-top">
+                          <div className="line-clamp-2 font-medium leading-snug">{competenceLineForBilling(b)}</div>
+                          {b.invoice_number ? (
+                            <div className="text-[9px] text-muted-foreground font-mono leading-tight">{b.invoice_number}</div>
+                          ) : null}
                         </td>
-                        <td className="p-3 align-top">{billingReasonLabelPt(b.billing_reason)}</td>
-                        <td className="p-3 align-top font-medium">{formatPrice(b.amount_cents)}</td>
-                        <td className="p-3 align-top">{formatDate(b.due_date)}</td>
-                        <td className="p-3 align-top">{billingStatusLabelPt(b.status)}</td>
-                        <td className="p-3 align-top">{paymentMethodLabelPt(b.effective_payment_method)}</td>
-                        <td className="p-3 align-top text-right">
+                        <td className="px-2 py-2 align-top text-xs text-muted-foreground">
+                          {billingReasonLabelPt(b.billing_reason)}
+                        </td>
+                        <td className="px-2 py-2 align-top text-sm font-semibold tabular-nums text-foreground">
+                          {formatPrice(b.amount_cents)}
+                        </td>
+                        <td className="whitespace-nowrap px-2 py-2 align-top text-xs tabular-nums text-foreground">
+                          {formatDate(b.due_date)}
+                        </td>
+                        <td className="px-2 py-2 align-top text-xs text-foreground">{billingStatusLabelPt(b.status)}</td>
+                        <td className="px-2 py-2 align-top text-xs text-muted-foreground">
+                          {paymentMethodOrDash(b.effective_payment_method)}
+                        </td>
+                        <td className="px-2 py-2 align-top text-right">
                           {canReopenGateway && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => goOpenSaasBillingPay(b.id)}
-                            >
-                              Pagar agora
+                            <Button type="button" size="sm" variant="secondary" onClick={() => goOpenSaasBillingPay(b.id)}>
+                              Pagar
                             </Button>
                           )}
                           {openCommercially && !canReopenGateway && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => goOpenSaasBillingPay(b.id)}
-                            >
-                              Abrir pagamento
+                            <Button type="button" size="sm" variant="outline" onClick={() => goOpenSaasBillingPay(b.id)}>
+                              Abrir
                             </Button>
                           )}
                         </td>
@@ -1611,7 +1816,8 @@ export default function MeuPlano() {
                     );
                   })}
                 </tbody>
-              </table>
+                </table>
+              </div>
             </div>
           )}
         </CardContent>
@@ -1620,52 +1826,100 @@ export default function MeuPlano() {
       {otherPlans.length > 0 && (
         <Card id="meu-plano-catalogo">
           <CardHeader>
-            <CardTitle>Outros planos</CardTitle>
-            <CardDescription>
+            <CardTitle className="text-lg md:text-xl">Planos disponíveis</CardTitle>
+            <CardDescription className="text-sm">
               {commercialMode === 'active'
-                ? 'Troque de plano — a contratação ou upgrade é finalizada na tela de pagamento.'
-                : 'Escolha um plano — a contratação é finalizada na tela de pagamento.'}
+                ? 'Compare e mude de plano. O pagamento ou ajuste é concluído na tela seguinte, com segurança.'
+                : 'Escolha um plano. A contratação termina na tela de pagamento.'}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {otherPlans.map((p) => (
-                <div key={p.id} className="flex flex-col rounded-lg border p-4 gap-2">
-                  <h3 className="font-semibold">{p.name}</h3>
-                  {p.description && <p className="text-sm text-muted-foreground line-clamp-2">{p.description}</p>}
-                  <div className="mt-auto pt-2 flex flex-col gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full gap-1"
-                      disabled={saving}
-                      onClick={() =>
-                        navigate('/checkout', {
-                          state: {
-                            plan: {
-                              id: p.id,
-                              name: p.name,
-                              plan_type: p.plan_type,
-                              price_cents: p.price_cents,
-                              interval_prices: p.interval_prices,
-                              description: p.description,
-                              benefits: p.benefits,
-                            },
-                            billingInterval: (INTERVALS[intervalIdx] ?? INTERVALS[0]).key,
-                            usersCount: p.plan_type === 'custom' ? contractedSeats : undefined,
-                          },
-                        })
-                      }
-                    >
-                      Assinar (pagamento)
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="w-full" disabled={saving} onClick={() => changePlan(p.id)}>
-                      Trocar plano (sem pagamento agora)
-                    </Button>
+              {otherPlans.map((p) => {
+                const listC = catalogListPriceCents(p, selectedIntervalKey, contractedSeats);
+                const isUpgrade = listC > mainDisplayPriceCents;
+                const isCheaper = listC < mainDisplayPriceCents;
+                const topBenefits = Array.isArray(p.benefits) ? p.benefits.slice(0, 3) : [];
+                const checkoutLabel = isUpgrade
+                  ? 'Fazer upgrade e pagar'
+                  : isCheaper
+                    ? 'Trocar plano e pagar'
+                    : 'Trocar plano e confirmar';
+                const changeLabel = isCheaper ? 'Trocar plano (sem pagamento agora)' : 'Trocar plano (só alocar)';
+                return (
+                  <div
+                    key={p.id}
+                    className="flex flex-col rounded-xl border border-border/80 bg-card p-4 shadow-sm gap-3"
+                  >
+                    <div>
+                      <h3 className="text-lg font-semibold leading-tight">{p.name}</h3>
+                      <p className="mt-2 text-2xl font-bold tabular-nums">
+                        {formatPrice(listC)}
+                        <span className="ml-1 text-sm font-normal text-muted-foreground">
+                          / {INTERVALS.find((i) => i.key === selectedIntervalKey)?.label ?? 'ciclo'}
+                        </span>
+                      </p>
+                    </div>
+                    {p.description ? (
+                      <p className="text-sm text-muted-foreground line-clamp-2">{p.description}</p>
+                    ) : null}
+                    {topBenefits.length > 0 ? (
+                      <ul className="space-y-1.5 text-sm">
+                        {topBenefits.map((b, i) => (
+                          <li key={i} className="flex gap-2">
+                            <Check className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+                            <span className="leading-snug">{b.label}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="mt-auto flex flex-col gap-2 pt-1">
+                      {canManage ? (
+                        <>
+                          <Button
+                            type="button"
+                            className="h-11 w-full gap-2"
+                            disabled={saving}
+                            onClick={() =>
+                              navigate('/checkout', {
+                                state: {
+                                  plan: {
+                                    id: p.id,
+                                    name: p.name,
+                                    plan_type: p.plan_type,
+                                    price_cents: p.price_cents,
+                                    interval_prices: p.interval_prices,
+                                    description: p.description,
+                                    benefits: p.benefits,
+                                  },
+                                  billingInterval: selectedIntervalKey,
+                                  usersCount: p.plan_type === 'custom' ? contractedSeats : undefined,
+                                },
+                              })
+                            }
+                          >
+                            {checkoutLabel}
+                            <ArrowRight className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-11 w-full"
+                            disabled={saving}
+                            onClick={() => changePlan(p.id)}
+                          >
+                            {changeLabel}
+                          </Button>
+                        </>
+                      ) : (
+                        <p className="rounded-lg border border-dashed bg-muted/20 px-3 py-2 text-center text-xs text-muted-foreground">
+                          Apenas o administrador da conta pode trocar de plano.
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
