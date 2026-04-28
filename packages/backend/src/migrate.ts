@@ -268,6 +268,10 @@ const order = [
   '179_appointment_automation_logs.sql',
   /** Mercado Pago: catálogo gateway (Fase 2 OAuth — isolado do Asaas) */
   '180_mercado_pago_gateway_catalog.sql',
+  /** Mercado Pago: tabela PKCE (code_verifier) para OAuth */
+  '181_mercado_pago_oauth_pkce.sql',
+  /** Chat Engine Fase 4: colunas multicanal em conversas/mensagens + índice username em communication_contacts */
+  '182_chat_engine_multichannel_phase4.sql',
   'create-admin-user.sql',
 ];
 

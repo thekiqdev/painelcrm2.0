@@ -7,6 +7,8 @@ import {
   decryptMercadoPagoOAuthToken,
   isMercadoPagoOAuthTokenEncryptionConfigured,
 } from './mercadoPagoOAuthTokenCrypto.js';
+import { generateMercadoPagoPkceCodeVerifier, mercadoPagoPkceCodeChallengeS256 } from './mercadoPagoPkce.js';
+import { consumeMercadoPagoPkceVerifier, saveMercadoPagoPkceChallenge } from './mercadoPagoPkceRepository.js';
 import {
   signMercadoPagoOAuthState,
   verifyMercadoPagoOAuthState,
@@ -85,7 +87,7 @@ export function getMercadoPagoAvailabilitySync(): {
   };
 }
 
-export function buildMercadoPagoConnectUrl(params: { tenantId: string; userId: string }): string {
+export async function buildMercadoPagoConnectUrl(params: { tenantId: string; userId: string }): Promise<string> {
   if (!isMercadoPagoOAuthTokenEncryptionConfigured()) {
     throw new Error('Criptografia OAuth não configurada (MERCADO_PAGO_OAUTH_TOKEN_ENCRYPTION_KEY).');
   }
@@ -94,11 +96,20 @@ export function buildMercadoPagoConnectUrl(params: { tenantId: string; userId: s
   }
   const { clientId, redirectUri } = getOAuthClientConfig();
   const exp = Date.now() + 10 * 60 * 1000;
+  const nonce = randomBytes(16).toString('hex');
+  const codeVerifier = generateMercadoPagoPkceCodeVerifier();
+  await saveMercadoPagoPkceChallenge({
+    nonce,
+    tenantId: params.tenantId,
+    userId: params.userId,
+    codeVerifier,
+    expiresAt: new Date(exp),
+  });
   const state = signMercadoPagoOAuthState({
     tenantId: params.tenantId,
     userId: params.userId,
     exp,
-    nonce: randomBytes(16).toString('hex'),
+    nonce,
   });
   const oauthEnv = getMercadoPagoConfiguredOAuthEnvironment();
   const base = getMercadoPagoAuthBaseUrlForEnvironment(oauthEnv);
@@ -107,6 +118,8 @@ export function buildMercadoPagoConnectUrl(params: { tenantId: string; userId: s
   u.searchParams.set('client_id', clientId);
   u.searchParams.set('redirect_uri', redirectUri);
   u.searchParams.set('state', state);
+  u.searchParams.set('code_challenge', mercadoPagoPkceCodeChallengeS256(codeVerifier));
+  u.searchParams.set('code_challenge_method', 'S256');
   u.searchParams.set('platform_id', 'mp');
   return u.toString();
 }
@@ -139,13 +152,36 @@ export async function handleMercadoPagoOAuthCallback(params: {
     return fail('error', 'Servidor sem criptografia de tokens.');
   }
 
+  const oauthEnvLog = getMercadoPagoConfiguredOAuthEnvironment();
+  const { redirectUri } = getOAuthClientConfig();
+
+  const codeVerifierPlain = await consumeMercadoPagoPkceVerifier({
+    nonce: payload.nonce,
+    tenantId: payload.tenantId,
+    userId: payload.userId,
+  });
+
+  console.log('[mercado_pago.oauth.callback]', {
+    oauth_environment: oauthEnvLog,
+    redirect_uri: redirectUri,
+    pkce_verifier_recovered: !!codeVerifierPlain,
+  });
+
+  if (!codeVerifierPlain) {
+    return fail(
+      'error',
+      'Sessão OAuth expirada ou inválida. Inicie a conexão novamente.',
+    );
+  }
+
   try {
-    const { clientId, clientSecret, redirectUri } = getOAuthClientConfig();
+    const { clientId, clientSecret } = getOAuthClientConfig();
     const token = await exchangeAuthorizationCode({
       clientId,
       clientSecret,
       code: params.code,
       redirectUri,
+      codeVerifier: codeVerifierPlain,
     });
     const access = typeof token.access_token === 'string' ? token.access_token : '';
     if (!access) {

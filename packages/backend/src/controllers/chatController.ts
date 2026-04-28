@@ -82,6 +82,16 @@ import {
   resolveCommunicationDisplayIdentity,
   upsertCommunicationContactFromProvider,
 } from '../services/communicationContactService.js';
+import {
+  processProviderWebhook,
+  registerCommunicationEngineDelegates,
+} from '../services/communication/communicationEngineService.js';
+import { DEFAULT_COMMUNICATION_PROVIDER } from '../services/communication/communicationTypes.js';
+import {
+  buildChannelStatusPayload,
+  buildConversationUpdatedPayload,
+  buildMessageCreatedPayload,
+} from '../services/communication/realtimePayloads.js';
 import { emitToTenant } from '../services/realtimeService.js';
 
 const instanceSchema = z.object({
@@ -881,11 +891,11 @@ async function syncCommunicationContactFromNormalized(
   tenantId: string | null,
   normalized: ReturnType<typeof normalizeChatPayload>,
   linked?: { clientId?: string | null; leadId?: string | null }
-): Promise<void> {
-  if (!tenantId || !normalized) return;
-  await upsertCommunicationContactFromProvider({
+): Promise<string | null> {
+  if (!tenantId || !normalized) return null;
+  const row = await upsertCommunicationContactFromProvider({
     tenantId,
-    provider: 'whatsapp_uazapi',
+    provider: DEFAULT_COMMUNICATION_PROVIDER,
     providerContactId: normalized.externalChatId ?? null,
     phone: normalized.phoneNumber ?? null,
     displayName: normalized.contactName ?? normalized.profileName ?? null,
@@ -894,11 +904,13 @@ async function syncCommunicationContactFromNormalized(
     linkedLeadId: linked?.leadId ?? null,
     rawProfile: (normalized.metadata as Record<string, unknown>) ?? null,
   });
+  return row?.id ?? null;
 }
 
 async function upsertConversation(
   instance: ChatInstanceRow,
-  chatData: ReturnType<typeof normalizeChatPayload>
+  chatData: ReturnType<typeof normalizeChatPayload>,
+  opts?: { communicationContactId?: string | null }
 ) {
   if (!chatData) {
     console.warn('[UpsertConversation] chatData is null or undefined');
@@ -1158,8 +1170,11 @@ async function upsertConversation(
           identity_state = $19,
           history_sync_status = $20,
           last_history_sync_reason = $21,
+          provider = 'whatsapp_uazapi',
+          provider_conversation_id = COALESCE(provider_conversation_id, $22),
+          communication_contact_id = COALESCE($23::uuid, communication_contact_id),
           updated_at = now()
-        WHERE id = $22
+        WHERE id = $24
         RETURNING *
         `,
         [
@@ -1184,6 +1199,8 @@ async function upsertConversation(
           fc.identity_state,
           fc.history_sync_status,
           fc.last_history_sync_reason,
+          chatData.externalChatId,
+          opts?.communicationContactId ?? null,
           conversationId,
         ]
       );
@@ -1218,8 +1235,11 @@ async function upsertConversation(
           identity_state = $18,
           history_sync_status = $19,
           last_history_sync_reason = $20,
+          provider = 'whatsapp_uazapi',
+          provider_conversation_id = COALESCE(provider_conversation_id, $21),
+          communication_contact_id = COALESCE($22::uuid, communication_contact_id),
           updated_at = now()
-        WHERE id = $21
+        WHERE id = $23
         RETURNING *
         `,
         [
@@ -1243,6 +1263,8 @@ async function upsertConversation(
           fc.identity_state,
           fc.history_sync_status,
           fc.last_history_sync_reason,
+          chatData.externalChatId,
+          opts?.communicationContactId ?? null,
           conversationId,
         ]
       );
@@ -1344,10 +1366,11 @@ async function upsertConversation(
           last_message_preview, last_message_at, unread_count, metadata,
           client_id, lead_id, phone_key,
           canonical_chat_id, canonical_phone, display_name, avatar_url,
-          identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason
+          identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
+          provider, provider_conversation_id, communication_contact_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23, $24)
+          $16, $17, $18, $19, $20, $21, $22, $23, $24, 'whatsapp_uazapi', $25, $26)
         RETURNING *
         `,
         [
@@ -1375,6 +1398,8 @@ async function upsertConversation(
           fcInsert.identity_state,
           fcInsert.history_sync_status,
           fcInsert.last_history_sync_reason,
+          chatData.externalChatId,
+          opts?.communicationContactId ?? null,
         ]
       );
     } else {
@@ -1386,10 +1411,11 @@ async function upsertConversation(
           last_message_preview, last_message_at, unread_count, metadata,
           client_id, phone_key,
           canonical_chat_id, canonical_phone, display_name, avatar_url,
-          identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason
+          identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
+          provider, provider_conversation_id, communication_contact_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14,
-          $15, $16, $17, $18, $19, $20, $21, $22, $23)
+          $15, $16, $17, $18, $19, $20, $21, $22, $23, 'whatsapp_uazapi', $24, $25)
         RETURNING *
         `,
         [
@@ -1416,6 +1442,8 @@ async function upsertConversation(
           fcInsert.identity_state,
           fcInsert.history_sync_status,
           fcInsert.last_history_sync_reason,
+          chatData.externalChatId,
+          opts?.communicationContactId ?? null,
         ]
       );
     }
@@ -1474,7 +1502,7 @@ async function upsertConversation(
       try {
         await upsertCommunicationContactFromProvider({
           tenantId,
-          provider: 'whatsapp_uazapi',
+          provider: DEFAULT_COMMUNICATION_PROVIDER,
           providerContactId: deriveProviderContactIdFromConversation(upserted as Record<string, unknown>),
           phone: (upserted.phone_number as string | null) ?? null,
           displayName:
@@ -1573,9 +1601,9 @@ async function saveMessage(
     `
     INSERT INTO chat_messages (
       conversation_id, direction, external_message_id, body,
-      media, status, sent_at, metadata
+      media, status, sent_at, metadata, provider
     )
-    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb)
+    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, 'whatsapp_uazapi')
     ON CONFLICT (conversation_id, external_message_id)
     DO UPDATE SET
       status = COALESCE(EXCLUDED.status, chat_messages.status),
@@ -2825,8 +2853,8 @@ async function performSyncConversationsForInstance(
       enrichNormalizedChatFromContactCatalog(normalized, contactCatalog);
       const rowKind = classifyChatRowForLog(item);
       try {
-        await syncCommunicationContactFromNormalized(tenantId, normalized);
-        await upsertConversation(instance, normalized);
+        const ccId = await syncCommunicationContactFromNormalized(tenantId, normalized);
+        await upsertConversation(instance, normalized, { communicationContactId: ccId });
         if (rowKind === 'group') upsertedGroup += 1;
         else if (rowKind === 'private') upsertedPrivate += 1;
         else upsertedUnknownKind += 1;
@@ -4665,6 +4693,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.id,
         c.user_id,
         c.instance_id,
+        c.provider,
         c.external_chat_id,
         c.external_fast_id,
         c.contact_name,
@@ -4708,7 +4737,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
       LEFT JOIN LATERAL (
         SELECT cc.display_name, cc.profile_avatar_url
         FROM communication_contacts cc
-        WHERE cc.provider = 'whatsapp_uazapi'
+        WHERE cc.provider = COALESCE(NULLIF(btrim(c.provider), ''), 'whatsapp_uazapi')
           AND cc.tenant_id = (SELECT tenant_id FROM users WHERE id = $1 LIMIT 1)
           AND (
             (c.canonical_chat_id IS NOT NULL AND btrim(c.canonical_chat_id) <> '' AND cc.provider_contact_id = c.canonical_chat_id)
@@ -5685,7 +5714,9 @@ async function fetchAndUpsertRemoteChatIdentity(
     return null;
   }
   enrichNormalizedChatFromContactCatalog(normalized, catalog ?? new Map());
-  return (await upsertConversation(instance, normalized)) as AnyObject | null;
+  const tenantId = await resolveTenantIdForUser(instance.user_id);
+  const ccId = await syncCommunicationContactFromNormalized(tenantId, normalized);
+  return (await upsertConversation(instance, normalized, { communicationContactId: ccId })) as AnyObject | null;
 }
 
 async function hydrateMissingIdentityFromStoredConversations(
@@ -6421,11 +6452,14 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             c.id,
             c.user_id,
             c.instance_id,
+            c.provider,
             c.external_chat_id,
             c.external_fast_id,
             c.contact_name,
             c.profile_name,
             c.phone_number,
+            c.display_name,
+            c.avatar_url,
             c.status,
             c.last_message_preview,
             c.last_message_at,
@@ -6436,6 +6470,8 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             c.client_id,
             ${leadColumnAvailableWs ? 'c.lead_id,' : 'NULL::uuid as lead_id,'}
             c.phone_key,
+            c.assigned_to_user_id,
+            c.assigned_team_id,
             i.name as instance_name,
             CASE
               WHEN c.client_id IS NOT NULL THEN 'client_linked'
@@ -6478,17 +6514,23 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       try {
         emitConversationUpdate(userId, updatedConversation);
         if (tenantId) {
-          emitToTenant(tenantId, 'conversation.updated', {
-            conversation_id: updatedConversation.id,
-            last_message_preview: updatedConversation.last_message_preview ?? null,
-            last_message_at: updatedConversation.last_message_at ?? null,
-            unread_count: updatedConversation.unread_count ?? 0,
-            status: updatedConversation.status ?? null,
-            assigned_user_id: updatedConversation.assigned_to_user_id ?? null,
-            assigned_team_id: updatedConversation.assigned_team_id ?? null,
-            display_name: updatedConversation.display_name ?? null,
-            avatar_url: updatedConversation.avatar_url ?? null,
-          });
+          const rowProv = (updatedConversation as { provider?: string }).provider;
+          emitToTenant(
+            tenantId,
+            'conversation.updated',
+            buildConversationUpdatedPayload({
+              provider: (rowProv as typeof DEFAULT_COMMUNICATION_PROVIDER) ?? DEFAULT_COMMUNICATION_PROVIDER,
+              conversation_id: updatedConversation.id,
+              last_message_preview: updatedConversation.last_message_preview ?? null,
+              last_message_at: updatedConversation.last_message_at ?? null,
+              unread_count: updatedConversation.unread_count ?? 0,
+              status: updatedConversation.status ?? null,
+              assigned_user_id: updatedConversation.assigned_to_user_id ?? null,
+              assigned_team_id: updatedConversation.assigned_team_id ?? null,
+              display_name: updatedConversation.display_name ?? null,
+              avatar_url: updatedConversation.avatar_url ?? null,
+            })
+          );
         }
         console.log('[SendMessage] Conversation update emitted via WebSocket', {
           conversationId: updatedConversation.id,
@@ -6522,17 +6564,25 @@ export async function sendMessage(req: AuthRequest, res: Response) {
           );
           if (tenantId) {
             const media = Array.isArray(row.media) ? (row.media as Array<Record<string, unknown>>) : [];
-            const mediaUrl = media.find((m) => typeof m?.url === 'string' && m.url)?.url ?? null;
-            emitToTenant(tenantId, 'message.created', {
-              conversation_id: conversation.id,
-              message_id: row.id,
-              direction: row.direction,
-              body: row.body,
-              message_type: contract.kind,
-              media_url: mediaUrl,
-              sent_at: row.sent_at || new Date(),
-              provider_message_id: row.external_message_id ?? null,
-            });
+            const mediaUrlRaw = media.find((m) => typeof m?.url === 'string' && m.url)?.url;
+            const mediaUrl = typeof mediaUrlRaw === 'string' ? mediaUrlRaw : null;
+            const convProv = (conversation as { provider?: string }).provider;
+            emitToTenant(
+              tenantId,
+              'message.created',
+              buildMessageCreatedPayload({
+                provider: (convProv as typeof DEFAULT_COMMUNICATION_PROVIDER) ?? DEFAULT_COMMUNICATION_PROVIDER,
+                conversation_id: conversation.id,
+                message_id: row.id != null ? String(row.id) : null,
+                direction: String(row.direction ?? ''),
+                body: row.body == null ? null : String(row.body),
+                message_type: String(contract.kind ?? 'text'),
+                media_url: mediaUrl,
+                sent_at: row.sent_at || new Date(),
+                provider_message_id:
+                  row.external_message_id == null ? null : String(row.external_message_id),
+              })
+            );
           }
           console.log('[SendMessage] New message emitted via WebSocket', {
             messageId: row.id,
@@ -6726,11 +6776,14 @@ export async function sendKanbanAutomationOutboundText(
             c.id,
             c.user_id,
             c.instance_id,
+            c.provider,
             c.external_chat_id,
             c.external_fast_id,
             c.contact_name,
             c.profile_name,
             c.phone_number,
+            c.display_name,
+            c.avatar_url,
             c.status,
             c.last_message_preview,
             c.last_message_at,
@@ -6741,6 +6794,8 @@ export async function sendKanbanAutomationOutboundText(
             c.client_id,
             ${leadColumnAvailableWs ? 'c.lead_id,' : 'NULL::uuid as lead_id,'}
             c.phone_key,
+            c.assigned_to_user_id,
+            c.assigned_team_id,
             i.name as instance_name,
             CASE
               WHEN c.client_id IS NOT NULL THEN 'client_linked'
@@ -7026,11 +7081,14 @@ export async function sendKanbanAutomationOutboundMedia(
             c.id,
             c.user_id,
             c.instance_id,
+            c.provider,
             c.external_chat_id,
             c.external_fast_id,
             c.contact_name,
             c.profile_name,
             c.phone_number,
+            c.display_name,
+            c.avatar_url,
             c.status,
             c.last_message_preview,
             c.last_message_at,
@@ -7041,6 +7099,8 @@ export async function sendKanbanAutomationOutboundMedia(
             c.client_id,
             ${leadColumnAvailableWs ? 'c.lead_id,' : 'NULL::uuid as lead_id,'}
             c.phone_key,
+            c.assigned_to_user_id,
+            c.assigned_team_id,
             i.name as instance_name,
             CASE
               WHEN c.client_id IS NOT NULL THEN 'client_linked'
@@ -7412,8 +7472,8 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         hasContactName: !!chatData.contactName,
       });
 
-      await syncCommunicationContactFromNormalized(tenantId, chatData);
-      const conversation = await upsertConversation(instance, chatData);
+      const ccId = await syncCommunicationContactFromNormalized(tenantId, chatData);
+      const conversation = await upsertConversation(instance, chatData, { communicationContactId: ccId });
 
       if (!conversation) {
         console.error(`[Webhook ${webhookId}] Failed to upsert conversation`, {
@@ -7558,17 +7618,23 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         });
         emitConversationUpdate(instance.user_id, conversationWithInstance);
         if (tenantId) {
-          emitToTenant(tenantId, 'conversation.updated', {
-            conversation_id: conversation.id,
-            last_message_preview: conversationWithInstance.last_message_preview ?? null,
-            last_message_at: conversationWithInstance.last_message_at ?? null,
-            unread_count: conversationWithInstance.unread_count ?? 0,
-            status: conversationWithInstance.status ?? null,
-            assigned_user_id: conversationWithInstance.assigned_to_user_id ?? null,
-            assigned_team_id: conversationWithInstance.assigned_team_id ?? null,
-            display_name: conversationWithInstance.display_name ?? null,
-            avatar_url: conversationWithInstance.avatar_url ?? null,
-          });
+          const wProv = (conversationWithInstance as { provider?: string }).provider;
+          emitToTenant(
+            tenantId,
+            'conversation.updated',
+            buildConversationUpdatedPayload({
+              provider: (wProv as typeof DEFAULT_COMMUNICATION_PROVIDER) ?? DEFAULT_COMMUNICATION_PROVIDER,
+              conversation_id: conversation.id,
+              last_message_preview: conversationWithInstance.last_message_preview ?? null,
+              last_message_at: conversationWithInstance.last_message_at ?? null,
+              unread_count: conversationWithInstance.unread_count ?? 0,
+              status: conversationWithInstance.status ?? null,
+              assigned_user_id: conversationWithInstance.assigned_to_user_id ?? null,
+              assigned_team_id: conversationWithInstance.assigned_team_id ?? null,
+              display_name: conversationWithInstance.display_name ?? null,
+              avatar_url: conversationWithInstance.avatar_url ?? null,
+            })
+          );
         }
 
         let wsMessagePayload: Record<string, unknown> = {
@@ -7608,19 +7674,31 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
             const media = Array.isArray((wsMessagePayload as Record<string, unknown>).media)
               ? ((wsMessagePayload as Record<string, unknown>).media as Array<Record<string, unknown>>)
               : [];
-            const mediaUrl = media.find((m) => typeof m?.url === 'string' && m.url)?.url ?? null;
-            emitToTenant(tenantId, 'message.created', {
-              conversation_id: conversation.id,
-              message_id: wsMessagePayload.id ?? null,
-              direction: wsMessagePayload.direction ?? extracted.direction,
-              body: wsMessagePayload.body ?? messageBody ?? null,
-              message_type:
-                (wsMessagePayload as { message_contract?: { kind?: string } }).message_contract?.kind ??
-                msgKind,
-              media_url: mediaUrl,
-              sent_at: wsMessagePayload.sent_at ?? sentAt ?? new Date().toISOString(),
-              provider_message_id: effectiveMessageId,
-            });
+            const mediaUrlRawW = media.find((m) => typeof m?.url === 'string' && m.url)?.url;
+            const mediaUrl = typeof mediaUrlRawW === 'string' ? mediaUrlRawW : null;
+            const convProvW = (conversation as { provider?: string }).provider;
+            emitToTenant(
+              tenantId,
+              'message.created',
+              buildMessageCreatedPayload({
+                provider: (convProvW as typeof DEFAULT_COMMUNICATION_PROVIDER) ?? DEFAULT_COMMUNICATION_PROVIDER,
+                conversation_id: conversation.id,
+                message_id:
+                  wsMessagePayload.id == null ? null : String(wsMessagePayload.id as string | number),
+                direction: String(wsMessagePayload.direction ?? extracted.direction),
+                body:
+                  (wsMessagePayload.body == null ? null : String(wsMessagePayload.body)) ??
+                  messageBody ??
+                  null,
+                message_type: String(
+                  (wsMessagePayload as { message_contract?: { kind?: string } }).message_contract?.kind ??
+                    msgKind,
+                ),
+                media_url: mediaUrl,
+                sent_at: (wsMessagePayload.sent_at as Date | string) ?? sentAt ?? new Date().toISOString(),
+                provider_message_id: effectiveMessageId,
+              })
+            );
           }
         }
       } catch (wsError: any) {
@@ -7780,25 +7858,34 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         return;
       }
 
-      await syncCommunicationContactFromNormalized(tenantId, chatData);
-      const conversation = await upsertConversation(instance, chatData);
+      const ccIdChats = await syncCommunicationContactFromNormalized(tenantId, chatData);
+      const conversation = await upsertConversation(instance, chatData, { communicationContactId: ccIdChats });
 
       if (conversation) {
         if (tenantId) {
-          emitToTenant(tenantId, 'conversation.updated', {
-            conversation_id: conversation.id,
-            last_message_preview: (conversation as Record<string, unknown>).last_message_preview ?? null,
-            last_message_at: (conversation as Record<string, unknown>).last_message_at ?? null,
-            unread_count: (conversation as Record<string, unknown>).unread_count ?? 0,
-            status: (conversation as Record<string, unknown>).status ?? null,
-            assigned_user_id: (conversation as Record<string, unknown>).assigned_to_user_id ?? null,
-            assigned_team_id: (conversation as Record<string, unknown>).assigned_team_id ?? null,
-            display_name:
-              (conversation as Record<string, unknown>).display_name ??
-              (conversation as Record<string, unknown>).contact_name ??
-              null,
-            avatar_url: (conversation as Record<string, unknown>).avatar_url ?? null,
-          });
+          emitToTenant(
+            tenantId,
+            'conversation.updated',
+            buildConversationUpdatedPayload({
+              provider: DEFAULT_COMMUNICATION_PROVIDER,
+              conversation_id: String(conversation.id),
+              last_message_preview:
+                (conversation as { last_message_preview?: string | null }).last_message_preview ?? null,
+              last_message_at:
+                (conversation as { last_message_at?: Date | string | null }).last_message_at ?? null,
+              unread_count: Number((conversation as { unread_count?: number }).unread_count ?? 0),
+              status: (conversation as { status?: string | null }).status ?? null,
+              assigned_user_id:
+                (conversation as { assigned_to_user_id?: string | null }).assigned_to_user_id ?? null,
+              assigned_team_id:
+                (conversation as { assigned_team_id?: string | null }).assigned_team_id ?? null,
+              display_name:
+                (conversation as { display_name?: string | null }).display_name ??
+                (conversation as { contact_name?: string | null }).contact_name ??
+                null,
+              avatar_url: (conversation as { avatar_url?: string | null }).avatar_url ?? null,
+            }),
+          );
         }
         // Verificar se é uma nova conversa (sem mensagens ainda)
         const messageCount = await pool.query(
@@ -7925,18 +8012,22 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         processingTime: Date.now() - startTime,
       });
       if (tenantId) {
-        emitToTenant(tenantId, 'channel.status_changed', {
-          channel_id: instance.id,
-          provider: 'whatsapp_uazapi',
-          status:
-            state === 'open' || state === 'connected'
-              ? 'connected'
-              : state === 'close' || state === 'disconnected'
-                ? 'disconnected'
-                : String(state || instance.status || 'unknown'),
-          display_name: instance.name,
-          profile_avatar_url: null,
-        });
+        emitToTenant(
+          tenantId,
+          'channel.status_changed',
+          buildChannelStatusPayload({
+            provider: DEFAULT_COMMUNICATION_PROVIDER,
+            channel_id: instance.id,
+            status:
+              state === 'open' || state === 'connected'
+                ? 'connected'
+                : state === 'close' || state === 'disconnected'
+                  ? 'disconnected'
+                  : String(state || instance.status || 'unknown'),
+            display_name: instance.name,
+            profile_avatar_url: null,
+          })
+        );
       }
     } else if (event === 'leads') {
       const data = payload.data || payload;
@@ -7963,6 +8054,10 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
     // Não relançar erro para não quebrar o fluxo
   }
 }
+
+registerCommunicationEngineDelegates({
+  processWhatsappUazapiWebhook: processWebhookEvent,
+});
 
 function normalizeIncomingWebhookSecret(raw: unknown): string | undefined {
   const normalizeString = (value: string): string | undefined => {
@@ -8463,7 +8558,7 @@ export async function handleWebhook(req: Request, res: Response) {
     });
 
     // 8. Processar evento de forma assíncrona (não bloqueia a resposta)
-    processWebhookEvent(instance, payload, event).catch((error) => {
+    processProviderWebhook(DEFAULT_COMMUNICATION_PROVIDER, instance, payload, event).catch((error) => {
       console.error(`[Webhook ${webhookId}] Async processing error:`, {
         error: error.message,
         stack: error.stack,

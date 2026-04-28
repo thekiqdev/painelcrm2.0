@@ -105,6 +105,10 @@ import { consumeKanbanProposalColumnContextIfMatch } from '@/utils/kanbanProposa
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useVisualKeyboardInset } from '@/hooks/useVisualKeyboardInset';
 import { cn } from '@/lib/utils';
+import {
+  communicationProviderBadgeLabel,
+  shouldShowCommunicationChannelBadge,
+} from '@/lib/communicationChannelUi';
 import { isChatClientProfileReturn, isChatListReturnPath } from '@/lib/chatListNavigation';
 import {
   logChatRealtimeDuplicateSkipped,
@@ -1085,6 +1089,7 @@ const Chat = () => {
         handleConversationUpdated(
           {
             id: evt.conversation_id,
+            provider: evt.provider,
             last_message_preview: evt.last_message_preview,
             last_message_at: evt.last_message_at,
             unread_count: evt.unread_count,
@@ -2815,6 +2820,14 @@ const Chat = () => {
               >
                 {identity.displayName}
               </div>
+              {shouldShowCommunicationChannelBadge(conversation.provider) ? (
+                <Badge
+                  variant="outline"
+                  className="hidden h-5 shrink-0 px-1.5 text-[10px] font-normal text-muted-foreground sm:inline-flex"
+                >
+                  {communicationProviderBadgeLabel(conversation.provider)}
+                </Badge>
+              ) : null}
               <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
                 {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
             </span>

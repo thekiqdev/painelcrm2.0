@@ -1,4 +1,6 @@
 import { apiClient } from '@/integrations/api/client';
+import type { CommunicationProvider } from '@/types/communication';
+import { DEFAULT_COMMUNICATION_PROVIDER } from '@/types/communication';
 
 /** Etapa 4 — mesmos valores persistidos em `chat_instances.metadata`. */
 export type InstanceSyncMode = 'none' | 'days_7' | 'days_30' | 'days_90' | 'full';
@@ -44,6 +46,8 @@ export interface ChatConversation {
   id: string;
   user_id: string;
   instance_id: string;
+  /** Canal lógico (Chat Engine multicanal). */
+  provider?: CommunicationProvider | string | null;
   instance_name?: string;
   client_id?: string | null;
   leadId?: string | null;
@@ -182,6 +186,7 @@ export function normalizeConversation(raw: any): ChatConversation {
     id: raw.id,
     user_id: raw.user_id,
     instance_id: raw.instance_id,
+    provider: (raw.provider as CommunicationProvider | undefined) ?? DEFAULT_COMMUNICATION_PROVIDER,
     instance_name: raw.instance_name,
     client_id: raw.client_id ?? null,
     leadId: raw.lead_id ?? null,

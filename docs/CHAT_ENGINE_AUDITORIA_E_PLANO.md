@@ -532,3 +532,82 @@ Objetivo em produção: saber por sessão se o fluxo **V2** (`message.created` /
   - **Legacy** a aparecer com `V2=1` e `legacy_fallback_enabled=true`: rollback parcial explícito; comparar com duplicados ignorados.
   - Rajadas de `duplicate_skipped` com `source` alternado: ambos os barramentos a entregar a mesma mensagem (esperado com fallback ligado).
 
+---
+
+## Fase 4 — preparação multicanal
+
+Objetivo: permitir **outros canais** (Instagram, Messenger, webchat, e-mail) sem integrações reais nesta fase, mantendo **WhatsApp/Uazapi** estável e **rotas/tabelas** atuais.
+
+### Fase 4.0 — Auditoria de acoplamento (onde ainda há WhatsApp/Uazapi)
+
+| Área | Ficheiros / pontos | Acoplamento | Alterado nesta fase | Fases futuras |
+|------|---------------------|-------------|---------------------|---------------|
+| Webhook + pipeline | `packages/backend/src/controllers/chatController.ts` (`handleWebhook`, `processWebhookEvent`, `upsertConversation`, `saveMessage`) | Payload Uazapi, `normalizeChatPayload`, envio `uazapiService` | Entrada do webhook via `communicationEngineService.processProviderWebhook`; colunas `provider` / vínculo `communication_contact_id`; emits realtime com `provider` | Extrair normalização Uazapi para adapter; reduzir tamanho do controller |
+| API provedor | `packages/backend/src/services/uazapi.ts` | HTTP Uazapi | Sem mudança | Abstrair `ChannelTransport` por provider |
+| Identidade WA | `packages/backend/src/utils/uazapiChatIdentity.ts`, `canonicalConversationIdentity.ts`, `uazapiIdentityResolve.ts` | JID, `@lid`, foto/metadata Uaz | Reuso; join `communication_contacts` por `c.provider` | Regras por canal (username-first) |
+| Instâncias | `chat_instances`, rotas em `chatRoutes.ts`, UI `src/components/whatsapp/*` | Nome “WhatsApp”, tokens Uaz | Sem renomear UI | Modelo “channel” genérico + credenciais por provider |
+| Lista conversas | `getConversations` (controller), `conversationRowForClientApi` | LATERAL só WA | `c.provider` na query; join contact por `COALESCE(c.provider, 'whatsapp_uazapi')` | Filtro UI por canal |
+| Realtime | `emitToTenant` em controller | Eventos sem `provider` | `message.created`, `conversation.updated`, `channel.status_changed` incluem `provider` | Consumidores multicanal no Kanban/outros |
+| Frontend Chat | `src/pages/Chat.tsx`, `src/services/chat.ts` | Textos e fluxos WA | Tipos `CommunicationProvider`; badge de canal para `provider !== whatsapp_uazapi` | Ícones por canal, inbox unificado |
+| Contactos multicanal | `communication_contacts`, `communicationContactService.ts` | Índices phone + `provider_contact_id` | Lookup por **username** (índice único parcial); prioridade documentada | Sincronização Instagram/Graph |
+
+**O que não foi implementado nesta fase:** OAuth Meta, webhooks Instagram/Messenger, adapter concreto para `instagram` / `facebook_messenger`, renomear menu Settings para “Canais”, migração de `chat_instances` para tabela genérica de canais.
+
+### Providers padronizados (backend)
+
+- Ficheiro: `packages/backend/src/services/communication/communicationTypes.ts`
+- `CommunicationProvider`: `whatsapp_uazapi` | `instagram` | `facebook_messenger` | `webchat` | `email`
+- Direções, tipos de mensagem e estado de conversa alinhados ao modelo normalizado (mapeamento BD: `incoming`/`outgoing` ↔ `inbound`/`outbound` nos tipos canónicos).
+
+### Modelos normalizados
+
+- `packages/backend/src/services/communication/normalizedCommunication.ts`
+- `NormalizedCommunicationContact`, `NormalizedCommunicationConversation`, `NormalizedCommunicationMessage` — linguagem interna do engine; `provider_message_id` no modelo canónico corresponde a `chat_messages.external_message_id` (sem coluna duplicada).
+
+### Adapter e orquestração
+
+- Interface: `communicationProviderAdapter.ts` (`CommunicationProviderAdapter`)
+- Implementação inicial: `whatsappUazapiAdapter.ts` (normalização leve + delegação de envio/sync ao controller documentada)
+- Orquestração: `communicationEngineService.ts` — `processProviderWebhook`, `resolveProviderAdapter`, `sendProviderMessage`, `refreshProviderProfile`, `syncProviderConversations` (extensível; sync/send WA continuam no HTTP legado até registo de delegates)
+- Webhook: `handleWebhook` chama `processProviderWebhook('whatsapp_uazapi', …)` que delega no `processWebhookEvent` registado.
+
+### Realtime multicanal (Fase 3 + 4)
+
+Payloads tenant-scoped passam a incluir **`provider`** (default `whatsapp_uazapi`):
+
+- `message.created`: `provider`, `conversation_id`, `message_id`, `provider_message_id`, `direction`, `message_type`, `body`, `media_url`, `sent_at`
+- `conversation.updated`: `provider`, `conversation_id`, `display_name`, `avatar_url`, `last_message_preview`, `last_message_at`, `unread_count`, …
+- `channel.status_changed`: `provider`, `channel_id`, `status`, …
+
+Helpers: `packages/backend/src/services/communication/realtimePayloads.ts`.
+
+### Base de dados (compatível, não destrutivo)
+
+- Ficheiro: `database/init/182_chat_engine_multichannel_phase4.sql` (+ espelho em `supabase/migrations/`)
+- `chat_conversations`: `provider` (default `whatsapp_uazapi`), `provider_conversation_id` (backfill a partir de `external_chat_id` para WA), `communication_contact_id` (FK opcional)
+- `chat_messages`: `provider` (default `whatsapp_uazapi`); ID da mensagem no provedor continua em `external_message_id`
+- `communication_contacts`: índice único parcial `(tenant_id, provider, username)` onde `username` não vazio
+
+### Identidade multicanal (contacto)
+
+Ordem de resolução em `upsertCommunicationContactFromProvider` (mesmo tenant + provider):
+
+1. `provider_contact_id`
+2. `phone` (normalizado)
+3. `username`
+
+Para WhatsApp, **telefone** e **provider_contact_id** (JID/chat id) continuam fortes; para Instagram/Facebook futuros, **username** / **provider_contact_id** ganham peso.
+
+### Frontend
+
+- `src/types/communication.ts` — tipos alinhados ao backend
+- `src/lib/communicationChannelUi.ts` — rótulos para badge (só exibido quando `provider !== whatsapp_uazapi`)
+- `ChatConversation.provider` em `src/services/chat.ts` + normalização da API
+
+### Estratégia de migração futura
+
+1. Introduzir adapters por provider e mover `processWebhookEvent` por fatias para o engine.
+2. Generalizar `chat_instances` (ou tabela `communication_channels`) com `provider` + credenciais JSON.
+3. UI “Canais de atendimento” mantendo atalho WhatsApp.
+4. Inbox com filtro por `provider` e ícones.
+

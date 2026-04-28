@@ -1,6 +1,7 @@
 import { pool } from '../utils/db.js';
+import type { CommunicationProvider as CommunicationProviderKey } from './communication/communicationTypes.js';
 
-export type CommunicationProvider = 'whatsapp_uazapi' | 'instagram' | 'facebook' | 'webchat';
+export type CommunicationProvider = CommunicationProviderKey;
 
 export type UpsertCommunicationContactInput = {
   tenantId: string;
@@ -39,7 +40,7 @@ export async function upsertCommunicationContactFromProvider(
   const displayName = pickNonEmpty(input.displayName ?? null);
   const profileAvatarUrl = pickNonEmpty(input.profileAvatarUrl ?? null);
 
-  if (!tenantId || (!phone && !providerContactId)) return null;
+  if (!tenantId || (!phone && !providerContactId && !username)) return null;
 
   const existing = await pool.query<{ id: string }>(
     `SELECT id
@@ -47,12 +48,13 @@ export async function upsertCommunicationContactFromProvider(
      WHERE tenant_id = $1
        AND provider = $2
        AND (
-         ($3::text IS NOT NULL AND phone = $3)
-         OR ($4::text IS NOT NULL AND provider_contact_id = $4)
+         ($3::text IS NOT NULL AND btrim($3::text) <> '' AND phone = $3)
+         OR ($4::text IS NOT NULL AND btrim($4::text) <> '' AND provider_contact_id = $4)
+         OR ($5::text IS NOT NULL AND btrim($5::text) <> '' AND username = $5)
        )
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [tenantId, provider, phone, providerContactId]
+    [tenantId, provider, phone, providerContactId, username]
   );
 
   if ((existing.rowCount ?? 0) > 0) {

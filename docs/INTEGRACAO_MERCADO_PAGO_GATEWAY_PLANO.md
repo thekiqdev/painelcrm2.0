@@ -334,6 +334,20 @@ Qualquer mudança em arquivos compartilhados deve ser **mínima e aditiva**:
 
 ---
 
+## 8.1 OAuth PKCE (obrigatório em produção — Mercado Pago)
+
+O fluxo de autorização do Mercado Pago usa **PKCE**: na URL de authorize são enviados `code_challenge` e `code_challenge_method=S256`; na troca do `code` por token, o endpoint `POST /oauth/token` exige **`code_verifier`**. Sem isso a API responde `invalid_request` / `code_verifier is a required parameter`.
+
+Implementação no PainelCRM:
+
+- Geração de `code_verifier` e `code_challenge` (SHA-256 + base64url): `packages/backend/src/services/mercadoPagoPkce.ts`.
+- Persistência temporária do verifier **cifrado** (AES-GCM, mesma chave dos tokens), por **nonce** do state assinado: tabela `mercado_pago_oauth_pkce_challenges` (`database/init/181_mercado_pago_oauth_pkce.sql`).
+- Consumo único no callback antes de chamar `oauth/token`; TTL alinhado ao `exp` do state (~10 min).
+
+Checklist manual: `docs/MERCADO_PAGO_OAUTH_PKCE_QA.md`.
+
+---
+
 ## 9. Referências de código (âncoras)
 
 - Registry Asaas: `packages/backend/src/modules/payments/gatewayRegistry.ts`
