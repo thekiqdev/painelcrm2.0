@@ -1,11 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format, parseISO, startOfWeek, endOfWeek } from 'date-fns';
+import {
+  format,
+  parseISO,
+  startOfWeek,
+  endOfWeek,
+  startOfDay,
+  endOfDay,
+  startOfMonth,
+  endOfMonth,
+  addWeeks,
+  addMonths,
+} from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   CalendarClock,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Loader2,
   MapPin,
@@ -15,6 +28,7 @@ import {
   User,
   Video,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { MobilePageHeader } from '@/components/mobile/MobilePageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -74,6 +88,37 @@ const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'other', label: 'Outro' },
 ];
 
+const TYPE_ACCENT: Record<string, string> = {
+  meeting: 'border-l-violet-400/80 dark:border-l-violet-500/70',
+  call: 'border-l-sky-400/80 dark:border-l-sky-500/70',
+  visit: 'border-l-emerald-400/80 dark:border-l-emerald-500/70',
+  other: 'border-l-stone-400/70 dark:border-l-stone-500/60',
+};
+
+type DateRangePreset = 'today' | 'week' | 'month' | 'custom';
+
+function appointmentStatusLabel(status: string): string {
+  if (status === 'done') return 'Concluído';
+  if (status === 'cancelled') return 'Cancelado';
+  return 'Agendado';
+}
+
+/** Rótulo e “tom” leve para sync, sem vermelho agressivo. */
+function syncPill(
+  ap: Appointment,
+): { key: 'google' | 'error' | 'crm'; label: string; className: string } {
+  if (ap.create_google_event && ap.sync_status === 'synced') {
+    return { key: 'google', label: 'Google', className: 'border-sky-200/80 bg-sky-50/80 text-sky-900 dark:border-sky-800/50 dark:bg-sky-950/30 dark:text-sky-200' };
+  }
+  if (ap.create_google_event && ap.sync_status === 'error') {
+    return { key: 'error', label: 'Erro', className: 'border-amber-200/80 bg-amber-50/70 text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200' };
+  }
+  if (ap.create_google_event) {
+    return { key: 'google', label: 'Pendente', className: 'border-border bg-muted/50 text-muted-foreground' };
+  }
+  return { key: 'crm', label: 'CRM', className: 'border-border/80 bg-card text-muted-foreground' };
+}
+
 function localToIso(d: Date, timeHHmm: string): string {
   const [hh, mm] = timeHHmm.split(':').map((x) => parseInt(x, 10) || 0);
   const x = new Date(d);
@@ -100,22 +145,6 @@ function canEditAgendaItem(
   if (!userId) return false;
   if (!isEditOwnOnly) return true;
   return ap.created_by === userId || ap.responsible_user_id === userId;
-}
-
-function syncBadge(ap: Appointment) {
-  if (ap.status === 'cancelled') {
-    return { label: 'Cancelado', variant: 'secondary' as const };
-  }
-  if (ap.create_google_event && ap.sync_status === 'synced') {
-    return { label: 'Google', variant: 'default' as const };
-  }
-  if (ap.create_google_event && ap.sync_status === 'error') {
-    return { label: 'Erro no Google', variant: 'destructive' as const };
-  }
-  if (ap.create_google_event) {
-    return { label: 'Pendente / local', variant: 'outline' as const };
-  }
-  return { label: 'Apenas CRM', variant: 'secondary' as const };
 }
 
 type AttForm = { name: string; email: string; phone: string };
@@ -150,6 +179,7 @@ export default function Agenda() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  const [datePreset, setDatePreset] = useState<DateRangePreset>('week');
   const [dateFrom, setDateFrom] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [dateTo, setDateTo] = useState(() => endOfWeek(new Date(), { weekStartsOn: 1 }));
   const [responsibleFilter, setResponsibleFilter] = useState<string>('');
@@ -176,8 +206,65 @@ export default function Agenda() {
     queryFn: () => membersService.getMembers(),
   });
 
-  const dateFromIso = useMemo(() => format(dateFrom, "yyyy-MM-dd") + 'T00:00:00.000Z', [dateFrom]);
-  const dateToIso = useMemo(() => format(dateTo, "yyyy-MM-dd") + 'T23:59:59.999Z', [dateTo]);
+  const applyToday = useCallback(() => {
+    const n = new Date();
+    setDateFrom(startOfDay(n));
+    setDateTo(endOfDay(n));
+    setDatePreset('today');
+  }, []);
+
+  const applyWeek = useCallback(() => {
+    const n = new Date();
+    setDateFrom(startOfWeek(n, { weekStartsOn: 1 }));
+    setDateTo(endOfWeek(n, { weekStartsOn: 1 }));
+    setDatePreset('week');
+  }, []);
+
+  const applyMonth = useCallback(() => {
+    const n = new Date();
+    setDateFrom(startOfMonth(n));
+    setDateTo(endOfMonth(n));
+    setDatePreset('month');
+  }, []);
+
+  const goWeek = useCallback(
+    (dir: -1 | 1) => {
+      const w = addWeeks(startOfDay(dateFrom), dir);
+      setDateFrom(startOfWeek(w, { weekStartsOn: 1 }));
+      setDateTo(endOfWeek(w, { weekStartsOn: 1 }));
+      setDatePreset('week');
+    },
+    [dateFrom],
+  );
+
+  const goMonth = useCallback(
+    (dir: -1 | 1) => {
+      const m = addMonths(startOfDay(dateFrom), dir);
+      setDateFrom(startOfMonth(m));
+      setDateTo(endOfMonth(m));
+      setDatePreset('month');
+    },
+    [dateFrom],
+  );
+
+  const onPickDateFrom = useCallback((d: Date | undefined) => {
+    if (!d) return;
+    const from = startOfDay(d);
+    setDateFrom(from);
+    setDatePreset('custom');
+    setDateTo((prev) => (from > endOfDay(prev) ? endOfDay(from) : prev));
+  }, []);
+
+  const onPickDateTo = useCallback((d: Date | undefined) => {
+    if (!d) return;
+    const to = endOfDay(d);
+    setDateTo(to);
+    setDatePreset('custom');
+    setDateFrom((prev) => (startOfDay(prev) > to ? startOfDay(d) : prev));
+  }, []);
+
+  const dateFromIso = useMemo(() => startOfDay(dateFrom).toISOString(), [dateFrom]);
+  const dateToIso = useMemo(() => endOfDay(dateTo).toISOString(), [dateTo]);
 
   const listParams = useMemo(
     () => ({
@@ -224,20 +311,30 @@ export default function Agenda() {
   const formDisabled = !canMutate;
 
   useEffect(() => {
-    if (searchParams.get('new') === '1' && canCreateA) {
-      setEditingId(null);
-      setEditingRow(null);
-      setForm(buildEmptyForm(user?.id));
-      setSheetOpen(true);
-      setSearchParams(
-        (prev) => {
-          const n = new URLSearchParams(prev);
-          n.delete('new');
-          return n;
-        },
-        { replace: true },
-      );
+    if (searchParams.get('new') !== '1' || !canCreateA) return;
+    const clientIdRaw = searchParams.get('client_id');
+    const clientIdOk =
+      clientIdRaw && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientIdRaw)
+        ? clientIdRaw
+        : null;
+    setEditingId(null);
+    setEditingRow(null);
+    const base = buildEmptyForm(user?.id);
+    if (clientIdOk) {
+      setForm({ ...base, link: 'client' as const, clientId: clientIdOk });
+    } else {
+      setForm(base);
     }
+    setSheetOpen(true);
+    setSearchParams(
+      (prev) => {
+        const n = new URLSearchParams(prev);
+        n.delete('new');
+        n.delete('client_id');
+        return n;
+      },
+      { replace: true },
+    );
   }, [searchParams, setSearchParams, canCreateA, user?.id]);
 
   const openNew = useCallback(() => {
@@ -432,20 +529,82 @@ export default function Agenda() {
       </div>
 
       {googleConnected === false ? (
-        <Alert className="border-amber-200/80 bg-amber-50/80 dark:border-amber-900/50 dark:bg-amber-950/20">
+        <Alert className="border-muted bg-muted/30">
           <CalendarClock className="h-4 w-4" />
-          <AlertTitle>Google Calendar</AlertTitle>
-          <AlertDescription className="text-sm">
-            Conecte a sua conta em{' '}
-            <Link to="/settings?section=googleCalendar" className="font-medium underline underline-offset-2">
-              Configurações
-            </Link>{' '}
-            para sincronizar compromissos e criar reuniões com Meet.
+          <AlertTitle>Google Agenda</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <span>
+              Conecte o Google Agenda para criar eventos, convites e reuniões com Meet automaticamente.
+            </span>
+            <Button variant="secondary" size="sm" className="shrink-0" asChild>
+              <Link to="/settings?section=googleCalendar">Conectar Google Agenda</Link>
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
 
-      <div className="grid gap-3 rounded-lg border border-border/80 bg-card/30 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="space-y-3 rounded-lg border border-border/80 bg-card/40 p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="mr-1 text-xs text-muted-foreground">Ver</span>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'today' ? 'default' : 'outline'}
+              className="h-8"
+              onClick={applyToday}
+            >
+              Hoje
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'week' ? 'default' : 'outline'}
+              className="h-8"
+              onClick={applyWeek}
+            >
+              Semana
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'month' ? 'default' : 'outline'}
+              className="h-8"
+              onClick={applyMonth}
+            >
+              Mês
+            </Button>
+            {datePreset === 'custom' ? (
+              <span className="ml-1 text-xs text-muted-foreground">(personalizado)</span>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-0.5">
+            {datePreset === 'week' ? (
+              <>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => goWeek(-1)} aria-label="Semana anterior">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-0.5 text-xs text-muted-foreground">navegar semana</span>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => goWeek(1)} aria-label="Próxima semana">
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
+            {datePreset === 'month' ? (
+              <>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => goMonth(-1)} aria-label="Mês anterior">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-0.5 text-xs text-muted-foreground">navegar mês</span>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => goMonth(1)} aria-label="Próximo mês">
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <div className="space-y-1.5">
           <Label>De</Label>
           <Popover>
@@ -455,7 +614,7 @@ export default function Agenda() {
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
-              <Calendar mode="single" selected={dateFrom} onSelect={(d) => d && setDateFrom(d)} locale={ptBR} />
+              <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={ptBR} />
             </PopoverContent>
           </Popover>
         </div>
@@ -468,7 +627,7 @@ export default function Agenda() {
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
-              <Calendar mode="single" selected={dateTo} onSelect={(d) => d && setDateTo(d)} locale={ptBR} />
+              <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={ptBR} />
             </PopoverContent>
           </Popover>
         </div>
@@ -521,6 +680,7 @@ export default function Agenda() {
             </SelectContent>
           </Select>
         </div>
+        </div>
       </div>
 
       {listLoading ? (
@@ -531,8 +691,8 @@ export default function Agenda() {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
             <CalendarDays className="h-10 w-10 text-muted-foreground" />
-            <p className="text-muted-foreground">Não há compromissos neste período.</p>
-            {canCreateA ? <Button onClick={openNew}>Criar o primeiro compromisso</Button> : null}
+            <p className="text-muted-foreground">Você ainda não possui compromissos nesse período.</p>
+            {canCreateA ? <Button onClick={openNew}>Criar compromisso</Button> : null}
           </CardContent>
         </Card>
       ) : (
@@ -544,51 +704,82 @@ export default function Agenda() {
               </h2>
               <ul className="space-y-2">
                 {rows.map((ap) => {
-                  const sb = syncBadge(ap);
                   const canRowEdit = canEditA && canEditAgendaItem(user?.id, ap, ownOnly);
+                  const syncP = syncPill(ap);
+                  const accent = TYPE_ACCENT[ap.type] ?? TYPE_ACCENT.other;
                   return (
                     <li key={ap.id}>
-                      <Card className="overflow-hidden transition-colors hover:bg-muted/30">
-                        <CardContent className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-mono text-sm text-muted-foreground">
-                                {format(parseISO(ap.starts_at), 'HH:mm')} – {format(parseISO(ap.ends_at), 'HH:mm')}
-                              </span>
-                              <Badge variant="outline" className="text-xs">
+                      <Card
+                        className={cn(
+                          'group overflow-hidden border border-border/70 shadow-sm transition-colors',
+                          'hover:border-border hover:bg-muted/20',
+                          'border-l-4',
+                          accent,
+                        )}
+                      >
+                        <CardContent className="flex min-h-[4.5rem] gap-0 p-0 sm:min-h-0">
+                          <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center border-r border-border/60 bg-muted/20 px-2 py-2.5 sm:py-3">
+                            <span className="text-center text-sm font-semibold leading-none tabular-nums text-foreground">
+                              {format(parseISO(ap.starts_at), 'HH:mm')}
+                            </span>
+                            <span className="mt-0.5 text-[10px] font-medium text-muted-foreground">até</span>
+                            <span className="text-center text-xs font-medium tabular-nums text-muted-foreground">
+                              {format(parseISO(ap.ends_at), 'HH:mm')}
+                            </span>
+                          </div>
+                          <div className="min-w-0 flex-1 px-2.5 py-2.5 sm:px-3 sm:py-2.5">
+                            <p className="line-clamp-2 font-medium leading-snug text-foreground sm:line-clamp-1">
+                              {ap.title}
+                            </p>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              <Badge variant="secondary" className="h-5 max-w-[9rem] truncate px-1.5 text-[10px] font-normal sm:max-w-none">
                                 {TYPE_OPTIONS.find((t) => t.value === ap.type)?.label ?? ap.type}
                               </Badge>
-                              <Badge variant={sb.variant} className="text-xs">
-                                {sb.label}
+                              <Badge
+                                variant="outline"
+                                className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground"
+                              >
+                                {appointmentStatusLabel(ap.status)}
                               </Badge>
+                              <span
+                                className={cn(
+                                  'inline-flex h-5 max-w-full items-center rounded-md border px-1.5 text-[10px] font-medium',
+                                  syncP.className,
+                                )}
+                              >
+                                {syncP.label}
+                              </span>
                             </div>
-                            <p className="font-medium leading-tight">{ap.title}</p>
-                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                            <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
                               {ap.client_name ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <User className="h-3 w-3" /> {ap.client_name}
+                                <span className="inline-flex max-w-full items-center gap-1 truncate">
+                                  <User className="h-3 w-3 shrink-0" />
+                                  {ap.client_name}
                                 </span>
                               ) : null}
                               {ap.lead_name && !ap.client_name ? (
                                 <span className="inline-flex items-center gap-1">
-                                  <User className="h-3 w-3" /> Lead: {ap.lead_name}
+                                  <User className="h-3 w-3" />
+                                  Lead: {ap.lead_name}
                                 </span>
                               ) : null}
-                              {ap.responsible_name ? <span>Resp.: {ap.responsible_name}</span> : null}
+                              {ap.responsible_name ? <span>Resp. {ap.responsible_name}</span> : null}
                             </div>
-                            {ap.sync_error && ap.sync_status === 'error' ? (
-                              <p className="text-xs text-destructive/90">Erro: {ap.sync_error}</p>
+                            {ap.sync_status === 'error' && ap.create_google_event ? (
+                              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                                Não foi possível sincronizar com o Google Agenda.
+                              </p>
                             ) : null}
-                            <div className="flex flex-wrap gap-2 pt-1">
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2">
                               {ap.google_meet_link ? (
                                 <a
                                   href={ap.google_meet_link}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs font-medium text-primary underline"
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-primary underline-offset-2 hover:underline"
                                 >
-                                  <Video className="h-3.5 w-3.5" />
-                                  Abrir Meet
+                                  <Video className="h-3.5 w-3.5 shrink-0" />
+                                  Meet
                                 </a>
                               ) : null}
                               {ap.google_html_link ? (
@@ -596,34 +787,47 @@ export default function Agenda() {
                                   href={ap.google_html_link}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs text-muted-foreground underline"
+                                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:underline"
                                 >
-                                  <ExternalLink className="h-3.5 w-3.5" />
-                                  Google Calendar
+                                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                  Google
                                 </a>
                               ) : null}
                             </div>
                           </div>
-                          <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
+                          <div className="flex shrink-0 flex-col items-end justify-center gap-1 border-l border-border/50 bg-muted/5 px-1.5 py-1.5 sm:px-2">
                             {ap.sync_status === 'error' && ap.create_google_event && canRowEdit ? (
                               <Button
                                 size="sm"
-                                variant="secondary"
-                                className="h-8 gap-1"
+                                variant="outline"
+                                className="h-7 gap-1 px-2 text-[10px] sm:text-xs"
                                 onClick={() => retryMut.mutate(ap.id)}
                                 disabled={retryMut.isPending}
                               >
-                                <RefreshCw className="h-3.5 w-3.5" />
-                                Retentar sincronização
+                                <RefreshCw className="h-3 w-3 shrink-0" />
+                                <span className="hidden min-[400px]:inline">Retentar</span>
                               </Button>
                             ) : null}
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                >
                                   <MoreHorizontal className="h-4 w-4" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                {ap.sync_status === 'error' && ap.create_google_event && canRowEdit ? (
+                                  <DropdownMenuItem
+                                    onClick={() => retryMut.mutate(ap.id)}
+                                    disabled={retryMut.isPending}
+                                  >
+                                    <RefreshCw className="mr-2 h-4 w-4" />
+                                    Retentar sincronização
+                                  </DropdownMenuItem>
+                                ) : null}
                                 <DropdownMenuItem onClick={() => void openDetail(ap.id)}>
                                   {canRowEdit && ap.status !== 'cancelled' ? 'Editar' : 'Ver'}
                                 </DropdownMenuItem>

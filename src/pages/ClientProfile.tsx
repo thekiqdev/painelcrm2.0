@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { ClientSidebar } from "@/components/clients/ClientSidebar";
 import { clientsService, type ClientTimelineEvent } from "@/services/clients";
@@ -44,12 +45,15 @@ import {
   MessageSquare,
   PieChart,
   CalendarSync,
+  CalendarDays,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { io, Socket } from "socket.io-client";
-import { format } from "date-fns";
+import { format, parseISO, startOfDay, endOfDay, addMonths, isValid } from "date-fns";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
+import { listAppointments } from "@/services/appointments";
 import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
@@ -215,7 +219,34 @@ const ClientProfile = () => {
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   const { session } = useAuth();
   const { canDeleteRecord, canView, canCreate, canEdit } = useModulePermissions();
+  const hasAgendaModule = useFeatureFlag("agenda");
   const isMobile = useIsMobile();
+
+  const upcomingAppointmentsQuery = useQuery({
+    queryKey: ["agenda", "clientUpcoming", id],
+    queryFn: () =>
+      listAppointments({
+        client_id: id!,
+        date_from: startOfDay(new Date()).toISOString(),
+        date_to: endOfDay(addMonths(new Date(), 2)).toISOString(),
+        status: "scheduled",
+        limit: 40,
+      }),
+    enabled: Boolean(id && hasAgendaModule && canView("agenda")),
+  });
+
+  const clientUpcomingAppointments = useMemo(() => {
+    const raw = upcomingAppointmentsQuery.data?.items ?? [];
+    const now = new Date();
+    return raw
+      .filter((a) => {
+        if (a.status === "cancelled") return false;
+        const t = parseISO(a.starts_at);
+        return isValid(t) && t >= now;
+      })
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+      .slice(0, 5);
+  }, [upcomingAppointmentsQuery.data?.items]);
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -1224,6 +1255,16 @@ const ClientProfile = () => {
                         Propostas
                       </Button>
                     ) : null}
+                    {hasAgendaModule && canView("agenda") && client.id ? (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link
+                          to={`/agenda?${new URLSearchParams({ client_id: client.id, new: "1" }).toString()}`}
+                        >
+                          <CalendarDays className="mr-2 h-4 w-4" />
+                          Agendar com este cliente
+                        </Link>
+                      </Button>
+                    ) : null}
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-6">
                     <Card className="max-md:border-border/70 max-md:shadow-none">
@@ -1273,6 +1314,45 @@ const ClientProfile = () => {
                       </CardContent>
                     </Card>
                   </div>
+                  {hasAgendaModule && canView("agenda") && client.id ? (
+                    <Card className="border-border/80 max-md:shadow-sm">
+                      <CardHeader className="pb-2 pt-3">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <CardTitle className="text-sm font-semibold">Próximos compromissos</CardTitle>
+                          <Button variant="link" className="h-auto px-0 text-xs" asChild>
+                            <Link
+                              to={`/agenda?${new URLSearchParams({ client_id: client.id }).toString()}`}
+                            >
+                              Ver na agenda
+                            </Link>
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        {upcomingAppointmentsQuery.isLoading ? (
+                          <p className="text-xs text-muted-foreground">A carregar…</p>
+                        ) : clientUpcomingAppointments.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            Nenhum compromisso agendado a seguir para este cliente.
+                          </p>
+                        ) : (
+                          <ul className="space-y-2 text-sm">
+                            {clientUpcomingAppointments.map((apt) => (
+                              <li
+                                key={apt.id}
+                                className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 py-1.5 last:border-0"
+                              >
+                                <span className="font-mono text-xs text-muted-foreground">
+                                  {format(parseISO(apt.starts_at), "dd/MM, HH:mm")}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate font-medium">{apt.title}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ) : null}
                   {client?.updated_at ? (
                     <p className="text-xs text-muted-foreground">
                       Última atualização no CRM:{" "}
