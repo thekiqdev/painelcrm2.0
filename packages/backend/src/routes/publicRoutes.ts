@@ -32,6 +32,7 @@ import {
 import { getPublicLegalPage } from '../controllers/publicLegalController.js';
 import {
   getPublicAppointmentConfirmationByToken,
+  getPublicAppointmentAvailabilityByToken,
   getPublicRescheduleConflictsByToken,
   postPublicAppointmentConfirmationByToken,
 } from '../controllers/publicAppointmentsConfirmationController.js';
@@ -209,6 +210,11 @@ router.get(
   '/appointments/confirm/:token',
   appointmentPublicConfirmReadLimiter,
   getPublicAppointmentConfirmationByToken,
+);
+router.get(
+  '/appointments/confirm/:token/availability',
+  appointmentPublicConfirmReadLimiter,
+  getPublicAppointmentAvailabilityByToken,
 );
 router.get(
   '/appointments/confirm/:token/reschedule-conflicts',

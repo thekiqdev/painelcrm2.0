@@ -45,6 +45,7 @@ export const MercadoPagoGatewaySection: React.FC = () => {
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [redirectingToMp, setRedirectingToMp] = useState(false);
   const [testing, setTesting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
@@ -96,15 +97,27 @@ export const MercadoPagoGatewaySection: React.FC = () => {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, loadStatus]);
 
-  const handleConnect = async () => {
+  const startOAuthFlow = async (reconnect: boolean) => {
+    const label = reconnect ? 'reconectar' : 'conectar';
     setConnecting(true);
-    const res = await apiClient.get<{ url: string }>(API_CONNECT_URL);
-    setConnecting(false);
+    setRedirectingToMp(true);
+    const qs = reconnect ? '?reconnect=true' : '';
+    const res = await apiClient.get<{ url: string }>(`${API_CONNECT_URL}${qs}`, { cache: 'no-store' });
     if (res.error || !res.data?.url) {
-      toast.error(res.error || 'Não foi possível iniciar o OAuth.');
+      setConnecting(false);
+      setRedirectingToMp(false);
+      toast.error(res.error || `Não foi possível iniciar o OAuth para ${label}.`);
       return;
     }
     window.location.href = res.data.url;
+  };
+
+  const handleConnect = async () => {
+    await startOAuthFlow(false);
+  };
+
+  const handleReconnect = async () => {
+    await startOAuthFlow(true);
   };
 
   const handleTest = async () => {
@@ -142,6 +155,16 @@ export const MercadoPagoGatewaySection: React.FC = () => {
       <div className="flex items-center gap-2 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
         Carregando…
+      </div>
+    );
+  }
+
+  if (redirectingToMp) {
+    return (
+      <div className="mx-auto w-full max-w-3xl flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm font-medium text-foreground">Redirecionando para o Mercado Pago…</p>
+        <p className="text-xs text-center max-w-sm">Complete a autorização na página do Mercado Pago para atualizar a conexão.</p>
       </div>
     );
   }
@@ -240,10 +263,25 @@ export const MercadoPagoGatewaySection: React.FC = () => {
           )}
 
           <div className="flex flex-wrap gap-2 pt-2">
-            <Button type="button" onClick={() => void handleConnect()} disabled={connecting || !availability.oauth_client_configured}>
-              {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlugZap className="mr-2 h-4 w-4" />}
-              Conectar Mercado Pago
-            </Button>
+            {!status?.connected ? (
+              <Button
+                type="button"
+                onClick={() => void handleConnect()}
+                disabled={connecting || !availability.oauth_client_configured}
+              >
+                {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlugZap className="mr-2 h-4 w-4" />}
+                Conectar Mercado Pago
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={() => void handleReconnect()}
+                disabled={connecting || !availability.oauth_client_configured}
+              >
+                {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                Reconectar
+              </Button>
+            )}
             <Button type="button" variant="outline" onClick={() => void handleTest()} disabled={testing || !status?.connected}>
               {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
               Testar conexão

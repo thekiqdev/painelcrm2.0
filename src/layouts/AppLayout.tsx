@@ -157,7 +157,7 @@ const Nav = () => {
   const navLinkClassFn = (isActive: boolean) =>
     cn(
       'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
-      isActive
+    isActive
         ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-sm'
         : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/55 hover:text-sidebar-accent-foreground',
     );
@@ -193,7 +193,7 @@ const Nav = () => {
       className="border-r border-sidebar-border/70 bg-sidebar/95 shadow-sm transition-[width] duration-300"
     >
       <SidebarHeader
-        className={cn(
+      className={cn(
           'border-0 p-2',
           collapsed
             ? 'flex flex-col items-stretch gap-1.5'
@@ -235,7 +235,7 @@ const Nav = () => {
             )}
           </SidebarMenu>
         </SidebarGroup>
-
+        
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
             Relacionamento
@@ -279,7 +279,7 @@ const Nav = () => {
             <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
               Faturamento
             </SidebarGroupLabel>
-            <SidebarGroupContent>
+          <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 <NavLinkItem
                   to="/customer-invoices"
@@ -373,7 +373,7 @@ const Nav = () => {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
+        
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
             Financeiro
@@ -409,17 +409,17 @@ const Nav = () => {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
+        
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
             Configurações
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {show(hasSettings, 'settings') && (
+            {show(hasSettings, 'settings') && (
                 <NavLinkItem to="/settings" icon={Settings} label="Configurações" preload={() => routePreload.settings()} />
-              )}
-            </SidebarMenu>
+            )}
+          </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
@@ -770,7 +770,7 @@ const Header = () => {
       return;
     }
     if (!commandDialogOpen) {
-      setPopoverOpen(true);
+    setPopoverOpen(true);
     }
   }, [searchTypesCsv, qTrim, commandDialogOpen]);
 
@@ -908,7 +908,7 @@ const Header = () => {
           }
         }}
       >
-        <CommandInput
+        <CommandInput 
           placeholder="Digite para buscar (mín. 2 caracteres)…"
           value={commandSearchQuery}
           autoComplete="off"
@@ -944,10 +944,10 @@ const Header = () => {
       
       <div className="flex min-w-0 shrink-0 items-center gap-0.5 sm:gap-1">
         {showCreateMenu ? (
-          <DropdownMenu>
+        <DropdownMenu>
             <Tooltip delayDuration={400}>
               <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
+          <DropdownMenuTrigger asChild>
                   <Button
                     type="button"
                     variant="ghost"
@@ -956,8 +956,8 @@ const Header = () => {
                     aria-label="Criar novo"
                   >
                     <Plus className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.25} aria-hidden />
-                  </Button>
-                </DropdownMenuTrigger>
+            </Button>
+          </DropdownMenuTrigger>
               </TooltipTrigger>
               <TooltipContent side="bottom" align="end" className="text-xs font-medium">
                 Criar novo
@@ -969,12 +969,12 @@ const Header = () => {
               className="min-w-[13.75rem] rounded-xl border-border/50 bg-popover/95 p-1 shadow-md backdrop-blur-sm dark:bg-popover"
             >
               {createMenuContent}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          </DropdownMenuContent>
+        </DropdownMenu>
         ) : null}
         <ThemeToggle />
         <HeaderNotificationBell unreadCount={notifUnread} />
-
+        
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="h-9 max-w-[min(100%,14rem)] gap-2 rounded-lg px-2 hover:bg-accent/80">
@@ -1066,7 +1066,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
       >
         <div className="flex min-h-screen w-full min-w-0">
           <div className="hidden md:block">
-            <Nav />
+          <Nav />
           </div>
           <MobileShellChromeProvider>
             <AppLayoutMainColumn>{children}</AppLayoutMainColumn>

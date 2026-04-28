@@ -1,6 +1,7 @@
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { ChatInstance, BootstrapSyncMeta } from '@/services/chat';
+import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 
 const isValidUrl = (url: unknown): url is string => typeof url === 'string' && url.trim().length > 0;
 
@@ -137,7 +138,7 @@ export function getWhatsAppInstanceProfileInfo(instance: ChatInstance): {
     }
   }
 
-  return { phone, name, pictureUrl };
+  return { phone, name, pictureUrl: chatAvatarUrlForImgSrc(pictureUrl) };
 }
 
 /** Formata dígitos para exibição BR (melhor esforço). */

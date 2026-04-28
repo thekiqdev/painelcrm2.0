@@ -71,6 +71,9 @@ export default function PublicAppointmentConfirmation() {
   const [previewHasConflict, setPreviewHasConflict] = useState(false);
   const [previewConflicts, setPreviewConflicts] = useState<ConflictRow[]>([]);
   const [rescheduleIso, setRescheduleIso] = useState<{ start: string; end: string } | null>(null);
+  const [publicSlots, setPublicSlots] = useState<{ starts_at: string; ends_at: string }[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotDurationMin, setSlotDurationMin] = useState(60);
 
   const encodedToken = useMemo(() => encodeURIComponent((token || "").trim()), [token]);
 
@@ -108,6 +111,18 @@ export default function PublicAppointmentConfirmation() {
     setPreviewHasConflict(false);
     setPreviewConflicts([]);
     setRescheduleIso(null);
+    setPublicSlots([]);
+    setSlotsLoading(true);
+    void publicApiGet<{
+      slots: { starts_at: string; ends_at: string }[];
+      default_meeting_duration_minutes: number;
+    }>(`/api/public/appointments/confirm/${encodedToken}/availability`).then((res) => {
+      setSlotsLoading(false);
+      if (res.data) {
+        setPublicSlots(res.data.slots || []);
+        setSlotDurationMin(res.data.default_meeting_duration_minutes ?? 60);
+      }
+    });
   }
 
   function cancelRescheduleFlow() {
@@ -129,8 +144,9 @@ export default function PublicAppointmentConfirmation() {
       setError("O horário final deve ser depois do início.");
       return;
     }
-    if (new Date(e).getTime() - new Date(s).getTime() > 8 * 60 * 60 * 1000) {
-      setError("A duração não pode exceder 8 horas.");
+    const durMin = (new Date(e).getTime() - new Date(s).getTime()) / 60_000;
+    if (Math.abs(durMin - slotDurationMin) > 0.5) {
+      setError(`A duração deve ser de ${slotDurationMin} minutos conforme a disponibilidade do responsável.`);
       return;
     }
     if (new Date(s).getTime() < Date.now() - 60_000) {
@@ -311,6 +327,36 @@ export default function PublicAppointmentConfirmation() {
           {inReschedule && reschedulePhase === "form" ? (
             <div className="space-y-4 rounded-lg border p-4">
               <p className="text-sm font-medium">Escolha uma nova data e horário para este compromisso.</p>
+              {slotsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> A carregar horários disponíveis…
+                </div>
+              ) : publicSlots.length > 0 ? (
+                <div className="space-y-2">
+                  <Label>Horários livres sugeridos</Label>
+                  <div className="max-h-48 overflow-y-auto flex flex-wrap gap-2">
+                    {publicSlots.map((sl) => (
+                      <Button
+                        key={sl.starts_at}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => {
+                          setRescheduleStartLocal(isoToDatetimeLocalValue(sl.starts_at));
+                          setRescheduleEndLocal(isoToDatetimeLocalValue(sl.ends_at));
+                        }}
+                      >
+                        {formatDatePt(sl.starts_at)} {formatTimePt(sl.starts_at)}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Os intervalos refletem a disponibilidade do responsável (ou da empresa, se não houver regra
+                    personalizada).
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label htmlFor="rs-start">Início</Label>

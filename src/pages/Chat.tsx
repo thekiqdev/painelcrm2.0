@@ -110,6 +110,7 @@ import {
   shouldShowCommunicationChannelBadge,
 } from '@/lib/communicationChannelUi';
 import { isChatClientProfileReturn, isChatListReturnPath } from '@/lib/chatListNavigation';
+import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import {
   logChatRealtimeDuplicateSkipped,
   logChatRealtimeLegacyEventReceived,
@@ -277,7 +278,7 @@ function resolveInstanceConnectionUi(instance: ChatInstance | null): {
     instance.name;
   const phoneRaw = readInstanceMetaString(m, ['connectedPhone', 'connected_phone', 'phone']);
   return {
-    avatarUrl: pic,
+    avatarUrl: chatAvatarUrlForImgSrc(pic),
     displayName: name,
     phoneDisplay: formatConnectedPhoneForDisplay(phoneRaw || ''),
   };
@@ -410,7 +411,7 @@ const Chat = () => {
   // Estados para formulários
   const [clients, setClients] = useState<any[]>([]);
   const [ticketCategories, setTicketCategories] = useState<any[]>([]);
-
+  
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
     try {
@@ -2351,7 +2352,7 @@ const Chat = () => {
           }),
           proposal_link: proposalLink,
         }, created.id);
-    } catch (error) {
+      } catch (error) {
         console.error('Erro ao notificar proposta criada no chat:', error);
       }
     }
@@ -2565,7 +2566,7 @@ const Chat = () => {
               ? `${window.location.origin}/contract-view/${createdWithView.public_view.token}`
               : undefined),
         }, createdWithView.id);
-    } catch (error) {
+      } catch (error) {
         console.error('Erro ao notificar contrato criado no chat:', error);
       }
     }
@@ -3089,7 +3090,7 @@ const Chat = () => {
                         );
                       })}
                     </div>
-                                  <div className="mt-1 border-t border-border">
+                    <div className="mt-1 border-t border-border">
                       <div
                                       className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50"
                         onClick={handleAddConnection}
@@ -3295,11 +3296,11 @@ const Chat = () => {
                       ) : viewMode === 'proposal-create' ? (
                         <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0')}>
                           {!isMobile ? (
-                            <div className="mb-3">
-                              <Button variant="ghost" size="sm" onClick={handleBackFromProposalCreate}>
-                                Voltar para conversa
-                              </Button>
-                            </div>
+                          <div className="mb-3">
+                            <Button variant="ghost" size="sm" onClick={handleBackFromProposalCreate}>
+                              Voltar para conversa
+                            </Button>
+                          </div>
                           ) : null}
                           <ProposalCreateForm
                             key={`${selectedConversation.id}:${proposalKanbanModelId ?? 'noM'}:${proposalKanbanLegacyDraftId ?? 'noD'}`}
@@ -3350,28 +3351,28 @@ const Chat = () => {
                         >
                           <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0 pt-2')}>
                             {!isMobile ? (
-                              <div className="mb-3">
-                                <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
-                                  Voltar para conversa
-                                </Button>
-                              </div>
+                          <div className="mb-3">
+                            <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
+                              Voltar para conversa
+                            </Button>
+                          </div>
                             ) : null}
-                            <ContractCreateForm
-                              key={selectedConversation.id}
-                              embedded
-                              initialClientId={selectedConversation.client_id ?? null}
-                              initialSigners={chatContractInitialSigners}
-                              initialTitleHint={
-                                currentClient?.name || currentLead?.name
-                                  ? `Contrato — ${currentClient?.name || currentLead?.name}`
-                                  : ''
-                              }
-                              onBack={handleBackFromContractCreate}
-                              onCreated={(created, mode) => {
-                                void handleContractCreatedInChat(created, mode);
-                              }}
-                            />
-                          </CardContent>
+                          <ContractCreateForm
+                            key={selectedConversation.id}
+                            embedded
+                            initialClientId={selectedConversation.client_id ?? null}
+                            initialSigners={chatContractInitialSigners}
+                            initialTitleHint={
+                              currentClient?.name || currentLead?.name
+                                ? `Contrato — ${currentClient?.name || currentLead?.name}`
+                                : ''
+                            }
+                            onBack={handleBackFromContractCreate}
+                            onCreated={(created, mode) => {
+                              void handleContractCreatedInChat(created, mode);
+                            }}
+                          />
+                        </CardContent>
                         </MobileCommerceScreenLayout>
                       ) : (
                         <>
@@ -3687,8 +3688,8 @@ const Chat = () => {
                                 <div 
                                       className={`max-w-[min(88%,28rem)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm md:max-w-[min(82%,28rem)] md:rounded-xl ${
                                         message.direction === 'outgoing'
-                                          ? 'bg-primary text-primary-foreground ring-1 ring-primary/20'
-                                          : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
+                                      ? 'bg-primary text-primary-foreground ring-1 ring-primary/20' 
+                                      : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
                                   }`}
                                 >
                                       <ChatBubbleContent message={message} />
@@ -3798,9 +3799,9 @@ const Chat = () => {
                             <Textarea
                               ref={composerTextareaRef}
                               rows={1}
-                            placeholder="Mensagem ou legenda da imagem..."
+                              placeholder="Mensagem ou legenda da imagem..."
                               value={newMessage}
-                            onChange={(event) => setNewMessage(event.target.value)}
+                              onChange={(event) => setNewMessage(event.target.value)}
                               onKeyDown={(e) => {
                                 if (!isMobile) return;
                                 if (e.key !== 'Enter' || e.shiftKey) return;

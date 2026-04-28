@@ -1,6 +1,12 @@
 import { Router } from 'express';
 import { appointmentsAuth } from '../middleware/auth.js';
 import {
+  getTenantAvailabilitySettingsHandler,
+  patchTenantAvailabilitySettingsHandler,
+  getUserAvailabilitySettingsHandler,
+  patchUserAvailabilitySettingsHandler,
+} from '../controllers/appointmentAvailabilityController.js';
+import {
   getAppointmentsHandler,
   getAppointmentConflictsHandler,
   getAppointmentsReportsSummaryHandler,
@@ -22,6 +28,11 @@ import {
 
 const router = Router();
 router.use(...appointmentsAuth);
+
+router.get('/tenant-availability-settings', getTenantAvailabilitySettingsHandler);
+router.patch('/tenant-availability-settings', patchTenantAvailabilitySettingsHandler);
+router.get('/user-availability-settings', getUserAvailabilitySettingsHandler);
+router.patch('/user-availability-settings', patchUserAvailabilitySettingsHandler);
 
 router.get('/', getAppointmentsHandler);
 router.get('/conflicts', getAppointmentConflictsHandler);

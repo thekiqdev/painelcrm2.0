@@ -31,7 +31,13 @@ export async function getMercadoPagoConnectUrl(req: Request, res: Response): Pro
       res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
-    const url = await buildMercadoPagoConnectUrl({ tenantId, userId });
+    const q = req.query ?? {};
+    const reconnect =
+      q.reconnect === 'true' ||
+      q.reconnect === '1' ||
+      q.force === 'true' ||
+      q.force === '1';
+    const url = await buildMercadoPagoConnectUrl({ tenantId, userId, reconnect });
     res.json({ url });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

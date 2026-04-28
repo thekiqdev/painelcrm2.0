@@ -268,7 +268,10 @@ class ApiClient {
     }
   }
 
-  async get<T>(endpoint: string, init?: Pick<RequestInit, 'signal'>): Promise<ApiResponse<T>> {
+  async get<T>(
+    endpoint: string,
+    init?: Pick<RequestInit, 'signal' | 'cache'>,
+  ): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, { method: 'GET', ...init });
   }
 

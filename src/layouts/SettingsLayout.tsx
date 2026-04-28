@@ -22,7 +22,8 @@ export type SettingSection =
   | "domain"
   | "messageTemplates"
   | "paymentGateway"
-  | "googleCalendar";
+  | "googleCalendar"
+  | "agendaAvailability";
 
 interface SettingsLayoutContextValue {
   activeSection: SettingSection;
@@ -48,6 +49,7 @@ const SECTION_QUERY_VALUES: SettingSection[] = [
   "messageTemplates",
   "paymentGateway",
   "googleCalendar",
+  "agendaAvailability",
 ];
 
 function sectionFromQuery(raw: string | null): SettingSection | null {

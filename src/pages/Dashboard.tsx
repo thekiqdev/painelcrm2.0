@@ -706,7 +706,7 @@ const Dashboard = () => {
       {/* Linha principal */}
       <div className="hidden gap-6 md:grid md:grid-cols-2 lg:grid-cols-4">
         <Card className="hover:shadow-md transition-shadow">
-          <CardHeader className="pb-2">
+            <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2"><DollarSign className="h-4 w-4 text-emerald-600" />Receita recebida</CardDescription>
             <CardTitle className="text-2xl">{formatCurrency(overview?.sales.received_revenue ?? 0)}</CardTitle>
           </CardHeader>
@@ -741,7 +741,7 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">Receita recebida / vendas pagas.</CardContent>
         </Card>
-      </div>
+                </div>
 
       {/* Gráfico receita vs prevista e funil */}
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
@@ -775,9 +775,9 @@ const Dashboard = () => {
                 <Label htmlFor="dash-chart-projected" className="cursor-pointer text-sm font-normal">
                   Receita prevista
                 </Label>
+                </div>
               </div>
-      </div>
-          </CardHeader>
+            </CardHeader>
           <CardContent className="h-[320px]">
             <div className="h-80">
               {!chartShowReceived && !chartShowProjected ? (
@@ -837,9 +837,9 @@ const Dashboard = () => {
                   </BarChart>
               </ResponsiveContainer>
               )}
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+            </CardContent>
+          </Card>
         <Card>
           <CardHeader>
             <CardTitle>Funil de vendas</CardTitle>
@@ -872,13 +872,13 @@ const Dashboard = () => {
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-3">
         {show(hasAgenda, "agenda") ? (
           <Card>
-            <CardHeader>
+          <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <CalendarClock className="h-4 w-4 text-sky-600" />
                 Próximos compromissos
               </CardTitle>
               <CardDescription>Até três eventos futuros da sua agenda</CardDescription>
-            </CardHeader>
+          </CardHeader>
             <CardContent className="space-y-2">
               {(overview?.upcoming_appointments ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">Nenhum compromisso futuro agendado.</p>
@@ -937,15 +937,15 @@ const Dashboard = () => {
                           <Link to={a.task_href}>Ver tarefa</Link>
                         </Button>
                       ) : null}
-                    </div>
+            </div>
                   </div>
                 ))
               )}
               <Button asChild variant="outline" className="w-full">
                 <Link to="/agenda?confirmation_status=needs_reschedule">Abrir fila de remarcação</Link>
               </Button>
-            </CardContent>
-          </Card>
+          </CardContent>
+        </Card>
         ) : null}
 
         {show(hasTasks, "tasks") ? (
@@ -986,8 +986,8 @@ const Dashboard = () => {
                   </Link>
                 ));
               })()}
-            </CardContent>
-          </Card>
+          </CardContent>
+        </Card>
         ) : null}
 
         {show(hasProjects, "projects") ? (
@@ -1011,7 +1011,7 @@ const Dashboard = () => {
                       <Badge variant="outline" className="text-[10px]">
                         {project.progress_pct}%
                       </Badge>
-                    </div>
+      </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {project.pending_tasks} pendente(s)
                       {project.due_date ? ` · prazo ${new Date(`${project.due_date}T00:00:00`).toLocaleDateString("pt-BR")}` : ""}
@@ -1025,10 +1025,10 @@ const Dashboard = () => {
 
         {show(hasTickets, "tickets") ? (
           <Card>
-            <CardHeader>
+          <CardHeader>
               <CardTitle>Tickets</CardTitle>
               <CardDescription>Chamados da empresa</CardDescription>
-            </CardHeader>
+          </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-lg border p-2">
@@ -1057,7 +1057,7 @@ const Dashboard = () => {
                       <p className="mt-1 text-[11px] text-muted-foreground">{ticketStatusShort(t.status)}</p>
                     </Link>
                   ))}
-                </div>
+            </div>
               ) : (
                 <p className="text-sm text-muted-foreground">Nenhum ticket recente.</p>
               )}
@@ -1067,7 +1067,7 @@ const Dashboard = () => {
             </CardContent>
           </Card>
         ) : null}
-      </div>
+                        </div>
 
       {/* Operação + Clientes */}
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
@@ -1088,7 +1088,7 @@ const Dashboard = () => {
                     <div className="rounded-lg border bg-muted/20 p-3">
                       <p className="text-xs text-muted-foreground">Em atendimento (você)</p>
                       <p className="text-xl font-semibold tabular-nums">{overview.agent_attendance.my_in_service}</p>
-                    </div>
+                      </div>
                     <div className="rounded-lg border bg-muted/20 p-3">
                       <p className="text-xs text-muted-foreground">Na sua fila</p>
                       <p className="text-xl font-semibold tabular-nums">{overview.agent_attendance.my_queued}</p>
@@ -1148,8 +1148,8 @@ const Dashboard = () => {
                             </p>
                           </Link>
                         ))
-                      )}
-                    </div>
+              )}
+            </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 border-t pt-3">
@@ -1223,7 +1223,7 @@ const Dashboard = () => {
             </Link>
           </CardContent>
         </Card>
-      </div>
+                    </div>
 
       {/* Financeiro resumido + alertas */}
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
@@ -1280,7 +1280,7 @@ const Dashboard = () => {
                     <p className="text-xs text-muted-foreground">
                       {new Date(`${item.due_date}T00:00:00`).toLocaleDateString("pt-BR")} · {payableTag(item.due_date)}
                     </p>
-                  </div>
+                    </div>
                   <p className="text-sm font-semibold tabular-nums">{formatCurrencyCents(item.amount_cents)}</p>
                 </Link>
                 ))

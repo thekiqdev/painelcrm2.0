@@ -103,6 +103,7 @@ import { processAnnouncementSendRecipientsBatch } from './services/announcements
 import { runAppointmentRemindersOnce } from './services/appointmentReminderWorkerService.js';
 import { runPendingConfirmationAutomationOnce } from './services/appointmentAutomationService.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
+import { getAllowedCorsOrigins } from './config/corsOrigins.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -126,25 +127,8 @@ app.use(
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
-// CORS - aceitar FRONTEND_URL e também URLs do Easypanel
-const extraOrigins = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
-const parsedExtraOrigins = extraOrigins
-  .split(',')
-  .map((url) => url.trim())
-  .filter((url) => url.length > 0)
-  .flatMap((url) => [url, url.replace(/\/$/, '')]);
-
-const corsOrigins: string[] = [
-  ...new Set([
-    ...parsedExtraOrigins,
-    'http://localhost:5173',
-    'http://localhost:8080',
-    'http://localhost:8081',
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:8080',
-    'http://127.0.0.1:8081',
-  ]),
-];
+// CORS - aceitar FRONTEND_URL(S) e hosts locais (dev); mesma lista em Socket.IO (corsOrigins.ts)
+const corsOrigins = getAllowedCorsOrigins();
 
 app.use(cors({
   origin: corsOrigins.length > 0 ? corsOrigins : true, // Se não houver URLs, aceitar todas (apenas para debug)

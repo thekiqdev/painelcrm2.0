@@ -1300,141 +1300,141 @@ const Clients = () => {
                   className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
                   aria-hidden
                 />
-                <Input
-                  type="search"
+            <Input
+              type="search"
                   placeholder="Buscar nome, empresa ou e-mail…"
                   className="h-10 pl-9"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
                   aria-label="Buscar clientes"
-                />
-              </div>
-              {canCreate(MODULE_CLIENTS) && (
-                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                  <DialogTrigger asChild>
+            />
+          </div>
+          {canCreate(MODULE_CLIENTS) && (
+          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <DialogTrigger asChild>
                     <Button type="button" className="h-10 shrink-0 touch-manipulation sm:px-4">
-                      <Plus className="mr-2 h-4 w-4" />
+                <Plus className="mr-2 h-4 w-4" />
                       Novo cliente
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-2xl">
-                    <DialogHeader>
-                      <DialogTitle>Adicionar Cliente</DialogTitle>
-                      <DialogDescription>
-                        Preencha os dados para adicionar um novo cliente ao sistema.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <form onSubmit={handleAddClient}>
-                      <div className="grid gap-6 py-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="name">Nome</Label>
-                            <Input
-                              id="name"
-                              placeholder="Nome completo"
-                              required
-                              value={newClient.name}
-                              onChange={handleInputChange}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="company">Empresa</Label>
-                            <Input
-                              id="company"
-                              placeholder="Nome da empresa"
-                              value={newClient.company}
-                              onChange={handleInputChange}
-                            />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="email">E-mail</Label>
-                            <Input
-                              id="email"
-                              type="email"
-                              placeholder="email@exemplo.com"
-                              required
-                              value={newClient.email}
-                              onChange={handleInputChange}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="phone">Telefone</Label>
-                            <Input
-                              id="phone"
-                              placeholder="(00) 00000-0000"
-                              value={newClient.phone}
-                              onChange={handleInputChange}
-                            />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
-                            <Input
-                              id="cpf_cnpj"
-                              placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                              value={newClient.cpf_cnpj}
-                              onChange={handleInputChange}
-                            />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="status">Status</Label>
-                            <Select
-                              defaultValue="Ativo"
-                              onValueChange={(value) => handleSelectChange("status", value)}
-                            >
-                              <SelectTrigger id="status">
-                                <SelectValue placeholder="Selecione" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Ativo">Ativo</SelectItem>
-                                <SelectItem value="Inativo">Inativo</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="group_id">Grupo</Label>
-                            <Select
-                              defaultValue=""
-                              onValueChange={(value) => handleSelectChange("group_id", value)}
-                            >
-                              <SelectTrigger id="group_id">
-                                <SelectValue placeholder="Selecione um grupo" />
-                              </SelectTrigger>
-                              <SelectContent>
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Adicionar Cliente</DialogTitle>
+                <DialogDescription>
+                  Preencha os dados para adicionar um novo cliente ao sistema.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleAddClient}>
+                <div className="grid gap-6 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Nome</Label>
+                      <Input 
+                        id="name" 
+                        placeholder="Nome completo" 
+                        required 
+                        value={newClient.name}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="company">Empresa</Label>
+                      <Input 
+                        id="company" 
+                        placeholder="Nome da empresa" 
+                        value={newClient.company}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="email">E-mail</Label>
+                      <Input 
+                        id="email" 
+                        type="email" 
+                        placeholder="email@exemplo.com" 
+                        required 
+                        value={newClient.email}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Telefone</Label>
+                      <Input 
+                        id="phone" 
+                        placeholder="(00) 00000-0000" 
+                        value={newClient.phone}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+                      <Input 
+                        id="cpf_cnpj" 
+                        placeholder="000.000.000-00 ou 00.000.000/0000-00" 
+                        value={newClient.cpf_cnpj}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="status">Status</Label>
+                      <Select 
+                        defaultValue="Ativo"
+                        onValueChange={(value) => handleSelectChange("status", value)}
+                      >
+                        <SelectTrigger id="status">
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Ativo">Ativo</SelectItem>
+                          <SelectItem value="Inativo">Inativo</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="group_id">Grupo</Label>
+                      <Select 
+                        defaultValue=""
+                        onValueChange={(value) => handleSelectChange("group_id", value)}
+                      >
+                        <SelectTrigger id="group_id">
+                          <SelectValue placeholder="Selecione um grupo" />
+                        </SelectTrigger>
+                        <SelectContent>
                                 {clientGroups.map((group) => (
                                   <SelectItem key={group.id} value={group.id}>
                                     {group.name}
                                   </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="notes">Observações</Label>
-                          <Textarea
-                            id="notes"
-                            placeholder="Adicione informações relevantes sobre este cliente"
-                            value={newClient.notes || ""}
-                            onChange={handleInputChange}
-                          />
-                        </div>
-                      </div>
-                      <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                          Cancelar
-                        </Button>
-                        <Button type="submit">Salvar Cliente</Button>
-                      </DialogFooter>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              )}
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="notes">Observações</Label>
+                    <Textarea 
+                      id="notes" 
+                      placeholder="Adicione informações relevantes sobre este cliente" 
+                      value={newClient.notes || ""}
+                      onChange={handleInputChange}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button type="submit">Salvar Cliente</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+          )}
             </div>
           </>
         }
@@ -1897,29 +1897,29 @@ const Clients = () => {
               {sortedClients.length === 0
                 ? "Nenhum resultado"
                 : `Mostrando ${paginatedClients.length} de ${sortedClients.length} neste filtro`}
-            </p>
-          </div>
+              </p>
+            </div>
           <div className="hidden items-center gap-2 md:flex">
             <span className="text-sm text-muted-foreground">Por página</span>
-            <Select
-              value={itemsPerPage.toString()}
-              onValueChange={(value) => {
-                setItemsPerPage(Number(value));
+              <Select 
+                value={itemsPerPage.toString()} 
+                onValueChange={(value) => {
+                  setItemsPerPage(Number(value));
                 setCurrentPage(1);
-              }}
-            >
+                }}
+              >
               <SelectTrigger className="h-10 w-[88px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
                 {itemsPerPageOptions.map((option) => (
-                  <SelectItem key={option} value={option.toString()}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                    <SelectItem key={option} value={option.toString()}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
         </CardHeader>
         <CardContent className="pt-4">
           {isLoading && clients.length === 0 ? (
@@ -1931,28 +1931,28 @@ const Clients = () => {
           ) : (
             <>
               <div className={COMMERCIAL_TABLE_DESKTOP_WRAP}>
-                <Table>
-                  <TableHeader>
+            <Table>
+              <TableHeader>
                     <TableRow className="border-b border-border/60 hover:bg-transparent">
-                      <TableHead className="w-12" aria-label="Avatar" />
+                  <TableHead className="w-12" aria-label="Avatar" />
                       <TableHead
                         className="min-w-[200px] cursor-pointer text-xs font-medium text-muted-foreground"
                         onClick={() => handleSort("name")}
                       >
-                        <div className="flex items-center">
+                    <div className="flex items-center">
                           Cliente
-                          <SortIcon field="name" />
-                        </div>
-                      </TableHead>
+                      <SortIcon field="name" />
+                    </div>
+                  </TableHead>
                       <TableHead
                         className="hidden cursor-pointer text-xs font-medium text-muted-foreground lg:table-cell lg:min-w-[160px]"
                         onClick={() => handleSort("company")}
                       >
-                        <div className="flex items-center">
-                          Empresa
-                          <SortIcon field="company" />
-                        </div>
-                      </TableHead>
+                    <div className="flex items-center">
+                      Empresa
+                      <SortIcon field="company" />
+                    </div>
+                  </TableHead>
                       <TableHead className="hidden text-xs font-medium text-muted-foreground xl:table-cell xl:max-w-[200px]">
                         E-mail
                       </TableHead>
@@ -1964,34 +1964,34 @@ const Clients = () => {
                         Grupo
                       </TableHead>
                       <TableHead className="w-[132px] text-right text-xs font-medium text-muted-foreground">Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {paginatedClients.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center text-muted-foreground">
-                          Nenhum cliente encontrado com os critérios de busca
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      paginatedClients.map((client) => {
-                        const listAvatar = resolveProfileAvatarUrl(
-                          client,
-                          client.whatsapp_avatar_url ?? null
-                        );
-                        return (
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedClients.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-muted-foreground">
+                      Nenhum cliente encontrado com os critérios de busca
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  paginatedClients.map((client) => {
+                    const listAvatar = resolveProfileAvatarUrl(
+                      client,
+                      client.whatsapp_avatar_url ?? null
+                    );
+                    return (
                         <TableRow
                           key={client.id}
                           className="group/row border-border/40 transition-colors hover:bg-muted/50"
                         >
                           <TableCell className="w-12 align-middle">
                             <Avatar className="h-9 w-9 ring-1 ring-border/60">
-                              {listAvatar.src ? (
-                                <AvatarImage src={listAvatar.src} alt={client.name} />
-                              ) : null}
-                              <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
-                            </Avatar>
-                          </TableCell>
+                          {listAvatar.src ? (
+                            <AvatarImage src={listAvatar.src} alt={client.name} />
+                          ) : null}
+                          <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                        </Avatar>
+                      </TableCell>
                           <TableCell className="align-middle">
                             <button
                               type="button"
@@ -2020,7 +2020,7 @@ const Clients = () => {
                             {client.phone || "—"}
                           </TableCell>
                           <TableCell className="align-middle">
-                            <Badge
+                        <Badge 
                               variant="outline"
                               className={cn(
                                 "rounded-md px-2.5 py-1 text-xs font-medium",
@@ -2032,10 +2032,10 @@ const Clients = () => {
                                   client.status !== "Inativo" &&
                                   "border-border/60",
                               )}
-                            >
-                              {client.status}
-                            </Badge>
-                          </TableCell>
+                        >
+                          {client.status}
+                        </Badge>
+                      </TableCell>
                           <TableCell className="hidden align-middle text-sm text-muted-foreground lg:table-cell">
                             <span className="line-clamp-2 max-w-[160px]">{client.group || "—"}</span>
                           </TableCell>
@@ -2051,25 +2051,25 @@ const Clients = () => {
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                                   <Button variant="outline" size="sm" className="h-8 gap-1 px-2" aria-label="Mais ações">
-                                    <MoreVertical className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
                                   <DropdownMenuLabel>Mais ações</DropdownMenuLabel>
-                                  <DropdownMenuSeparator />
+                            <DropdownMenuSeparator />
                                   <DropdownMenuItem
                                     onClick={(e) => {
-                                      e.stopPropagation();
+                              e.stopPropagation();
                                       saveClientsListScrollPosition();
-                                      navigate(`/clients/${client.id}/tasks`);
+                              navigate(`/clients/${client.id}/tasks`);
                                     }}
                                   >
                                     <Plus className="mr-2 h-4 w-4" />
                                     Adicionar tarefa
-                                  </DropdownMenuItem>
+                            </DropdownMenuItem>
                                   {canCreate("proposals") && (
                                     <DropdownMenuItem asChild>
                                       <Link
@@ -2082,7 +2082,7 @@ const Clients = () => {
                                         <UserPlus className="mr-2 h-4 w-4" />
                                         Nova proposta
                                       </Link>
-                                    </DropdownMenuItem>
+                            </DropdownMenuItem>
                                   )}
                                   {canCreate("billing") ? (
                                     <>
@@ -2098,7 +2098,7 @@ const Clients = () => {
                                           <Receipt className="mr-2 h-4 w-4" />
                                           Nova fatura
                                         </Link>
-                                      </DropdownMenuItem>
+                            </DropdownMenuItem>
                                       <DropdownMenuItem asChild>
                                         <Link
                                           to={appendClientsListReturnPath(
@@ -2127,29 +2127,29 @@ const Clients = () => {
                                       </Link>
                                     </DropdownMenuItem>
                                   ) : null}
-                                  <DropdownMenuSeparator />
-                                  {canDelete(MODULE_CLIENTS) && (
-                                    <DropdownMenuItem
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        confirmDeleteClient(client);
-                                      }}
-                                      className="text-destructive focus:text-destructive"
-                                    >
+                            <DropdownMenuSeparator />
+                            {canDelete(MODULE_CLIENTS) && (
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                confirmDeleteClient(client);
+                              }}
+                              className="text-destructive focus:text-destructive"
+                            >
                                       <Trash2 className="mr-2 h-4 w-4" />
                                       Excluir cliente
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                            </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                             </div>
-                          </TableCell>
-                        </TableRow>
-                        );
-                      })
-                    )}
-                  </TableBody>
-                </Table>
+                      </TableCell>
+                    </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
               </div>
 
               <div className="space-y-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
@@ -2352,8 +2352,8 @@ const Clients = () => {
               </p>
               <Pagination className="justify-center sm:justify-end">
                 <PaginationContent className="flex-wrap gap-1">{renderPagination()}</PaginationContent>
-              </Pagination>
-            </div>
+            </Pagination>
+          </div>
           ) : null}
         </CardContent>
       </Card>
@@ -2389,7 +2389,7 @@ const Clients = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      </div>
+    </div>
     </CommercialListingPageShell>
   );
 };

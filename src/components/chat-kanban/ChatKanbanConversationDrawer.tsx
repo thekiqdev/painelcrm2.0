@@ -16,6 +16,7 @@ import type { ChatKanbanBoardCard } from '@/services/chatKanban';
 import { kanbanCardPhoneLine, kanbanCardTitle } from '@/utils/chatKanbanCardDisplay';
 import { useAuth } from '@/contexts/AuthContext';
 import { buildKanbanDrawerTemplateContext } from '@/utils/kanbanDrawerTemplateContext';
+import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -186,6 +187,7 @@ export function ChatKanbanConversationDrawer({
 
   const title = card ? kanbanCardTitle(card) : '';
   const phone = card ? kanbanCardPhoneLine(card) : null;
+  const convAvatar = card ? chatAvatarUrlForImgSrc(card.conv_avatar_url) : null;
 
   return (
     <>
@@ -213,8 +215,8 @@ export function ChatKanbanConversationDrawer({
         <SheetHeader className="px-4 py-3 border-b space-y-0 text-left shrink-0 bg-muted/20">
           <div className="flex items-start gap-3 pr-8">
             <Avatar className="h-11 w-11 rounded-lg shrink-0">
-              {card?.conv_avatar_url ? (
-                <AvatarImage src={card.conv_avatar_url} alt="" className="object-cover" />
+              {convAvatar ? (
+                <AvatarImage src={convAvatar} alt="" className="object-cover" />
               ) : null}
               <AvatarFallback className="rounded-lg bg-primary/10 text-primary font-semibold">
                 {title.slice(0, 2).toUpperCase() || '?'}

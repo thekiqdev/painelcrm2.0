@@ -22,9 +22,9 @@ const AvatarImage = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Image>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
 >(({ className, onError, ...props }, ref) => {
-  // Tratar erros de imagem silenciosamente (especialmente para imagens do WhatsApp que podem dar 403)
+  // Fallback: URLs de CDN WhatsApp devem ser filtradas em `chatAvatarUrlForImgSrc` antes do src.
   const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
-    // Silenciar erros de imagens do WhatsApp (403 é esperado devido a CORS)
+    // Silenciar erros residuais de domínios WhatsApp (403 anti-hotlink)
     const target = e.target as HTMLImageElement;
     if (target.src && (target.src.includes('whatsapp.net') || target.src.includes('whatsapp.com'))) {
       // Erro esperado, não logar

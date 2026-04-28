@@ -272,6 +272,10 @@ const order = [
   '181_mercado_pago_oauth_pkce.sql',
   /** Chat Engine Fase 4: colunas multicanal em conversas/mensagens + índice username em communication_contacts */
   '182_chat_engine_multichannel_phase4.sql',
+  /** Agenda Fase 5.1: disponibilidade tenant para remarcação pública */
+  '183_appointment_availability_settings.sql',
+  /** Agenda Fase 5.2: disponibilidade por utilizador (fallback tenant) */
+  '184_appointment_user_availability_settings.sql',
   'create-admin-user.sql',
 ];
 

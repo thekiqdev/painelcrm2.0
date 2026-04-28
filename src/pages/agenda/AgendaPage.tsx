@@ -729,7 +729,7 @@ export default function Agenda() {
       if ((row.recurrence_created_count ?? 1) > 1) {
         toast.success(`Série criada com ${row.recurrence_created_count} ocorrências.`);
       } else {
-        toast.success('Compromisso criado');
+      toast.success('Compromisso criado');
       }
       if (row.recurrence_warnings?.length) {
         toast.warning(`${row.recurrence_warnings.length} aviso(s) de conflito/sincronização na série.`);
@@ -789,7 +789,7 @@ export default function Agenda() {
     },
     onSuccess: (res, scope) => {
       if (scope === 'single') {
-        toast.success('Compromisso atualizado');
+      toast.success('Compromisso atualizado');
       } else {
         const count = typeof (res as { updated_count?: number })?.updated_count === 'number'
           ? (res as { updated_count?: number }).updated_count
@@ -1144,43 +1144,43 @@ export default function Agenda() {
         </div>
 
         {layoutMode === 'list' ? (
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-1">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1">
               <span className="mr-1 text-xs text-muted-foreground">Período</span>
-              <Button
-                type="button"
-                size="sm"
-                variant={datePreset === 'today' ? 'default' : 'outline'}
-                className="h-8"
-                onClick={applyToday}
-              >
-                Hoje
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={datePreset === 'week' ? 'default' : 'outline'}
-                className="h-8"
-                onClick={applyWeek}
-              >
-                Semana
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={datePreset === 'month' ? 'default' : 'outline'}
-                className="h-8"
-                onClick={applyMonth}
-              >
-                Mês
-              </Button>
-              {datePreset === 'custom' ? (
-                <span className="ml-1 text-xs text-muted-foreground">(personalizado)</span>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-0.5">
-              {datePreset === 'week' ? (
-                <>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'today' ? 'default' : 'outline'}
+              className="h-8"
+              onClick={applyToday}
+            >
+              Hoje
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'week' ? 'default' : 'outline'}
+              className="h-8"
+              onClick={applyWeek}
+            >
+              Semana
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'month' ? 'default' : 'outline'}
+              className="h-8"
+              onClick={applyMonth}
+            >
+              Mês
+            </Button>
+            {datePreset === 'custom' ? (
+              <span className="ml-1 text-xs text-muted-foreground">(personalizado)</span>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-0.5">
+            {datePreset === 'week' ? (
+              <>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1189,9 +1189,9 @@ export default function Agenda() {
                     onClick={() => goWeek(-1)}
                     aria-label="Semana anterior"
                   >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="px-0.5 text-xs text-muted-foreground">navegar semana</span>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-0.5 text-xs text-muted-foreground">navegar semana</span>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1200,12 +1200,12 @@ export default function Agenda() {
                     onClick={() => goWeek(1)}
                     aria-label="Próxima semana"
                   >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </>
-              ) : null}
-              {datePreset === 'month' ? (
-                <>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
+            {datePreset === 'month' ? (
+              <>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1214,9 +1214,9 @@ export default function Agenda() {
                     onClick={() => goMonth(-1)}
                     aria-label="Mês anterior"
                   >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="px-0.5 text-xs text-muted-foreground">navegar mês</span>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-0.5 text-xs text-muted-foreground">navegar mês</span>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1225,12 +1225,12 @@ export default function Agenda() {
                     onClick={() => goMonth(1)}
                     aria-label="Próximo mês"
                   >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </>
-              ) : null}
-            </div>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
           </div>
+        </div>
         ) : (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-1">
@@ -1256,83 +1256,83 @@ export default function Agenda() {
         >
           {layoutMode === 'list' ? (
             <>
-              <div className="space-y-1.5">
-                <Label>De</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start text-left font-normal">
-                      {format(dateFrom, 'P', { locale: ptBR })}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={ptBR} />
-                  </PopoverContent>
-                </Popover>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Até</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start text-left font-normal">
-                      {format(dateTo, 'P', { locale: ptBR })}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={ptBR} />
-                  </PopoverContent>
-                </Popover>
-              </div>
+        <div className="space-y-1.5">
+          <Label>De</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="w-full justify-start text-left font-normal">
+                {format(dateFrom, 'P', { locale: ptBR })}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={ptBR} />
+            </PopoverContent>
+          </Popover>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Até</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="w-full justify-start text-left font-normal">
+                {format(dateTo, 'P', { locale: ptBR })}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={ptBR} />
+            </PopoverContent>
+          </Popover>
+        </div>
             </>
           ) : null}
-          <div className="space-y-1.5">
-            <Label>Responsável</Label>
-            <Select
-              value={responsibleFilter || '__all__'}
-              onValueChange={(v) => setResponsibleFilter(v === '__all__' ? '' : v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                {members.map((m: Member) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Status</Label>
-            <Select value={statusFilter || '__all__'} onValueChange={(v) => setStatusFilter(v === '__all__' ? '' : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                <SelectItem value="scheduled">Agendado</SelectItem>
-                <SelectItem value="done">Concluído</SelectItem>
-                <SelectItem value="cancelled">Cancelado</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Tipo</Label>
-            <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter(v === '__all__' ? '' : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                {TYPE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="space-y-1.5">
+          <Label>Responsável</Label>
+          <Select
+            value={responsibleFilter || '__all__'}
+            onValueChange={(v) => setResponsibleFilter(v === '__all__' ? '' : v)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Todos</SelectItem>
+              {members.map((m: Member) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Status</Label>
+          <Select value={statusFilter || '__all__'} onValueChange={(v) => setStatusFilter(v === '__all__' ? '' : v)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Todos</SelectItem>
+              <SelectItem value="scheduled">Agendado</SelectItem>
+              <SelectItem value="done">Concluído</SelectItem>
+              <SelectItem value="cancelled">Cancelado</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Tipo</Label>
+          <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter(v === '__all__' ? '' : v)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Todos</SelectItem>
+              {TYPE_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
           <div className="space-y-1.5">
             <Label>Confirmação</Label>
             <Select
@@ -1364,19 +1364,19 @@ export default function Agenda() {
                 <SelectItem value="no_show">Não compareceu</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-        </div>
+                          </div>
+                            </div>
         {clientIdFromQuery ? (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-border/60 bg-muted/15 px-3 py-2 text-xs">
             <span className="text-muted-foreground">Compromissos filtrados por este cliente</span>
             <Button type="button" variant="secondary" size="sm" className="h-7" onClick={clearClientFilter}>
               Limpar filtro
             </Button>
-          </div>
-        ) : null}
+                            </div>
+                            ) : null}
           </>
-        ) : null}
-      </div>
+                              ) : null}
+                            </div>
 
       {agendaTab === 'reports' ? <AgendaReportsView members={members as Array<{ id: string; name: string }>} /> : null}
 
@@ -1394,7 +1394,7 @@ export default function Agenda() {
           onAfterRetry={invalidate}
           canRowEdit={(ap) => canEditA && canEditAgendaItem(user?.id, ap, ownOnly)}
         />
-      ) : null}
+                            ) : null}
       {agendaTab === 'calendar' && layoutMode === 'week' ? (
         <AgendaWeekView
           weekStart={calendarWeekStart}
@@ -1404,7 +1404,7 @@ export default function Agenda() {
           onEventClick={(id) => void openDetail(id)}
           onEmptyClick={openNewWithDateTime}
         />
-      ) : null}
+                                ) : null}
       {agendaTab === 'calendar' && layoutMode === 'month' ? (
         <AgendaMonthView
           month={calendarMonth}
@@ -1416,7 +1416,7 @@ export default function Agenda() {
           onShowDayList={onShowDayList}
           canCreate={canCreateA}
         />
-      ) : null}
+                                ) : null}
 
       <Sheet open={sheetOpen} onOpenChange={closeSheet}>
         <SheetContent
@@ -1826,9 +1826,9 @@ export default function Agenda() {
                   <Label className="text-sm font-medium">Lembretes</Label>
                   <p className="text-xs text-muted-foreground">Notificações internas no Painel (e Google Agenda, se ativo)</p>
                 </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
                       id="r10"
                       checked={form.rem10}
                       onCheckedChange={(c) => setForm((f) => ({ ...f, rem10: c === true }))}
@@ -1836,30 +1836,30 @@ export default function Agenda() {
                     />
                     <label htmlFor="r10" className="text-sm">
                       10 minutos antes
-                    </label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
+                      </label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
                       id="r60m"
-                      checked={form.rem30}
-                      onCheckedChange={(c) => setForm((f) => ({ ...f, rem30: c === true }))}
+                        checked={form.rem30}
+                        onCheckedChange={(c) => setForm((f) => ({ ...f, rem30: c === true }))}
                       disabled={formDisabled}
-                    />
+                      />
                     <label htmlFor="r60m" className="text-sm">
-                      30 minutos antes
-                    </label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
+                        30 minutos antes
+                      </label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
                       id="r1h"
-                      checked={form.rem60}
-                      onCheckedChange={(c) => setForm((f) => ({ ...f, rem60: c === true }))}
+                        checked={form.rem60}
+                        onCheckedChange={(c) => setForm((f) => ({ ...f, rem60: c === true }))}
                       disabled={formDisabled}
-                    />
+                      />
                     <label htmlFor="r1h" className="text-sm">
                       1 hora antes
-                    </label>
-                  </div>
+                      </label>
+                    </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox
                       id="r1d"

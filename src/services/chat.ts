@@ -1,6 +1,7 @@
 import { apiClient } from '@/integrations/api/client';
 import type { CommunicationProvider } from '@/types/communication';
 import { DEFAULT_COMMUNICATION_PROVIDER } from '@/types/communication';
+import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 
 /** Etapa 4 — mesmos valores persistidos em `chat_instances.metadata`. */
 export type InstanceSyncMode = 'none' | 'days_7' | 'days_30' | 'days_90' | 'full';
@@ -162,7 +163,7 @@ export function normalizeConversation(raw: any): ChatConversation {
 
   const avatarColumn = trimStr(raw?.avatar_url);
 
-  const avatarUrl =
+  const avatarMerged =
     avatarColumn ||
     raw?.image ||
     raw?.image_preview ||
@@ -172,6 +173,7 @@ export function normalizeConversation(raw: any): ChatConversation {
     metadata.imagePreview ||
     (typeof metadata.whatsapp_profile_photo === 'string' ? metadata.whatsapp_profile_photo : null) ||
     null;
+  const avatarUrl = chatAvatarUrlForImgSrc(avatarMerged);
 
   const canonical_chat_id = trimStr(raw?.canonical_chat_id);
   const canonical_phone = trimStr(raw?.canonical_phone);
@@ -196,7 +198,7 @@ export function normalizeConversation(raw: any): ChatConversation {
     profileName: raw.profile_name ?? null,
     phoneNumber: raw.phone_number ?? null,
     avatarUrl,
-    avatar_url: avatarColumn,
+    avatar_url: chatAvatarUrlForImgSrc(avatarColumn),
     canonicalChatId: canonical_chat_id,
     canonicalPhone: canonical_phone,
     displayName: display_name,
@@ -704,7 +706,8 @@ export const chatService = {
     if (response.error) {
       throw new Error(response.error);
     }
-    return response.data || { avatarUrl: null };
+    const data = response.data || { avatarUrl: null };
+    return { avatarUrl: chatAvatarUrlForImgSrc(data.avatarUrl) };
   },
 };
 

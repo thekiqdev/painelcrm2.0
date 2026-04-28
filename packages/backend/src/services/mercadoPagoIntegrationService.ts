@@ -87,13 +87,31 @@ export function getMercadoPagoAvailabilitySync(): {
   };
 }
 
-export async function buildMercadoPagoConnectUrl(params: { tenantId: string; userId: string }): Promise<string> {
+export async function buildMercadoPagoConnectUrl(params: {
+  tenantId: string;
+  userId: string;
+  /** Indica nova autorização OAuth mesmo com tokens já guardados (UI “Reconectar”). */
+  reconnect?: boolean;
+}): Promise<string> {
   if (!isMercadoPagoOAuthTokenEncryptionConfigured()) {
     throw new Error('Criptografia OAuth não configurada (MERCADO_PAGO_OAUTH_TOKEN_ENCRYPTION_KEY).');
   }
   if (!isMercadoPagoOAuthStateSecretConfigured()) {
     throw new Error('State OAuth não configurado (MERCADO_PAGO_OAUTH_STATE_SECRET).');
   }
+
+  const existing = await getMercadoPagoTenantConfigRow(params.tenantId);
+  const creds = existing?.credentials ?? {};
+  const hasExistingConnection =
+    typeof creds.oauth_access_token_ciphertext === 'string' && creds.oauth_access_token_ciphertext.length > 0;
+
+  const action = params.reconnect ? 'reconnect' : 'connect';
+  console.log('[mercado_pago.oauth.connect-url]', {
+    action,
+    hasExistingConnection,
+    generatedNewOAuthSession: true,
+  });
+
   const { clientId, redirectUri } = getOAuthClientConfig();
   const exp = Date.now() + 10 * 60 * 1000;
   const nonce = randomBytes(16).toString('hex');

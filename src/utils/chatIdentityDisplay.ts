@@ -1,4 +1,5 @@
 import type { ChatConversation } from '@/services/chat';
+import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 
 /** Campos opcionais vindos do CRM (API pode expor além do tipo `Client`). */
 export type ChatCrmEntity = {
@@ -10,12 +11,12 @@ export type ChatCrmEntity = {
 function pickCrmPhoto(entity: ChatCrmEntity): string | null {
   if (!entity) return null;
   const a = entity.avatar_url || entity.photo;
-  return a && String(a).trim() ? String(a).trim() : null;
+  return chatAvatarUrlForImgSrc(a && String(a).trim() ? String(a).trim() : null);
 }
 
 /** Foto WhatsApp: coluna/API `avatar_url` → normalizeConversation.avatarUrl → metadata. */
 function pickWhatsAppPhoto(conv: ChatConversation): string | null {
-  if (conv.avatarUrl && String(conv.avatarUrl).trim()) return String(conv.avatarUrl).trim();
+  const fromConv = conv.avatarUrl && String(conv.avatarUrl).trim() ? String(conv.avatarUrl).trim() : null;
   const meta = (conv.metadata || {}) as Record<string, unknown>;
   const fromMeta =
     (typeof meta.whatsapp_profile_photo === 'string' && meta.whatsapp_profile_photo.trim()) ||
@@ -23,7 +24,7 @@ function pickWhatsAppPhoto(conv: ChatConversation): string | null {
     (typeof meta.imagePreview === 'string' && meta.imagePreview.trim()) ||
     (typeof meta.image_preview === 'string' && meta.image_preview.trim()) ||
     null;
-  return fromMeta || null;
+  return chatAvatarUrlForImgSrc(fromConv || fromMeta || null);
 }
 
 function firstNonEmpty(...vals: (string | null | undefined)[]): string {
@@ -149,7 +150,7 @@ export function resolveProfileAvatarUrl(
   if (crm) {
     return { src: crm, isWhatsappFallback: false, initials };
   }
-  const wa = whatsappFallbackUrl?.trim() || null;
+  const wa = chatAvatarUrlForImgSrc(whatsappFallbackUrl?.trim() || null);
   if (wa) {
     return { src: wa, isWhatsappFallback: true, initials };
   }

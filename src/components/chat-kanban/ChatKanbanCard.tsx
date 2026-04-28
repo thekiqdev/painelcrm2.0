@@ -11,6 +11,7 @@ import {
   shortOperatorName,
 } from '@/utils/chatKanbanCardDisplay';
 import { parseKanbanProposalsDisplay } from '@/utils/kanbanColumnRulesUi';
+import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 
 function kanbanLabelsFromMetadata(meta: unknown): string[] {
   if (!meta || typeof meta !== 'object') return [];
@@ -45,6 +46,7 @@ export function ChatKanbanCard({ card, columnMetadata, onClick, dragHandleProps 
   const acc = Number(card.proposal_accepted_total ?? 0);
   const hasCrm = Boolean(card.conv_client_id || card.conv_lead_id);
   const showProposalRow = hasCrm && (pp.show_pending || pp.show_accepted);
+  const convAvatar = chatAvatarUrlForImgSrc(card.conv_avatar_url);
 
   return (
     <button
@@ -58,8 +60,8 @@ export function ChatKanbanCard({ card, columnMetadata, onClick, dragHandleProps 
     >
       <div className="flex gap-2 min-w-0">
         <Avatar className="h-9 w-9 shrink-0 rounded-md">
-          {card.conv_avatar_url ? (
-            <AvatarImage src={card.conv_avatar_url} alt="" className="object-cover" />
+          {convAvatar ? (
+            <AvatarImage src={convAvatar} alt="" className="object-cover" />
           ) : null}
           <AvatarFallback className="rounded-md bg-primary/10 text-primary text-xs font-semibold">
             {title.slice(0, 2).toUpperCase()}

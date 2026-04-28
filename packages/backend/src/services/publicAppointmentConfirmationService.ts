@@ -8,6 +8,7 @@ import {
   updateCalendarEvent,
   type GoogleCalendarReminder,
 } from './googleCalendarService.js';
+import { validatePublicRescheduleAgainstAvailability } from './appointmentAvailabilityService.js';
 
 export type PublicConfirmationResponse = 'confirmed' | 'needs_reschedule' | 'declined';
 
@@ -371,6 +372,15 @@ export async function getPublicRescheduleConflictPreview(params: {
   if (expiresAtMs <= Date.now()) return { ok: false, code: 'expired' };
   if (row.status !== 'scheduled') return { ok: false, code: 'invalid_state', message: 'Compromisso não está agendado.' };
 
+  const avail = await validatePublicRescheduleAgainstAvailability({
+    tenantId: row.tenant_id,
+    responsibleUserId: row.responsible_user_id,
+    excludeAppointmentId: row.id,
+    startsAtIso: params.starts_at,
+    endsAtIso: params.ends_at,
+  });
+  if (!avail.ok) return { ok: false, code: 'validation_error', message: avail.message };
+
   const conflicts = await listConflictsForResponsible({
     tenantId: row.tenant_id,
     responsibleUserId: row.responsible_user_id,
@@ -439,6 +449,18 @@ export async function submitPublicConfirmationByToken(params: {
     const note = params.note?.trim() || null;
 
     if (params.response === 'needs_reschedule' && params.starts_at && params.ends_at) {
+      const avail = await validatePublicRescheduleAgainstAvailability({
+        tenantId: row.tenant_id,
+        responsibleUserId: row.responsible_user_id,
+        excludeAppointmentId: row.id,
+        startsAtIso: params.starts_at,
+        endsAtIso: params.ends_at,
+      });
+      if (!avail.ok) {
+        await client.query('ROLLBACK');
+        return { status: 'validation_error', message: avail.message };
+      }
+
       const conflicts = await listConflictsForResponsible({
         tenantId: row.tenant_id,
         responsibleUserId: row.responsible_user_id,

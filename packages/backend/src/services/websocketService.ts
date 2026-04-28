@@ -5,6 +5,7 @@ import { pool } from '../utils/db.js';
 import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
 import { conversationRowForClientApi } from '../utils/uazapiIdentityResolve.js';
 import type { Notification } from './notifications.js';
+import { getAllowedCorsOrigins } from '../config/corsOrigins.js';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -18,14 +19,12 @@ const wsVerbose = () => isUazIntegrationVerboseLogs();
  * Inicializa o servidor WebSocket
  */
 export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
-  // Configurar CORS para Socket.IO - aceitar todas as origens em produção (Nginx já faz o controle)
-  const corsOrigins = process.env.FRONTEND_URL 
-    ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-    : true; // Aceitar todas em produção (Nginx controla)
+  // Mesma lista que Express (inclui localhost:8081 etc.) — FRONTEND_URL só prod não bloqueia dev
+  const corsOrigins = getAllowedCorsOrigins();
 
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: corsOrigins,
+      origin: corsOrigins.length > 0 ? corsOrigins : true,
       methods: ['GET', 'POST', 'OPTIONS'],
       credentials: true,
       allowedHeaders: ['Authorization', 'Content-Type'],

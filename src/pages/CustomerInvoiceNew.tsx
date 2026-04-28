@@ -31,6 +31,7 @@ import type { CustomerChargeWithSummary } from "@/services/customerCharges";
 import type { Product } from "@/types/products";
 import { resolvePublicCatalogUnitPrice } from "@/types/products";
 import type { Client } from "@/services/clients";
+import { chatAvatarUrlForImgSrc } from "@/lib/chatAvatarUrl";
 import { toast } from "@/components/ui/sonner";
 import {
   ArrowLeft,
@@ -307,10 +308,10 @@ const CustomerInvoiceNew = ({
               toast.info(
                 "Esta fatura já está paga: não é possível editar a cobrança atual aqui. No detalhe da fatura use «Alterar próxima renovação» para mudar o ciclo da assinatura."
               );
-          navigate(`/customer-invoices/${editInvoiceId}`);
+              navigate(`/customer-invoices/${editInvoiceId}`);
             }
-          return;
-        }
+            return;
+          }
           // URL canónica: fatura paga de assinatura só edita ciclo com ?flow=renewal
           if (editFlowQuery !== "renewal") {
             if (!cancelled) {
@@ -523,7 +524,7 @@ const CustomerInvoiceNew = ({
     });
     if (embedded) {
       setCreationKind("one_off");
-    setStep("form");
+      setStep("form");
     } else {
       const kindFromUrl =
         billingKindQuery === "subscription"
@@ -609,31 +610,31 @@ const CustomerInvoiceNew = ({
 
   const appendLineFromCatalog = useCallback(
     (p: Product) => {
-    const unit =
-      resolvePublicCatalogUnitPrice({
-        price: p.price ?? null,
-        discount_price: p.discount_price ?? null,
-      }) ?? 0;
-    const desc =
-      [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
-    setLines((prev) => [
-      ...prev,
-      {
-        ...defaultLine(),
-        id: crypto.randomUUID(),
-        product_id: p.id,
-        description: desc.slice(0, 2000),
-        quantity: "1",
-        unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
-        discount: "0",
-        discount_kind: "fixed",
+      const unit =
+        resolvePublicCatalogUnitPrice({
+          price: p.price ?? null,
+          discount_price: p.discount_price ?? null,
+        }) ?? 0;
+      const desc =
+        [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
+      setLines((prev) => [
+        ...prev,
+        {
+          ...defaultLine(),
+          id: crypto.randomUUID(),
+          product_id: p.id,
+          description: desc.slice(0, 2000),
+          quantity: "1",
+          unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
+          discount: "0",
+          discount_kind: "fixed",
           ...(creationKind === "subscription"
             ? { is_recurring: true, recurring_interval: billingInterval }
             : {}),
-      },
-    ]);
-    setInvoicePickerOpen(null);
-    setInvoicePickerQuery("");
+        },
+      ]);
+      setInvoicePickerOpen(null);
+      setInvoicePickerQuery("");
     },
     [creationKind, billingInterval]
   );
@@ -1210,9 +1211,9 @@ const CustomerInvoiceNew = ({
                 </>
               ) : (
                 <>
-                  <strong className="text-foreground">Nesta tela altera-se só a recorrência futura</strong> (data do próximo
-                  ciclo na assinatura). <strong>Não</strong> se mexe no vencimento nem nos itens da fatura atual — essa fatura
-                  já está paga e permanece como registo histórico.
+              <strong className="text-foreground">Nesta tela altera-se só a recorrência futura</strong> (data do próximo
+              ciclo na assinatura). <strong>Não</strong> se mexe no vencimento nem nos itens da fatura atual — essa fatura
+              já está paga e permanece como registo histórico.
                 </>
               )}
             </CardDescription>
@@ -1237,10 +1238,10 @@ const CustomerInvoiceNew = ({
               </AlertDescription>
             </Alert>
             {!mobileShell && (
-              <CardDescription className="text-xs text-muted-foreground -mt-2">
-                Jobs pendentes obsoletos na fila são cancelados. Se a nova data já for elegível (calendário do servidor e
+            <CardDescription className="text-xs text-muted-foreground -mt-2">
+              Jobs pendentes obsoletos na fila são cancelados. Se a nova data já for elegível (calendário do servidor e
                 janela horária local da empresa), o backend pode enfileirar o job de imediato.
-              </CardDescription>
+            </CardDescription>
             )}
             <div>
               <Label htmlFor="next_renewal_date">{mobileShell ? "1.º dia de geração" : "Primeiro dia de geração"}</Label>
@@ -1345,7 +1346,7 @@ const CustomerInvoiceNew = ({
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-foreground">
                       <Link2 className="h-5 w-5 shrink-0" aria-hidden />
-                    </div>
+              </div>
                     <p className="mt-3 font-semibold text-foreground">Fatura por link</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       Link público: a pessoa completa os dados e paga no gateway.
@@ -1402,9 +1403,10 @@ const CustomerInvoiceNew = ({
               <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
                 <div className="flex gap-3 border-b border-border/60 bg-muted/10 px-4 py-3.5 dark:bg-muted/15">
                   <Avatar className="h-12 w-12 shrink-0 border border-border/50 shadow-sm">
-                    {selectedClient.whatsapp_avatar_url ? (
-                      <AvatarImage src={selectedClient.whatsapp_avatar_url} alt="" className="object-cover" />
-                    ) : null}
+                    {(() => {
+                      const src = chatAvatarUrlForImgSrc(selectedClient.whatsapp_avatar_url);
+                      return src ? <AvatarImage src={src} alt="" className="object-cover" /> : null;
+                    })()}
                     <AvatarFallback className="bg-primary/10 text-sm font-semibold text-primary">
                       {clientInitials(selectedClient.name || "?")}
                     </AvatarFallback>
@@ -1512,20 +1514,20 @@ const CustomerInvoiceNew = ({
         >
           {!mobileShell && (
           <CardHeader>
-              <CardTitle>Tipo de cobrança</CardTitle>
+            <CardTitle>Tipo de cobrança</CardTitle>
             <CardDescription>
-                {invoiceByLink ? (
-                  <>
-                    Cobrança por link — sem cliente selecionado neste momento. Escolha entre fatura única ou assinatura
-                    recorrente; em seguida preencha os dados da cobrança.
-                  </>
-                ) : (
-                  <>
-                    Cliente:{" "}
-                    <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>. Escolha o que
-                    deseja criar.
-                  </>
-                )}
+              {invoiceByLink ? (
+                <>
+                  Cobrança por link — sem cliente selecionado neste momento. Escolha entre fatura única ou assinatura
+                  recorrente; em seguida preencha os dados da cobrança.
+                </>
+              ) : (
+                <>
+                  Cliente:{" "}
+                  <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>. Escolha o que
+                  deseja criar.
+                </>
+              )}
             </CardDescription>
           </CardHeader>
           )}
@@ -1609,11 +1611,11 @@ const CustomerInvoiceNew = ({
               </button>
             </div>
             {!mobileShell && (
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" onClick={() => setStep("client")}>
-                  Voltar
-                </Button>
-              </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => setStep("client")}>
+                Voltar
+              </Button>
+            </div>
             )}
           </CardContent>
         </Card>
@@ -1642,19 +1644,19 @@ const CustomerInvoiceNew = ({
                     </div>
                   </div>
                 ) : (
-                  <CardDescription>
-                    {invoiceByLink ? (
-                      <>
-                        Cobrança por link — o cliente poderá concluir os dados no link público. Tipo:{" "}
-                        <strong>{creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}</strong>.
-                      </>
-                    ) : (
-                      <>
-                        Cliente:{" "}
-                        <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>
-                      </>
-                    )}
-                  </CardDescription>
+                <CardDescription>
+                  {invoiceByLink ? (
+                    <>
+                      Cobrança por link — o cliente poderá concluir os dados no link público. Tipo:{" "}
+                      <strong>{creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}</strong>.
+                    </>
+                  ) : (
+                    <>
+                      Cliente:{" "}
+                      <strong>{selectedClient?.name || selectedClient?.company || form.client_id}</strong>
+                    </>
+                  )}
+                </CardDescription>
                 )}
               </div>
               {!isEditMode && creationKind && !mobileShell && (
@@ -1794,7 +1796,7 @@ const CustomerInvoiceNew = ({
                     {mobileShell ? "Assinatura" : "Dados da assinatura"}
                   </h3>
                   <div className="grid gap-4 sm:grid-cols-2">
-              <div>
+                    <div>
                       <Label htmlFor="billing_interval_sub">Periodicidade</Label>
                       <Select
                         value={billingInterval}
@@ -2429,7 +2431,7 @@ const CustomerInvoiceNew = ({
                                   <Checkbox
                                     id={`line_is_recurring_${line.id}`}
                                     checked={line.is_recurring}
-                                          disabled={creationKind === "subscription"}
+                                    disabled={creationKind === "subscription"}
                                     onCheckedChange={(v) =>
                                       setLines((prev) =>
                                         prev.map((l) =>
@@ -2461,7 +2463,7 @@ const CustomerInvoiceNew = ({
                                         )
                                       )
                                     }
-                                          disabled={!line.is_recurring || creationKind === "subscription"}
+                                    disabled={!line.is_recurring || creationKind === "subscription"}
                                   >
                                     <SelectTrigger className="h-8 mt-1">
                                       <SelectValue />
@@ -2590,8 +2592,8 @@ const CustomerInvoiceNew = ({
                         ? "1.º vencimento *"
                         : "Vencimento *"
                       : !isEditMode && creationKind === "subscription"
-                        ? "Vencimento da primeira cobrança *"
-                        : "Data de vencimento *"}
+                      ? "Vencimento da primeira cobrança *"
+                      : "Data de vencimento *"}
                   </Label>
                   <Input
                     id="due_date"
@@ -2741,7 +2743,7 @@ const CustomerInvoiceNew = ({
                       ? "Salvar alterações"
                       : creationKind === "subscription"
                         ? "Criar assinatura e primeira fatura"
-                      : "Criar fatura"}
+                        : "Criar fatura"}
                 </Button>
               </div>
             </form>

@@ -5,6 +5,7 @@ import {
   getPublicRescheduleConflictPreview,
   submitPublicConfirmationByToken,
 } from '../services/publicAppointmentConfirmationService.js';
+import { getPublicAvailabilitySlotsForToken } from '../services/appointmentAvailabilityService.js';
 
 const noteField = z.string().max(2000).optional().nullable();
 
@@ -41,6 +42,43 @@ export async function getPublicAppointmentConfirmationByToken(req: Request, res:
   } catch (e) {
     console.error('[public/appointments/confirm:get]', e);
     res.status(500).json({ error: 'Erro ao carregar link de confirmação', code: 'internal_error' });
+  }
+}
+
+export async function getPublicAppointmentAvailabilityByToken(req: Request, res: Response): Promise<void> {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) {
+      res.status(400).json({ error: 'Token inválido', code: 'invalid_token' });
+      return;
+    }
+    const result = await getPublicAvailabilitySlotsForToken(token);
+    if (!result.ok) {
+      if (result.code === 'not_found') {
+        res.status(404).json({ error: 'Link não encontrado', code: 'not_found' });
+        return;
+      }
+      if (result.code === 'expired') {
+        res.status(410).json({ error: 'Link expirado', code: 'token_expired' });
+        return;
+      }
+      if (result.code === 'already_responded') {
+        res.status(409).json({ error: 'Resposta já registrada', code: 'already_responded' });
+        return;
+      }
+      res.status(400).json({ error: result.message || 'Indisponível', code: result.code });
+      return;
+    }
+    res.json({
+      timezone: result.timezone,
+      slot_duration_minutes: result.slot_duration_minutes,
+      default_meeting_duration_minutes: result.default_meeting_duration_minutes,
+      settings_source: result.settings_source,
+      slots: result.slots,
+    });
+  } catch (e) {
+    console.error('[public/appointments/confirm:availability]', e);
+    res.status(500).json({ error: 'Erro ao calcular disponibilidade', code: 'internal_error' });
   }
 }
 

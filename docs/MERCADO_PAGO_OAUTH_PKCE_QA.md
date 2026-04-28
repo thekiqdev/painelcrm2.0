@@ -31,6 +31,10 @@
 7. **Repetir**  
    - Conectar novamente após desconectar — fluxo completo deve funcionar.
 
+8. **Reconectar (já conectado)**  
+   - Com conta já conectada, usar o botão **Reconectar** (chama `GET .../connect-url?reconnect=true`, nova sessão PKCE/state).  
+   - Deve abrir novamente o Mercado Pago; após autorizar, tokens antigos são substituídos pelos novos no callback.
+
 ## Erros esperados (comportamento)
 
 - **“Sessão OAuth expirada ou inválida…”** — novo fluxo sem PKCE salvo (expirou ~10 min, outro dispositivo limpou a linha, ou migração não aplicada). Solução: iniciar **Conectar** de novo.

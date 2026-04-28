@@ -38,7 +38,8 @@ type SettingSection =
   | "domain"
   | "messageTemplates"
   | "paymentGateway"
-  | "googleCalendar";
+  | "googleCalendar"
+  | "agendaAvailability";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -116,6 +117,13 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
     {
       id: "googleCalendar",
       label: "Google Agenda",
+      icon: <Calendar className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Agenda",
+    },
+    {
+      id: "agendaAvailability",
+      label: "Disponibilidade da agenda",
       icon: <Calendar className="h-4 w-4" />,
       category: "Integrações",
       subcategory: "Agenda",
