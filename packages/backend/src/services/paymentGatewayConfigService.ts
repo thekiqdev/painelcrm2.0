@@ -4,6 +4,7 @@
  */
 import type { BillingType } from '../modules/payments/paymentGatewayTypes.js';
 import { pool } from '../utils/db.js';
+import { filterMercadoPagoFromTenantGatewayList } from '../config/mercadoPagoGatewayEnv.js';
 import {
   mergeGatewayPaymentFieldsForSave,
   paymentMethodSlugsFromConfigRow,
@@ -46,6 +47,10 @@ export interface PaymentGatewayConfigPublic {
   environment?: 'sandbox' | 'production' | null;
   /** Se a URL do webhook está definida (sempre true quando configurado para Asaas). */
   webhook_configured?: boolean;
+  webhook_id?: string | null;
+  webhook_status?: 'created' | 'pending' | 'error' | null;
+  webhook_url?: string | null;
+  last_webhook_received_at?: string | null;
   /** Métodos disponíveis no checkout (slugs: pix, boleto, credit_card). */
   enabled_payment_methods: GatewayPaymentMethodSlug[];
   /** Método padrão para faturas automáticas ou null para usar ordem de fallback. */
@@ -341,9 +346,18 @@ export async function saveGlobalConfig(data: {
  * Usado pelas rotas GET /api/me/tenant/payment-gateway.
  */
 export async function getTenantConfig(tenantId: string): Promise<PaymentGatewayConfigPublic | null> {
-  const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
+  const r = await pool.query<PaymentGatewayConfigRow & {
+    status?: string;
+    last_connection_test_at?: string | null;
+    last_connection_status?: string | null;
+    webhook_id?: string | null;
+    webhook_status?: string | null;
+    webhook_url?: string | null;
+    last_webhook_received_at?: string | null;
+  }>(
     `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
             status, last_connection_test_at, last_connection_status,
+            webhook_id, webhook_status, webhook_url, last_webhook_received_at,
             enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs
      WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true
@@ -368,7 +382,11 @@ export async function getTenantConfig(tenantId: string): Promise<PaymentGatewayC
     last_connection_test_at: row.last_connection_test_at ?? undefined,
     last_connection_status: (row.last_connection_status as LastConnectionStatus) ?? undefined,
     environment: env,
-    webhook_configured: !!row.gateway_key,
+    webhook_configured: !!row.webhook_id || !!row.gateway_key,
+    webhook_id: row.webhook_id ?? null,
+    webhook_status: (row.webhook_status as 'created' | 'pending' | 'error' | null) ?? null,
+    webhook_url: row.webhook_url ?? null,
+    last_webhook_received_at: row.last_webhook_received_at ?? null,
     enabled_payment_methods: pm.enabled_payment_methods,
     default_payment_method: pm.default_payment_method,
   };
@@ -547,12 +565,17 @@ async function getTenantConfigsForStatus(tenantId: string): Promise<Map<string, 
   for (const row of r.rows) {
     const credentials = (row.credentials as Record<string, unknown>) ?? {};
     const env = credentials.env === 'production' ? 'production' : 'sandbox';
+    const hasCredentials =
+      row.gateway_key === 'mercado_pago'
+        ? typeof credentials.oauth_access_token_ciphertext === 'string' &&
+          credentials.oauth_access_token_ciphertext.length > 0
+        : Object.keys(credentials).length > 0 && !!credentials.api_key;
     map.set(row.gateway_key, {
       status: (row.status as PaymentGatewayConfigStatus) ?? null,
       last_connection_test_at: row.last_connection_test_at,
       last_connection_status: (row.last_connection_status as LastConnectionStatus) ?? null,
       environment: env,
-      hasCredentials: Object.keys(credentials).length > 0 && !!credentials.api_key,
+      hasCredentials,
     });
   }
   return map;
@@ -566,7 +589,9 @@ export async function getGatewaysStatus(
   scope: 'global' | 'tenant',
   tenantId?: string
 ): Promise<GatewayStatusItem[]> {
-  const gateways = await listGateways();
+  const allGateways = await listGateways();
+  const gateways =
+    scope === 'tenant' ? filterMercadoPagoFromTenantGatewayList(allGateways) : allGateways;
   let config: (PaymentGatewayConfigPublic & { gateway_key: string }) | null = null;
   let tenantConfigs: Map<string, {
     status: PaymentGatewayConfigStatus | null;

@@ -106,6 +106,13 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useVisualKeyboardInset } from '@/hooks/useVisualKeyboardInset';
 import { cn } from '@/lib/utils';
 import { isChatClientProfileReturn, isChatListReturnPath } from '@/lib/chatListNavigation';
+import {
+  logChatRealtimeDuplicateSkipped,
+  logChatRealtimeLegacyEventReceived,
+  logChatRealtimeSocketConnected,
+  logChatRealtimeSocketDisconnected,
+  logChatRealtimeV2EventReceived,
+} from '@/lib/chatRealtimeDiagnostics';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
@@ -346,6 +353,8 @@ const Chat = () => {
   };
   /** Conversa a reabrir após voltar do perfil (evita race com reload de `enabledInstanceIds`). */
   const pendingConversationRestoreRef = useRef<PendingConversationRestore | null>(null);
+  /** Configurações → «Abrir conversa»: aplicado após hidratar instâncias (evita sobrescrita pela seleção automática). */
+  const pendingFocusInstanceIdRef = useRef<string | null>(null);
   /** Evita restaurar no primeiro paint com lista vazia e loading=false (race antes do primeiro setLoading(true) aplicar). */
   const conversationsHydratedRef = useRef(false);
   /**
@@ -566,6 +575,15 @@ const Chat = () => {
     navigate('/chat', { replace: true, state: {} });
   }, [location.state, navigate]);
 
+  /** Captura `focusInstanceId` antes de limpar `location.state` (aplicação real mais abaixo). */
+  useEffect(() => {
+    const st = location.state as { focusInstanceId?: string } | null | undefined;
+    const id = st?.focusInstanceId?.trim();
+    if (!id) return;
+    pendingFocusInstanceIdRef.current = id;
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
+  }, [location.state, location.pathname, location.search, navigate]);
+
   const goToClientProfileFromChat = useCallback((clientId: string, conversation: ChatConversation) => {
     const keys = {
       id: conversation.id,
@@ -662,6 +680,14 @@ const Chat = () => {
       // Remover transportOptions que podem causar problemas de parse
     };
 
+    const preferRealtimeV2Raw = String(import.meta.env.VITE_CHAT_REALTIME_V2 ?? '1').toLowerCase();
+    const preferRealtimeV2 = preferRealtimeV2Raw !== '0' && preferRealtimeV2Raw !== 'false';
+    const legacyFallbackDefault = preferRealtimeV2 ? '0' : '1';
+    const legacyFallbackRaw = String(
+      import.meta.env.VITE_CHAT_REALTIME_LEGACY_FALLBACK ?? legacyFallbackDefault
+    ).toLowerCase();
+    const enableLegacyFallback = legacyFallbackRaw === '1' || legacyFallbackRaw === 'true';
+
     const socket: Socket = io(socketUrl, socketOptions);
     socketRef.current = socket;
 
@@ -671,6 +697,12 @@ const Chat = () => {
         id: socket.id,
         transport: socket.io.engine.transport.name,
         url: socketUrl,
+      });
+      logChatRealtimeSocketConnected({
+        socket_id: socket.id,
+        transport: socket.io.engine?.transport?.name,
+        realtime_v2_preferred: preferRealtimeV2,
+        legacy_fallback_enabled: enableLegacyFallback,
       });
     });
 
@@ -766,6 +798,12 @@ const Chat = () => {
         reason,
         wasConnected: socket.connected,
       });
+      logChatRealtimeSocketDisconnected({
+        reason,
+        socket_id: socket.id,
+        realtime_v2_preferred: preferRealtimeV2,
+        legacy_fallback_enabled: enableLegacyFallback,
+      });
     });
 
     socket.on('reconnect', (attemptNumber) => {
@@ -784,8 +822,14 @@ const Chat = () => {
       console.error('[Chat] WebSocket reconnect failed - giving up');
     });
 
-    // Escutar atualizações de conversa
-    socket.on('conversation_updated', (raw: any) => {
+    const handleConversationUpdated = (raw: any, source: 'v2' | 'legacy') => {
+      const conversationId =
+        typeof raw?.id === 'string' ? raw.id : typeof raw?.conversation_id === 'string' ? raw.conversation_id : null;
+      if (source === 'v2') {
+        logChatRealtimeV2EventReceived('conversation', { conversation_id: conversationId });
+      } else {
+        logChatRealtimeLegacyEventReceived('conversation', { conversation_id: conversationId });
+      }
       console.log('[Chat] Conversation updated via WebSocket (raw):', raw);
       console.log('[Chat] Conversation updated - parsed fields:', {
         id: raw?.id,
@@ -872,7 +916,7 @@ const Chat = () => {
         void loadMessages(updatedConversation.id, { silent: true });
         }, 650);
       }
-    });
+    };
 
     socket.on('conversation_attendance_updated', (payload: { conversation?: Record<string, unknown> }) => {
       const conv = payload?.conversation;
@@ -909,14 +953,30 @@ const Chat = () => {
         .catch(() => {});
     });
 
-    // Escutar novas mensagens
-    socket.on('new_message', (data: { message: any; conversationId: string }) => {
+    const handleNewMessage = (
+      data: { message: any; conversationId: string },
+      source: 'v2' | 'legacy',
+    ) => {
       console.log('[Chat] New message via WebSocket (raw):', data.message);
       
       const normalizedMessage = normalizeChatMessage({
         ...data.message,
         conversation_id: data.message.conversation_id || data.conversationId,
       });
+
+      if (source === 'v2') {
+        logChatRealtimeV2EventReceived('message', {
+          conversation_id: data.conversationId,
+          message_id: normalizedMessage.id ?? null,
+          external_message_id: normalizedMessage.external_message_id ?? null,
+        });
+      } else {
+        logChatRealtimeLegacyEventReceived('message', {
+          conversation_id: data.conversationId,
+          message_id: normalizedMessage.id ?? null,
+          external_message_id: normalizedMessage.external_message_id ?? null,
+        });
+      }
       
       // Usar ref para evitar closure stale
       const currentSelectedId = selectedConversationIdRef.current;
@@ -933,10 +993,22 @@ const Chat = () => {
             }
           }
           if (normalizedMessage.id && base.some((m) => m.id === normalizedMessage.id)) {
+            logChatRealtimeDuplicateSkipped({
+              conversation_id: data.conversationId,
+              reason: 'id',
+              message_id: normalizedMessage.id,
+              source,
+            });
             return base;
           }
           const ext = normalizedMessage.external_message_id;
           if (ext && base.some((m) => m.external_message_id === ext)) {
+            logChatRealtimeDuplicateSkipped({
+              conversation_id: data.conversationId,
+              reason: 'external_message_id',
+              external_message_id: ext,
+              source,
+            });
             return base;
           }
           return [...base, normalizedMessage];
@@ -1005,7 +1077,53 @@ const Chat = () => {
         }
         return prev;
       });
-    });
+    };
+
+    if (preferRealtimeV2) {
+      socket.on('conversation.updated', (evt: any) => {
+        if (!evt || typeof evt !== 'object') return;
+        handleConversationUpdated(
+          {
+            id: evt.conversation_id,
+            last_message_preview: evt.last_message_preview,
+            last_message_at: evt.last_message_at,
+            unread_count: evt.unread_count,
+            status: evt.status,
+            assigned_to_user_id: evt.assigned_user_id,
+            assigned_team_id: evt.assigned_team_id,
+            display_name: evt.display_name,
+            avatar_url: evt.avatar_url,
+          },
+          'v2',
+        );
+      });
+
+      socket.on('message.created', (evt: any) => {
+        if (!evt || typeof evt !== 'object' || typeof evt.conversation_id !== 'string') return;
+        handleNewMessage(
+          {
+            conversationId: evt.conversation_id,
+            message: {
+              id: evt.message_id || evt.provider_message_id,
+              conversation_id: evt.conversation_id,
+              direction: evt.direction,
+              body: evt.body,
+              sent_at: evt.sent_at,
+              external_message_id: evt.provider_message_id,
+              media: evt.media_url ? [{ type: evt.message_type || 'unknown', url: evt.media_url }] : [],
+            },
+          },
+          'v2',
+        );
+      });
+    }
+
+    if (!preferRealtimeV2 || enableLegacyFallback) {
+      socket.on('conversation_updated', (raw: any) => handleConversationUpdated(raw, 'legacy'));
+      socket.on('new_message', (payload: { message: any; conversationId: string }) =>
+        handleNewMessage(payload, 'legacy'),
+      );
+    }
 
     socket.on('message_updated', (data: { message: any; conversationId: string }) => {
       const normalizedMessage = normalizeChatMessage({
@@ -1114,6 +1232,28 @@ const Chat = () => {
       return currentSelected;
     });
   }, [enabledInstanceIds]);
+
+  /** Após seleção automática da primeira instância, prioriza o canal vindo das Configurações. */
+  useEffect(() => {
+    const id = pendingFocusInstanceIdRef.current;
+    if (!id) return;
+    if (loadingInstances) return;
+    if (instances.length === 0) return;
+
+    if (!instances.some((i) => i.id === id)) {
+      pendingFocusInstanceIdRef.current = null;
+      toast.info('Este número não está mais disponível no chat.');
+      return;
+    }
+    if (!enabledInstanceIds.has(id)) {
+      pendingFocusInstanceIdRef.current = null;
+      toast.info('Ative este número na lista do Chat para usá-lo como canal de atendimento.');
+      return;
+    }
+
+    pendingFocusInstanceIdRef.current = null;
+    setSelectedInstanceId(id);
+  }, [instances, loadingInstances, enabledInstanceIds]);
 
   useEffect(() => {
     if (enabledInstanceIds.size === 0) {

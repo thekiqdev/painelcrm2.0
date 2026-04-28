@@ -69,6 +69,36 @@ type RequestOptions = {
   maxRetries?: number;
 };
 
+export interface AsaasCreateWebhookRequest {
+  name: string;
+  url: string;
+  email?: string;
+  enabled?: boolean;
+  interrupted?: boolean;
+  apiVersion?: number;
+  authToken?: string;
+  sendType?: 'SEQUENTIALLY' | 'NON_SEQUENTIALLY';
+  events: string[];
+}
+
+export interface AsaasWebhookResponse {
+  id: string;
+  name?: string;
+  url?: string;
+  email?: string;
+  enabled?: boolean;
+  interrupted?: boolean;
+  authToken?: string;
+  sendType?: string;
+  events?: string[];
+  [key: string]: unknown;
+}
+
+export interface AsaasListWebhooksResponse {
+  data?: AsaasWebhookResponse[];
+  [key: string]: unknown;
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -294,6 +324,18 @@ export async function getIdentificationField(
 
 export function isConfigured(config?: AsaasConfig | null): boolean {
   return !!getApiKey(config);
+}
+
+export async function createWebhook(
+  data: AsaasCreateWebhookRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasWebhookResponse> {
+  return request<AsaasWebhookResponse>('POST', '/webhooks', data, config);
+}
+
+export async function listWebhooks(config?: AsaasConfig | null): Promise<AsaasWebhookResponse[]> {
+  const first = await request<AsaasListWebhooksResponse>('GET', '/webhooks?limit=100&offset=0', undefined, config);
+  return Array.isArray(first?.data) ? first.data : [];
 }
 
 /**

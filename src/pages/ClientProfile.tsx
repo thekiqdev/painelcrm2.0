@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { ClientSidebar } from "@/components/clients/ClientSidebar";
 import { clientsService, type ClientTimelineEvent } from "@/services/clients";
@@ -20,7 +19,7 @@ import { ChatBubbleContent } from "@/components/chat/ChatBubbleContent";
 import { MessageStatusIndicator } from "@/components/chat/MessageStatusIndicator";
 import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -51,9 +50,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { io, Socket } from "socket.io-client";
-import { format, parseISO, startOfDay, endOfDay, addMonths, isValid } from "date-fns";
-import { useFeatureFlag } from "@/hooks/useFeatureFlag";
-import { listAppointments } from "@/services/appointments";
+import { format, parseISO, startOfDay, endOfDay, addMonths } from "date-fns";
+import { ClientUpcomingAppointments } from "@/components/clients/ClientUpcomingAppointments";
+import { ClientAppointmentsHistory } from "@/components/clients/ClientAppointmentsHistory";
 import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
@@ -176,6 +175,20 @@ const timelineEventLabelMap: Record<string, string> = {
   chat_contract_draft_saved: "Rascunho de contrato salvo a partir do chat",
   chat_contract_sent_for_signature: "Contrato enviado para assinatura a partir do chat",
   invoice_paid: "Fatura paga",
+  agenda_appointment_created: "Compromisso criado na agenda",
+  agenda_appointment_updated: "Compromisso atualizado na agenda",
+  agenda_appointment_cancelled: "Compromisso cancelado",
+  agenda_appointment_rescheduled: "Compromisso reagendado",
+  agenda_attendance_confirmed: "Presença confirmada",
+  agenda_attendance_not_confirmed: "Cliente não confirmou presença",
+  agenda_attendance_no_show: "Cliente não compareceu",
+  agenda_confirmation_requested: "Solicitação de confirmação enviada",
+  agenda_public_confirmation_confirmed: "Cliente confirmou presença por link público",
+  agenda_public_confirmation_needs_reschedule: "Cliente pediu remarcação",
+  agenda_public_confirmation_declined: "Cliente informou ausência por link público",
+  agenda_public_rescheduled: "Cliente remarcou o compromisso",
+  agenda_appointment_completed: "Compromisso concluído",
+  agenda_appointment_follow_up_created: "Próximo follow-up agendado",
 };
 
 const ClientProfile = () => {
@@ -219,34 +232,8 @@ const ClientProfile = () => {
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   const { session } = useAuth();
   const { canDeleteRecord, canView, canCreate, canEdit } = useModulePermissions();
-  const hasAgendaModule = useFeatureFlag("agenda");
   const isMobile = useIsMobile();
 
-  const upcomingAppointmentsQuery = useQuery({
-    queryKey: ["agenda", "clientUpcoming", id],
-    queryFn: () =>
-      listAppointments({
-        client_id: id!,
-        date_from: startOfDay(new Date()).toISOString(),
-        date_to: endOfDay(addMonths(new Date(), 2)).toISOString(),
-        status: "scheduled",
-        limit: 40,
-      }),
-    enabled: Boolean(id && hasAgendaModule && canView("agenda")),
-  });
-
-  const clientUpcomingAppointments = useMemo(() => {
-    const raw = upcomingAppointmentsQuery.data?.items ?? [];
-    const now = new Date();
-    return raw
-      .filter((a) => {
-        if (a.status === "cancelled") return false;
-        const t = parseISO(a.starts_at);
-        return isValid(t) && t >= now;
-      })
-      .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
-      .slice(0, 5);
-  }, [upcomingAppointmentsQuery.data?.items]);
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -1171,11 +1158,21 @@ const ClientProfile = () => {
           {activeTab === "overview" && (
             <div className="mb-6 space-y-4 max-md:space-y-3 md:space-y-6">
               <Card className="max-md:shadow-sm">
-                <CardHeader className="pb-2 pt-3 max-md:py-2.5 md:pb-3 md:pt-4">
+                <CardHeader className="pb-2 pt-3 max-md:py-2.5 md:flex md:flex-row md:items-center md:justify-between md:pb-3 md:pt-4">
                   <CardTitle className="text-sm font-semibold md:text-base">
                     <span className="md:hidden">Visão geral</span>
                     <span className="hidden md:inline">Resumo</span>
                   </CardTitle>
+                  {canView("agenda") && client.id && canCreate("agenda") ? (
+                    <Button className="mt-2 w-full sm:w-auto md:mt-0" size="sm" asChild>
+                      <Link
+                        to={`/agenda?${new URLSearchParams({ client_id: client.id, new: "1" }).toString()}`}
+                      >
+                        <CalendarDays className="mr-2 h-4 w-4" />
+                        Agendar compromisso
+                      </Link>
+                    </Button>
+                  ) : null}
                 </CardHeader>
                 <CardContent className="space-y-3 max-md:space-y-2.5 md:space-y-4">
                   <div className="flex flex-wrap gap-2">
@@ -1255,16 +1252,6 @@ const ClientProfile = () => {
                         Propostas
                       </Button>
                     ) : null}
-                    {hasAgendaModule && canView("agenda") && client.id ? (
-                      <Button variant="outline" size="sm" asChild>
-                        <Link
-                          to={`/agenda?${new URLSearchParams({ client_id: client.id, new: "1" }).toString()}`}
-                        >
-                          <CalendarDays className="mr-2 h-4 w-4" />
-                          Agendar com este cliente
-                        </Link>
-                      </Button>
-                    ) : null}
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-6">
                     <Card className="max-md:border-border/70 max-md:shadow-none">
@@ -1314,44 +1301,15 @@ const ClientProfile = () => {
                       </CardContent>
                     </Card>
                   </div>
-                  {hasAgendaModule && canView("agenda") && client.id ? (
-                    <Card className="border-border/80 max-md:shadow-sm">
-                      <CardHeader className="pb-2 pt-3">
-                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <CardTitle className="text-sm font-semibold">Próximos compromissos</CardTitle>
-                          <Button variant="link" className="h-auto px-0 text-xs" asChild>
-                            <Link
-                              to={`/agenda?${new URLSearchParams({ client_id: client.id }).toString()}`}
-                            >
-                              Ver na agenda
-                            </Link>
-                          </Button>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="pt-0">
-                        {upcomingAppointmentsQuery.isLoading ? (
-                          <p className="text-xs text-muted-foreground">A carregar…</p>
-                        ) : clientUpcomingAppointments.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">
-                            Nenhum compromisso agendado a seguir para este cliente.
-                          </p>
-                        ) : (
-                          <ul className="space-y-2 text-sm">
-                            {clientUpcomingAppointments.map((apt) => (
-                              <li
-                                key={apt.id}
-                                className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 py-1.5 last:border-0"
-                              >
-                                <span className="font-mono text-xs text-muted-foreground">
-                                  {format(parseISO(apt.starts_at), "dd/MM, HH:mm")}
-                                </span>
-                                <span className="min-w-0 flex-1 truncate font-medium">{apt.title}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </CardContent>
-                    </Card>
+                  {canView("agenda") && client.id ? (
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
+                      <ClientUpcomingAppointments
+                        clientId={client.id}
+                        enabled
+                        canCreateAgenda={canCreate("agenda")}
+                      />
+                      <ClientAppointmentsHistory clientId={client.id} enabled />
+                    </div>
                   ) : null}
                   {client?.updated_at ? (
                     <p className="text-xs text-muted-foreground">
@@ -2393,28 +2351,67 @@ const ClientProfile = () => {
             </Card>
           ) : null}
 
-          {(activeTab === "calendar" || activeTab === "settings") && (
+          {activeTab === "calendar" && canView("agenda") && client.id ? (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle>Agenda e compromissos</CardTitle>
+                    <CardDescription>Compromissos deste cliente no módulo Agenda do Painel</CardDescription>
+                  </div>
+                  {canCreate("agenda") ? (
+                    <Button size="sm" className="shrink-0" asChild>
+                      <Link
+                        to={`/agenda?${new URLSearchParams({ client_id: client.id, new: "1" }).toString()}`}
+                      >
+                        <CalendarDays className="mr-2 h-4 w-4" />
+                        Agendar compromisso
+                      </Link>
+                    </Button>
+                  ) : null}
+                </CardHeader>
+              </Card>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
+                <ClientUpcomingAppointments
+                  clientId={client.id}
+                  enabled
+                  canCreateAgenda={canCreate("agenda")}
+                />
+                <ClientAppointmentsHistory clientId={client.id} enabled />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={`/agenda?client_id=${encodeURIComponent(client.id)}`}>Ver agenda completa</Link>
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {activeTab === "calendar" && !canView("agenda") ? (
             <Card>
               <CardHeader>
-                <CardTitle>{activeTab === "calendar" ? "Agenda" : "Configurações"}</CardTitle>
+                <CardTitle>Agenda</CardTitle>
+                <CardDescription>Compromissos e eventos do cliente</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 py-6 text-center text-sm text-muted-foreground">
-                {activeTab === "calendar" && (
-                  <>
-                    <p>Use as tarefas para acompanhar prazos e compromissos da equipa.</p>
-                    <Button asChild variant="secondary">
-                      <Link to="/tasks">Abrir tarefas</Link>
-                    </Button>
-                  </>
-                )}
-                {activeTab === "settings" && (
-                  <>
-                    <p>Preferências da organização, integrações e utilizadores.</p>
-                    <Button asChild variant="secondary">
-                      <Link to="/settings">Abrir configurações</Link>
-                    </Button>
-                  </>
-                )}
+                <p>Sem permissão para ver a Agenda. Peça a um administrador acesso ao módulo.</p>
+                <Button asChild variant="secondary">
+                  <Link to="/tasks">Abrir tarefas</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {activeTab === "settings" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Configurações</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 py-6 text-center text-sm text-muted-foreground">
+                <p>Preferências da organização, integrações e utilizadores.</p>
+                <Button asChild variant="secondary">
+                  <Link to="/settings">Abrir configurações</Link>
+                </Button>
               </CardContent>
             </Card>
           )}

@@ -143,6 +143,7 @@ export type Database = {
           status: string | null
           updated_at: string | null
           user_id: string
+          whatsapp_avatar_url: string | null
         }
         Insert: {
           company?: string | null
@@ -159,6 +160,7 @@ export type Database = {
           status?: string | null
           updated_at?: string | null
           user_id: string
+          whatsapp_avatar_url?: string | null
         }
         Update: {
           company?: string | null
@@ -175,6 +177,7 @@ export type Database = {
           status?: string | null
           updated_at?: string | null
           user_id?: string
+          whatsapp_avatar_url?: string | null
         }
         Relationships: [
           {
@@ -640,6 +643,7 @@ export type Database = {
           status: string | null
           updated_at: string | null
           user_id: string
+          whatsapp_avatar_url: string | null
         }
         Insert: {
           company?: string | null
@@ -654,6 +658,7 @@ export type Database = {
           status?: string | null
           updated_at?: string | null
           user_id: string
+          whatsapp_avatar_url?: string | null
         }
         Update: {
           company?: string | null
@@ -668,6 +673,7 @@ export type Database = {
           status?: string | null
           updated_at?: string | null
           user_id?: string
+          whatsapp_avatar_url?: string | null
         }
         Relationships: [
           {

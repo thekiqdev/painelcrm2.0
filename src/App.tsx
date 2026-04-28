@@ -52,6 +52,7 @@ const CustomerInvoicePay = lazy(() => import("./pages/CustomerInvoicePay"));
 const PublicContractView = lazy(() => import("./pages/PublicContractView"));
 const PublicContractSign = lazy(() => import("./pages/PublicContractSign"));
 const PublicProposalView = lazy(() => import("./pages/PublicProposalView"));
+const PublicAppointmentConfirmation = lazy(() => import("./pages/PublicAppointmentConfirmation"));
 const CustomerCharges = lazy(() => import("./pages/CustomerCharges"));
 const CustomerChargeDetail = lazy(() => import("./pages/CustomerChargeDetail"));
 const Finance = lazy(() => import("./pages/Finance"));
@@ -204,6 +205,14 @@ const App = () => (
             <Route path="/saas-pay/:token" element={<Suspense fallback={<LoadingFallback />}><PublicSaasBillingPay /></Suspense>} />
             <Route path="/contract-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractView /></Suspense>} />
             <Route path="/proposal-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicProposalView /></Suspense>} />
+            <Route
+              path="/confirmar-compromisso/:token"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicAppointmentConfirmation />
+                </Suspense>
+              }
+            />
             <Route path="/contract-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractSign /></Suspense>} />
             <Route
               path="/legal/privacy-policy"

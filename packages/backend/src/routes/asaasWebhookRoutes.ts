@@ -7,6 +7,11 @@ import { asaasWebhookHandler } from '../modules/gateways/asaas/index.js';
 
 const router = Router();
 
-router.post('/', asaasWebhookHandler);
+router.get('/', (_req, res) => {
+  res.status(200).json({ status: 'ok', provider: 'asaas', webhook: 'ready' });
+});
+
+// Aceita "/" e subpaths para tolerar variações de URL configurada no provedor.
+router.post('*', asaasWebhookHandler);
 
 export default router;

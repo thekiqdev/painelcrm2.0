@@ -1,5 +1,6 @@
 import { pool } from '../utils/db.js';
 import { emitNotification, emitUnreadCount } from './websocketService.js';
+import { emitToTenant } from './realtimeService.js';
 
 /**
  * Tipos de notificações disponíveis
@@ -16,7 +17,11 @@ export type NotificationType =
   | 'instance_disconnected'
   | 'kanban_automation'
   | 'crm_proposal'
-  | 'announcement';
+  | 'announcement'
+  | 'agenda_reminder'
+  | 'agenda_reschedule_request'
+  | 'agenda_public_reschedule_done'
+  | 'agenda_pending_confirmation_alert';
 
 /**
  * Interface para criar notificação
@@ -127,6 +132,16 @@ export function resolveNotificationHrefForRow(n: Notification): string {
     if (lid) return `/leads/${lid}`;
   }
 
+  if (
+    type === 'agenda_reminder' ||
+    type === 'agenda_reschedule_request' ||
+    type === 'agenda_public_reschedule_done' ||
+    type === 'agenda_pending_confirmation_alert'
+  ) {
+    const aid = typeof d.appointment_id === 'string' ? d.appointment_id : '';
+    if (aid) return `/agenda?appointment_id=${encodeURIComponent(aid)}`;
+  }
+
   const invoiceId =
     typeof d.invoice_id === 'string'
       ? d.invoice_id
@@ -206,6 +221,24 @@ export async function createNotification(
   // Emitir notificação via WebSocket
   try {
     emitNotification(userId, notification);
+    let tenantId: string | null = notification.tenant_id ?? null;
+    if (!tenantId) {
+      const tr = await pool.query<{ tenant_id: string | null }>(
+        `SELECT tenant_id FROM users WHERE id = $1 LIMIT 1`,
+        [userId]
+      );
+      tenantId = tr.rows[0]?.tenant_id ?? null;
+    }
+    if (tenantId) {
+      emitToTenant(tenantId, 'notification.created', {
+        notification_id: notification.id,
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        href: resolveNotificationHrefForRow(notification),
+        created_at: notification.created_at,
+      });
+    }
     // Atualizar contador de não lidas
     const unreadCount = await getUnreadCount(userId);
     emitUnreadCount(userId, unreadCount);

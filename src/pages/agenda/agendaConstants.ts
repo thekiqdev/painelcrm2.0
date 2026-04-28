@@ -30,6 +30,40 @@ export function appointmentStatusLabel(status: string): string {
   return 'Agendado';
 }
 
+export function appointmentAttendanceLabel(att: string | null | undefined): string {
+  if (att === 'confirmed') return 'Confirmado';
+  if (att === 'not_confirmed') return 'Não confirmado';
+  if (att === 'no_show') return 'Não compareceu';
+  return 'Aguardando confirmação';
+}
+
+export function appointmentAttendanceBadgeClass(att: string | null | undefined): string {
+  if (att === 'confirmed') return 'border-emerald-300/70 bg-emerald-50/70 text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200';
+  if (att === 'not_confirmed') return 'border-amber-300/70 bg-amber-50/70 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200';
+  if (att === 'no_show') return 'border-rose-300/70 bg-rose-50/70 text-rose-900 dark:border-rose-800/50 dark:bg-rose-950/30 dark:text-rose-200';
+  return 'border-border/80 bg-card text-muted-foreground';
+}
+
+export function appointmentPublicConfirmationLabel(
+  response: 'confirmed' | 'needs_reschedule' | 'declined' | null | undefined,
+): string | null {
+  if (response === 'needs_reschedule') return 'Precisa remarcar';
+  if (response === 'declined') return 'Cliente recusou';
+  return null;
+}
+
+export function appointmentPublicConfirmationBadgeClass(
+  response: 'confirmed' | 'needs_reschedule' | 'declined' | null | undefined,
+): string {
+  if (response === 'needs_reschedule') {
+    return 'border-amber-300/70 bg-amber-50/70 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200';
+  }
+  if (response === 'declined') {
+    return 'border-slate-300/70 bg-slate-50/70 text-slate-900 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200';
+  }
+  return 'border-border/80 bg-card text-muted-foreground';
+}
+
 export function syncPill(
   ap: Appointment,
 ): { key: 'google' | 'error' | 'crm'; label: string; className: string } {

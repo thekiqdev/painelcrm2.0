@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { chatService, ChatInstance, ChatConversation, type BootstrapSyncMeta } from "@/services/chat";
+import { getWhatsAppInstanceProfileInfo, formatWhatsappDisplayPhone } from "@/lib/whatsappInstanceProfile";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -271,91 +272,13 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
     }
   };
 
-  // Extrair informações do perfil conectado do metadata
-  const getProfileInfo = () => {
-    if (!instance) return { phone: null, name: null, pictureUrl: null };
-    
-    const metadata = instance.metadata && typeof instance.metadata === 'object' 
-      ? (instance.metadata as any) 
-      : null;
-    
-    // Número conectado
-    let phone: string | null = null;
-    if (metadata?.connectedPhone) {
-      phone = metadata.connectedPhone;
-    } else if (instance.external_instance_name) {
-      const match = instance.external_instance_name.match(/(\d+)$/);
-      if (match) {
-        phone = match[1];
-      }
-    } else if (metadata) {
-      phone = metadata.phone || metadata.phoneNumber || metadata.number || null;
-    }
-    
-    // Nome do perfil
-    const name = metadata?.connectedProfileName || null;
-    
-    // Foto do perfil - verificar múltiplos campos possíveis
-    // Função auxiliar para verificar se uma string é válida (não vazia)
-    const isValidUrl = (url: any): url is string => {
-      return typeof url === 'string' && url.trim().length > 0;
-    };
-    
-    let pictureUrl: string | null = null;
-    
-    // Prioridade 1: Campo salvo diretamente
-    if (isValidUrl(metadata?.connectedProfilePicUrl)) {
-      pictureUrl = metadata.connectedProfilePicUrl;
-    } 
-    // Prioridade 2: Campos diretos no metadata
-    else if (isValidUrl(metadata?.profilePicUrl)) {
-      pictureUrl = metadata.profilePicUrl;
-    } else if (isValidUrl(metadata?.profilePicture)) {
-      pictureUrl = metadata.profilePicture;
-    } else if (isValidUrl(metadata?.pictureUrl)) {
-      pictureUrl = metadata.pictureUrl;
-    } 
-    // Prioridade 3: Dentro de lastConnect.instance (mais comum)
-    else if (isValidUrl(metadata?.lastConnect?.instance?.profilePicUrl)) {
-      pictureUrl = metadata.lastConnect.instance.profilePicUrl;
-    } else if (isValidUrl(metadata?.lastConnect?.instance?.profilePicture)) {
-      pictureUrl = metadata.lastConnect.instance.profilePicture;
-    } else if (isValidUrl(metadata?.lastConnect?.instance?.pictureUrl)) {
-      pictureUrl = metadata.lastConnect.instance.pictureUrl;
-    } else if (isValidUrl(metadata?.lastConnect?.instance?.profile_pic_url)) {
-      pictureUrl = metadata.lastConnect.instance.profile_pic_url;
-    } else if (isValidUrl(metadata?.lastConnect?.instance?.avatar)) {
-      pictureUrl = metadata.lastConnect.instance.avatar;
-    } else if (isValidUrl(metadata?.lastConnect?.instance?.image)) {
-      pictureUrl = metadata.lastConnect.instance.image;
-    } else if (isValidUrl(metadata?.lastConnect?.profilePicUrl)) {
-      pictureUrl = metadata.lastConnect.profilePicUrl;
-    }
-    // Prioridade 4: Dentro de lastStatusCheck.instance
-    else if (isValidUrl(metadata?.lastStatusCheck?.instance?.profilePicUrl)) {
-      pictureUrl = metadata.lastStatusCheck.instance.profilePicUrl;
-    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.profilePicture)) {
-      pictureUrl = metadata.lastStatusCheck.instance.profilePicture;
-    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.pictureUrl)) {
-      pictureUrl = metadata.lastStatusCheck.instance.pictureUrl;
-    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.profile_pic_url)) {
-      pictureUrl = metadata.lastStatusCheck.instance.profile_pic_url;
-    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.avatar)) {
-      pictureUrl = metadata.lastStatusCheck.instance.avatar;
-    } else if (isValidUrl(metadata?.lastStatusCheck?.instance?.image)) {
-      pictureUrl = metadata.lastStatusCheck.instance.image;
-    } else if (isValidUrl(metadata?.lastStatusCheck?.profilePicUrl)) {
-      pictureUrl = metadata.lastStatusCheck.profilePicUrl;
-    }
-    
-    return { phone, name, pictureUrl };
-  };
-
   if (!instance) return null;
 
   const canManage = instance.can_manage !== false;
 
-  const { phone: phoneNumber, name: profileName, pictureUrl: profilePictureUrl } = getProfileInfo();
+  const { phone: phoneNumber, name: profileName, pictureUrl: profilePictureUrl } =
+    getWhatsAppInstanceProfileInfo(instance);
+  const phoneNumberDisplay = formatWhatsappDisplayPhone(phoneNumber);
 
   return (
     <>
@@ -364,10 +287,10 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {getStatusIcon(instance.status)}
-              Detalhes da Instância
+              Sincronização e conversas
             </DialogTitle>
             <DialogDescription>
-              Informações detalhadas e gerenciamento da instância WhatsApp
+              Histórico, sincronização com o WhatsApp e ações técnicas desta conexão
               {!canManage && (
                 <span className="block text-amber-800 dark:text-amber-200 mt-1">
                   Conexão da equipe: você pode operar o atendimento; só o criador pode gerar QR e alterar a sessão.
@@ -378,10 +301,10 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
               const bs = instance.metadata?.bootstrap_sync as BootstrapSyncMeta | undefined;
               if (!bs?.status) return null;
               const labels: Record<string, string> = {
-                queued: "Sincronização inicial na fila",
-                running: "Sincronizando histórico inicial…",
-                completed: "Sincronização inicial concluída",
-                failed: "Sincronização inicial falhou",
+                queued: "Sincronização aguardando na fila",
+                running: "Sincronizando mensagens…",
+                completed: "Tudo pronto para uso",
+                failed: "Não foi possível concluir a sincronização",
               };
               return (
                 <p className="text-xs text-muted-foreground pt-1">
@@ -430,9 +353,9 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                         <div>
                           <Label className="text-xs text-muted-foreground flex items-center gap-1">
                             <Phone className="h-3 w-3" />
-                            Número do WhatsApp
+                            Número
                           </Label>
-                          <p className="text-sm font-medium">{phoneNumber}</p>
+                          <p className="text-sm font-medium">{phoneNumberDisplay}</p>
                         </div>
                       )}
                     </div>
@@ -444,12 +367,12 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
             {/* Informações da Instância */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Informações Gerais</CardTitle>
+                <CardTitle className="text-lg">Identificação</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label className="text-xs text-muted-foreground">Nome da Instância</Label>
+                    <Label className="text-xs text-muted-foreground">Nome de referência</Label>
                     <p className="text-sm font-medium">{instance.name}</p>
                   </div>
                   <div>
@@ -478,7 +401,7 @@ export const InstanceDetailsDialog: React.FC<InstanceDetailsDialogProps> = ({
                   <div>
                     <Label className="text-xs text-muted-foreground flex items-center gap-1">
                       <Hash className="h-3 w-3" />
-                      ID da Instância
+                      ID interno
                     </Label>
                     <p className="text-sm font-mono text-xs">{instance.id}</p>
                   </div>

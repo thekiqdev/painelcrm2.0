@@ -21,6 +21,38 @@ export type NeCatalogItem = {
   merge_fields: unknown;
   tenant_enabled: boolean;
   has_override: boolean;
+  template_exists?: boolean;
+};
+
+export type NePreferenceEvent = {
+  event_key: string;
+  label: string;
+  description: string | null;
+  channel: string;
+  enabled: boolean;
+  template_exists: boolean;
+  has_override: boolean;
+  last_delivery_status: string | null;
+  last_delivery_at: string | null;
+};
+
+export type NePreferenceModule = {
+  module: string;
+  label: string;
+  events: NePreferenceEvent[];
+};
+
+export type NeTenantPreferencesResponse = {
+  ok: boolean;
+  modules: NePreferenceModule[];
+};
+
+export type NeTenantSummaryResponse = {
+  ok: boolean;
+  active_events_count: number;
+  disabled_events_count: number;
+  sent_last_7_days: number;
+  failures_last_7_days: number;
 };
 
 export type NeCatalogResponse = {
@@ -53,12 +85,24 @@ export type NeDeliveryRow = {
   idempotency_key: string;
   created_at: string;
   channel?: string;
+  /** Módulo do catálogo (invoices, proposals, …). */
+  module?: string | null;
   recipient_type?: string;
   recipient_address?: string;
   retry_count?: number;
   next_retry_at?: string | null;
   dispatch_sender_user_id?: string | null;
   sent_at?: string | null;
+};
+
+export type NeDeliveryAttemptRow = {
+  id: string;
+  attempt_number: number;
+  status: string;
+  error_message: string | null;
+  provider_response: unknown;
+  duration_ms: number | null;
+  created_at: string;
 };
 
 export type NeDeliveriesSearchResponse = {
@@ -74,6 +118,22 @@ export async function fetchNeCatalogWithState(locale = 'pt-BR') {
   return apiClient.get<NeCatalogResponse>(`${BASE}/tenant/catalog-with-state?locale=${encodeURIComponent(locale)}`);
 }
 
+export async function fetchNeTenantPreferences(locale = 'pt-BR') {
+  return apiClient.get<NeTenantPreferencesResponse>(
+    `${BASE}/tenant/preferences?locale=${encodeURIComponent(locale)}`,
+  );
+}
+
+export async function fetchNeTenantSummary() {
+  return apiClient.get<NeTenantSummaryResponse>(`${BASE}/tenant/summary`);
+}
+
+export async function fetchNeDeliveryAttempts(deliveryId: string) {
+  return apiClient.get<{ ok: boolean; attempts: NeDeliveryAttemptRow[] }>(
+    `${BASE}/deliveries/${encodeURIComponent(deliveryId)}/attempts`,
+  );
+}
+
 export async function fetchNeTemplateBundle(eventKey: string, locale = 'pt-BR', channel?: string) {
   const q = new URLSearchParams({ locale });
   if (channel) q.set('channel', channel);
@@ -82,8 +142,18 @@ export async function fetchNeTemplateBundle(eventKey: string, locale = 'pt-BR', 
   );
 }
 
-export async function putNeTenantPreference(eventKey: string, body: { enabled: boolean }) {
+export async function putNeTenantPreference(
+  eventKey: string,
+  body: { enabled: boolean; channel?: 'whatsapp' | 'email' | 'sms' },
+) {
   return apiClient.put<{ ok: boolean }>(`${BASE}/tenant/preferences/${encodeURIComponent(eventKey)}`, body);
+}
+
+export async function patchNeTenantPreference(
+  eventKey: string,
+  body: { enabled: boolean; channel?: 'whatsapp' | 'email' | 'sms' },
+) {
+  return apiClient.patch<{ ok: boolean }>(`${BASE}/tenant/preferences/${encodeURIComponent(eventKey)}`, body);
 }
 
 export async function putNeTenantOverride(
@@ -137,12 +207,16 @@ export async function fetchNeDeliveriesSearch(params: {
   limit?: number;
   status?: string;
   event_key?: string;
+  channel?: string;
+  module?: string;
 }) {
   const q = new URLSearchParams();
   if (params.hours != null) q.set('hours', String(params.hours));
   if (params.limit != null) q.set('limit', String(params.limit));
   if (params.status) q.set('status', params.status);
   if (params.event_key) q.set('event_key', params.event_key);
+  if (params.channel) q.set('channel', params.channel);
+  if (params.module) q.set('module', params.module);
   const qs = q.toString();
   return apiClient.get<NeDeliveriesSearchResponse>(`${BASE}/deliveries/search${qs ? `?${qs}` : ''}`);
 }

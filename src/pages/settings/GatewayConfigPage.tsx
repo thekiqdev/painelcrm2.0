@@ -7,6 +7,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { PaymentGatewaySection } from "@/components/settings/PaymentGatewaySection";
+import { MercadoPagoGatewaySection } from "@/components/settings/MercadoPagoGatewaySection";
 import { apiClient } from "@/integrations/api/client";
 import NotFound from "@/pages/NotFound";
 
@@ -65,7 +66,11 @@ export default function GatewayConfigPage() {
           Configurar {gatewayKey}
         </h1>
       </div>
-      <PaymentGatewaySection gatewayKey={gatewayKey} />
+      {gatewayKey === "mercado_pago" ? (
+        <MercadoPagoGatewaySection />
+      ) : (
+        <PaymentGatewaySection gatewayKey={gatewayKey} />
+      )}
     </div>
   );
 }

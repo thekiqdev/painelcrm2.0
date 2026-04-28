@@ -46,6 +46,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarHeader,
   SidebarTrigger,
   SidebarProvider,
   useSidebar
@@ -85,6 +86,7 @@ import {
   useMobileShellChrome,
 } from '@/contexts/MobileShellChromeContext';
 import { useInAppNotificationBadges } from '@/hooks/useInAppNotificationBadges';
+import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { HeaderNotificationBell } from '@/components/layout/HeaderNotificationBell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -188,14 +190,42 @@ const Nav = () => {
   return (
     <Sidebar
       collapsible="icon"
-      className={cn(
-        'border-r border-sidebar-border/70 bg-sidebar/95 shadow-sm transition-all duration-300',
-        collapsed ? 'w-[3.25rem]' : 'w-64',
-      )}
+      className="border-r border-sidebar-border/70 bg-sidebar/95 shadow-sm transition-[width] duration-300"
     >
-      <SidebarTrigger className="m-2 h-8 shrink-0 self-end rounded-lg border border-transparent hover:bg-sidebar-accent/60" />
-
-      <TenantSidebarMark collapsed={collapsed} />
+      <SidebarHeader
+        className={cn(
+          'border-0 p-2',
+          collapsed
+            ? 'flex flex-col items-stretch gap-1.5'
+            : 'flex flex-row items-center justify-between gap-2',
+        )}
+      >
+        {collapsed ? (
+          <>
+            <div className="flex justify-end">
+              <SidebarTrigger
+                className="h-8 w-8 shrink-0 rounded-md hover:bg-sidebar-accent/60"
+                aria-label="Recolher ou expandir o menu"
+              />
+            </div>
+            <TenantSidebarMark
+              collapsed
+              className="!mb-2 px-0 pb-0"
+            />
+          </>
+        ) : (
+          <>
+            <TenantSidebarMark
+              collapsed={false}
+              className="!mb-0 min-w-0 flex-1 px-0 pb-0"
+            />
+            <SidebarTrigger
+              className="h-8 w-8 shrink-0 rounded-md hover:bg-sidebar-accent/60"
+              aria-label="Recolher ou expandir o menu"
+            />
+          </>
+        )}
+      </SidebarHeader>
 
       <SidebarContent className="gap-0.5">
         <SidebarGroup className="py-1.5">
@@ -410,6 +440,46 @@ const Header = () => {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [commandSearchQuery, setCommandSearchQuery] = useState('');
+  const [desktopSearchInteracted, setDesktopSearchInteracted] = useState(false);
+  const [commandSearchInteracted, setCommandSearchInteracted] = useState(false);
+  const [desktopSearchFocused, setDesktopSearchFocused] = useState(false);
+  const [commandSearchFocused, setCommandSearchFocused] = useState(false);
+  const [desktopSearchArmed, setDesktopSearchArmed] = useState(false);
+  const [commandSearchArmed, setCommandSearchArmed] = useState(false);
+
+  useEffect(() => {
+    // A cada mudança de página, a busca global deve voltar vazia.
+    setSearchQuery('');
+    setCommandSearchQuery('');
+    setDesktopSearchInteracted(false);
+    setCommandSearchInteracted(false);
+    setDesktopSearchFocused(false);
+    setCommandSearchFocused(false);
+    setDesktopSearchArmed(false);
+    setCommandSearchArmed(false);
+    setPopoverOpen(false);
+    setCommandDialogOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    // Hardening: se algum autofill injetar e-mail sem foco/interação, limpamos imediatamente.
+    const userEmail = (user?.email || '').trim().toLowerCase();
+    if (!userEmail) return;
+    if (!desktopSearchFocused && !desktopSearchInteracted && searchQuery.trim().toLowerCase() === userEmail) {
+      setSearchQuery('');
+    }
+    if (!commandSearchFocused && !commandSearchInteracted && commandSearchQuery.trim().toLowerCase() === userEmail) {
+      setCommandSearchQuery('');
+    }
+  }, [
+    user?.email,
+    searchQuery,
+    commandSearchQuery,
+    desktopSearchFocused,
+    commandSearchFocused,
+    desktopSearchInteracted,
+    commandSearchInteracted,
+  ]);
 
   const initials = profile ? 
     (profile.first_name?.charAt(0) || '') + (profile.last_name?.charAt(0) || '') : 
@@ -420,6 +490,7 @@ const Header = () => {
     'Usuário';
 
   const { notifUnread, updatesUnread } = useInAppNotificationBadges();
+  useRealtimeEvents();
 
   const hasClients = useFeatureFlag('clients');
   const hasLeads = useFeatureFlag('leads');
@@ -679,7 +750,9 @@ const Header = () => {
   const canNewInvoiceFromClient = hasInvoices && canView('billing') && canCreate('billing');
   const canCreateClientFromSearch = hasClients && canView('clients') && canCreate('clients');
 
-  const activeSearchQuery = commandDialogOpen ? commandSearchQuery : searchQuery;
+  const activeSearchQuery = commandDialogOpen
+    ? (commandSearchArmed && commandSearchInteracted ? commandSearchQuery : '')
+    : (desktopSearchArmed && desktopSearchInteracted ? searchQuery : '');
   const qTrim = activeSearchQuery.trim();
 
   const { groupedSearch, searchLoading, searchError } = useDebouncedGlobalGroupedSearch(
@@ -701,7 +774,7 @@ const Header = () => {
     }
   }, [searchTypesCsv, qTrim, commandDialogOpen]);
 
-  const panelQuery = commandDialogOpen ? commandSearchQuery : searchQuery;
+  const panelQuery = activeSearchQuery;
 
   const handleOpenHref = (href: string) => {
     setPopoverOpen(false);
@@ -763,13 +836,34 @@ const Header = () => {
               <Input
                 placeholder="Buscar clientes, contratos, produtos..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  if (!desktopSearchFocused || !desktopSearchArmed) return;
+                  setDesktopSearchInteracted(true);
+                  setSearchQuery(e.target.value);
+                }}
+                onPaste={() => {
+                  if (!desktopSearchArmed) return;
+                  setDesktopSearchInteracted(true);
+                }}
+                onFocus={() => setDesktopSearchFocused(true)}
+                onBlur={() => setDesktopSearchFocused(false)}
+                onMouseDown={() => setDesktopSearchArmed(true)}
                 onKeyDown={(e) => {
+                  if (e.key === 'Tab') return;
+                  if (!desktopSearchArmed) setDesktopSearchArmed(true);
+                  if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+                    setDesktopSearchInteracted(true);
+                  }
                   if (e.key === 'Escape') {
                     e.stopPropagation();
                     setPopoverOpen(false);
                   }
                 }}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                name="global-search-input"
                 className="pl-9 pr-16"
               />
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
@@ -801,11 +895,37 @@ const Header = () => {
         </Popover>
       </div>
 
-      <CommandDialog open={commandDialogOpen} onOpenChange={setCommandDialogOpen}>
+      <CommandDialog
+        open={commandDialogOpen}
+        onOpenChange={(open) => {
+          setCommandDialogOpen(open);
+          if (open) {
+            // Evita reaproveitar/autofill de valor anterior no diálogo.
+            setCommandSearchQuery('');
+            setCommandSearchInteracted(false);
+            setCommandSearchFocused(false);
+            setCommandSearchArmed(false);
+          }
+        }}
+      >
         <CommandInput
           placeholder="Digite para buscar (mín. 2 caracteres)…"
           value={commandSearchQuery}
-          onValueChange={setCommandSearchQuery}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          name="global-search-command-input"
+          onFocus={() => setCommandSearchFocused(true)}
+          onBlur={() => setCommandSearchFocused(false)}
+          onMouseDown={() => setCommandSearchArmed(true)}
+          onKeyDown={() => setCommandSearchArmed(true)}
+          onValueChange={(v) => {
+            // Só considera interação real quando o diálogo está aberto e com foco explícito do usuário.
+            if (!commandDialogOpen || !commandSearchFocused || !commandSearchArmed) return;
+            setCommandSearchInteracted(true);
+            setCommandSearchQuery(v);
+          }}
         />
         <GlobalSearchPanelContent
           layout="dialog"
@@ -934,8 +1054,17 @@ function AppLayoutMainColumn({ children }: AppLayoutProps) {
 const AppLayout = ({ children }: AppLayoutProps) => {
   return (
     <TenantBrandProvider>
-      <SidebarProvider>
-        <div className="flex min-h-screen w-full">
+      <SidebarProvider
+        className="min-w-0"
+        style={
+          {
+            // Largura do painel e do espaçador: mais estreita e alinhada (evita trigger a “puxar” a largura).
+            '--sidebar-width': '13.5rem',
+            '--sidebar-width-icon': '3.25rem',
+          } as React.CSSProperties
+        }
+      >
+        <div className="flex min-h-screen w-full min-w-0">
           <div className="hidden md:block">
             <Nav />
           </div>

@@ -14,7 +14,18 @@ export type ClientTimelineEventName =
   | 'invoice_paid'
   | 'agenda_appointment_created'
   | 'agenda_appointment_updated'
-  | 'agenda_appointment_cancelled';
+  | 'agenda_appointment_cancelled'
+  | 'agenda_appointment_rescheduled'
+  | 'agenda_attendance_confirmed'
+  | 'agenda_attendance_not_confirmed'
+  | 'agenda_attendance_no_show'
+  | 'agenda_confirmation_requested'
+  | 'agenda_public_confirmation_confirmed'
+  | 'agenda_public_confirmation_needs_reschedule'
+  | 'agenda_public_confirmation_declined'
+  | 'agenda_public_rescheduled'
+  | 'agenda_appointment_completed'
+  | 'agenda_appointment_follow_up_created';
 
 export interface CreateClientTimelineEventInput {
   tenantId: string;

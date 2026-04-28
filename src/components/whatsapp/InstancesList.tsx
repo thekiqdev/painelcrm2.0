@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,32 +11,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { 
-  QrCode, 
-  RefreshCw, 
-  Trash2, 
-  Plus,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Loader2,
-  Calendar,
-  Hash
-} from "lucide-react";
+import { Loader2, Plus, MessageCircle } from "lucide-react";
 import { chatService, ChatInstance, type BootstrapSyncMeta } from "@/services/chat";
 import { toast } from "@/components/ui/sonner";
 import QRCodePopup from "./QRCodePopup";
 import { InstanceDetailsDialog } from "./InstanceDetailsDialog";
+import { WhatsAppInstanceCard } from "./WhatsAppInstanceCard";
+import { WhatsAppInstanceDetailsSheet } from "./WhatsAppInstanceDetailsSheet";
+import { REALTIME_WINDOW_EVENTS } from "@/services/realtimeClient";
 
 interface InstancesListProps {
   onAddInstance: () => void;
   onInstanceCreated?: () => void;
 }
 
-export const InstancesList: React.FC<InstancesListProps> = ({ 
-  onAddInstance,
-  onInstanceCreated 
-}) => {
+export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onInstanceCreated }) => {
+  const navigate = useNavigate();
   const [instances, setInstances] = useState<ChatInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -49,18 +38,18 @@ export const InstancesList: React.FC<InstancesListProps> = ({
   const [checkingStatus, setCheckingStatus] = useState<string | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<ChatInstance | null>(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
-  const instancesRef = useRef<ChatInstance[]>([]);
+  const [quickSyncingId, setQuickSyncingId] = useState<string | null>(null);
+  const [sheetInstanceId, setSheetInstanceId] = useState<string | null>(null);
 
   const loadInstances = async () => {
     try {
       setLoading(true);
       const data = await chatService.listInstances();
       setInstances(data);
-      instancesRef.current = data; // Atualizar ref
     } catch (error) {
       console.error("Erro ao carregar instâncias:", error);
-      toast.error("Erro ao carregar instâncias", {
-        description: error instanceof Error ? error.message : "Ocorreu um erro"
+      toast.error("Erro ao carregar conexões", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro",
       });
     } finally {
       setLoading(false);
@@ -71,7 +60,22 @@ export const InstancesList: React.FC<InstancesListProps> = ({
     loadInstances();
   }, []);
 
-  // Atualiza lista enquanto bootstrap sync estiver em fila ou em execução (metadata do backend)
+  useEffect(() => {
+    const onChannelStatusChanged = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+      const channelId = typeof detail?.channel_id === "string" ? detail.channel_id : null;
+      const status = typeof detail?.status === "string" ? detail.status : null;
+      if (!channelId || !status) return;
+      setInstances((prev) =>
+        prev.map((inst) => (inst.id === channelId ? { ...inst, status } : inst))
+      );
+    };
+    window.addEventListener(REALTIME_WINDOW_EVENTS.channelStatusChanged, onChannelStatusChanged);
+    return () => {
+      window.removeEventListener(REALTIME_WINDOW_EVENTS.channelStatusChanged, onChannelStatusChanged);
+    };
+  }, []);
+
   useEffect(() => {
     const needsBootstrapPoll = instances.some((inst) => {
       const bs = inst.metadata?.bootstrap_sync as BootstrapSyncMeta | undefined;
@@ -84,102 +88,94 @@ export const InstancesList: React.FC<InstancesListProps> = ({
     return () => clearInterval(id);
   }, [instances]);
 
-  // Polling otimizado - apenas para instâncias que realmente precisam (conectando ou com QR code aberto)
   useEffect(() => {
-    const needsPolling = instances.filter(inst => 
-      inst.status === 'connecting' || qrCodeInstanceId === inst.id
+    const needsPolling = instances.filter(
+      (inst) => inst.status === "connecting" || qrCodeInstanceId === inst.id
     );
-    
     if (needsPolling.length === 0) return;
-    
-    // Intervalo maior para reduzir requisições
+
     const statusInterval = setInterval(async () => {
       try {
-        // Atualizar apenas instâncias que precisam
         const updates = await Promise.all(
           needsPolling.map(async (instance) => {
-          try {
-            const status = await chatService.getInstanceStatus(instance.id);
-            const instanceData = status?.instance || status;
-            const state = instanceData?.state || instanceData?.status || status?.status;
-            const connected = status?.connected || instanceData?.connected;
-            const loggedIn = status?.loggedIn || instanceData?.loggedIn;
-            
-            if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
-                return { id: instance.id, status: 'connected' };
+            try {
+              const status = await chatService.getInstanceStatus(instance.id);
+              const instanceData = status?.instance || status;
+              const state = instanceData?.state || instanceData?.status || status?.status;
+              const connected = status?.connected || instanceData?.connected;
+              const loggedIn = status?.loggedIn || instanceData?.loggedIn;
+
+              if (state === "open" || state === "connected" || connected === true || loggedIn === true) {
+                return { id: instance.id, status: "connected" };
               }
-          } catch (error) {
-              // Silenciar erros
+            } catch {
+              /* silenciar */
             }
             return null;
-        })
-      );
-      
-        // Aplicar atualizações apenas se houver mudanças
-        const validUpdates = updates.filter(u => u !== null);
+          })
+        );
+
+        const validUpdates = updates.filter((u) => u !== null);
         if (validUpdates.length > 0) {
-          setInstances(prev => prev.map(inst => {
-            const update = validUpdates.find(u => u?.id === inst.id);
-            return update ? { ...inst, status: update.status } : inst;
-          }));
-          // Recarregar se alguma instância conectou
-          if (validUpdates.some(u => u?.status === 'connected')) {
+          setInstances((prev) =>
+            prev.map((inst) => {
+              const update = validUpdates.find((u) => u?.id === inst.id);
+              return update ? { ...inst, status: update.status } : inst;
+            })
+          );
+          if (validUpdates.some((u) => u?.status === "connected")) {
             loadInstances();
           }
         }
-      } catch (error) {
-        // Silenciar erros no polling
+      } catch {
+        /* silenciar */
       }
-    }, 15000); // A cada 15 segundos (reduzido de 10s)
-    
+    }, 15000);
+
     return () => clearInterval(statusInterval);
-  }, [instances.length, qrCodeInstanceId]); // Incluir qrCodeInstanceId nas dependências
+  }, [instances.length, qrCodeInstanceId]);
 
   const handleGenerateQRCode = async (instance: ChatInstance) => {
     setGeneratingQR(instance.id);
     try {
       const connectResponse = await chatService.connectInstance(instance.id);
-      
+
       const instanceData = connectResponse?.instance || {};
       const qrData = instanceData?.qrcode || connectResponse?.qrcode || connectResponse?.code;
       const pairingCode = instanceData?.paircode || connectResponse?.paircode || connectResponse?.pairingCode;
-      
+
       if (qrData) {
-        const processedQR = qrData.startsWith('data:image') 
-          ? qrData 
-          : `data:image/png;base64,${qrData}`;
-        
+        const processedQR = qrData.startsWith("data:image") ? qrData : `data:image/png;base64,${qrData}`;
+
         setQrCodeData(processedQR);
         setQrCodeInstanceId(instance.id);
-        toast.success("QR Code gerado com sucesso!");
+        toast.success("QR Code pronto!");
       } else if (pairingCode) {
         toast.info("Código de pareamento disponível", {
-          description: `Use o código: ${pairingCode}`
+          description: `Use o código: ${pairingCode}`,
         });
-      } else if (connectResponse?.connected || connectResponse?.loggedIn || instanceData?.status === 'open') {
-        toast.success("Instância já está conectada!");
+      } else if (connectResponse?.connected || connectResponse?.loggedIn || instanceData?.status === "open") {
+        toast.success("Já está conectado!");
         await loadInstances();
       } else {
         throw new Error("QR Code não disponível na resposta");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Erro ao gerar QR code:", error);
-      
-      // Tratar erro 409 de forma mais clara
-      const errorMessage = error?.message || '';
-      if (errorMessage.includes('409') || errorMessage.includes('Conflict') || errorMessage.includes('já está conectada')) {
-        toast.error("Instância já conectada", {
-          description: "A instância já está conectada. O sistema tentará desconectar automaticamente. Aguarde alguns segundos e tente novamente.",
+
+      const errorMessage = error instanceof Error ? error.message : "";
+      if (errorMessage.includes("409") || errorMessage.includes("Conflict") || errorMessage.includes("já está conectada")) {
+        toast.error("Já conectado", {
+          description: "Aguarde alguns segundos e tente novamente se precisar de um novo QR.",
           duration: 5000,
         });
-        // Recarregar instâncias após 2 segundos para verificar se desconectou
         setTimeout(() => {
           loadInstances();
         }, 2000);
       } else {
-      toast.error("Erro ao gerar QR Code", {
-          description: errorMessage || "Ocorreu um erro. Tente novamente.",
-      });
+        toast.error("Não foi possível abrir o QR", {
+          description: errorMessage || "Tente novamente.",
+        });
       }
     } finally {
       setGeneratingQR(null);
@@ -194,32 +190,26 @@ export const InstancesList: React.FC<InstancesListProps> = ({
       const state = instanceData?.state || instanceData?.status || status?.status;
       const connected = status?.connected || instanceData?.connected;
       const loggedIn = status?.loggedIn || instanceData?.loggedIn;
-      
-      // Determinar status final
-      let newStatus = 'disconnected';
-      if (state === 'open' || state === 'connected' || connected === true || loggedIn === true) {
-        newStatus = 'connected';
-      } else if (state === 'connecting') {
-        newStatus = 'connecting';
+
+      let newStatus = "disconnected";
+      if (state === "open" || state === "connected" || connected === true || loggedIn === true) {
+        newStatus = "connected";
+      } else if (state === "connecting") {
+        newStatus = "connecting";
       } else if (state) {
         newStatus = state;
       }
-      
-      // Atualizar status na lista
-      setInstances(prev => prev.map(inst => 
-        inst.id === instance.id 
-          ? { ...inst, status: newStatus }
-          : inst
-      ));
-      
-      toast.success("Status atualizado", {
-        description: `Status: ${newStatus === 'connected' ? 'Conectado' : newStatus === 'connecting' ? 'Conectando' : 'Desconectado'}`
-      });
+
+      setInstances((prev) =>
+        prev.map((inst) => (inst.id === instance.id ? { ...inst, status: newStatus } : inst))
+      );
+
+      toast.success("Conexão atualizada");
       await loadInstances();
     } catch (error) {
       console.error("Erro ao verificar status:", error);
-      toast.error("Erro ao verificar status", {
-        description: error instanceof Error ? error.message : "Ocorreu um erro"
+      toast.error("Erro ao atualizar", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro",
       });
     } finally {
       setCheckingStatus(null);
@@ -233,16 +223,17 @@ export const InstancesList: React.FC<InstancesListProps> = ({
 
   const handleDeleteConfirm = async () => {
     if (!instanceToDelete) return;
-    
+
     setDeletingId(instanceToDelete.id);
     try {
       await chatService.deleteInstance(instanceToDelete.id);
-      toast.success("Instância deletada com sucesso!");
+      toast.success("Conexão removida");
       await loadInstances();
+      onInstanceCreated?.();
     } catch (error) {
-      console.error("Erro ao deletar instância:", error);
-      toast.error("Erro ao deletar instância", {
-        description: error instanceof Error ? error.message : "Ocorreu um erro"
+      console.error("Erro ao remover:", error);
+      toast.error("Não foi possível remover", {
+        description: error instanceof Error ? error.message : "Ocorreu um erro",
       });
     } finally {
       setDeletingId(null);
@@ -251,223 +242,86 @@ export const InstancesList: React.FC<InstancesListProps> = ({
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const statusLower = status.toLowerCase();
-    if (statusLower === 'connected' || statusLower === 'open') {
-      return (
-        <Badge
-          variant="default"
-          className="border-0 bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-600/90 dark:bg-emerald-700 dark:hover:bg-emerald-600"
-        >
-          Conectado
-        </Badge>
-      );
-    } else if (statusLower === 'connecting') {
-      return (
-        <Badge
-          variant="default"
-          className="border-0 bg-amber-500 px-2 py-0.5 text-xs font-medium text-amber-950 hover:bg-amber-500/90 dark:bg-amber-600 dark:text-amber-50 dark:hover:bg-amber-500"
-        >
-          Conectando
-        </Badge>
-      );
-    } else {
-      return <Badge variant="secondary" className="text-xs font-medium px-2 py-0.5">Desconectado</Badge>;
-    }
+  const openConversationsDialog = (instance: ChatInstance) => {
+    setSelectedInstance(instance);
+    setDetailsDialogOpen(true);
+  };
+  const openDetailsSheet = (instance: ChatInstance) => {
+    setSheetInstanceId(instance.id);
+  };
+  const activeSheetInstance = instances.find((inst) => inst.id === sheetInstanceId) ?? null;
+
+  const handleOpenChat = (instance: ChatInstance) => {
+    navigate("/chat", { state: { focusInstanceId: instance.id } });
   };
 
-  const getBootstrapSyncBadge = (meta: ChatInstance["metadata"]) => {
-    const bs = meta?.bootstrap_sync as BootstrapSyncMeta | undefined;
-    if (!bs?.status) return null;
-    const map: Record<string, { label: string; className: string }> = {
-      queued: {
-        label: "Sync inicial",
-        className:
-          "border-0 bg-muted text-foreground dark:bg-muted/80 dark:text-foreground",
-      },
-      running: {
-        label: "Sincronizando…",
-        className: "border-0 bg-sky-600 text-white dark:bg-sky-700",
-      },
-      completed: {
-        label: "Histórico inicial ok",
-        className: "border-0 bg-emerald-600/90 text-white dark:bg-emerald-700",
-      },
-      failed: {
-        label: "Sync inicial falhou",
-        className: "border-0 bg-red-600 text-white dark:bg-red-700",
-      },
-    };
-    const v = map[bs.status];
-    if (!v) return null;
-    return (
-      <Badge variant="outline" className={`text-[10px] font-medium px-1.5 py-0 ${v.className}`}>
-        {v.label}
-      </Badge>
-    );
-  };
-
-  const getStatusIcon = (status: string) => {
-    const statusLower = status.toLowerCase();
-    if (statusLower === 'connected' || statusLower === 'open') {
-      return <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />;
-    } else if (statusLower === 'connecting') {
-      return <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />;
-    } else {
-      return <XCircle className="h-4 w-4 text-muted-foreground" />;
+  const handleQuickSync = async (instance: ChatInstance) => {
+    setQuickSyncingId(instance.id);
+    try {
+      await chatService.syncConversations(instance.id, { limit: 200 });
+      toast.success("Conversas sincronizadas", {
+        description: "A lista no chat foi atualizada com as últimas conversas.",
+      });
+      await loadInstances();
+    } catch (error) {
+      console.error("Erro ao sincronizar conversas:", error);
+      toast.error("Não foi possível sincronizar", {
+        description: error instanceof Error ? error.message : "Tente novamente.",
+      });
+    } finally {
+      setQuickSyncingId(null);
     }
   };
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Instâncias WhatsApp</CardTitle>
-              <CardDescription>
-                Gerencie suas instâncias do WhatsApp conectadas via UazAPI
-              </CardDescription>
-            </div>
-            <Button onClick={onAddInstance} size="sm">
-              <Plus className="h-4 w-4 mr-2" />
-              Nova Instância
-            </Button>
+      {loading ? (
+        <div className="mx-auto flex min-h-[220px] w-full max-w-4xl items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/20">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : instances.length === 0 ? (
+        <div className="mx-auto flex w-full max-w-4xl flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/60 bg-gradient-to-b from-muted/30 to-card px-6 py-16 text-center">
+          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <MessageCircle className="h-8 w-8" />
           </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : instances.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground mb-4">
-                Nenhuma instância criada ainda.
-              </p>
-              <Button onClick={onAddInstance} variant="outline">
-                <Plus className="h-4 w-4 mr-2" />
-                Criar Primeira Instância
-              </Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {instances.map((instance) => (
-                <Card 
-                  key={instance.id} 
-                  className="relative hover:shadow-lg transition-all duration-200 border-border/50 cursor-pointer"
-                  onClick={() => {
-                    setSelectedInstance(instance);
-                    setDetailsDialogOpen(true);
-                  }}
-                >
-                  <CardHeader className="pb-3 space-y-0">
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div className="flex-1 min-w-0">
-                        <CardTitle className="text-base font-semibold truncate mb-1">
-                          {instance.name}
-                        </CardTitle>
-                        {instance.external_instance_name && (
-                          <CardDescription className="text-xs truncate">
-                            {instance.external_instance_name}
-                          </CardDescription>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {getStatusIcon(instance.status)}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {getStatusBadge(instance.status)}
-                      {getBootstrapSyncBadge(instance.metadata)}
-                    </div>
-                  </CardHeader>
-                  <CardContent className="pt-0 space-y-0">
-                    <div className="flex flex-col gap-2.5 text-xs text-muted-foreground mb-4">
-                      {instance.created_at && (
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-                          <span className="truncate">
-                            {new Date(instance.created_at).toLocaleDateString('pt-BR', {
-                              day: '2-digit',
-                              month: 'short',
-                              year: 'numeric'
-                            })}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <Hash className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-                        <span className="font-mono text-xs truncate opacity-80">
-                          {instance.id.substring(0, 8)}...
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 border-t border-border pt-3" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="flex-1 h-9 text-xs font-medium"
-                        onClick={() => handleGenerateQRCode(instance)}
-                        disabled={generatingQR === instance.id || instance.can_manage === false}
-                      >
-                        {generatingQR === instance.id ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                            Gerando...
-                          </>
-                        ) : (
-                          <>
-                            <QrCode className="h-3.5 w-3.5 mr-1.5" />
-                            QR Code
-                          </>
-                        )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-9 w-9 p-0 hover:bg-accent"
-                        onClick={() => handleCheckStatus(instance)}
-                        disabled={checkingStatus === instance.id}
-                        title="Atualizar status"
-                      >
-                        {checkingStatus === instance.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-9 w-9 p-0 hover:bg-destructive hover:text-destructive-foreground hover:border-destructive transition-colors"
-                        onClick={() => handleDeleteClick(instance)}
-                        disabled={deletingId === instance.id || instance.can_manage === false}
-                        title="Deletar instância"
-                      >
-                        {deletingId === instance.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          <h3 className="text-lg font-semibold text-foreground">Nenhuma conexão ainda</h3>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            Adicione um número para o seu time atender pelo chat integrado.
+          </p>
+          <Button className="mt-6 h-12 px-8 text-base" onClick={onAddInstance} size="lg">
+            <Plus className="mr-2 h-5 w-5" />
+            Conectar WhatsApp
+          </Button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          {instances.map((instance) => (
+            <WhatsAppInstanceCard
+              key={instance.id}
+              instance={instance}
+              generatingQR={generatingQR === instance.id}
+              checkingStatus={checkingStatus === instance.id}
+              deleting={deletingId === instance.id}
+              quickSyncing={quickSyncingId === instance.id}
+              onOpenDetails={() => openDetailsSheet(instance)}
+              onOpenChat={() => handleOpenChat(instance)}
+              onQuickSync={() => handleQuickSync(instance)}
+              onRefresh={() => handleCheckStatus(instance)}
+              onOpenQR={() => handleGenerateQRCode(instance)}
+              onDisconnect={() => handleDeleteClick(instance)}
+              canOperateConversations={instance.can_operate !== false}
+            />
+          ))}
+        </div>
+      )}
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="rounded-2xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Deletar Instância</AlertDialogTitle>
+            <AlertDialogTitle>Desconectar este número?</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja deletar a instância "{instanceToDelete?.name}"?
-              Esta ação não pode ser desfeita e a instância será removida permanentemente.
+              A conexão com &ldquo;{instanceToDelete?.name}&rdquo; será removida da plataforma. Esta ação não pode ser
+              desfeita. Você poderá conectar de novo com um novo QR Code depois.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -476,7 +330,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Deletar
+              Desconectar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -487,14 +341,13 @@ export const InstancesList: React.FC<InstancesListProps> = ({
         onClose={() => {
           setQrCodeInstanceId(null);
           setQrCodeData(null);
-          loadInstances(); // Recarregar após fechar
+          loadInstances();
         }}
-        connectionId={qrCodeInstanceId || ''}
+        connectionId={qrCodeInstanceId || ""}
         qrCode={qrCodeData}
         onConnect={async () => {
           setQrCodeInstanceId(null);
           setQrCodeData(null);
-          // Recarregar instâncias para atualizar status
           await loadInstances();
         }}
       />
@@ -508,7 +361,24 @@ export const InstancesList: React.FC<InstancesListProps> = ({
         }}
         onInstanceUpdated={loadInstances}
       />
+
+      <WhatsAppInstanceDetailsSheet
+        instance={activeSheetInstance}
+        open={sheetInstanceId !== null}
+        onOpenChange={(open) => {
+          if (!open) setSheetInstanceId(null);
+        }}
+        generatingQR={sheetInstanceId != null && generatingQR === sheetInstanceId}
+        checkingStatus={sheetInstanceId != null && checkingStatus === sheetInstanceId}
+        deleting={sheetInstanceId != null && deletingId === sheetInstanceId}
+        quickSyncing={sheetInstanceId != null && quickSyncingId === sheetInstanceId}
+        canOperateConversations={activeSheetInstance?.can_operate !== false}
+        onOpenChat={() => (activeSheetInstance ? handleOpenChat(activeSheetInstance) : undefined)}
+        onQuickSync={() => (activeSheetInstance ? handleQuickSync(activeSheetInstance) : undefined)}
+        onRefresh={() => (activeSheetInstance ? handleCheckStatus(activeSheetInstance) : undefined)}
+        onOpenQR={() => (activeSheetInstance ? handleGenerateQRCode(activeSheetInstance) : undefined)}
+        onDisconnect={() => (activeSheetInstance ? handleDeleteClick(activeSheetInstance) : undefined)}
+      />
     </>
   );
 };
-

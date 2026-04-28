@@ -149,6 +149,11 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
         `[WebSocket] User connected: ${userId} (socket: ${socket.id}, transport: ${socket.conn.transport.name})`
       );
     }
+    console.log('[realtime_socket_connected]', {
+      socketId: socket.id,
+      userId,
+      transport: socket.conn.transport.name,
+    });
 
     // Juntar usuário a uma sala específica para receber suas notificações
     socket.join(`user:${userId}`);
@@ -187,6 +192,11 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
       if (wsVerbose()) {
         console.log(`[WebSocket] User disconnected: ${userId} (reason: ${reason})`);
       }
+      console.log('[realtime_socket_disconnected]', {
+        socketId: socket.id,
+        userId,
+        reason,
+      });
     });
 
     // Erro

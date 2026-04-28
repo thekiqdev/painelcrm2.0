@@ -20,6 +20,10 @@ import {
   TYPE_ACCENT,
   TYPE_OPTIONS,
   appointmentStatusLabel,
+  appointmentAttendanceLabel,
+  appointmentAttendanceBadgeClass,
+  appointmentPublicConfirmationLabel,
+  appointmentPublicConfirmationBadgeClass,
   syncPill,
 } from '../agendaConstants';
 
@@ -95,6 +99,9 @@ export function AgendaListView({
             {rows.map((ap) => {
               const ce = canRowEdit(ap);
               const syncP = syncPill(ap);
+              const publicConfirmationLabel = appointmentPublicConfirmationLabel(
+                ap.public_confirmation_response ?? null,
+              );
               const accent = TYPE_ACCENT[ap.type] ?? TYPE_ACCENT.other;
               return (
                 <li key={ap.id}>
@@ -133,6 +140,34 @@ export function AgendaListView({
                           >
                             {appointmentStatusLabel(ap.status)}
                           </Badge>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              'h-5 px-1.5 text-[10px] font-normal',
+                              appointmentAttendanceBadgeClass(ap.attendance_status),
+                            )}
+                          >
+                            {appointmentAttendanceLabel(ap.attendance_status)}
+                          </Badge>
+                          {publicConfirmationLabel ? (
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'h-5 px-1.5 text-[10px] font-normal',
+                                appointmentPublicConfirmationBadgeClass(ap.public_confirmation_response ?? null),
+                              )}
+                            >
+                              {publicConfirmationLabel}
+                            </Badge>
+                          ) : null}
+                          {ap.recurrence_series_id ? (
+                            <Badge
+                              variant="outline"
+                              className="h-5 px-1.5 text-[10px] font-normal border-primary/40 text-primary"
+                            >
+                              Recorrente
+                            </Badge>
+                          ) : null}
                           <span
                             className={cn(
                               'inline-flex h-5 max-w-full items-center rounded-md border px-1.5 text-[10px] font-medium',

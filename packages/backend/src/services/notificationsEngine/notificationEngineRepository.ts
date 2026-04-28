@@ -53,6 +53,24 @@ export type DeliveryRow = {
   entity_id?: string | null;
   recipient_type?: string;
   recipient_address?: string;
+  /** Módulo do catálogo (ex.: invoices, proposals), quando JOIN disponível. */
+  catalog_module?: string | null;
+};
+
+export type DeliveryAttemptRow = {
+  id: string;
+  attempt_number: number;
+  status: string;
+  error_message: string | null;
+  provider_response: unknown;
+  duration_ms: number | null;
+  created_at: Date;
+};
+
+export type LastDeliveryByEventRow = {
+  event_key: string;
+  status: string;
+  created_at: Date;
 };
 
 export type OutboundDeliveryDispatchRow = {
@@ -321,38 +339,131 @@ export async function listRecentDeliveriesFiltered(
     eventKey?: string | null;
     channel?: string | null;
     hours?: number | null;
+    /** Valores do catálogo: invoices, proposals, contracts, agenda, ou 'other'. */
+    catalogModule?: string | null;
   },
 ): Promise<DeliveryRow[]> {
   const hours = Math.min(168, Math.max(1, params.hours ?? 72));
   const lim = Math.min(200, Math.max(1, params.limit));
-  const conds: string[] = ['tenant_id = $1', `created_at >= now() - ($2::int || ' hours')::interval`];
+  const conds: string[] = ['d.tenant_id = $1', `d.created_at >= now() - ($2::int || ' hours')::interval`];
   const vals: unknown[] = [params.tenantId, hours];
   let i = 3;
   if (params.status) {
-    conds.push(`status = $${i++}`);
+    conds.push(`d.status = $${i++}`);
     vals.push(params.status);
   }
   if (params.eventKey) {
-    conds.push(`event_key = $${i++}`);
+    conds.push(`d.event_key = $${i++}`);
     vals.push(params.eventKey);
   }
   if (params.channel) {
-    conds.push(`channel = $${i++}`);
+    conds.push(`d.channel = $${i++}`);
     vals.push(params.channel);
+  }
+  if (params.catalogModule === 'other') {
+    conds.push(
+      `(c.module IS NULL OR c.module NOT IN ('invoices', 'proposals', 'contracts', 'agenda'))`,
+    );
+  } else if (params.catalogModule) {
+    conds.push(`c.module = $${i++}`);
+    vals.push(params.catalogModule);
   }
   vals.push(lim);
   const r = await client.query<DeliveryRow>(
-    `SELECT id, tenant_id, event_key, entity_type, entity_id, status, rendered_body, rendered_subject,
-            error_message, provider_message_id, idempotency_key, created_at, channel,
-            recipient_type, recipient_address,
-            retry_count, next_retry_at, dispatch_sender_user_id, sent_at
-     FROM notification_outbound_deliveries
+    `SELECT d.id, d.tenant_id, d.event_key, d.entity_type, d.entity_id, d.status, d.rendered_body, d.rendered_subject,
+            d.error_message, d.provider_message_id, d.idempotency_key, d.created_at, d.channel,
+            d.recipient_type, d.recipient_address,
+            d.retry_count, d.next_retry_at, d.dispatch_sender_user_id, d.sent_at,
+            c.module AS catalog_module
+     FROM notification_outbound_deliveries d
+     LEFT JOIN notification_event_catalog c ON c.event_key = d.event_key
      WHERE ${conds.join(' AND ')}
-     ORDER BY created_at DESC
+     ORDER BY d.created_at DESC
      LIMIT $${i}`,
     vals,
   );
   return r.rows;
+}
+
+export async function getLatestDeliveryPerEventKey(
+  client: Pool | PoolClient,
+  tenantId: string,
+  eventKeys: string[],
+): Promise<LastDeliveryByEventRow[]> {
+  if (eventKeys.length === 0) return [];
+  const r = await client.query<LastDeliveryByEventRow>(
+    `SELECT DISTINCT ON (d.event_key)
+       d.event_key,
+       d.status,
+       d.created_at
+     FROM notification_outbound_deliveries d
+     WHERE d.tenant_id = $1::uuid
+       AND d.event_key = ANY($2::text[])
+     ORDER BY d.event_key, d.created_at DESC`,
+    [tenantId, eventKeys],
+  );
+  return r.rows;
+}
+
+export async function listDeliveryAttemptsForTenantDelivery(
+  client: Pool | PoolClient,
+  tenantId: string,
+  deliveryId: string,
+): Promise<DeliveryAttemptRow[]> {
+  const r = await client.query<DeliveryAttemptRow>(
+    `SELECT a.id::text, a.attempt_number, a.status, a.error_message, a.provider_response, a.duration_ms, a.created_at
+     FROM notification_outbound_delivery_attempts a
+     INNER JOIN notification_outbound_deliveries d ON d.id = a.delivery_id
+     WHERE d.tenant_id = $1::uuid AND a.delivery_id = $2::uuid
+     ORDER BY a.attempt_number ASC`,
+    [tenantId, deliveryId],
+  );
+  return r.rows;
+}
+
+export type TenantNotificationPanelSummaryRow = {
+  active_events_count: number;
+  disabled_events_count: number;
+  sent_last_7_days: number;
+  failures_last_7_days: number;
+};
+
+export async function getTenantNotificationPanelSummary(
+  client: Pool | PoolClient,
+  tenantId: string,
+): Promise<TenantNotificationPanelSummaryRow> {
+  const pref = await client.query<{ active: string; disabled: string }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE COALESCE(p.enabled, true))::text AS active,
+       COUNT(*) FILTER (WHERE p.enabled = false)::text AS disabled
+     FROM notification_event_catalog c
+     LEFT JOIN tenant_notification_preferences p
+       ON p.tenant_id = $1::uuid AND p.event_key = c.event_key
+     WHERE c.is_active = true`,
+    [tenantId],
+  );
+  const sent = await client.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM notification_outbound_deliveries
+     WHERE tenant_id = $1::uuid
+       AND status = 'sent'
+       AND created_at >= now() - interval '7 days'`,
+    [tenantId],
+  );
+  const fail = await client.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM notification_outbound_deliveries
+     WHERE tenant_id = $1::uuid
+       AND status IN ('failed', 'failed_transient')
+       AND created_at >= now() - interval '7 days'`,
+    [tenantId],
+  );
+  return {
+    active_events_count: parseInt(pref.rows[0]?.active ?? '0', 10) || 0,
+    disabled_events_count: parseInt(pref.rows[0]?.disabled ?? '0', 10) || 0,
+    sent_last_7_days: parseInt(sent.rows[0]?.c ?? '0', 10) || 0,
+    failures_last_7_days: parseInt(fail.rows[0]?.c ?? '0', 10) || 0,
+  };
 }
 
 export async function countDeliveryAttempts(client: Pool | PoolClient, deliveryId: string): Promise<number> {
@@ -590,6 +701,7 @@ export type CatalogWithTenantStateRow = {
   pref_enabled: boolean | null;
   pref_primary_channel: string | null;
   has_override: boolean;
+  has_system_template: boolean;
 };
 
 export async function listCatalogWithTenantState(
@@ -605,7 +717,8 @@ export async function listCatalogWithTenantState(
             c.merge_fields,
             p.enabled AS pref_enabled,
             p.primary_channel AS pref_primary_channel,
-            (o.id IS NOT NULL) AS has_override
+            (o.id IS NOT NULL) AS has_override,
+            (ts.id IS NOT NULL) AS has_system_template
      FROM notification_event_catalog c
      LEFT JOIN tenant_notification_preferences p
        ON p.tenant_id = $1::uuid AND p.event_key = c.event_key
@@ -615,6 +728,11 @@ export async function listCatalogWithTenantState(
       AND o.locale = $2
       AND o.is_active = true
       AND o.channel = COALESCE(p.primary_channel, c.default_channel)
+     LEFT JOIN notification_template_system ts
+       ON ts.event_key = c.event_key
+      AND ts.locale = $2
+      AND ts.channel = COALESCE(p.primary_channel, c.default_channel)
+      AND ts.is_active = true
      WHERE c.is_active = true
      ORDER BY c.module, c.event_key`,
     [tenantId, locale],
@@ -624,14 +742,33 @@ export async function listCatalogWithTenantState(
 
 export async function upsertTenantNotificationPreference(
   client: Pool | PoolClient,
-  params: { tenantId: string; eventKey: string; enabled: boolean },
+  params: {
+    tenantId: string;
+    eventKey: string;
+    enabled: boolean;
+    /** Se omitido, mantém primary_channel existente no UPDATE. */
+    primaryChannel?: string | null;
+  },
 ): Promise<void> {
+  const updateChannel = params.primaryChannel !== undefined;
   await client.query(
-    `INSERT INTO tenant_notification_preferences (tenant_id, event_key, enabled, recipient_policy)
-     VALUES ($1::uuid, $2, $3, '{}'::jsonb)
+    `INSERT INTO tenant_notification_preferences (tenant_id, event_key, enabled, primary_channel, recipient_policy)
+     VALUES ($1::uuid, $2, $3, $4, '{}'::jsonb)
      ON CONFLICT (tenant_id, event_key)
-     DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
-    [params.tenantId, params.eventKey, params.enabled],
+     DO UPDATE SET
+       enabled = EXCLUDED.enabled,
+       primary_channel = CASE
+         WHEN $5::boolean THEN COALESCE(EXCLUDED.primary_channel, tenant_notification_preferences.primary_channel)
+         ELSE tenant_notification_preferences.primary_channel
+       END,
+       updated_at = now()`,
+    [
+      params.tenantId,
+      params.eventKey,
+      params.enabled,
+      params.primaryChannel ?? null,
+      updateChannel,
+    ],
   );
 }
 

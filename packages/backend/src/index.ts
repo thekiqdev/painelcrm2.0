@@ -64,6 +64,9 @@ import meProfileRoutes from './routes/meProfileRoutes.js';
 import { authenticateToken, setCurrentTenant, setRequestDb } from './middleware/auth.js';
 import announcementsUpdatesRoutes from './routes/announcementsUpdatesRoutes.js';
 import googleCalendarIntegrationRoutes from './routes/googleCalendarIntegrationRoutes.js';
+import asaasIntegrationRoutes from './routes/asaasIntegrationRoutes.js';
+import mercadoPagoIntegrationRoutes from './routes/mercadoPagoIntegrationRoutes.js';
+import * as mercadoPagoIntegrationController from './controllers/mercadoPagoIntegrationController.js';
 import appointmentsRoutes from './routes/appointmentsRoutes.js';
 import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
@@ -97,6 +100,8 @@ import {
 } from './services/whatsappTemplateMediaStorageService.js';
 import { syncOverdueBillingStatuses } from './services/billingOverdueStatusService.js';
 import { processAnnouncementSendRecipientsBatch } from './services/announcements/announcementSendWorker.js';
+import { runAppointmentRemindersOnce } from './services/appointmentReminderWorkerService.js';
+import { runPendingConfirmationAutomationOnce } from './services/appointmentAutomationService.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -415,11 +420,17 @@ app.use('/api/me/tenant', myTenantPlanRoutes);
 /** Perfil pessoal / negócio: GET|PUT /api/me/profile, avatar, senha por WhatsApp, business-profile */
 app.use('/api/me', meProfileRoutes);
 app.use('/api/integrations/google', googleCalendarIntegrationRoutes);
+app.use('/api/integrations/asaas', asaasIntegrationRoutes);
+app.get('/api/integrations/mercado-pago/callback', mercadoPagoIntegrationController.getMercadoPagoOAuthCallback);
+app.use('/api/integrations/mercado-pago', mercadoPagoIntegrationRoutes);
 app.use('/api/appointments', appointmentsRoutes);
 app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);
 app.use('/api/superadmin/tenants', tenantsRoutes);
+// Alias de compatibilidade: alguns provedores foram configurados com /api/webhooks/...
+app.use('/api/webhooks/uazapi', uazapiWebhookRoutes);
+app.use('/api/webhooks/asaas', asaasWebhookRoutes);
 app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 app.use('/webhooks/asaas', asaasWebhookRoutes);
 
@@ -530,6 +541,21 @@ httpServer.listen(PORT, '0.0.0.0', () => {
       console.error('[announcements/send] batch error', err),
     );
   }, announcementsPollMs);
+
+  const agendaReminderMs = Math.max(60_000, parseInt(process.env.AGENDA_REMINDER_POLL_MS || '60000', 10));
+  setInterval(() => {
+    void runAppointmentRemindersOnce().catch((err) => console.error('[agenda-reminder] tick error', err));
+  }, agendaReminderMs);
+
+  const agendaAutomationMs = Math.max(
+    60_000,
+    parseInt(process.env.AGENDA_AUTOMATION_POLL_MS || '300000', 10),
+  );
+  setInterval(() => {
+    void runPendingConfirmationAutomationOnce().catch((err) =>
+      console.error('[agenda-automation] tick error', err),
+    );
+  }, agendaAutomationMs);
 });
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {

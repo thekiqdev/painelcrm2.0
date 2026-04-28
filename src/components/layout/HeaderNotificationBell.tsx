@@ -4,6 +4,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   Bell,
+  CalendarClock,
   ClipboardList,
   FileSignature,
   FileText,
@@ -51,6 +52,7 @@ type Props = {
 function iconForNotificationType(type: string): LucideIcon {
   const t = type || '';
   if (t === 'announcement') return Megaphone;
+  if (t === 'agenda_reminder') return CalendarClock;
   if (t === 'crm_proposal') return FileText;
   if (t === 'kanban_automation') return LayoutGrid;
   if (t === 'lead_updated') return UserPlus;

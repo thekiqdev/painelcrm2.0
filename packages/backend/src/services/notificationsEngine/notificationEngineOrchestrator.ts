@@ -25,18 +25,24 @@ import { resolveInvoiceTransactionalDispatchNotBefore } from './notificationTena
 
 const DEFAULT_LOCALE = 'pt-BR';
 
-export type SimulateResult =
-  | {
-      ok: true;
-      duplicate: boolean;
-      deliveryId: string;
-      status: string;
-      renderedSubject: string | null;
-      renderedBody: string;
-      providerMessageId: string | null;
-      errorMessage: string | null;
-    }
-  | { ok: false; error: string; details?: unknown };
+export type SimulateSuccess = {
+  ok: true;
+  duplicate: boolean;
+  /** Null apenas quando a preferência do tenant bloqueia antes de criar entrega. */
+  deliveryId: string | null;
+  status: string;
+  renderedSubject: string | null;
+  renderedBody: string;
+  providerMessageId: string | null;
+  errorMessage: string | null;
+  skipReason?: 'tenant_preference_disabled';
+};
+
+export type SimulateResult = SimulateSuccess | { ok: false; error: string; details?: unknown };
+
+export function isSkippedByTenantPreference(result: SimulateResult): boolean {
+  return result.ok === true && result.skipReason === 'tenant_preference_disabled';
+}
 
 function computeRetryDelayMs(failedAttemptNumber: number): number {
   const base = getNotificationsEngineRetryBaseMs();
@@ -118,7 +124,22 @@ export async function runTransactionalNotification(params: {
 
   const pref = await getTenantPreference(params.pool, params.tenantId, params.eventKey);
   if (pref && pref.enabled === false) {
-    return { ok: false, error: 'Notificação desativada para esta empresa (preferência).' };
+    neLogInfo('notification_skipped_by_tenant_preference', {
+      tenant_id: params.tenantId,
+      event_key: params.eventKey,
+      channel: pref.primary_channel ?? null,
+    });
+    return {
+      ok: true,
+      duplicate: false,
+      deliveryId: null,
+      status: 'skipped',
+      renderedSubject: null,
+      renderedBody: '',
+      providerMessageId: null,
+      errorMessage: null,
+      skipReason: 'tenant_preference_disabled',
+    };
   }
 
   const channel = pref?.primary_channel || event.default_channel;

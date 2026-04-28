@@ -30,6 +30,11 @@ import {
   postPublicSaasBillingPayWithCard,
 } from '../controllers/publicSaasBillingController.js';
 import { getPublicLegalPage } from '../controllers/publicLegalController.js';
+import {
+  getPublicAppointmentConfirmationByToken,
+  getPublicRescheduleConflictsByToken,
+  postPublicAppointmentConfirmationByToken,
+} from '../controllers/publicAppointmentsConfirmationController.js';
 
 const router = Router();
 
@@ -178,6 +183,42 @@ router.post(
   '/saas-billing/:token/pay-with-card',
   payWithCardLimiter,
   postPublicSaasBillingPayWithCard,
+);
+
+const appointmentPublicConfirmReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_APPOINTMENT_CONFIRM_GET_MAX || '120', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => `${req.ip || ''}:${(req.params as { token?: string }).token || ''}`,
+});
+
+const appointmentPublicConfirmWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_APPOINTMENT_CONFIRM_POST_MAX || '30', 10),
+  message: { ok: false, error: 'Muitas tentativas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => `${req.ip || ''}:${(req.params as { token?: string }).token || ''}`,
+});
+
+router.get(
+  '/appointments/confirm/:token',
+  appointmentPublicConfirmReadLimiter,
+  getPublicAppointmentConfirmationByToken,
+);
+router.get(
+  '/appointments/confirm/:token/reschedule-conflicts',
+  appointmentPublicConfirmReadLimiter,
+  getPublicRescheduleConflictsByToken,
+);
+router.post(
+  '/appointments/confirm/:token',
+  appointmentPublicConfirmWriteLimiter,
+  postPublicAppointmentConfirmationByToken,
 );
 
 export default router;

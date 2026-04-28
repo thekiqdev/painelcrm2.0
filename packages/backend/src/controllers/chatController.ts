@@ -78,6 +78,11 @@ import {
   fetchInstanceForManage,
   listInstancesForActor,
 } from '../utils/chatInstanceAccess.js';
+import {
+  resolveCommunicationDisplayIdentity,
+  upsertCommunicationContactFromProvider,
+} from '../services/communicationContactService.js';
+import { emitToTenant } from '../services/realtimeService.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -241,6 +246,89 @@ function normalizePhoneNumber(phone: string | null | undefined): string | null {
   return normalizeConversationPhone(phone);
 }
 
+function pickFirstNonEmpty(...values: unknown[]): string | null {
+  for (const v of values) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function extractConnectedProfileName(payload: any): string | null {
+  const root = payload ?? {};
+  const inst = root?.instance && typeof root.instance === 'object' ? root.instance : {};
+  const data = root?.data && typeof root.data === 'object' ? root.data : {};
+  const dataInst = data?.instance && typeof data.instance === 'object' ? data.instance : {};
+
+  return pickFirstNonEmpty(
+    root?.profile_name,
+    root?.profileName,
+    root?.push_name,
+    root?.pushName,
+    root?.contact_name,
+    root?.contactName,
+    root?.display_name,
+    root?.displayName,
+    root?.name,
+    inst?.profile_name,
+    inst?.profileName,
+    inst?.push_name,
+    inst?.pushName,
+    inst?.contact_name,
+    inst?.contactName,
+    inst?.display_name,
+    inst?.displayName,
+    inst?.name,
+    data?.profile_name,
+    data?.profileName,
+    data?.push_name,
+    data?.pushName,
+    data?.contact_name,
+    data?.contactName,
+    data?.display_name,
+    data?.displayName,
+    data?.name,
+    dataInst?.profile_name,
+    dataInst?.profileName,
+    dataInst?.push_name,
+    dataInst?.pushName,
+    dataInst?.contact_name,
+    dataInst?.contactName,
+    dataInst?.display_name,
+    dataInst?.displayName,
+    dataInst?.name
+  );
+}
+
+function extractConnectedPhone(payload: any): string | null {
+  const root = payload ?? {};
+  const inst = root?.instance && typeof root.instance === 'object' ? root.instance : {};
+  const data = root?.data && typeof root.data === 'object' ? root.data : {};
+  const dataInst = data?.instance && typeof data.instance === 'object' ? data.instance : {};
+
+  return pickFirstNonEmpty(
+    root?.owner,
+    root?.phone,
+    root?.phone_number,
+    root?.phoneNumber,
+    root?.number,
+    inst?.owner,
+    inst?.phone,
+    inst?.phone_number,
+    inst?.phoneNumber,
+    inst?.number,
+    data?.owner,
+    data?.phone,
+    data?.phone_number,
+    data?.phoneNumber,
+    data?.number,
+    dataInst?.owner,
+    dataInst?.phone,
+    dataInst?.phone_number,
+    dataInst?.phoneNumber,
+    dataInst?.number
+  );
+}
+
 let hasLeadIdColumnPromise: Promise<boolean> | null = null;
 async function hasLeadIdColumn(): Promise<boolean> {
   if (!hasLeadIdColumnPromise) {
@@ -256,6 +344,82 @@ async function hasLeadIdColumn(): Promise<boolean> {
     })();
   }
   return hasLeadIdColumnPromise;
+}
+
+let hasClientWhatsappAvatarColumnPromise: Promise<boolean> | null = null;
+async function hasClientWhatsappAvatarColumn(): Promise<boolean> {
+  if (!hasClientWhatsappAvatarColumnPromise) {
+    hasClientWhatsappAvatarColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'clients'
+           AND column_name = 'whatsapp_avatar_url'`
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
+  }
+  return hasClientWhatsappAvatarColumnPromise;
+}
+
+let hasLeadWhatsappAvatarColumnPromise: Promise<boolean> | null = null;
+async function hasLeadWhatsappAvatarColumn(): Promise<boolean> {
+  if (!hasLeadWhatsappAvatarColumnPromise) {
+    hasLeadWhatsappAvatarColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'leads'
+           AND column_name = 'whatsapp_avatar_url'`
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
+  }
+  return hasLeadWhatsappAvatarColumnPromise;
+}
+
+async function persistConversationAvatarOnCrm(
+  userId: string,
+  clientId: string | null,
+  leadId: string | null,
+  avatarUrl: string | null
+): Promise<void> {
+  const nextAvatar = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
+  if (!nextAvatar) return;
+
+  if (clientId && (await hasClientWhatsappAvatarColumn())) {
+    await pool.query(
+      `UPDATE clients
+       SET whatsapp_avatar_url = $1,
+           updated_at = now()
+       WHERE id = $2
+         AND user_id = $3
+         AND (
+           whatsapp_avatar_url IS NULL
+           OR btrim(whatsapp_avatar_url) = ''
+           OR whatsapp_avatar_url IS DISTINCT FROM $1
+         )`,
+      [nextAvatar, clientId, userId]
+    );
+  }
+
+  if (leadId && (await hasLeadWhatsappAvatarColumn())) {
+    await pool.query(
+      `UPDATE leads
+       SET whatsapp_avatar_url = $1,
+           updated_at = now()
+       WHERE id = $2
+         AND user_id = $3
+         AND (
+           whatsapp_avatar_url IS NULL
+           OR btrim(whatsapp_avatar_url) = ''
+           OR whatsapp_avatar_url IS DISTINCT FROM $1
+         )`,
+      [nextAvatar, leadId, userId]
+    );
+  }
 }
 
 type LinkSource = 'auto' | 'manual' | 'system';
@@ -704,6 +868,32 @@ async function resolveTenantIdForUser(userId: string): Promise<string | null> {
     [userId]
   );
   return r.rows[0]?.tenant_id ?? null;
+}
+
+function deriveProviderContactIdFromConversation(row: Record<string, unknown>): string | null {
+  const canonical = typeof row.canonical_chat_id === 'string' ? row.canonical_chat_id.trim() : '';
+  if (canonical) return canonical;
+  const external = typeof row.external_chat_id === 'string' ? row.external_chat_id.trim() : '';
+  return external || null;
+}
+
+async function syncCommunicationContactFromNormalized(
+  tenantId: string | null,
+  normalized: ReturnType<typeof normalizeChatPayload>,
+  linked?: { clientId?: string | null; leadId?: string | null }
+): Promise<void> {
+  if (!tenantId || !normalized) return;
+  await upsertCommunicationContactFromProvider({
+    tenantId,
+    provider: 'whatsapp_uazapi',
+    providerContactId: normalized.externalChatId ?? null,
+    phone: normalized.phoneNumber ?? null,
+    displayName: normalized.contactName ?? normalized.profileName ?? null,
+    profileAvatarUrl: extractUazapiChatImageUrl((normalized.metadata as Record<string, unknown>) || {}),
+    linkedClientId: linked?.clientId ?? null,
+    linkedLeadId: linked?.leadId ?? null,
+    rawProfile: (normalized.metadata as Record<string, unknown>) ?? null,
+  });
 }
 
 async function upsertConversation(
@@ -1280,6 +1470,39 @@ async function upsertConversation(
         },
       });
     }
+    if (tenantId) {
+      try {
+        await upsertCommunicationContactFromProvider({
+          tenantId,
+          provider: 'whatsapp_uazapi',
+          providerContactId: deriveProviderContactIdFromConversation(upserted as Record<string, unknown>),
+          phone: (upserted.phone_number as string | null) ?? null,
+          displayName:
+            ((upserted.display_name as string | null) ??
+              (upserted.contact_name as string | null) ??
+              (upserted.profile_name as string | null) ??
+              null),
+          profileAvatarUrl: ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null,
+          linkedClientId: (upserted.client_id as string | null) ?? null,
+          linkedLeadId: ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
+          rawProfile:
+            (upserted.metadata as Record<string, unknown> | null) ??
+            (chatData.metadata as Record<string, unknown> | null) ??
+            null,
+        });
+      } catch (contactError: any) {
+        console.error('[CommunicationContact] Falha ao sincronizar identidade técnica:', {
+          conversationId: upserted.id,
+          error: contactError?.message ?? String(contactError),
+        });
+      }
+    }
+    await persistConversationAvatarOnCrm(
+      instance.user_id,
+      (upserted.client_id as string | null) ?? null,
+      ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
+      ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null
+    );
   return upserted;
   } catch (error: any) {
     console.error(`[UpsertConversation ${upsertId}] Database error:`, {
@@ -1311,7 +1534,7 @@ async function saveMessage(
     /** Força kind no contrato (ex.: image no envio pelo painel). */
     messageKind?: ChatMessageKind | null;
   }
-): Promise<string | null> {
+): Promise<{ rowId: string | null; inserted: boolean }> {
   const saveId = randomUUID().substring(0, 8);
   const rawMeta =
     payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
@@ -1346,7 +1569,7 @@ async function saveMessage(
   }
 
   try {
-    const messageResult = await pool.query(
+    const messageResult = await pool.query<{ id: string; created_at: string; inserted: boolean }>(
     `
     INSERT INTO chat_messages (
       conversation_id, direction, external_message_id, body,
@@ -1366,7 +1589,7 @@ async function saveMessage(
         THEN EXCLUDED.media
         ELSE COALESCE(chat_messages.media, EXCLUDED.media)
       END
-      RETURNING id, created_at
+      RETURNING id, created_at, (xmax = 0) AS inserted
   `,
     [
       conversationId,
@@ -1385,12 +1608,21 @@ async function saveMessage(
     } else if (saveVerbose) {
       const messageCreatedAt = new Date(messageResult.rows[0]?.created_at).getTime();
       const now = Date.now();
-      const wasInsert = (now - messageCreatedAt) < 2000;
+      const wasInsert = messageResult.rows[0]?.inserted === true || (now - messageCreatedAt) < 2000;
       console.log(`[SaveMessage ${saveId}] Message saved successfully`, {
         messageId: messageResult.rows[0]?.id,
         wasInsert,
         createdAt: messageResult.rows[0]?.created_at,
       });
+    }
+
+    const inserted = messageResult.rows[0]?.inserted === true;
+    if (!inserted && payload.externalMessageId) {
+      console.log('[realtime_duplicate_message_skipped]', {
+        conversationId,
+        externalMessageId: payload.externalMessageId,
+      });
+      return { rowId: messageResult.rows[0]?.id ?? null, inserted: false };
     }
 
     const unreadShouldReset = payload.resetUnread === true;
@@ -1447,7 +1679,7 @@ async function saveMessage(
       });
     }
 
-    return messageResult.rows[0]?.id ?? null;
+    return { rowId: messageResult.rows[0]?.id ?? null, inserted: true };
   } catch (error: any) {
     console.error(`[SaveMessage ${saveId}] Database error:`, {
       error: error.message,
@@ -2593,6 +2825,7 @@ async function performSyncConversationsForInstance(
       enrichNormalizedChatFromContactCatalog(normalized, contactCatalog);
       const rowKind = classifyChatRowForLog(item);
       try {
+        await syncCommunicationContactFromNormalized(tenantId, normalized);
         await upsertConversation(instance, normalized);
         if (rowKind === 'group') upsertedGroup += 1;
         else if (rowKind === 'private') upsertedPrivate += 1;
@@ -3523,24 +3756,8 @@ export async function connectInstance(req: AuthRequest, res: Response) {
 
     // Extrair informações do perfil conectado da resposta
     const instanceData = response?.instance || response;
-    const connectedPhone = 
-      response?.owner || 
-      response?.phone || 
-      response?.number || 
-      instanceData?.owner || 
-      instanceData?.phone || 
-      instanceData?.number ||
-      response?.data?.owner ||
-      response?.data?.phone ||
-      response?.data?.number ||
-      null;
-
-    const profileName = 
-      response?.profileName ||
-      instanceData?.profileName ||
-      response?.name ||
-      instanceData?.name ||
-      null;
+    const connectedPhone = extractConnectedPhone(response);
+    const profileName = extractConnectedProfileName(response);
 
     const profilePicUrl = 
       response?.profilePicUrl ||
@@ -4081,24 +4298,8 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
     const loggedIn = result?.loggedIn || instanceData?.loggedIn;
     
     // Extrair informações do perfil conectado da resposta
-    const connectedPhone = 
-      result?.owner || 
-      result?.phone || 
-      result?.number || 
-      instanceData?.owner || 
-      instanceData?.phone || 
-      instanceData?.number ||
-      result?.data?.owner ||
-      result?.data?.phone ||
-      result?.data?.number ||
-      null;
-
-    const profileName = 
-      result?.profileName ||
-      instanceData?.profileName ||
-      result?.name ||
-      instanceData?.name ||
-      null;
+    const connectedPhone = extractConnectedPhone(result);
+    const profileName = extractConnectedProfileName(result);
 
     const resultInstance = result?.instance && typeof result.instance === 'object' ? result.instance as any : null;
     const instanceDataInstance = instanceData?.instance && typeof instanceData.instance === 'object' ? instanceData.instance as any : null;
@@ -4316,12 +4517,16 @@ export async function syncConversations(req: AuthRequest, res: Response) {
       batchSyncRecentMessagesAfterList: true,
     });
 
+    const extraIdentityHydration = await hydrateMissingIdentityFromStoredConversations(instance, 12);
+
     res.json({
       total,
       upserted,
       syncMode: effectiveMode,
       identityHydrationAttempted,
       identityHydrationUpdated,
+      extraIdentityHydrationAttempted: extraIdentityHydration.attempted,
+      extraIdentityHydrationUpdated: extraIdentityHydration.updated,
       batchMessagesSaved,
       batchConversationsTried,
     });
@@ -4468,6 +4673,8 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.display_name,
         c.canonical_phone,
         c.avatar_url,
+        cc_ext.display_name AS communication_display_name,
+        cc_ext.profile_avatar_url AS communication_avatar_url,
         c.identity_state,
         c.history_sync_status,
         c.last_history_sync_reason,
@@ -4497,7 +4704,21 @@ export async function getConversations(req: AuthRequest, res: Response) {
           ELSE NULL
         END as lead_status
       FROM chat_conversations c
-      INNER JOIN chat_instances i ON i.id = c.instance_id${attendanceSelectAndJoins.joins}
+      INNER JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN LATERAL (
+        SELECT cc.display_name, cc.profile_avatar_url
+        FROM communication_contacts cc
+        WHERE cc.provider = 'whatsapp_uazapi'
+          AND cc.tenant_id = (SELECT tenant_id FROM users WHERE id = $1 LIMIT 1)
+          AND (
+            (c.canonical_chat_id IS NOT NULL AND btrim(c.canonical_chat_id) <> '' AND cc.provider_contact_id = c.canonical_chat_id)
+            OR (c.external_chat_id IS NOT NULL AND btrim(c.external_chat_id) <> '' AND cc.provider_contact_id = c.external_chat_id)
+            OR (c.canonical_phone IS NOT NULL AND btrim(c.canonical_phone) <> '' AND cc.phone = regexp_replace(c.canonical_phone, '\D', '', 'g'))
+            OR (c.phone_number IS NOT NULL AND btrim(c.phone_number) <> '' AND cc.phone = regexp_replace(c.phone_number, '\D', '', 'g'))
+          )
+        ORDER BY cc.updated_at DESC
+        LIMIT 1
+      ) cc_ext ON true${attendanceSelectAndJoins.joins}
       WHERE ${whereOwnerOrTenant}
     `;
 
@@ -4592,9 +4813,38 @@ export async function getConversations(req: AuthRequest, res: Response) {
 
     const conversations = await pool.query(query, params);
 
-    const rowsForClient = conversations.rows.map((r: Record<string, unknown>) =>
-      conversationRowForClientApi(r)
-    );
+    const rowsForClient = conversations.rows.map((r: Record<string, unknown>) => {
+      const displayName = resolveCommunicationDisplayIdentity({
+        communicationDisplayName:
+          (typeof r.communication_display_name === 'string' && r.communication_display_name.trim())
+            ? r.communication_display_name
+            : null,
+        providerName:
+          (typeof r.display_name === 'string' && r.display_name.trim())
+            ? r.display_name
+            : (typeof r.contact_name === 'string' && r.contact_name.trim())
+              ? r.contact_name
+              : (typeof r.profile_name === 'string' && r.profile_name.trim())
+                ? r.profile_name
+                : null,
+        phone:
+          (typeof r.phone_number === 'string' && r.phone_number.trim())
+            ? r.phone_number
+            : (typeof r.canonical_phone === 'string' && r.canonical_phone.trim())
+              ? r.canonical_phone
+              : null,
+      });
+      const avatarUrl =
+        (typeof r.avatar_url === 'string' && r.avatar_url.trim()) ? r.avatar_url :
+        (typeof r.communication_avatar_url === 'string' && r.communication_avatar_url.trim()) ? r.communication_avatar_url :
+        r.avatar_url;
+
+      return conversationRowForClientApi({
+        ...r,
+        display_name: displayName,
+        avatar_url: avatarUrl,
+      });
+    });
 
     const tenantRow = await pool.query<{ tenant_id: string | null }>(
       'SELECT tenant_id FROM users WHERE id = $1',
@@ -5153,7 +5403,37 @@ export async function linkConversation(req: AuthRequest, res: Response) {
       `SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`,
       [conversationId]
     );
-    res.json(updated.rows[0]);
+    const updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+    if (updatedRow) {
+      await upsertCommunicationContactFromProvider({
+        tenantId,
+        provider: 'whatsapp_uazapi',
+        providerContactId: deriveProviderContactIdFromConversation(updatedRow),
+        phone:
+          typeof updatedRow.canonical_phone === 'string'
+            ? updatedRow.canonical_phone
+            : (updatedRow.phone_number as string | null | undefined) ?? null,
+        displayName:
+          (updatedRow.display_name as string | null | undefined) ??
+          (updatedRow.contact_name as string | null | undefined) ??
+          (updatedRow.profile_name as string | null | undefined) ??
+          null,
+        profileAvatarUrl: (updatedRow.avatar_url as string | null | undefined) ?? null,
+        linkedClientId:
+          body.type === 'client'
+            ? body.id
+            : ((updatedRow.client_id as string | null | undefined) ?? null),
+        linkedLeadId:
+          body.type === 'lead'
+            ? body.id
+            : ((updatedRow.lead_id as string | null | undefined) ?? null),
+        rawProfile:
+          updatedRow.metadata && typeof updatedRow.metadata === 'object'
+            ? (updatedRow.metadata as Record<string, unknown>)
+            : null,
+      });
+    }
+    res.json(updatedRow ?? null);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Payload inválido', details: error.errors });
@@ -5211,7 +5491,29 @@ export async function unlinkConversation(req: AuthRequest, res: Response) {
       ]
     );
     const updated = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
-    res.json(updated.rows[0]);
+    const updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+    if (updatedRow) {
+      await upsertCommunicationContactFromProvider({
+        tenantId,
+        provider: 'whatsapp_uazapi',
+        providerContactId: deriveProviderContactIdFromConversation(updatedRow),
+        phone:
+          typeof updatedRow.canonical_phone === 'string'
+            ? updatedRow.canonical_phone
+            : (updatedRow.phone_number as string | null | undefined) ?? null,
+        displayName:
+          (updatedRow.display_name as string | null | undefined) ??
+          (updatedRow.contact_name as string | null | undefined) ??
+          (updatedRow.profile_name as string | null | undefined) ??
+          null,
+        profileAvatarUrl: (updatedRow.avatar_url as string | null | undefined) ?? null,
+        rawProfile:
+          updatedRow.metadata && typeof updatedRow.metadata === 'object'
+            ? (updatedRow.metadata as Record<string, unknown>)
+            : null,
+      });
+    }
+    res.json(updatedRow ?? null);
   } catch (error: any) {
     console.error('Error unlinking conversation:', error);
     res.status(500).json({ error: 'Falha ao remover vínculo da conversa' });
@@ -5384,6 +5686,55 @@ async function fetchAndUpsertRemoteChatIdentity(
   }
   enrichNormalizedChatFromContactCatalog(normalized, catalog ?? new Map());
   return (await upsertConversation(instance, normalized)) as AnyObject | null;
+}
+
+async function hydrateMissingIdentityFromStoredConversations(
+  instance: ChatInstanceRow,
+  limit = 15
+): Promise<{ attempted: number; updated: number }> {
+  const q = await pool.query<{ external_chat_id: string }>(
+    `SELECT c.external_chat_id
+     FROM chat_conversations c
+     WHERE c.instance_id = $1
+       AND (
+         c.display_name IS NULL OR btrim(c.display_name) = ''
+         OR c.avatar_url IS NULL OR btrim(c.avatar_url) = ''
+       )
+     ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC NULLS LAST
+     LIMIT $2`,
+    [instance.id, limit]
+  );
+
+  let updated = 0;
+  for (const row of q.rows) {
+    const before = await pool.query<{ display_name: string | null; avatar_url: string | null }>(
+      `SELECT display_name, avatar_url
+       FROM chat_conversations
+       WHERE instance_id = $1 AND external_chat_id = $2
+       LIMIT 1`,
+      [instance.id, row.external_chat_id]
+    );
+    const prevDisplay = before.rows[0]?.display_name ?? null;
+    const prevAvatar = before.rows[0]?.avatar_url ?? null;
+
+    await fetchAndUpsertRemoteChatIdentity(instance, row.external_chat_id);
+
+    const after = await pool.query<{ display_name: string | null; avatar_url: string | null }>(
+      `SELECT display_name, avatar_url
+       FROM chat_conversations
+       WHERE instance_id = $1 AND external_chat_id = $2
+       LIMIT 1`,
+      [instance.id, row.external_chat_id]
+    );
+    const nextDisplay = after.rows[0]?.display_name ?? null;
+    const nextAvatar = after.rows[0]?.avatar_url ?? null;
+
+    if ((nextDisplay && nextDisplay !== prevDisplay) || (nextAvatar && nextAvatar !== prevAvatar)) {
+      updated += 1;
+    }
+  }
+
+  return { attempted: q.rows.length, updated };
 }
 
 export async function syncConversationMessages(req: AuthRequest, res: Response) {
@@ -5825,6 +6176,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
   let queuedMessageRowId: string | null = null;
   try {
     const userId = req.userId!;
+    const tenantId = await resolveTenantIdForUser(userId);
     const data = sendMessageSchema.parse(req.body);
 
     const conversationResult = await pool.query(
@@ -5879,7 +6231,8 @@ export async function sendMessage(req: AuthRequest, res: Response) {
           : resolvedMedia.fileForProvider;
 
       // 1) Persistência local imediata (estado inicial)
-      savedRowId = await saveMessage(conversation.id, 'outgoing', {
+      {
+        const saveResult = await saveMessage(conversation.id, 'outgoing', {
         externalMessageId: provisionalExternalId,
         body: caption || null,
         media: [
@@ -5894,6 +6247,8 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         sentAt: new Date(),
         metadata: { source: 'send/media', track_id: localTrackId, provisional: true },
       });
+        savedRowId = saveResult.rowId;
+      }
       queuedMessageRowId = savedRowId;
 
       messageResponse = (await uazapiService.sendMediaMessage(conversation.instance_token, {
@@ -5992,7 +6347,8 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       const text = (data.text ?? '').trim();
 
       // 1) Persistência local imediata (estado inicial)
-      savedRowId = await saveMessage(conversation.id, 'outgoing', {
+      {
+        const saveResult = await saveMessage(conversation.id, 'outgoing', {
         externalMessageId: provisionalExternalId,
         body: text,
         media: [],
@@ -6001,6 +6357,8 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         sentAt: new Date(),
         metadata: { source: 'send/text', track_id: localTrackId, provisional: true },
       });
+        savedRowId = saveResult.rowId;
+      }
       queuedMessageRowId = savedRowId;
 
       messageResponse = (await uazapiService.sendTextMessage(conversation.instance_token, {
@@ -6119,6 +6477,19 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       // Emitir atualização de conversa via WebSocket
       try {
         emitConversationUpdate(userId, updatedConversation);
+        if (tenantId) {
+          emitToTenant(tenantId, 'conversation.updated', {
+            conversation_id: updatedConversation.id,
+            last_message_preview: updatedConversation.last_message_preview ?? null,
+            last_message_at: updatedConversation.last_message_at ?? null,
+            unread_count: updatedConversation.unread_count ?? 0,
+            status: updatedConversation.status ?? null,
+            assigned_user_id: updatedConversation.assigned_to_user_id ?? null,
+            assigned_team_id: updatedConversation.assigned_team_id ?? null,
+            display_name: updatedConversation.display_name ?? null,
+            avatar_url: updatedConversation.avatar_url ?? null,
+          });
+        }
         console.log('[SendMessage] Conversation update emitted via WebSocket', {
           conversationId: updatedConversation.id,
           userId,
@@ -6149,6 +6520,20 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             },
             conversation.id
           );
+          if (tenantId) {
+            const media = Array.isArray(row.media) ? (row.media as Array<Record<string, unknown>>) : [];
+            const mediaUrl = media.find((m) => typeof m?.url === 'string' && m.url)?.url ?? null;
+            emitToTenant(tenantId, 'message.created', {
+              conversation_id: conversation.id,
+              message_id: row.id,
+              direction: row.direction,
+              body: row.body,
+              message_type: contract.kind,
+              media_url: mediaUrl,
+              sent_at: row.sent_at || new Date(),
+              provider_message_id: row.external_message_id ?? null,
+            });
+          }
           console.log('[SendMessage] New message emitted via WebSocket', {
             messageId: row.id,
             conversationId: conversation.id,
@@ -6269,7 +6654,7 @@ export async function sendKanbanAutomationOutboundText(
       metaBase.whatsapp_model_item_index = input.whatsappModelTrace.item_index;
       metaBase.whatsapp_model_item_type = input.whatsappModelTrace.message_type;
     }
-    const savedRowId = await saveMessage(conversation.id, 'outgoing', {
+    const saveResult = await saveMessage(conversation.id, 'outgoing', {
       externalMessageId: provisionalExternalId,
       body: text,
       media: [],
@@ -6278,6 +6663,7 @@ export async function sendKanbanAutomationOutboundText(
       sentAt: new Date(),
       metadata: metaBase,
     });
+    const savedRowId = saveResult.rowId;
     queuedMessageRowId = savedRowId;
 
     const trackSource =
@@ -6509,7 +6895,7 @@ export async function sendKanbanAutomationOutboundMedia(
     }
 
     const messageKind = input.type === 'document' ? 'document' : 'image';
-    const savedRowId = await saveMessage(conversation.id, 'outgoing', {
+    const saveResult = await saveMessage(conversation.id, 'outgoing', {
       externalMessageId: provisionalExternalId,
       body: caption || null,
       media: [{ type: input.type, url: resolvedMedia.persistedUrl, mimetype: resolvedMedia.mimeType }],
@@ -6518,6 +6904,7 @@ export async function sendKanbanAutomationOutboundMedia(
       sentAt: new Date(),
       metadata: metaBase,
     });
+    const savedRowId = saveResult.rowId;
     queuedMessageRowId = savedRowId;
 
     const trackSource =
@@ -6951,6 +7338,7 @@ function parseTimestamp(timestamp: any): Date | null {
 async function processWebhookEvent(instance: ChatInstanceRow, payload: any, event: string) {
   const startTime = Date.now();
   const webhookId = randomUUID();
+  const tenantId = await resolveTenantIdForUser(instance.user_id);
 
   try {
     console.log(`[Webhook ${webhookId}] ===== STARTING EVENT PROCESSING =====`, {
@@ -7024,6 +7412,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         hasContactName: !!chatData.contactName,
       });
 
+      await syncCommunicationContactFromNormalized(tenantId, chatData);
       const conversation = await upsertConversation(instance, chatData);
 
       if (!conversation) {
@@ -7130,7 +7519,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         messageId ||
         randomUUID();
 
-      const savedRowId = await saveMessage(conversation.id, extracted.direction, {
+      const saveResult = await saveMessage(conversation.id, extracted.direction, {
         externalMessageId: effectiveMessageId,
         body: messageBody || null,
         media: media.length > 0 ? media : [],
@@ -7147,6 +7536,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           originalPayload: payload,
         },
       });
+      const savedRowId = saveResult.rowId;
 
       console.log(`[Webhook ${webhookId}] Message saved successfully`, {
         conversationId: conversation.id,
@@ -7167,6 +7557,19 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           conversationId: conversation.id,
         });
         emitConversationUpdate(instance.user_id, conversationWithInstance);
+        if (tenantId) {
+          emitToTenant(tenantId, 'conversation.updated', {
+            conversation_id: conversation.id,
+            last_message_preview: conversationWithInstance.last_message_preview ?? null,
+            last_message_at: conversationWithInstance.last_message_at ?? null,
+            unread_count: conversationWithInstance.unread_count ?? 0,
+            status: conversationWithInstance.status ?? null,
+            assigned_user_id: conversationWithInstance.assigned_to_user_id ?? null,
+            assigned_team_id: conversationWithInstance.assigned_team_id ?? null,
+            display_name: conversationWithInstance.display_name ?? null,
+            avatar_url: conversationWithInstance.avatar_url ?? null,
+          });
+        }
 
         let wsMessagePayload: Record<string, unknown> = {
           id: effectiveMessageId,
@@ -7194,12 +7597,32 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           }
         }
 
-        console.log(`[Webhook ${webhookId}] Emitting new message via WebSocket`, {
-          userId: instance.user_id,
-          conversationId: conversation.id,
-          wsId: wsMessagePayload.id,
-        });
-        emitNewMessage(instance.user_id, wsMessagePayload, conversation.id);
+        if (saveResult.inserted) {
+          console.log(`[Webhook ${webhookId}] Emitting new message via WebSocket`, {
+            userId: instance.user_id,
+            conversationId: conversation.id,
+            wsId: wsMessagePayload.id,
+          });
+          emitNewMessage(instance.user_id, wsMessagePayload, conversation.id);
+          if (tenantId) {
+            const media = Array.isArray((wsMessagePayload as Record<string, unknown>).media)
+              ? ((wsMessagePayload as Record<string, unknown>).media as Array<Record<string, unknown>>)
+              : [];
+            const mediaUrl = media.find((m) => typeof m?.url === 'string' && m.url)?.url ?? null;
+            emitToTenant(tenantId, 'message.created', {
+              conversation_id: conversation.id,
+              message_id: wsMessagePayload.id ?? null,
+              direction: wsMessagePayload.direction ?? extracted.direction,
+              body: wsMessagePayload.body ?? messageBody ?? null,
+              message_type:
+                (wsMessagePayload as { message_contract?: { kind?: string } }).message_contract?.kind ??
+                msgKind,
+              media_url: mediaUrl,
+              sent_at: wsMessagePayload.sent_at ?? sentAt ?? new Date().toISOString(),
+              provider_message_id: effectiveMessageId,
+            });
+          }
+        }
       } catch (wsError: any) {
         console.error(`[Webhook ${webhookId}] Failed to emit WebSocket events:`, {
           error: wsError.message,
@@ -7208,7 +7631,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       }
 
       // Criar notificação para mensagens recebidas (incoming)
-      if (extracted.direction === 'incoming') {
+      if (extracted.direction === 'incoming' && saveResult.inserted) {
         try {
           await notificationService.notifyNewMessage(instance.user_id, {
             conversationId: conversation.id,
@@ -7357,9 +7780,26 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         return;
       }
 
+      await syncCommunicationContactFromNormalized(tenantId, chatData);
       const conversation = await upsertConversation(instance, chatData);
 
       if (conversation) {
+        if (tenantId) {
+          emitToTenant(tenantId, 'conversation.updated', {
+            conversation_id: conversation.id,
+            last_message_preview: (conversation as Record<string, unknown>).last_message_preview ?? null,
+            last_message_at: (conversation as Record<string, unknown>).last_message_at ?? null,
+            unread_count: (conversation as Record<string, unknown>).unread_count ?? 0,
+            status: (conversation as Record<string, unknown>).status ?? null,
+            assigned_user_id: (conversation as Record<string, unknown>).assigned_to_user_id ?? null,
+            assigned_team_id: (conversation as Record<string, unknown>).assigned_team_id ?? null,
+            display_name:
+              (conversation as Record<string, unknown>).display_name ??
+              (conversation as Record<string, unknown>).contact_name ??
+              null,
+            avatar_url: (conversation as Record<string, unknown>).avatar_url ?? null,
+          });
+        }
         // Verificar se é uma nova conversa (sem mensagens ainda)
         const messageCount = await pool.query(
           'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = $1',
@@ -7484,6 +7924,20 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         newState: state,
         processingTime: Date.now() - startTime,
       });
+      if (tenantId) {
+        emitToTenant(tenantId, 'channel.status_changed', {
+          channel_id: instance.id,
+          provider: 'whatsapp_uazapi',
+          status:
+            state === 'open' || state === 'connected'
+              ? 'connected'
+              : state === 'close' || state === 'disconnected'
+                ? 'disconnected'
+                : String(state || instance.status || 'unknown'),
+          display_name: instance.name,
+          profile_avatar_url: null,
+        });
+      }
     } else if (event === 'leads') {
       const data = payload.data || payload;
       const keys = data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data) : [];
@@ -7511,15 +7965,41 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
 }
 
 function normalizeIncomingWebhookSecret(raw: unknown): string | undefined {
+  const normalizeString = (value: string): string | undefined => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    // Alguns provedores enviam o secret URL-encoded ou envolto em aspas.
+    const unquoted = trimmed.replace(/^['"]+|['"]+$/g, '').trim();
+    if (!unquoted) return undefined;
+    try {
+      const decoded = decodeURIComponent(unquoted);
+      return decoded.trim() || undefined;
+    } catch {
+      return unquoted;
+    }
+  };
   if (typeof raw === 'string') {
-    const t = raw.trim();
-    return t.length ? t : undefined;
+    return normalizeString(raw);
   }
   if (Array.isArray(raw) && typeof raw[0] === 'string') {
-    const t = raw[0].trim();
-    return t.length ? t : undefined;
+    return normalizeString(raw[0]);
   }
   return undefined;
+}
+
+function getConfiguredWebhookSecrets(): string[] {
+  const raw = process.env.UAZAPI_WEBHOOK_SECRET;
+  if (!raw) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const piece of String(raw).split(',')) {
+    const normalized = normalizeIncomingWebhookSecret(piece);
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      out.push(normalized);
+    }
+  }
+  return out;
 }
 
 /** Comparação em tempo constante; espera strings já normalizadas (trim). */
@@ -7713,7 +8193,14 @@ function parseUazWebhookTrustIps(): string[] {
 }
 
 function clientIpForWebhookTrust(req: Request): string {
-  const raw = (req.ip || req.socket?.remoteAddress || '').toString();
+  const fwd = req.headers['x-forwarded-for'];
+  const fromFwd =
+    typeof fwd === 'string'
+      ? fwd.split(',')[0]?.trim()
+      : Array.isArray(fwd) && typeof fwd[0] === 'string'
+        ? fwd[0].split(',')[0]?.trim()
+        : '';
+  const raw = (fromFwd || req.ip || req.socket?.remoteAddress || '').toString();
   return raw.replace(/^::ffff:/i, '');
 }
 
@@ -7738,8 +8225,8 @@ export async function handleWebhook(req: Request, res: Response) {
   try {
     // 1. Secret e endurecimento de produção (antes de logs com corpo/headers detalhados)
     const isProduction = process.env.NODE_ENV === 'production';
-    const configuredSecret = process.env.UAZAPI_WEBHOOK_SECRET?.trim();
-    const hasConfiguredSecret = typeof configuredSecret === 'string' && configuredSecret.length > 0;
+    const configuredSecrets = getConfiguredWebhookSecrets();
+    const hasConfiguredSecret = configuredSecrets.length > 0;
     const allowNoSecretInProd =
       process.env.UAZAPI_WEBHOOK_ALLOW_NO_SECRET === 'true' ||
       process.env.UAZAPI_WEBHOOK_ALLOW_NO_SECRET === '1';
@@ -7786,7 +8273,7 @@ export async function handleWebhook(req: Request, res: Response) {
     // Uaz pode enviar em ?secret= um valor distinto do instance_token (ex. 25 chars vs UUID 36).
     const secretMatchesEnv =
       hasConfiguredSecret &&
-      secretCandidates.some((c) => webhookSecretsEqual(c, configuredSecret as string));
+      secretCandidates.some((c) => configuredSecrets.some((cfg) => webhookSecretsEqual(c, cfg)));
     const secretMatchesInstanceToken =
       instanceMatchCount === 1 &&
       !!instanceTokenForSecret &&
@@ -7821,7 +8308,7 @@ export async function handleWebhook(req: Request, res: Response) {
             normalizeIncomingWebhookSecret(req.body?.data?.secret)
           ),
           distinctCandidateLengths: secretCandidates.map((c) => c.length),
-          configuredSecretLen: configuredSecret.length,
+          configuredSecretLens: configuredSecrets.map((s) => s.length),
           secretMatchesEnv,
           secretMatchesInstanceToken,
           secretMatchesUazMetadata,

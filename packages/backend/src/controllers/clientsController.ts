@@ -11,6 +11,23 @@ import {
 
 const MODULE_CLIENTS = 'clients';
 
+let hasClientWhatsappAvatarUrlColumnPromise: Promise<boolean> | null = null;
+async function hasClientWhatsappAvatarUrlColumn(): Promise<boolean> {
+  if (!hasClientWhatsappAvatarUrlColumnPromise) {
+    hasClientWhatsappAvatarUrlColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'clients'
+           AND column_name = 'whatsapp_avatar_url'`
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
+  }
+  return hasClientWhatsappAvatarUrlColumnPromise;
+}
+
 /** Verifica se o cliente pertence ao tenant (acesso por conta, não por dono). */
 async function clientBelongsToTenant(clientId: string, tenantId: string | null): Promise<boolean> {
   if (!tenantId) return false;
@@ -107,12 +124,15 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
     }
     const { profileId, q } = req.query;
 
+    const hasWaAvatar = await hasClientWhatsappAvatarUrlColumn();
+    const waAvatarExpr = hasWaAvatar ? 'COALESCE(c.whatsapp_avatar_url, wa.wa_url)' : 'wa.wa_url';
+
     let query = `
       SELECT 
         c.*,
         cg.id as group_table_id,
         cg.name as group_table_name,
-        wa.wa_url AS whatsapp_avatar_url
+        ${waAvatarExpr} AS whatsapp_avatar_url
       FROM clients c
       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
       LEFT JOIN client_groups cg ON c.group_id = cg.id
@@ -197,8 +217,11 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!;
     const { id } = req.params;
 
+    const hasWaAvatar = await hasClientWhatsappAvatarUrlColumn();
+    const waAvatarExpr = hasWaAvatar ? 'COALESCE(c.whatsapp_avatar_url, wa.wa_url)' : 'wa.wa_url';
+
     const result = await pool.query(
-      `SELECT c.*, wa.wa_url AS whatsapp_avatar_url
+      `SELECT c.*, ${waAvatarExpr} AS whatsapp_avatar_url
        FROM clients c
        INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
        LEFT JOIN LATERAL (

@@ -239,6 +239,35 @@ const order = [
   '164_google_calendar_oauth_profile.sql',
   /** Módulo Agenda: compromissos, attendees, RLS, permissões e feature "agenda" */
   '165_appointments_module.sql',
+  '166_appointment_reminders_log.sql',
+  /** Motor de notificações: appointment.invited / appointment.reminder (Agenda → WhatsApp) */
+  '167_notifications_appointment_events.sql',
+  /** Atualização de textos padrão WhatsApp dos eventos de agenda */
+  '168_refresh_appointment_whatsapp_templates.sql',
+  /** Pós-compromisso comercial: status done + notas + outcome */
+  '169_appointments_post_meeting_followup.sql',
+  /** Motor de notificações: appointment.completed (resumo pós-compromisso) */
+  '170_notifications_appointment_completed.sql',
+  /** Agenda: lembrete 30m + compatibilidade reminder_type (60m/1h) */
+  '171_appointment_reminder_types_30m.sql',
+  /** Agenda Fase 4.2A: series de recorrencia simples */
+  '172_appointments_recurrence_series.sql',
+  /** Asaas: metadados para provisionamento automático de webhook por tenant */
+  '173_asaas_webhook_auto_config_fields.sql',
+  /** CRM: persistência de avatar WhatsApp (clients/leads) */
+  '174_whatsapp_avatar_to_clients_leads.sql',
+  /** Chat Engine Fase 2: identidade técnica multicanal do contato */
+  '175_communication_contacts.sql',
+  /** Agenda Fase 4.4: confirmação de presença */
+  '176_appointments_attendance_status.sql',
+  /** Agenda Fase 4.5: solicitação de confirmação via WhatsApp */
+  '177_notifications_appointment_confirmation_request.sql',
+  /** Agenda Fase 4.6: link público de confirmação */
+  '178_appointments_public_confirmation_link.sql',
+  /** Agenda Fase 4.8: logs de automações operacionais */
+  '179_appointment_automation_logs.sql',
+  /** Mercado Pago: catálogo gateway (Fase 2 OAuth — isolado do Asaas) */
+  '180_mercado_pago_gateway_catalog.sql',
   'create-admin-user.sql',
 ];
 

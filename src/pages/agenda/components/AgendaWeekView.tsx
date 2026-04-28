@@ -8,6 +8,8 @@ import {
   TYPE_ACCENT,
   WEEK_VIEW_HOUR_START,
   WEEK_VIEW_HOUR_END,
+  appointmentAttendanceLabel,
+  appointmentPublicConfirmationLabel,
   syncPill,
 } from '../agendaConstants';
 
@@ -128,6 +130,7 @@ export function AgendaWeekView({ weekStart, items, isLoading, isMobile, onEventC
               ) : (
                 <ul className="mt-2 space-y-1.5">
                   {list.map((ap) => (
+                    // mostra sinalização curta para remarcação/recusa no mobile
                     <li key={ap.id}>
                       <button
                         type="button"
@@ -142,9 +145,20 @@ export function AgendaWeekView({ weekStart, items, isLoading, isMobile, onEventC
                           {format(parseISO(ap.starts_at), 'HH:mm')} – {format(parseISO(ap.ends_at), 'HH:mm')}
                         </div>
                         <div className="line-clamp-1 font-medium leading-tight">{ap.title}</div>
+                        {ap.recurrence_series_id ? (
+                          <div className="text-[10px] text-primary">Recorrente</div>
+                        ) : null}
                         {ap.client_name || ap.lead_name ? (
                           <div className="line-clamp-1 text-[11px] text-muted-foreground">
                             {ap.client_name ?? `Lead: ${ap.lead_name}`}
+                          </div>
+                        ) : null}
+                        <div className="text-[10px] text-muted-foreground">
+                          {appointmentAttendanceLabel(ap.attendance_status)}
+                        </div>
+                        {appointmentPublicConfirmationLabel(ap.public_confirmation_response ?? null) ? (
+                          <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                            {appointmentPublicConfirmationLabel(ap.public_confirmation_response ?? null)}
                           </div>
                         ) : null}
                       </button>
@@ -206,6 +220,9 @@ export function AgendaWeekView({ weekStart, items, isLoading, isMobile, onEventC
                     const L = eventLayout(ap, d);
                     if (!L) return null;
                     const sp = syncPill(ap);
+                    const publicConfirmationLabel = appointmentPublicConfirmationLabel(
+                      ap.public_confirmation_response ?? null,
+                    );
                     return (
                       <button
                         key={ap.id}
@@ -225,9 +242,20 @@ export function AgendaWeekView({ weekStart, items, isLoading, isMobile, onEventC
                           {format(parseISO(ap.starts_at), 'HH:mm')}
                         </div>
                         <div className="line-clamp-2 font-medium text-foreground">{ap.title}</div>
+                        {ap.recurrence_series_id ? (
+                          <div className="text-[8px] text-primary">Recorrente</div>
+                        ) : null}
                         {ap.client_name || ap.lead_name ? (
                           <div className="line-clamp-1 text-[9px] text-muted-foreground">
                             {ap.client_name ?? ap.lead_name}
+                          </div>
+                        ) : null}
+                        <div className="text-[8px] text-muted-foreground">
+                          {appointmentAttendanceLabel(ap.attendance_status)}
+                        </div>
+                        {publicConfirmationLabel ? (
+                          <div className="text-[8px] text-amber-700 dark:text-amber-300">
+                            {publicConfirmationLabel}
                           </div>
                         ) : null}
                         <div className="mt-0.5 flex flex-wrap gap-0.5">

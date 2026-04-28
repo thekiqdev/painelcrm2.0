@@ -17,16 +17,57 @@ const MAX_ATTEMPTS = 5;
 
 async function loadConfiguredWebhookAuthTokens(): Promise<string[]> {
   const rows = await pool.query<{ token: string | null }>(
-    `SELECT NULLIF(BTRIM(credentials->>'webhook_auth_token'), '') AS token
+    `SELECT COALESCE(
+              NULLIF(BTRIM(webhook_auth_token), ''),
+              NULLIF(BTRIM(credentials->>'webhook_auth_token'), '')
+            ) AS token
      FROM payment_gateway_configs
      WHERE gateway_key = $1
        AND is_active = true
-       AND credentials ? 'webhook_auth_token'`,
+       AND (
+         NULLIF(BTRIM(webhook_auth_token), '') IS NOT NULL
+         OR credentials ? 'webhook_auth_token'
+       )`,
     [GATEWAY_KEY]
   );
   return rows.rows
     .map((row) => row.token ?? null)
     .filter((token): token is string => Boolean(token));
+}
+
+async function updateWebhookErrorByTokenOrReference(params: {
+  incomingToken?: string | null;
+  externalReference?: string | null;
+  error: string | null;
+}): Promise<void> {
+  const token = (params.incomingToken || '').trim();
+  const externalReference = (params.externalReference || '').trim();
+  if (token) {
+    await pool.query(
+      `UPDATE payment_gateway_configs
+       SET last_webhook_error = $2,
+           updated_at = now()
+       WHERE gateway_key = $1
+         AND is_active = true
+         AND (
+           NULLIF(BTRIM(webhook_auth_token), '') = $3
+           OR NULLIF(BTRIM(credentials->>'webhook_auth_token'), '') = $3
+         )`,
+      [GATEWAY_KEY, params.error, token]
+    );
+    return;
+  }
+  if (externalReference) {
+    await pool.query(
+      `UPDATE payment_gateway_configs
+       SET last_webhook_error = $2,
+           updated_at = now()
+       WHERE gateway_key = $1
+         AND scope = 'tenant'
+         AND tenant_id::text = $3`,
+      [GATEWAY_KEY, params.error, externalReference]
+    );
+  }
 }
 
 function payloadHash(body: object): string {
@@ -72,9 +113,14 @@ export async function asaasWebhookHandler(
 ): Promise<void> {
   try {
     const configuredTokens = await loadConfiguredWebhookAuthTokens();
+    const incomingToken = req.header('asaas-access-token')?.trim() ?? '';
     if (configuredTokens.length > 0) {
-      const incomingToken = req.header('asaas-access-token')?.trim() ?? '';
       if (!incomingToken || !configuredTokens.includes(incomingToken)) {
+        await updateWebhookErrorByTokenOrReference({
+          incomingToken,
+          externalReference: null,
+          error: 'Token de webhook inválido',
+        });
         res.status(401).json({ error: 'Webhook não autorizado: token inválido.' });
         return;
       }
@@ -82,6 +128,11 @@ export async function asaasWebhookHandler(
 
     const body = req.body as unknown;
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      await updateWebhookErrorByTokenOrReference({
+        incomingToken,
+        externalReference: null,
+        error: 'Payload inválido',
+      });
       res.status(400).json({ error: 'Body inválido' });
       return;
     }
@@ -90,8 +141,33 @@ export async function asaasWebhookHandler(
     const { eventId, eventType, paymentId, externalReference } = getEventPayload(obj);
 
     if (!eventId || !eventType) {
+      await updateWebhookErrorByTokenOrReference({
+        incomingToken,
+        externalReference,
+        error: 'Payload sem id/event',
+      });
       res.status(400).json({ error: 'Payload sem id ou event' });
       return;
+    }
+
+    if (incomingToken) {
+      await pool.query(
+        `UPDATE payment_gateway_configs
+         SET last_webhook_received_at = now(),
+             last_webhook_error = NULL,
+             webhook_status = CASE
+               WHEN webhook_status IS NULL THEN 'created'
+               ELSE webhook_status
+             END,
+             updated_at = now()
+         WHERE gateway_key = $1
+           AND is_active = true
+           AND (
+             NULLIF(BTRIM(webhook_auth_token), '') = $2
+             OR NULLIF(BTRIM(credentials->>'webhook_auth_token'), '') = $2
+           )`,
+        [GATEWAY_KEY, incomingToken]
+      );
     }
 
     console.log('[ASAAS WEBHOOK RECEIVED]', {
@@ -180,6 +256,11 @@ export async function asaasWebhookHandler(
       });
     } else {
       const message = result.body?.error ?? 'Erro ao processar webhook';
+      await updateWebhookErrorByTokenOrReference({
+        incomingToken,
+        externalReference,
+        error: message,
+      });
       await pool.query(
         `UPDATE asaas_webhook_events SET status = 'failed', last_error = $2 WHERE event_id = $1`,
         [eventId, message]
@@ -199,6 +280,11 @@ export async function asaasWebhookHandler(
     res.status(200).json({ received: true });
   } catch (err: unknown) {
     console.error('asaasWebhook error:', err);
+    await updateWebhookErrorByTokenOrReference({
+      incomingToken: req.header('asaas-access-token')?.trim() ?? '',
+      externalReference: null,
+      error: err instanceof Error ? err.message : 'Erro ao processar webhook',
+    });
     res
       .status(500)
       .json({

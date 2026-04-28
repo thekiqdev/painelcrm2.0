@@ -10,7 +10,10 @@ import {
   isNotificationsEngineEnabled,
 } from '../../config/notificationsEngineEnv.js';
 import { neLogInfo, neLogWarn as neLogWarnEngine } from './notificationEngineLog.js';
-import { runTransactionalNotification } from './notificationEngineOrchestrator.js';
+import {
+  runTransactionalNotification,
+  isSkippedByTenantPreference,
+} from './notificationEngineOrchestrator.js';
 import { resolveWhatsAppSenderUserIdForTenant } from './whatsappSenderResolve.js';
 import {
   buildAbsoluteProposalPublicLinkUrl,
@@ -137,6 +140,10 @@ async function gateAndPublish(
 
   if (!result.ok) {
     console.error(`[notifications-engine/business] ${input.eventKey} falhou`, result.error, result.details);
+    return;
+  }
+  if (isSkippedByTenantPreference(result)) {
+    return;
   }
 }
 

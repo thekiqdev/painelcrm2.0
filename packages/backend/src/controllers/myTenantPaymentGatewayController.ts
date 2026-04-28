@@ -21,6 +21,8 @@ import { invalidateGatewayCache } from '../modules/payments/gatewayProvider.js';
 import { testConnection } from '../modules/gateways/asaas/index.js';
 import { checkPaymentGatewayTestRateLimit } from '../middleware/paymentGatewayTestRateLimit.js';
 import { paymentMethodSlugsFromConfigRow } from '../services/gatewayPaymentMethodPolicy.js';
+import { filterMercadoPagoFromTenantGatewayList, isMercadoPagoGatewayEnabled } from '../config/mercadoPagoGatewayEnv.js';
+import { testMercadoPagoIntegration } from '../services/mercadoPagoIntegrationService.js';
 
 function getTenantId(req: AuthRequest): string | null {
   return req.tenantId ?? null;
@@ -128,6 +130,20 @@ export async function postMyTenantPaymentGatewayTest(req: Request, res: Response
       return;
     }
     const bodyGatewayKey = typeof req.body?.gateway_key === 'string' ? req.body.gateway_key.trim() : undefined;
+    if (bodyGatewayKey === 'mercado_pago') {
+      if (!isMercadoPagoGatewayEnabled()) {
+        res.status(404).json({ connected: false, error: 'Mercado Pago não disponível.' });
+        return;
+      }
+      try {
+        const result = await testMercadoPagoIntegration(tenantId);
+        res.json({ connected: result.ok, error: result.ok ? undefined : 'Mercado Pago não conectado.' });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        res.json({ connected: false, error: message });
+      }
+      return;
+    }
     const config = await getConfigForTest('tenant', tenantId, bodyGatewayKey);
     if (!config || config.gateway_key !== 'asaas') {
       res.status(400).json({ connected: false, error: 'Gateway não configurado ou não é Asaas.' });
@@ -181,7 +197,7 @@ export async function getMyTenantPaymentGatewaysList(req: Request, res: Response
       res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
-    const gateways = await listGateways();
+    const gateways = filterMercadoPagoFromTenantGatewayList(await listGateways());
     res.json(gateways);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';

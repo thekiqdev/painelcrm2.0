@@ -15,7 +15,12 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import type { Appointment } from '@/services/appointments';
-import { TYPE_ACCENT, TYPE_OPTIONS } from '../agendaConstants';
+import {
+  TYPE_ACCENT,
+  TYPE_OPTIONS,
+  appointmentAttendanceLabel,
+  appointmentPublicConfirmationLabel,
+} from '../agendaConstants';
 
 const MAX_VISIBLE = 3;
 const weekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
@@ -147,6 +152,9 @@ export function AgendaMonthView({
                             {format(parseISO(ap.starts_at), 'HH:mm')}
                           </span>{' '}
                           <span className="line-clamp-1 font-medium text-foreground">{ap.title}</span>
+                          {ap.recurrence_series_id ? (
+                            <span className="ml-1 text-[8px] text-primary">Recorrente</span>
+                          ) : null}
                         </button>
                       ))
                     : null}
@@ -192,6 +200,17 @@ export function AgendaMonthView({
                       {format(parseISO(ap.ends_at), 'HH:mm')}
                     </div>
                     <div className="font-medium">{ap.title}</div>
+                    {ap.recurrence_series_id ? (
+                      <div className="text-[10px] text-primary">Recorrente</div>
+                    ) : null}
+                    <div className="text-[10px] text-muted-foreground">
+                      {appointmentAttendanceLabel(ap.attendance_status)}
+                    </div>
+                    {appointmentPublicConfirmationLabel(ap.public_confirmation_response ?? null) ? (
+                      <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                        {appointmentPublicConfirmationLabel(ap.public_confirmation_response ?? null)}
+                      </div>
+                    ) : null}
                     <div className="text-xs text-muted-foreground">
                       {TYPE_OPTIONS.find((o) => o.value === ap.type)?.label}
                     </div>

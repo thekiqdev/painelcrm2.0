@@ -187,6 +187,21 @@ export interface DashboardOverviewResponse {
       unread_count: number;
     }>;
   } | null;
+  /** Próximos compromissos agendados (até 3), respeitando permissão da agenda. */
+  upcoming_appointments?: Array<{
+    id: string;
+    title: string;
+    starts_at: string;
+    client_name: string | null;
+  }>;
+  appointments_needing_reschedule?: Array<{
+    id: string;
+    title: string;
+    starts_at: string;
+    client_name: string | null;
+    task_created: boolean;
+    task_href: string | null;
+  }>;
 }
 
 export interface ActivationMissionItem {

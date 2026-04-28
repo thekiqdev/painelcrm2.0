@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertTriangle,
+  CalendarClock,
   CreditCard,
   DollarSign,
   FileSignature,
@@ -52,6 +53,7 @@ const Dashboard = () => {
   const hasProjects = useFeatureFlag("projects");
   const hasTickets = useFeatureFlag("tickets");
   const hasTasks = useFeatureFlag("tasks");
+  const hasAgenda = useFeatureFlag("agenda");
   const [preset, setPreset] = useState<PeriodPreset>("current_month");
   const [chartShowReceived, setChartShowReceived] = useState(true);
   const [chartShowProjected, setChartShowProjected] = useState(true);
@@ -368,6 +370,86 @@ const Dashboard = () => {
                 </div>
               );
             })()}
+          </div>
+        </section>
+      ) : null}
+
+      {overview && show(hasAgenda, "agenda") ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Próximos compromissos</h2>
+              <p className="text-xs text-muted-foreground">Agenda</p>
+            </div>
+            <Button asChild size="sm" variant="outline" className="h-8">
+              <Link to="/agenda">Ver agenda</Link>
+            </Button>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
+            {(overview.upcoming_appointments ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum compromisso futuro agendado.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {(overview.upcoming_appointments ?? []).map((a) => (
+                  <Link
+                    key={a.id}
+                    to={`/agenda?appointment_id=${encodeURIComponent(a.id)}`}
+                    className="block rounded-lg border p-2.5 transition-colors active:scale-[0.99]"
+                  >
+                    <p className="text-sm font-medium truncate">{a.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {new Date(a.starts_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                      {a.client_name ? ` · ${a.client_name}` : ""}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+      {overview && show(hasAgenda, "agenda") ? (
+        <section className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold tracking-tight">Compromissos que precisam remarcar</h2>
+              <p className="text-xs text-muted-foreground">Solicitações por link público</p>
+            </div>
+            <Button asChild size="sm" variant="outline" className="h-8">
+              <Link to="/agenda?confirmation_status=needs_reschedule">Ver agenda</Link>
+            </Button>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
+            {(overview.appointments_needing_reschedule ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum compromisso aguardando remarcação.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {(overview.appointments_needing_reschedule ?? []).map((a) => (
+                  <div key={a.id} className="rounded-lg border p-2.5">
+                    <p className="text-sm font-medium truncate">{a.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {new Date(a.starts_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                      {a.client_name ? ` · ${a.client_name}` : ""}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {a.task_created ? (
+                        <Badge variant="outline" className="text-[10px]">Tarefa criada</Badge>
+                      ) : null}
+                      <Button asChild size="sm" variant="outline" className="h-7">
+                        <Link to={`/agenda?appointment_id=${encodeURIComponent(a.id)}&action=reschedule`}>
+                          Reagendar agora
+                        </Link>
+                      </Button>
+                      {a.task_created && a.task_href ? (
+                        <Button asChild size="sm" variant="ghost" className="h-7">
+                          <Link to={a.task_href}>Ver tarefa</Link>
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       ) : null}
@@ -788,6 +870,84 @@ const Dashboard = () => {
       </div>
 
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-3">
+        {show(hasAgenda, "agenda") ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CalendarClock className="h-4 w-4 text-sky-600" />
+                Próximos compromissos
+              </CardTitle>
+              <CardDescription>Até três eventos futuros da sua agenda</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {(overview?.upcoming_appointments ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhum compromisso futuro agendado.</p>
+              ) : (
+                (overview?.upcoming_appointments ?? []).map((a) => (
+                  <Link
+                    key={a.id}
+                    to={`/agenda?appointment_id=${encodeURIComponent(a.id)}`}
+                    className="block rounded-lg border p-2.5 transition-colors hover:bg-muted/50"
+                  >
+                    <p className="text-sm font-medium leading-snug">{a.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {new Date(a.starts_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                      {a.client_name ? ` · ${a.client_name}` : ""}
+                    </p>
+                  </Link>
+                ))
+              )}
+              <Button asChild variant="outline" className="w-full">
+                <Link to="/agenda">Ver agenda</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+        {show(hasAgenda, "agenda") ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CalendarClock className="h-4 w-4 text-amber-600" />
+                Compromissos que precisam remarcar
+              </CardTitle>
+              <CardDescription>Até três solicitações recentes de remarcação</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {(overview?.appointments_needing_reschedule ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhum compromisso aguardando remarcação.</p>
+              ) : (
+                (overview?.appointments_needing_reschedule ?? []).map((a) => (
+                  <div key={a.id} className="rounded-lg border p-2.5">
+                    <p className="text-sm font-medium leading-snug">{a.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {new Date(a.starts_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                      {a.client_name ? ` · ${a.client_name}` : ""}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {a.task_created ? (
+                        <Badge variant="outline" className="text-[10px]">Tarefa criada</Badge>
+                      ) : null}
+                      <Button asChild size="sm" variant="outline">
+                        <Link to={`/agenda?appointment_id=${encodeURIComponent(a.id)}&action=reschedule`}>
+                          Reagendar agora
+                        </Link>
+                      </Button>
+                      {a.task_created && a.task_href ? (
+                        <Button asChild size="sm" variant="ghost">
+                          <Link to={a.task_href}>Ver tarefa</Link>
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
+              <Button asChild variant="outline" className="w-full">
+                <Link to="/agenda?confirmation_status=needs_reschedule">Abrir fila de remarcação</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+
         {show(hasTasks, "tasks") ? (
           <Card>
           <CardHeader>

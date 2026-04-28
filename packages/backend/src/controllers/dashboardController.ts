@@ -8,6 +8,8 @@ import {
 } from '../services/activationChecklistService.js';
 import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
 import { hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
+import { getEffectiveModulePermissions, getUserRoleInTenant } from '../services/modulePermissionsService.js';
+import { listAppointmentsScopeForUser } from '../services/appointmentsService.js';
 
 // GET /api/dashboard/kpis
 export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
@@ -750,6 +752,122 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
           }
         : null;
 
+    let upcoming_appointments: Array<{
+      id: string;
+      title: string;
+      starts_at: string;
+      client_name: string | null;
+    }> = [];
+    let appointments_needing_reschedule: Array<{
+      id: string;
+      title: string;
+      starts_at: string;
+      client_name: string | null;
+      task_created: boolean;
+      task_href: string | null;
+    }> = [];
+    if (userId) {
+      const perms = await getEffectiveModulePermissions(userId);
+      if (perms['agenda']?.can_view !== false) {
+        const role = await getUserRoleInTenant(userId);
+        const { ownOnly } = listAppointmentsScopeForUser(userId, role, perms['agenda']);
+        const uar = ownOnly
+          ? await pool.query<{
+              id: string;
+              title: string;
+              starts_at: string;
+              client_name: string | null;
+            }>(
+              `SELECT a.id::text, a.title, a.starts_at::text, c.name AS client_name
+               FROM public.appointments a
+               LEFT JOIN public.clients c ON c.id = a.client_id
+               WHERE a.tenant_id = $1
+                 AND a.status = 'scheduled'
+                 AND a.starts_at > now()
+                 AND (a.responsible_user_id = $2::uuid OR a.created_by = $2::uuid)
+               ORDER BY a.starts_at ASC
+               LIMIT 3`,
+              [tenantId, userId],
+            )
+          : await pool.query<{
+              id: string;
+              title: string;
+              starts_at: string;
+              client_name: string | null;
+            }>(
+              `SELECT a.id::text, a.title, a.starts_at::text, c.name AS client_name
+               FROM public.appointments a
+               LEFT JOIN public.clients c ON c.id = a.client_id
+               WHERE a.tenant_id = $1
+                 AND a.status = 'scheduled'
+                 AND a.starts_at > now()
+               ORDER BY a.starts_at ASC
+               LIMIT 3`,
+              [tenantId],
+            );
+        upcoming_appointments = uar.rows;
+        const nrr = ownOnly
+          ? await pool.query<{
+              id: string;
+              title: string;
+              starts_at: string;
+              client_name: string | null;
+              task_created: boolean;
+              task_href: string | null;
+            }>(
+              `SELECT
+                 a.id::text,
+                 a.title,
+                 a.starts_at::text,
+                 c.name AS client_name,
+                 (al.id IS NOT NULL) AS task_created,
+                 (al.metadata_json->>'task_href') AS task_href
+               FROM public.appointments a
+               LEFT JOIN public.clients c ON c.id = a.client_id
+               LEFT JOIN public.appointment_automation_logs al
+                 ON al.appointment_id = a.id
+                AND al.automation_key = 'needs_reschedule_task_created'
+                AND al.result = 'created'
+               WHERE a.tenant_id = $1
+                 AND a.status = 'scheduled'
+                 AND a.public_confirmation_response = 'needs_reschedule'
+                 AND (a.responsible_user_id = $2::uuid OR a.created_by = $2::uuid)
+               ORDER BY a.starts_at ASC
+               LIMIT 3`,
+              [tenantId, userId],
+            )
+          : await pool.query<{
+              id: string;
+              title: string;
+              starts_at: string;
+              client_name: string | null;
+              task_created: boolean;
+              task_href: string | null;
+            }>(
+              `SELECT
+                 a.id::text,
+                 a.title,
+                 a.starts_at::text,
+                 c.name AS client_name,
+                 (al.id IS NOT NULL) AS task_created,
+                 (al.metadata_json->>'task_href') AS task_href
+               FROM public.appointments a
+               LEFT JOIN public.clients c ON c.id = a.client_id
+               LEFT JOIN public.appointment_automation_logs al
+                 ON al.appointment_id = a.id
+                AND al.automation_key = 'needs_reschedule_task_created'
+                AND al.result = 'created'
+               WHERE a.tenant_id = $1
+                 AND a.status = 'scheduled'
+                 AND a.public_confirmation_response = 'needs_reschedule'
+               ORDER BY a.starts_at ASC
+               LIMIT 3`,
+              [tenantId],
+            );
+        appointments_needing_reschedule = nrr.rows;
+      }
+    }
+
     res.json({
       period: { from, to, preset },
       sales: {
@@ -822,6 +940,8 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
       },
       tickets_overview,
       agent_attendance,
+      upcoming_appointments,
+      appointments_needing_reschedule,
     });
   } catch (error) {
     console.error('Error fetching executive dashboard overview:', error);

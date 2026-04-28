@@ -11,6 +11,9 @@ import {
   listActiveEvents,
   listRecentDeliveries,
   listRecentDeliveriesFiltered,
+  getLatestDeliveryPerEventKey,
+  listDeliveryAttemptsForTenantDelivery,
+  getTenantNotificationPanelSummary,
   getTenantDeliveryStatusSummary,
   getSentLatencySummaryMs,
   getEventByKey,
@@ -22,7 +25,11 @@ import {
   upsertTenantNotificationOverride,
   deleteTenantNotificationOverride,
 } from '../services/notificationsEngine/notificationEngineRepository.js';
-import { simulateTransactionalNotification } from '../services/notificationsEngine/notificationEngineOrchestrator.js';
+import { groupCatalogRowsForTenantPreferences } from '../services/notificationsEngine/notificationTenantPreferencesGrouped.js';
+import {
+  simulateTransactionalNotification,
+  isSkippedByTenantPreference,
+} from '../services/notificationsEngine/notificationEngineOrchestrator.js';
 import { renderStrictTemplates } from '../services/notificationsEngine/strictMergeRenderer.js';
 import { buildSampleMergeContext } from '../services/notificationsEngine/notificationTenantUiSamples.js';
 
@@ -41,6 +48,7 @@ const DEFAULT_LOCALE = 'pt-BR';
 
 const tenantPrefBodySchema = z.object({
   enabled: z.boolean(),
+  channel: z.enum(['whatsapp', 'email', 'sms']).optional(),
 });
 
 const tenantOverrideBodySchema = z.object({
@@ -60,6 +68,20 @@ function engineDisabled(res: Response) {
     ok: false,
     error: 'Motor de notificações desligado (Super Admin → Motor de notificações, ou kill switch NOTIFICATIONS_ENGINE_ENABLED no ambiente).',
   });
+}
+
+/** Módulo da UI (billing, proposals, …) → filtro no catálogo (invoices, …). */
+function tenantUiModuleToCatalogFilter(raw: string | null | undefined): string | null {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (!s || s === '__all__') return null;
+  const map: Record<string, string> = {
+    billing: 'invoices',
+    proposals: 'proposals',
+    contracts: 'contracts',
+    agenda: 'agenda',
+    other: 'other',
+  };
+  return map[s] ?? null;
 }
 
 /** GET /api/notifications-engine/events */
@@ -103,6 +125,9 @@ export async function listNotificationDeliveriesFiltered(req: AuthRequest, res: 
     const status = typeof req.query.status === 'string' && req.query.status.trim() ? req.query.status.trim() : null;
     const eventKey = typeof req.query.event_key === 'string' && req.query.event_key.trim() ? req.query.event_key.trim() : null;
     const channel = typeof req.query.channel === 'string' && req.query.channel.trim() ? req.query.channel.trim() : null;
+    const moduleUi =
+      typeof req.query.module === 'string' && req.query.module.trim() ? req.query.module.trim() : null;
+    const catalogModule = tenantUiModuleToCatalogFilter(moduleUi);
     const rows = await listRecentDeliveriesFiltered(pool, {
       tenantId,
       limit,
@@ -110,11 +135,97 @@ export async function listNotificationDeliveriesFiltered(req: AuthRequest, res: 
       eventKey,
       channel,
       hours,
+      catalogModule,
     });
-    res.json({ ok: true, deliveries: rows });
+    res.json({
+      ok: true,
+      deliveries: rows.map((r) => ({
+        id: r.id,
+        tenant_id: r.tenant_id,
+        event_key: r.event_key,
+        entity_type: r.entity_type,
+        entity_id: r.entity_id,
+        status: r.status,
+        rendered_body: r.rendered_body,
+        rendered_subject: r.rendered_subject,
+        error_message: r.error_message,
+        provider_message_id: r.provider_message_id,
+        idempotency_key: r.idempotency_key,
+        created_at: r.created_at,
+        channel: r.channel,
+        recipient_type: r.recipient_type,
+        recipient_address: r.recipient_address,
+        retry_count: r.retry_count,
+        next_retry_at: r.next_retry_at,
+        dispatch_sender_user_id: r.dispatch_sender_user_id,
+        sent_at: r.sent_at,
+        module: r.catalog_module ?? null,
+      })),
+    });
   } catch (e: unknown) {
     console.error('[notifications-engine] listNotificationDeliveriesFiltered', e);
     res.status(500).json({ ok: false, error: 'Erro ao listar entregas.' });
+  }
+}
+
+/** GET /api/notifications-engine/tenant/summary — cartões da visão geral (7 dias + preferências). */
+export async function getTenantNotificationPanelSummaryHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!isNotificationsEngineEnabled()) {
+      engineDisabled(res);
+      return;
+    }
+    const tenantId = req.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
+      return;
+    }
+    const summary = await getTenantNotificationPanelSummary(pool, tenantId);
+    res.json({ ok: true, ...summary });
+  } catch (e: unknown) {
+    console.error('[notifications-engine] getTenantNotificationPanelSummaryHandler', e);
+    res.status(500).json({ ok: false, error: 'Erro ao obter resumo.' });
+  }
+}
+
+/** GET /api/notifications-engine/deliveries/:deliveryId/attempts */
+export async function listNotificationDeliveryAttempts(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!isNotificationsEngineEnabled()) {
+      engineDisabled(res);
+      return;
+    }
+    const tenantId = req.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
+      return;
+    }
+    const deliveryId = String(req.params.deliveryId || '').trim();
+    if (!deliveryId) {
+      res.status(400).json({ ok: false, error: 'Identificador de entrega obrigatório.' });
+      return;
+    }
+    const own = await pool.query(`SELECT 1 FROM notification_outbound_deliveries WHERE id = $1::uuid AND tenant_id = $2::uuid LIMIT 1`, [deliveryId, tenantId]);
+    if (!own.rows[0]) {
+      res.status(404).json({ ok: false, error: 'Entrega não encontrada.' });
+      return;
+    }
+    const rows = await listDeliveryAttemptsForTenantDelivery(pool, tenantId, deliveryId);
+    res.json({
+      ok: true,
+      attempts: rows.map((a) => ({
+        id: a.id,
+        attempt_number: a.attempt_number,
+        status: a.status,
+        error_message: a.error_message,
+        provider_response: a.provider_response,
+        duration_ms: a.duration_ms,
+        created_at: a.created_at,
+      })),
+    });
+  } catch (e: unknown) {
+    console.error('[notifications-engine] listNotificationDeliveryAttempts', e);
+    res.status(500).json({ ok: false, error: 'Erro ao listar tentativas.' });
   }
 }
 
@@ -209,6 +320,16 @@ export async function simulateNotification(req: AuthRequest, res: Response): Pro
       return;
     }
 
+    if (isSkippedByTenantPreference(result)) {
+      res.status(200).json({
+        ok: true,
+        skipped: true,
+        skip_reason: 'notification_skipped_by_tenant_preference',
+        event_key: body.event_key,
+      });
+      return;
+    }
+
     res.status(result.duplicate ? 200 : 201).json({
       ok: true,
       duplicate: result.duplicate,
@@ -235,6 +356,36 @@ export async function getNotificationsEngineBootstrap(_req: AuthRequest, res: Re
     whatsapp_send_enabled: master && isNotificationsEngineWhatsAppSendEnabled(),
     default_locale: DEFAULT_LOCALE,
   });
+}
+
+/** GET /api/notifications-engine/tenant/preferences — eventos agrupados por módulo (UI “Notificações automáticas”). */
+export async function getTenantNotificationPreferencesGrouped(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!isNotificationsEngineEnabled()) {
+      engineDisabled(res);
+      return;
+    }
+    const tenantId = req.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ ok: false, error: 'Empresa obrigatória.' });
+      return;
+    }
+    const locale =
+      typeof req.query.locale === 'string' && req.query.locale.trim()
+        ? req.query.locale.trim()
+        : DEFAULT_LOCALE;
+    const rows = await listCatalogWithTenantState(pool, tenantId, locale);
+    const keys = rows.map((r) => r.event_key);
+    const lasts = await getLatestDeliveryPerEventKey(pool, tenantId, keys);
+    const lastMap = new Map(
+      lasts.map((x) => [x.event_key, { status: x.status, created_at: x.created_at }]),
+    );
+    const modules = groupCatalogRowsForTenantPreferences(rows, lastMap);
+    res.json({ ok: true, modules });
+  } catch (e: unknown) {
+    console.error('[notifications-engine] getTenantNotificationPreferencesGrouped', e);
+    res.status(500).json({ ok: false, error: 'Erro ao listar preferências.' });
+  }
 }
 
 /** GET /api/notifications-engine/tenant/catalog-with-state */
@@ -269,6 +420,7 @@ export async function getTenantCatalogWithState(req: AuthRequest, res: Response)
           merge_fields: r.merge_fields,
           tenant_enabled: enabled,
           has_override: r.has_override,
+          template_exists: r.has_system_template,
         };
       }),
     });
@@ -371,12 +523,18 @@ export async function putTenantNotificationPreference(req: AuthRequest, res: Res
       tenantId,
       eventKey,
       enabled: parsed.data.enabled,
+      primaryChannel: parsed.data.channel,
     });
     res.json({ ok: true });
   } catch (e: unknown) {
     console.error('[notifications-engine] putTenantNotificationPreference', e);
     res.status(500).json({ ok: false, error: 'Erro ao guardar preferência.' });
   }
+}
+
+/** PATCH /api/notifications-engine/tenant/preferences/:eventKey — mesmo corpo que PUT (enabled + canal opcional). */
+export async function patchTenantNotificationPreference(req: AuthRequest, res: Response): Promise<void> {
+  await putTenantNotificationPreference(req, res);
 }
 
 /** PUT /api/notifications-engine/tenant/override/:eventKey */
