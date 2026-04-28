@@ -1286,14 +1286,20 @@ const Chat = () => {
     if (pendingConversationRestoreRef.current) {
       return;
     }
-    if (
-      selectedConversationId &&
-      !conversations.some((conversation) => conversation.id === selectedConversationId)
-    ) {
+    if (!selectedConversationId) return;
+    // Evita ciclo infinito de fetch (ERR_INSUFFICIENT_RESOURCES): a rota `/chat/:id` fixa a
+    // conversa antes da lista hidratar; limpar aqui fazia o efeito da URL voltar a chamar
+    // handleSelectConversation em rajada.
+    if (loadingConversations) return;
+    if (!conversationsHydratedRef.current) return;
+    if (routeConversationId && routeConversationId === selectedConversationId) {
+      return;
+    }
+    if (!conversations.some((conversation) => conversation.id === selectedConversationId)) {
       setSelectedConversationId(null);
       setMessages([]);
     }
-  }, [conversations, selectedConversationId]);
+  }, [conversations, selectedConversationId, loadingConversations, routeConversationId]);
 
   /** Mantém o viewport no fim do histórico (mensagem mais recente visível). */
   const scrollMessagesToBottom = useCallback(() => {
