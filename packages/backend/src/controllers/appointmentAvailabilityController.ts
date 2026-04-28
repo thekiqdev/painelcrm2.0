@@ -12,6 +12,7 @@ import {
   getUserAvailabilitySettingsForApi,
   upsertUserAvailabilitySettings,
   resolveEffectiveAvailabilitySettings,
+  type ResolvedAvailabilitySettings,
 } from '../services/appointmentAvailabilityService.js';
 
 const MODULE = 'agenda' as const;
