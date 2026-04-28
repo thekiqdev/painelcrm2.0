@@ -21,7 +21,9 @@ export type NotificationType =
   | 'agenda_reminder'
   | 'agenda_reschedule_request'
   | 'agenda_public_reschedule_done'
-  | 'agenda_pending_confirmation_alert';
+  | 'agenda_pending_confirmation_alert'
+  | 'chat_assigned'
+  | 'chat_transferred';
 
 /**
  * Interface para criar notificação
@@ -116,7 +118,9 @@ export function resolveNotificationHrefForRow(n: Notification): string {
       type === 'message_delivered' ||
       type === 'message_read' ||
       type === 'new_conversation' ||
-      type === 'kanban_automation'
+      type === 'kanban_automation' ||
+      type === 'chat_assigned' ||
+      type === 'chat_transferred'
     ) {
       return `/chat/${encodeURIComponent(conv)}`;
     }

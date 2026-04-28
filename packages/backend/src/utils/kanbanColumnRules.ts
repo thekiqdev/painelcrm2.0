@@ -341,7 +341,7 @@ export async function applyKanbanColumnEnterRules(
       (err as Error & { code?: string }).code = 'FORBIDDEN';
       throw err;
     }
-    nextStatus = 'queued';
+    nextStatus = 'pending';
     nextAssigned = null;
     nextQueue = null;
     nextTeam = opts.rules.assign_team_id;
@@ -365,7 +365,7 @@ export async function applyKanbanColumnEnterRules(
       (err as Error & { code?: string }).code = 'FORBIDDEN';
       throw err;
     }
-    nextStatus = 'in_service';
+    nextStatus = 'in_progress';
     nextAssigned = opts.rules.assign_user_id;
     nextQueue = null;
     nextTeam = null;
@@ -377,7 +377,7 @@ export async function applyKanbanColumnEnterRules(
       (err as Error & { code?: string }).code = 'FORBIDDEN';
       throw err;
     }
-    nextStatus = 'queued';
+    nextStatus = 'pending';
     nextAssigned = null;
     nextQueue = null;
     nextTeam = null;
@@ -390,7 +390,7 @@ export async function applyKanbanColumnEnterRules(
       (err as Error & { code?: string }).code = 'FORBIDDEN';
       throw err;
     }
-    nextStatus = 'unassigned';
+    nextStatus = 'pending';
     nextAssigned = null;
     nextQueue = null;
     nextTeam = null;

@@ -1,7 +1,11 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { pool } from '../utils/db.js';
-import { hasAssignedTeamColumn, hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
+import {
+  hasAssignedTeamColumn,
+  hasAttendanceColumns,
+  hasChatPhase5SlaColumns,
+} from '../utils/chatAttendanceSchema.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { resolveOutgoingMediaPayload } from '../services/outgoingMediaPayloadResolver.js';
@@ -93,6 +97,7 @@ import {
   buildMessageCreatedPayload,
 } from '../services/communication/realtimePayloads.js';
 import { emitToTenant } from '../services/realtimeService.js';
+import { canChatAction } from '../services/chatAccess.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -1694,7 +1699,36 @@ async function saveMessage(
 
     if (conversationResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] Conversation not found for update`, { conversationId });
-    } else if (saveVerbose) {
+    } else {
+      if (await hasChatPhase5SlaColumns()) {
+        try {
+          if (direction === 'incoming') {
+            await pool.query(
+              `UPDATE chat_conversations SET
+                 last_customer_message_at = now(),
+                 attendance_status = CASE
+                   WHEN attendance_status IN ('closed', 'archived') THEN 'pending'
+                   ELSE attendance_status
+                 END,
+                 updated_at = now()
+               WHERE id = $1`,
+              [conversationId]
+            );
+          } else if (direction === 'outgoing') {
+            await pool.query(
+              `UPDATE chat_conversations SET
+                 last_agent_message_at = now(),
+                 first_response_at = COALESCE(first_response_at, now()),
+                 updated_at = now()
+               WHERE id = $1`,
+              [conversationId]
+            );
+          }
+        } catch (slaErr: unknown) {
+          console.warn('[SaveMessage] SLA columns update skipped', slaErr);
+        }
+      }
+      if (saveVerbose) {
       const updated = conversationResult.rows[0];
       console.log(`[SaveMessage ${saveId}] Conversation updated successfully`, {
         conversationId: updated?.id,
@@ -1705,6 +1739,7 @@ async function saveMessage(
         newMessageSentAt: effectiveSentAt,
         newMessagePreview: messagePreview?.substring(0, 50),
       });
+      }
     }
 
     return { rowId: messageResult.rows[0]?.id ?? null, inserted: true };
@@ -4660,7 +4695,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
       LEFT JOIN profiles pf ON pf.id = assignee.id${teamCols ? '\n      LEFT JOIN teams t_chat_team ON t_chat_team.id = c.assigned_team_id' : ''}`,
         }
       : {
-          select: `'unassigned'::text AS attendance_status,
+          select: `'pending'::text AS attendance_status,
         NULL::uuid AS assigned_to_user_id,
         NULL::uuid AS queue_id,
         NULL::timestamptz AS assigned_at,
@@ -4760,32 +4795,36 @@ export async function getConversations(req: AuthRequest, res: Response) {
     if (attendanceCols) {
       if (attendanceFilter === 'mine') {
         params.push(userId);
-        query += ` AND c.assigned_to_user_id = $${params.length} AND c.attendance_status = 'in_service'`;
+        query += ` AND c.assigned_to_user_id = $${params.length} AND c.attendance_status = 'in_progress'`;
         paramIndex++;
       } else if (attendanceFilter === 'unassigned') {
         query += ` AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status = 'unassigned')
-          AND (c.attendance_status IS DISTINCT FROM 'closed')`;
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
+          AND (c.attendance_status IS DISTINCT FROM 'closed')
+          AND (c.attendance_status IS DISTINCT FROM 'archived')`;
         if (teamCols) {
           query += ` AND (c.assigned_team_id IS NULL)`;
         }
       } else if (attendanceFilter === 'queue' || attendanceFilter === 'queued') {
         /** Fila geral: sem operador e sem fila de equipe */
         query += ` AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
-          AND (c.attendance_status IS DISTINCT FROM 'closed')`;
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
+          AND (c.attendance_status IS DISTINCT FROM 'closed')
+          AND (c.attendance_status IS DISTINCT FROM 'archived')`;
         if (teamCols) {
           query += ` AND (c.assigned_team_id IS NULL)`;
         }
+      } else if (attendanceFilter === 'waiting' || attendanceFilter === 'waiting_customer') {
+        query += ` AND c.attendance_status = 'waiting_customer'`;
       } else if (attendanceFilter === 'closed') {
-        query += ` AND c.attendance_status = 'closed'`;
+        query += ` AND c.attendance_status IN ('closed', 'archived')`;
       } else if (attendanceFilter === 'team') {
         /** Equipe: conversas na fila da equipe (transferidas para equipe), visível só a membros */
         if (teamCols) {
           params.push(userId);
           query += ` AND c.assigned_team_id IS NOT NULL
           AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
           AND EXISTS (
             SELECT 1 FROM team_members tm
             WHERE tm.team_id = c.assigned_team_id AND tm.user_id = $${params.length}
@@ -4829,6 +4868,33 @@ export async function getConversations(req: AuthRequest, res: Response) {
       params.push(new Date(endDate));
       query += ` AND (COALESCE(c.last_message_at, c.created_at) <= $${params.length})`;
       paramIndex++;
+    }
+
+    if (attendanceCols) {
+      const viewAll = await canChatAction(userId, 'view_all', req);
+      if (!viewAll) {
+        if (teamCols) {
+          query += ` AND (
+          c.assigned_to_user_id = $1
+          OR (
+            c.assigned_team_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = c.assigned_team_id AND tm.user_id = $1)
+          )
+          OR (
+            c.assigned_to_user_id IS NULL
+            AND (c.attendance_status IS NULL OR c.attendance_status NOT IN ('closed', 'archived'))
+          )
+        )`;
+        } else {
+          query += ` AND (
+          c.assigned_to_user_id = $1
+          OR (
+            c.assigned_to_user_id IS NULL
+            AND (c.attendance_status IS NULL OR c.attendance_status NOT IN ('closed', 'archived'))
+          )
+        )`;
+        }
+      }
     }
 
     query += ' ORDER BY COALESCE(c.last_message_at, c.created_at) DESC, c.updated_at DESC LIMIT 200';
@@ -4936,7 +5002,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
           );
           const unassignedAtt = await raw.query<{ n: string }>(
             `SELECT COUNT(*)::text AS n FROM chat_conversations c
-           WHERE c.instance_id = $1 AND c.attendance_status = 'unassigned'`,
+           WHERE c.instance_id = $1 AND c.attendance_status = 'pending'`,
             [instanceId]
           );
           const nullAssignee = await raw.query<{ n: string }>(
@@ -5077,7 +5143,7 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
         ? `COUNT(*) FILTER (
         WHERE c.assigned_team_id IS NOT NULL
           AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
           AND EXISTS (
             SELECT 1 FROM team_members tm
             WHERE tm.team_id = c.assigned_team_id AND tm.user_id = $1
@@ -5088,20 +5154,21 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
       COUNT(*) FILTER (
         WHERE c.assigned_to_user_id IS NULL
           ${queueTeamExcl}
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued'))
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
           AND (c.attendance_status IS DISTINCT FROM 'closed')
       )::int AS queue,
       COUNT(*) FILTER (
-        WHERE c.assigned_to_user_id = $1 AND c.attendance_status = 'in_service'
+        WHERE c.assigned_to_user_id = $1 AND c.attendance_status = 'in_progress'
       )::int AS mine,
       ${teamInboxCount}
       COUNT(*) FILTER (
         WHERE c.assigned_to_user_id IS NULL
           ${unassTeamExcl}
-          AND (c.attendance_status IS NULL OR c.attendance_status = 'unassigned')
+          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
           AND (c.attendance_status IS DISTINCT FROM 'closed')
+          AND (c.attendance_status IS DISTINCT FROM 'archived')
       )::int AS unassigned,
-      COUNT(*) FILTER (WHERE c.attendance_status = 'closed')::int AS closed,
+      COUNT(*) FILTER (WHERE c.attendance_status IN ('closed', 'archived'))::int AS closed,
       `;
     } else {
       selectCounts = `

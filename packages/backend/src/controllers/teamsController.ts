@@ -23,7 +23,7 @@ const teamSchema = z.object({
 
 const teamMemberSchema = z.object({
   user_id: z.string().uuid('user_id deve ser um UUID válido'),
-  role: z.enum(['lead', 'member']).optional().default('member'),
+  role: z.enum(['lead', 'member', 'supervisor']).optional().default('member'),
 });
 
 // GET /api/teams (retorna [] se a tabela teams não existir — migração 49 não aplicada)

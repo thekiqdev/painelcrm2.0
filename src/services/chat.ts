@@ -40,8 +40,17 @@ export interface ChatInstance {
   can_manage?: boolean;
 }
 
-/** Etapa 5 — estado de atendimento na conversa (chat Uaz). */
-export type ChatAttendanceStatus = 'unassigned' | 'queued' | 'in_service' | 'closed';
+/** Etapa 5 — estado de atendimento (Fase 5 inclui valores legacy para payloads antigos). */
+export type ChatAttendanceStatus =
+  | 'open'
+  | 'pending'
+  | 'in_progress'
+  | 'waiting_customer'
+  | 'closed'
+  | 'archived'
+  | 'unassigned'
+  | 'queued'
+  | 'in_service';
 
 export interface ChatConversation {
   id: string;
@@ -415,7 +424,7 @@ export const chatService = {
     /** Etapa 5: `tenant` = inbox do tenant; padrão `owner` */
     inboxScope?: 'owner' | 'tenant';
     /** `queue` = fila operacional (Etapa 5); `queued` aceite por compatibilidade */
-    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team';
+    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team' | 'waiting';
   }) {
     const params = new URLSearchParams();
     if (filters?.instanceId) params.append('instanceId', filters.instanceId);

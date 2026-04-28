@@ -111,14 +111,18 @@ export function ChatKanbanCard({ card, columnMetadata, onClick, dragHandleProps 
                 <span className="truncate">{card.conv_assigned_team_name}</span>
               </span>
             ) : null}
-            {card.conv_attendance_status === 'in_service' && card.conv_assignee_display ? (
+            {(card.conv_attendance_status === 'in_progress' || card.conv_attendance_status === 'in_service') &&
+            card.conv_assignee_display ? (
               <span className="inline-flex items-center gap-0.5 rounded border border-violet-200 bg-violet-50 px-1 py-0 text-[10px] text-violet-900 max-w-[120px]">
                 <Headphones className="h-2.5 w-2.5 shrink-0" aria-hidden />
                 <span className="truncate">{shortOperatorName(card.conv_assignee_display)}</span>
               </span>
             ) : null}
             {att &&
-            !(card.conv_attendance_status === 'in_service' && card.conv_assignee_display) &&
+            !(
+              (card.conv_attendance_status === 'in_progress' || card.conv_attendance_status === 'in_service') &&
+              card.conv_assignee_display
+            ) &&
             !(card.conv_assigned_team_id && !card.conv_assignee_display && card.conv_assigned_team_name) ? (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 border-violet-200 text-violet-900 bg-violet-50">
                 {att}

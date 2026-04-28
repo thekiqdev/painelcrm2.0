@@ -16,6 +16,7 @@ import { TeamsSection } from "@/components/settings/TeamsSection";
 import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesSection";
 import { GoogleCalendarSection } from "@/components/settings/GoogleCalendarSection";
 import { AgendaAvailabilitySection } from "@/components/settings/AgendaAvailabilitySection";
+import { ChatAttendanceSettingsSection } from "@/components/settings/ChatAttendanceSettingsSection";
 import { toast } from "@/components/ui/sonner";
 
 const Settings = () => {
@@ -63,6 +64,8 @@ const Settings = () => {
       return <GoogleCalendarSection />;
     case "agendaAvailability":
       return <AgendaAvailabilitySection />;
+    case "chatAttendance":
+      return <ChatAttendanceSettingsSection />;
     default:
       return <CompanyDataSection handleSave={handleSave} />;
   }

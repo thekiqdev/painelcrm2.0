@@ -276,6 +276,8 @@ const order = [
   '183_appointment_availability_settings.sql',
   /** Agenda Fase 5.2: disponibilidade por utilizador (fallback tenant) */
   '184_appointment_user_availability_settings.sql',
+  /** Chat Engine Fase 5: filas, status padronizados, transferências, SLA básico */
+  '185_chat_engine_phase5_professional.sql',
   'create-admin-user.sql',
 ];
 

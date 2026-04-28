@@ -39,7 +39,8 @@ type SettingSection =
   | "messageTemplates"
   | "paymentGateway"
   | "googleCalendar"
-  | "agendaAvailability";
+  | "agendaAvailability"
+  | "chatAttendance";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -90,6 +91,13 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
       id: "chatTemplates",
       label: "Templates WhatsApp",
       icon: <LayoutTemplate className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Mensagens",
+    },
+    {
+      id: "chatAttendance",
+      label: "Chat e atendimento",
+      icon: <MessageSquare className="h-4 w-4" />,
       category: "Integrações",
       subcategory: "Mensagens",
     },

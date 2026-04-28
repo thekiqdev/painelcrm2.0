@@ -2,9 +2,14 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
-import { emitConversationAttendanceUpdated } from '../services/websocketService.js';
+import {
+  emitConversationAttendanceUpdated,
+  emitChatProfessionalPayload,
+} from '../services/websocketService.js';
 import { hasAssignedTeamColumn, hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
 import { isTenantAdmin } from '../utils/tenant.js';
+import { insertChatTransferRow } from '../services/chatProfessionalService.js';
+import { createNotification } from '../services/notifications.js';
 
 function respondAttendanceMigrationRequired(res: Response): void {
   res.status(503).json({
@@ -14,7 +19,14 @@ function respondAttendanceMigrationRequired(res: Response): void {
   });
 }
 
-const attendanceStatusSchema = z.enum(['unassigned', 'queued', 'in_service', 'closed']);
+const attendanceStatusSchema = z.enum([
+  'open',
+  'pending',
+  'in_progress',
+  'waiting_customer',
+  'closed',
+  'archived',
+]);
 
 const patchAttendanceSchema = z.discriminatedUnion('action', [
   z.object({
@@ -38,6 +50,19 @@ const patchAttendanceSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('reassign_team'),
     toTeamId: z.string().uuid(),
+    reason: z.string().max(500).optional(),
+  }),
+  z.object({
+    action: z.literal('set_status'),
+    status: attendanceStatusSchema,
+    reason: z.string().max(500).optional(),
+  }),
+  z.object({
+    action: z.literal('waiting_customer'),
+    reason: z.string().max(500).optional(),
+  }),
+  z.object({
+    action: z.literal('reopen'),
     reason: z.string().max(500).optional(),
   }),
 ]);
@@ -214,7 +239,7 @@ export async function attendConversation(req: AuthRequest, res: Response) {
     }
 
     if (
-      prev.attendance_status === 'in_service' &&
+      prev.attendance_status === 'in_progress' &&
       prev.assigned_to_user_id != null &&
       prev.assigned_to_user_id !== actorUserId
     ) {
@@ -229,10 +254,12 @@ export async function attendConversation(req: AuthRequest, res: Response) {
     const clearTeam = hasTeamCol ? ', assigned_team_id = NULL' : '';
     const upd = await client.query(
       `UPDATE chat_conversations
-       SET attendance_status = 'in_service',
+       SET attendance_status = 'in_progress',
            assigned_to_user_id = $2,
            assigned_at = now(),
+           last_assigned_at = now(),
            closed_at = NULL,
+           closed_by = NULL,
            last_assignment_reason = COALESCE($3, 'attend'),
            updated_at = now()
            ${clearTeam}
@@ -248,7 +275,7 @@ export async function attendConversation(req: AuthRequest, res: Response) {
       conversation_id: conversationId,
       tenant_id: prev.owner_tenant_id,
       from_status: prev.attendance_status,
-      to_status: 'in_service',
+      to_status: 'in_progress',
       from_user_id: prev.assigned_to_user_id,
       to_user_id: actorUserId,
       queue_id: prev.queue_id,
@@ -266,6 +293,37 @@ export async function attendConversation(req: AuthRequest, res: Response) {
       assignee_display: assignee.rows[0]?.email ?? null,
     });
     emitConversationAttendanceUpdated(prev.owner_tenant_id, prev.user_id, patch);
+    try {
+      if (prev.owner_tenant_id) {
+        await insertChatTransferRow({
+          tenantId: prev.owner_tenant_id,
+          conversationId,
+          fromUserId: prev.assigned_to_user_id,
+          fromTeamId: hasTeamCol ? prev.assigned_team_id : null,
+          fromQueueId: prev.queue_id,
+          toUserId: actorUserId,
+          toTeamId: null,
+          toQueueId: prev.queue_id,
+          transferredBy: actorUserId,
+          reason: reason ?? 'attend',
+        });
+      }
+      emitChatProfessionalPayload(
+        prev.owner_tenant_id,
+        prev.user_id,
+        'assignment.changed',
+        {
+          conversation_id: conversationId,
+          assigned_user_id: actorUserId,
+          assigned_team_id: null,
+          queue_id: prev.queue_id ?? null,
+          status: 'in_progress',
+          updated_at: new Date().toISOString(),
+        }
+      );
+    } catch (e) {
+      console.warn('[attendConversation] pos-commit', e);
+    }
     res.json({ ok: true, conversation: patch });
   } catch (e: any) {
     await client.query('ROLLBACK');
@@ -330,7 +388,7 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
         res.status(403).json({ error: 'Sem permissão' });
         return;
       }
-      nextStatus = 'queued';
+      nextStatus = 'pending';
       nextQueue = body.queueId ?? null;
       nextClosedAt = null;
       nextTeam = null;
@@ -357,7 +415,7 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
         res.status(403).json({ error: 'Só o dono ou o atendente atual pode desatribuir' });
         return;
       }
-      nextStatus = 'unassigned';
+      nextStatus = 'pending';
       nextAssigned = null;
       nextQueue = null;
       nextTeam = null;
@@ -383,12 +441,12 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
         });
         return;
       }
-      nextStatus = 'in_service';
+      nextStatus = 'in_progress';
       nextAssigned = body.toUserId;
       nextClosedAt = null;
       nextTeam = null;
       operation = 'transfer';
-    } else {
+    } else if (body.action === 'reassign_team') {
       if (!hasTeamCol) {
         await client.query('ROLLBACK');
         respondAttendanceMigrationRequired(res);
@@ -408,12 +466,53 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
         });
         return;
       }
-      nextStatus = 'queued';
+      nextStatus = 'pending';
       nextAssigned = null;
       nextQueue = null;
       nextTeam = body.toTeamId;
       nextClosedAt = null;
       operation = 'transfer_team';
+    } else if (body.action === 'set_status') {
+      const actorIsTenantAdminSt = await isTenantAdmin(actorUserId);
+      if (!isOwner && !isAssignee && !actorIsTenantAdminSt) {
+        await client.query('ROLLBACK');
+        res.status(403).json({ error: 'Sem permissão para alterar o status' });
+        return;
+      }
+      nextStatus = body.status;
+      if (body.status === 'closed') {
+        nextClosedAt = new Date();
+        nextAssigned = null;
+        nextQueue = null;
+        nextTeam = null;
+      } else if (body.status === 'archived') {
+        nextClosedAt = prev.closed_at ?? new Date();
+      } else {
+        nextClosedAt = null;
+      }
+      operation = 'set_status';
+    } else if (body.action === 'waiting_customer') {
+      if (!isOwner && !isAssignee && !(await isTenantAdmin(actorUserId))) {
+        await client.query('ROLLBACK');
+        res.status(403).json({ error: 'Sem permissão' });
+        return;
+      }
+      nextStatus = 'waiting_customer';
+      operation = 'waiting_customer';
+    } else if (body.action === 'reopen') {
+      const actorIsTenantAdminRo = await isTenantAdmin(actorUserId);
+      if (!isOwner && !isAssignee && !actorIsTenantAdminRo) {
+        await client.query('ROLLBACK');
+        res.status(403).json({ error: 'Sem permissão para reabrir' });
+        return;
+      }
+      nextStatus = 'pending';
+      nextClosedAt = null;
+      operation = 'reopen';
+    } else {
+      await client.query('ROLLBACK');
+      res.status(400).json({ error: 'Ação não suportada' });
+      return;
     }
 
     const lastReason = reason || operation;
@@ -475,6 +574,14 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
     }
 
     const row = upd.rows[0];
+    if (nextStatus === 'closed') {
+      await client.query(`UPDATE chat_conversations SET closed_by = $2 WHERE id = $1`, [
+        conversationId,
+        actorUserId,
+      ]);
+    } else if (nextStatus !== 'archived') {
+      await client.query(`UPDATE chat_conversations SET closed_by = NULL WHERE id = $1`, [conversationId]);
+    }
     const histToTeam = body.action === 'reassign_team' ? body.toTeamId : null;
     await insertAssignmentHistory(client, {
       conversation_id: conversationId,
@@ -519,6 +626,68 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
       assigned_team_name: teamName,
     });
     emitConversationAttendanceUpdated(prev.owner_tenant_id, prev.user_id, patch);
+    try {
+      const shouldRecordTransfer =
+        operation === 'transfer' ||
+        operation === 'transfer_team' ||
+        (operation === 'queue' &&
+          String(prev.queue_id ?? '') !== String((row.queue_id as string | null) ?? ''));
+      if (prev.owner_tenant_id && shouldRecordTransfer) {
+        await insertChatTransferRow({
+          tenantId: prev.owner_tenant_id,
+          conversationId,
+          fromUserId: prev.assigned_to_user_id,
+          fromTeamId: hasTeamCol ? prev.assigned_team_id : null,
+          fromQueueId: prev.queue_id,
+          toUserId: (row.assigned_to_user_id as string | null) ?? null,
+          toTeamId: (row.assigned_team_id as string | null) ?? null,
+          toQueueId: (row.queue_id as string | null) ?? null,
+          transferredBy: actorUserId,
+          reason: lastReason,
+        });
+      }
+      if (body.action === 'reassign' && nextAssigned && nextAssigned !== actorUserId) {
+        await createNotification({
+          userId: nextAssigned,
+          type: 'chat_transferred',
+          title: 'Nova conversa para você',
+          message: 'Você foi definido como responsável pelo atendimento.',
+          data: { conversation_id: conversationId },
+        });
+      }
+      if (body.action === 'reassign_team' && prev.owner_tenant_id && nextTeam) {
+        const leads = await pool.query<{ user_id: string }>(
+          `SELECT user_id FROM team_members
+           WHERE team_id = $1 AND role IN ('lead', 'supervisor')`,
+          [nextTeam]
+        );
+        for (const m of leads.rows) {
+          if (m.user_id === actorUserId) continue;
+          await createNotification({
+            userId: m.user_id,
+            type: 'chat_transferred',
+            title: 'Conversa na equipe',
+            message: 'Uma conversa foi transferida para a sua equipe.',
+            data: { conversation_id: conversationId },
+          });
+        }
+      }
+      emitChatProfessionalPayload(
+        prev.owner_tenant_id,
+        prev.user_id,
+        'conversation.status_changed',
+        {
+          conversation_id: conversationId,
+          assigned_user_id: row.assigned_to_user_id ?? null,
+          assigned_team_id: row.assigned_team_id ?? null,
+          queue_id: row.queue_id ?? null,
+          status: row.attendance_status,
+          updated_at: new Date().toISOString(),
+        }
+      );
+    } catch (e) {
+      console.warn('[patchConversationAttendance] pos-commit', e);
+    }
     res.json({ ok: true, conversation: patch });
   } catch (e: any) {
     await client.query('ROLLBACK');

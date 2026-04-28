@@ -51,3 +51,33 @@ export async function hasAssignedTeamColumn(): Promise<boolean> {
   cachedTeam = { value, checkedAt: now };
   return value;
 }
+
+let cachedSla: { value: boolean; checkedAt: number } | null = null;
+
+/** Colunas Fase 5: first_response_at, last_customer_message_at, etc. */
+export async function hasChatPhase5SlaColumns(): Promise<boolean> {
+  const now = Date.now();
+  if (cachedSla && now - cachedSla.checkedAt < CHECK_TTL_MS) {
+    return cachedSla.value;
+  }
+  const r = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'chat_conversations'
+       AND column_name = 'last_customer_message_at'`
+  );
+  const value = (r.rows[0]?.c ?? '0') === '1';
+  cachedSla = { value, checkedAt: now };
+  return value;
+}
+
+/** Tabela chat_queues (Fase 5). */
+export async function hasChatQueuesTable(): Promise<boolean> {
+  const r = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'chat_queues'`
+  );
+  return (r.rows[0]?.c ?? '0') === '1';
+}

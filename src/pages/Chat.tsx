@@ -208,16 +208,27 @@ const statusBadgeClass = (status?: string | null) => {
 };
 
 /** Etapa 5 — rótulo curto para badge de atendimento (evita confundir com `status` da conversa Uaz). */
+/** Compat: backend Fase 5 usa `in_progress`; valores antigos `in_service`. */
+const attendanceIsInProgress = (s?: string | null) => s === 'in_progress' || s === 'in_service';
+
 const attendanceStatusLabel = (s?: string | null) => {
   switch (s) {
+    case 'open':
+      return 'Aberta';
+    case 'pending':
     case 'unassigned':
-      return 'Sem responsável';
+      return 'Aguardando';
     case 'queued':
-      return 'Fila';
+      return 'Na fila';
+    case 'in_progress':
     case 'in_service':
       return 'Em atendimento';
+    case 'waiting_customer':
+      return 'Aguardando cliente';
     case 'closed':
       return 'Encerrada';
+    case 'archived':
+      return 'Arquivada';
     default:
       return null;
   }
@@ -313,7 +324,7 @@ const Chat = () => {
   /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
   const [chatInboxScope, setChatInboxScope] = useState<'owner' | 'tenant'>('tenant');
   const [chatAttendanceFilter, setChatAttendanceFilter] = useState<
-    '' | 'queue' | 'team' | 'mine' | 'closed'
+    '' | 'queue' | 'team' | 'mine' | 'closed' | 'unassigned' | 'waiting'
   >('');
   const [attendanceCounts, setAttendanceCounts] = useState({
     queue: 0,
@@ -1552,7 +1563,7 @@ const Chat = () => {
       (id?.phoneLine && id.phoneLine.trim()) || conv.phoneNumber || conv.canonicalPhone || conv.canonical_phone || null;
     const statusParts: string[] = [];
     if (id?.waSubtitle) statusParts.push(`WhatsApp: ${id.waSubtitle}`);
-    if (conv.attendance_status === 'in_service') statusParts.push('Em atendimento');
+    if (attendanceIsInProgress(conv.attendance_status)) statusParts.push('Em atendimento');
     if (conv.attendance_status === 'queued') statusParts.push('Na fila');
     if (conv.attendance_status === 'closed') statusParts.push('Encerrado');
     const statusLine = statusParts.length ? statusParts.join(' · ') : null;
@@ -1580,7 +1591,7 @@ const Chat = () => {
     const adminBypass = user.is_tenant_admin === true;
     const canTransferProfile =
       !!user.tenant_id &&
-      conv.attendance_status === 'in_service' &&
+      attendanceIsInProgress(conv.attendance_status) &&
       !!conv.assigned_to_user_id &&
       (conv.assigned_to_user_id === user.id || adminBypass);
     return {
@@ -2626,7 +2637,7 @@ const Chat = () => {
       toast.success('Você assumiu o atendimento desta conversa');
       mergeAttendanceFromPayload({
         id: selectedConversationId,
-        attendance_status: 'in_service',
+        attendance_status: 'in_progress',
         assigned_to_user_id: user.id,
         assigned_team_id: null,
         assigned_team_name: null,
@@ -2872,7 +2883,7 @@ const Chat = () => {
                   <span className="truncate">{conversation.assigned_team_name}</span>
                 </span>
               ) : null}
-              {conversation.attendance_status === 'in_service' && conversation.assignee_display ? (
+              {attendanceIsInProgress(conversation.attendance_status) && conversation.assignee_display ? (
                 <span
                   className="inline-flex max-w-[10rem] items-center gap-1 rounded-md border border-violet-300/80 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
                   title={conversation.assignee_display}
@@ -3211,6 +3222,17 @@ const Chat = () => {
                               </span>
                             )}
                           </ToggleGroupItem>
+                          <ToggleGroupItem value="unassigned" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                            Não atribuídas
+                            {attendanceCounts.unassigned > 0 && (
+                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                                {attendanceCounts.unassigned > 99 ? '99+' : attendanceCounts.unassigned}
+                              </span>
+                            )}
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value="waiting" className="text-xs px-2.5 h-8 shrink-0">
+                            Aguard. cliente
+                          </ToggleGroupItem>
                           <ToggleGroupItem value="all" className="text-xs px-2.5 h-8 shrink-0">
                             Todas
                           </ToggleGroupItem>
@@ -3521,7 +3543,7 @@ const Chat = () => {
                                       Fila {selectedConversation.assigned_team_name}
                                     </span>
                                   </span>
-                                ) : selectedConversation.attendance_status === 'in_service' &&
+                                ) : attendanceIsInProgress(selectedConversation.attendance_status) &&
                                 selectedConversation.assignee_display ? (
                                   <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-300/80 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100">
                                     <Headphones className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -3538,7 +3560,7 @@ const Chat = () => {
                                   </Badge>
                                 ) : null}
                                 {!(
-                                  selectedConversation.attendance_status === 'in_service' &&
+                                  attendanceIsInProgress(selectedConversation.attendance_status) &&
                                   selectedConversation.assignee_display?.trim()
                                 ) &&
                                   !(
@@ -3561,19 +3583,19 @@ const Chat = () => {
                               selectedConversation &&
                               (() => {
                                 const takenByOther =
-                                  selectedConversation.attendance_status === 'in_service' &&
+                                  attendanceIsInProgress(selectedConversation.attendance_status) &&
                                   selectedConversation.assigned_to_user_id &&
                                   selectedConversation.assigned_to_user_id !== user.id;
                                 const adminBypass = user.is_tenant_admin === true;
                                 const hideAttendEncerrarSlot = takenByOther && !adminBypass;
                                 const canCloseAttendance =
-                                  selectedConversation.attendance_status === 'in_service' &&
+                                  attendanceIsInProgress(selectedConversation.attendance_status) &&
                                   (selectedConversation.user_id === user.id ||
                                     selectedConversation.assigned_to_user_id === user.id ||
                                     adminBypass);
                                 const canTransferAttendance =
                                   !!user.tenant_id &&
-                                  selectedConversation.attendance_status === 'in_service' &&
+                                  attendanceIsInProgress(selectedConversation.attendance_status) &&
                                   !!selectedConversation.assigned_to_user_id &&
                                   (selectedConversation.assigned_to_user_id === user.id || adminBypass);
                                 return (

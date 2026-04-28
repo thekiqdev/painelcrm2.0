@@ -403,6 +403,30 @@ export function emitConversationAttendanceUpdated(
   }
 }
 
+/** Fase 5 — eventos adicionais (payload merge-friendly no cliente). */
+export function emitChatProfessionalPayload(
+  tenantId: string | null,
+  ownerUserId: string,
+  eventName:
+    | 'assignment.changed'
+    | 'conversation.transferred'
+    | 'conversation.status_changed',
+  data: Record<string, unknown>
+): void {
+  if (!io) return;
+  const payload = {
+    v: 1 as const,
+    type: eventName,
+    data,
+    ts: new Date().toISOString(),
+  };
+  if (tenantId) {
+    io.to(`tenant:${tenantId}`).emit(eventName, payload);
+  } else {
+    io.to(`user:${ownerUserId}`).emit(eventName, payload);
+  }
+}
+
 /**
  * Obtém o servidor WebSocket (para uso externo se necessário)
  */

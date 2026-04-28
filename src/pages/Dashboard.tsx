@@ -119,7 +119,7 @@ const Dashboard = () => {
 
   const attendanceStatusLabel = (s: string | null | undefined): string => {
     const v = (s ?? "").toLowerCase();
-    if (v === "in_service" || v === "in-service") return "Em atendimento";
+    if (v === "in_progress" || v === "in_service" || v === "in-service") return "Em atendimento";
     if (v === "queued") return "Na fila";
     if (v === "unassigned") return "Sem responsável";
     if (v === "closed") return "Encerrada";

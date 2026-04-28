@@ -475,7 +475,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
         `SELECT
            COUNT(*) FILTER (WHERE c.attendance_status IS DISTINCT FROM 'closed')::int AS active_conversations,
            COUNT(*) FILTER (
-             WHERE c.attendance_status IS NULL OR c.attendance_status IN ('unassigned', 'queued')
+             WHERE c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open')
            )::int AS awaiting_response,
            COUNT(*) FILTER (WHERE COALESCE(c.unread_count, 0) > 0)::int AS unread
          FROM chat_conversations c
@@ -523,10 +523,10 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
           }>(
             `SELECT
                COUNT(*) FILTER (
-                 WHERE c.assigned_to_user_id = $2::uuid AND c.attendance_status = 'in_service'
+                 WHERE c.assigned_to_user_id = $2::uuid AND c.attendance_status = 'in_progress'
                )::text AS my_in_service,
                COUNT(*) FILTER (
-                 WHERE c.assigned_to_user_id = $2::uuid AND c.attendance_status = 'queued'
+                 WHERE c.assigned_to_user_id = $2::uuid AND c.attendance_status IN ('pending', 'waiting_customer')
                )::text AS my_queued,
                COUNT(*) FILTER (
                  WHERE c.assigned_to_user_id = $2::uuid
@@ -534,7 +534,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
                    AND c.updated_at >= (CURRENT_TIMESTAMP - INTERVAL '7 days')
                )::text AS my_closed_7d,
                COUNT(*) FILTER (
-                 WHERE c.attendance_status IN ('unassigned', 'queued')
+                 WHERE c.attendance_status IN ('pending', 'open')
                    AND c.assigned_to_user_id IS NULL
                )::text AS queue_unassigned
              FROM chat_conversations c

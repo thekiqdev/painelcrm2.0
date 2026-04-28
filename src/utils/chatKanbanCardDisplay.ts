@@ -68,14 +68,22 @@ export function formatKanbanActivity(iso?: string | null): string {
 
 export function kanbanAttendanceShort(status?: string | null): string | null {
   switch (status) {
+    case 'open':
+      return 'Aberta';
+    case 'pending':
     case 'unassigned':
-      return 'Sem responsável';
+      return 'Aguardando';
     case 'queued':
-      return 'Fila';
+      return 'Na fila';
+    case 'in_progress':
     case 'in_service':
       return 'Em atendimento';
+    case 'waiting_customer':
+      return 'Aguardando cliente';
     case 'closed':
       return 'Encerrada';
+    case 'archived':
+      return 'Arquivada';
     default:
       return null;
   }

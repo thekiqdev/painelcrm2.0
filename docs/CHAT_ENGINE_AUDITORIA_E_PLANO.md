@@ -611,3 +611,34 @@ Para WhatsApp, **telefone** e **provider_contact_id** (JID/chat id) continuam fo
 3. UI “Canais de atendimento” mantendo atalho WhatsApp.
 4. Inbox com filtro por `provider` e ícones.
 
+---
+
+## Fase 5 — Atendimento profissional
+
+**Objetivo:** central de atendimento com filas, equipes (reutiliza `teams` / `team_members`, papel `supervisor` adicionado), responsável, **status** normalizados, transferências com histórico, métricas básicas, notificações e visibilidade por permissões.
+
+### Estado (`attendance_status` na BD)
+
+Valores: `open`, `pending`, `in_progress`, `waiting_customer`, `closed`, `archived`. Migração a partir de legado (`unassigned`/`queued`/`in_service` → novos).
+
+### Migração
+
+- `database/init/185_chat_engine_phase5_professional.sql` (+ espelho Supabase)
+- Tabelas: `chat_queues`, `chat_conversation_transfers`; colunas SLA em `chat_conversations` (`first_response_at`, `last_customer_message_at`, `last_agent_message_at`, `priority`, `closed_by`, …).
+
+### API (prefixo `/api/chat`)
+
+- Filas: `GET/POST /queues`, `PATCH /queues/:id`
+- Métricas: `GET /metrics`
+- Transferências (histórico): `GET /conversations/:id/transfers`
+- Atribuir / transferir / estado / fila / equipa: `PATCH …/assign`, `…/transfer`, `…/status`, `…/queue`, `…/team` (aliases sobre `patchConversationAttendance`)
+- Equipas (delegação das rotas CRM): `GET/POST /teams`, `PATCH /teams/:id`, membros `…/teams/:teamId/members`
+
+### Permissões (`module_extras` do módulo `chat`)
+
+Ver `packages/backend/src/services/chatAccess.ts`: `chat_view_all`, `chat_reply`, `chat_assign`, `chat_transfer`, `chat_close`, `chat_manage_queues`, `chat_manage_teams` (predefinições conservadoras para não quebrar instalações existentes).
+
+### Documentação detalhada
+
+Ver `docs/CHAT_ATENDIMENTO_PROFISSIONAL.md`.
+
