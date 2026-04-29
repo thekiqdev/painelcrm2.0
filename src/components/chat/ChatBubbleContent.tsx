@@ -3,6 +3,10 @@ import { Download, ExternalLink, FileText } from 'lucide-react';
 import { coerceChatPlainText, type ChatMessage } from '@/services/chat';
 import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
 
+/** Quebra URLs longas sem criar scroll horizontal no mobile */
+const CHAT_MSG_TEXT =
+  'min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]';
+
 /** Primeira URL de mídia utilizável (imagem, áudio, etc.), inclusive objeto aninhado. */
 function firstRenderableMediaUrl(message: ChatMessage): string | null {
   const candidates = [
@@ -67,7 +71,7 @@ function ChatMessageImage({
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/40 px-2 py-3 text-center">
         <p className="text-xs text-muted-foreground">Imagem indisponível</p>
-        {caption ? <p className="mt-2 whitespace-pre-wrap break-words text-xs opacity-90">{caption}</p> : null}
+        {caption ? <p className={`mt-2 text-xs opacity-90 ${CHAT_MSG_TEXT}`}>{caption}</p> : null}
       </div>
     );
   }
@@ -92,7 +96,7 @@ function ChatMessageImage({
         />
       </button>
       {caption ? (
-        <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>
+        <p className={`text-sm ${CHAT_MSG_TEXT}`}>{caption}</p>
       ) : null}
     </div>
   );
@@ -160,7 +164,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
               ? 'Áudio — reprodução indisponível no momento (metadados preservados).'
               : 'Áudio — sem URL de reprodução.'}
         </p>
-        {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : null}
+        {text ? <p className={CHAT_MSG_TEXT}>{text}</p> : null}
       </div>
     );
   }
@@ -169,7 +173,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     return (
       <div className="space-y-1">
         <audio controls src={url} className="max-w-full" preload="metadata" />
-        {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : null}
+        {text ? <p className={CHAT_MSG_TEXT}>{text}</p> : null}
       </div>
     );
   }
@@ -252,7 +256,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
             <p className="mt-2 text-xs opacity-70">Link indisponível</p>
           )}
         </div>
-        {text ? <p className="whitespace-pre-wrap break-words">{text}</p> : null}
+        {text ? <p className={CHAT_MSG_TEXT}>{text}</p> : null}
       </div>
     );
   }
@@ -267,7 +271,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     const label =
       kind === 'video' ? 'Vídeo' : kind === 'audio' ? 'Áudio' : kind === 'document' ? 'Documento' : 'Mídia';
     return (
-      <p className="whitespace-pre-wrap break-words">
+      <p className={CHAT_MSG_TEXT}>
         {text || `[${label}]`}
       </p>
     );
@@ -301,23 +305,28 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/40 px-2 py-3 text-center">
         <p className="text-xs text-muted-foreground">Imagem indisponível</p>
-        {text ? <p className="mt-2 whitespace-pre-wrap break-words text-xs">{text}</p> : null}
+        {text ? <p className={`mt-2 text-xs ${CHAT_MSG_TEXT}`}>{text}</p> : null}
       </div>
     );
   }
 
   if (url && text) {
-    return <p className="whitespace-pre-wrap break-words">{text}</p>;
+    return <p className={CHAT_MSG_TEXT}>{text}</p>;
   }
 
   if (text) {
-    return <p className="whitespace-pre-wrap break-words">{text}</p>;
+    return <p className={CHAT_MSG_TEXT}>{text}</p>;
   }
 
   if (url) {
     return (
-      <p className="text-xs opacity-80">
-        <a href={url} target="_blank" rel="noreferrer" className="underline break-all">
+      <p className={`text-xs opacity-80 ${CHAT_MSG_TEXT}`}>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="underline [overflow-wrap:anywhere] break-all"
+        >
           Abrir mídia
         </a>
       </p>

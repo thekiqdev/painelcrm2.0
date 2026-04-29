@@ -292,6 +292,9 @@ const order = [
   '191_appointment_capacity_per_slot.sql',
   /** Agenda Fase 5.8: tipos de compromisso (duração padrão / labels) */
   '192_appointment_type_settings.sql',
+  /** Chat: resposta citada, comentários internos, notas CRM */
+  '193_chat_collaboration.sql',
+  '194_crm_notes_source_comment.sql',
   'create-admin-user.sql',
 ];
 

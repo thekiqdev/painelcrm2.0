@@ -156,6 +156,16 @@ export interface ChatMessageContract {
   status?: string | null;
 }
 
+/** Comentário interno na mensagem (equipa; não vai ao WhatsApp). */
+export type ChatInternalComment = {
+  id: string;
+  author_user_id: string;
+  comment_text: string;
+  created_at: string;
+  author_email?: string | null;
+  author_display?: string | null;
+};
+
 export interface ChatMessage {
   id: string;
   conversation_id: string;
@@ -169,6 +179,50 @@ export interface ChatMessage {
   /** JSONB no Postgres — lista de mídia normalizada */
   media?: ChatMediaItem[] | null;
   message_contract?: ChatMessageContract | null;
+  /** Citação / resposta (WhatsApp reply) */
+  reply_to_message_id?: string | null;
+  reply_to_external_message_id?: string | null;
+  reply_preview?: string | null;
+  reply_sender_name?: string | null;
+  reply_message_type?: string | null;
+  /** Comentários internos (não enviados ao WhatsApp) */
+  internal_comment_count?: number;
+  internal_comments?: ChatInternalComment[];
+}
+
+export function normalizeInternalComment(raw: unknown): ChatInternalComment | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.id !== 'string') return null;
+  const createdRaw = o.created_at;
+  const created =
+    typeof createdRaw === 'string'
+      ? createdRaw
+      : createdRaw instanceof Date
+        ? createdRaw.toISOString()
+        : String(createdRaw ?? '');
+  return {
+    id: o.id,
+    author_user_id: String(o.author_user_id ?? ''),
+    comment_text: String(o.comment_text ?? ''),
+    created_at: created,
+    author_email: o.author_email != null ? String(o.author_email) : null,
+    author_display: o.author_display != null ? String(o.author_display) : null,
+  };
+}
+
+function parseInternalCommentsFromApi(raw: unknown): ChatInternalComment[] {
+  if (raw == null) return [];
+  let v: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      v = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(v)) return [];
+  return v.map(normalizeInternalComment).filter((x): x is ChatInternalComment => x != null);
 }
 
 /** Normaliza linha de conversa (REST ou WebSocket) sem descartar campos canônicos de identidade. */
@@ -347,6 +401,12 @@ function sanitizeMessageContract(c: ChatMessageContract | null | undefined): Cha
 /** Normaliza uma linha de mensagem (API REST ou WebSocket) para o estado da UI. */
 export function normalizeChatMessage(raw: any): ChatMessage {
   const contract = (raw.message_contract as ChatMessageContract | undefined) ?? null;
+  const icc = raw.internal_comment_count;
+  const internal_comments = parseInternalCommentsFromApi(raw.internal_comments);
+  const countFromScalar =
+    typeof icc === 'number' ? icc : icc != null ? Math.max(0, Math.floor(Number(icc)) || 0) : undefined;
+  const internal_comment_count =
+    internal_comments.length > 0 ? internal_comments.length : countFromScalar ?? 0;
   return {
     id: raw.id,
     conversation_id: raw.conversation_id,
@@ -359,6 +419,13 @@ export function normalizeChatMessage(raw: any): ChatMessage {
     created_at: raw.created_at,
     media: sanitizeMediaItems(parseMediaField(raw.media)),
     message_contract: sanitizeMessageContract(contract),
+    reply_to_message_id: raw.reply_to_message_id ?? null,
+    reply_to_external_message_id: raw.reply_to_external_message_id ?? null,
+    reply_preview: raw.reply_preview ?? null,
+    reply_sender_name: raw.reply_sender_name ?? null,
+    reply_message_type: raw.reply_message_type ?? null,
+    internal_comment_count,
+    ...(internal_comments.length > 0 ? { internal_comments } : {}),
   };
 }
 
@@ -812,11 +879,81 @@ export const chatService = {
     };
   },
 
-  async sendMessage(conversationId: string, text: string) {
+  async sendMessage(
+    conversationId: string,
+    text: string,
+    options?: { replyToMessageId?: string }
+  ) {
     const response = await apiClient.post(`/api/chat/messages`, {
       conversationId,
       text,
+      ...(options?.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
     });
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data;
+  },
+
+  async postMessageComment(
+    messageId: string,
+    body: { commentText: string; alsoCreateCrmNote?: boolean }
+  ) {
+    const response = await apiClient.post<{ comment: Record<string, unknown> }>(
+      `/api/chat/messages/${messageId}/comments`,
+      body
+    );
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data;
+  },
+
+  async getMessageComments(messageId: string) {
+    const response = await apiClient.get<{ comments: Record<string, unknown>[] }>(
+      `/api/chat/messages/${messageId}/comments`
+    );
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data?.comments ?? [];
+  },
+
+  async listCrmNotesForClient(clientId: string, limit?: number) {
+    const q = new URLSearchParams({ clientId });
+    if (limit != null) q.set('limit', String(limit));
+    const response = await apiClient.get<{ notes: Record<string, unknown>[] }>(
+      `/api/chat/crm-notes?${q.toString()}`
+    );
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data?.notes ?? [];
+  },
+
+  async listCrmNotesForLead(leadId: string, limit?: number) {
+    const q = new URLSearchParams({ leadId });
+    if (limit != null) q.set('limit', String(limit));
+    const response = await apiClient.get<{ notes: Record<string, unknown>[] }>(
+      `/api/chat/crm-notes?${q.toString()}`
+    );
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response.data?.notes ?? [];
+  },
+
+  async postCrmNote(body: {
+    clientId?: string | null;
+    leadId?: string | null;
+    conversationId?: string | null;
+    messageId?: string | null;
+    sourceCommentId?: string | null;
+    noteType: 'general' | 'chat_message' | 'follow_up' | 'internal';
+    noteText: string;
+    pinned?: boolean;
+  }) {
+    const response = await apiClient.post<{ note: Record<string, unknown> }>(`/api/chat/crm-notes`, body);
     if (response.error) {
       throw new Error(response.error);
     }

@@ -71,6 +71,16 @@ import {
   postChatConversationScheduleAppointment,
 } from '../controllers/chatAppointmentsController.js';
 import { getChatAvatarProxy } from '../controllers/chatAvatarProxyController.js';
+import {
+  deleteCrmNote,
+  deleteMessageComment,
+  getMessageComments,
+  listCrmNotes,
+  patchCrmNote,
+  patchMessageComment,
+  postCrmNote,
+  postMessageComment,
+} from '../controllers/chatCollaborationController.js';
 
 const router = Router();
 
@@ -133,6 +143,14 @@ router.get('/clients/:id/messages', getClientMessages);
 router.post('/conversations/:id/messages/sync', syncConversationMessages);
 router.post('/conversations/:id/refresh-identity', refreshConversationIdentity);
 router.post('/messages', sendMessage);
+router.get('/crm-notes', listCrmNotes);
+router.post('/crm-notes', postCrmNote);
+router.patch('/crm-notes/:noteId', patchCrmNote);
+router.delete('/crm-notes/:noteId', deleteCrmNote);
+router.post('/messages/:messageId/comments', postMessageComment);
+router.get('/messages/:messageId/comments', getMessageComments);
+router.patch('/message-comments/:commentId', patchMessageComment);
+router.delete('/message-comments/:commentId', deleteMessageComment);
 router.post('/conversations/:id/mark-read', markConversationRead);
 router.post(
   '/conversations/:id/create-meet-now',

@@ -23,6 +23,12 @@ import {
   ArrowRightLeft,
   ListFilter,
   Video,
+  MoreVertical,
+  Reply,
+  MessageCircle,
+  Copy,
+  X,
+  StickyNote,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -64,6 +70,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import {
@@ -81,7 +88,9 @@ import {
   coerceChatPlainText,
   normalizeChatMessage,
   normalizeConversation,
+  normalizeInternalComment,
   parseMediaField,
+  type ChatInternalComment,
 } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
@@ -158,6 +167,40 @@ const formatHour = (value?: string | null) => {
     minute: '2-digit',
   });
 };
+
+/** Preview de notas CRM no painel lateral (inclui deep link para conversa). */
+type CrmNotePreviewRow = {
+  id: string;
+  note_text: string;
+  created_at: string;
+  conversation_id: string | null;
+  message_id: string | null;
+  source_comment_id: string | null;
+};
+
+function mapCrmNoteToPreview(n: Record<string, unknown>): CrmNotePreviewRow {
+  return {
+    id: String(n.id ?? ''),
+    note_text: String(n.note_text ?? ''),
+    created_at: String(n.created_at ?? ''),
+    conversation_id: n.conversation_id != null ? String(n.conversation_id) : null,
+    message_id: n.message_id != null ? String(n.message_id) : null,
+    source_comment_id: n.source_comment_id != null ? String(n.source_comment_id) : null,
+  };
+}
+
+function mergeInternalCommentIntoMessage(m: ChatMessage, c: ChatInternalComment): ChatMessage {
+  const ex = m.internal_comments ?? [];
+  if (ex.some((x) => x.id === c.id)) return m;
+  const next = [...ex, c].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+  return {
+    ...m,
+    internal_comments: next,
+    internal_comment_count: next.length,
+  };
+}
 
 const formatRelativeDate = (value?: string | null) => {
   if (!value) return 'Sem data';
@@ -321,6 +364,7 @@ const Chat = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const focusMessageIdParam = searchParams.get('focusMessageId')?.trim() ?? '';
   const { conversationId: routeConversationId } = useParams<{ conversationId: string }>();
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
@@ -369,6 +413,14 @@ const Chat = () => {
   const [transferMode, setTransferMode] = useState<'operator' | 'team'>('operator');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [contactProfileOpen, setContactProfileOpen] = useState(false);
+  const contactProfileOpenRef = useRef(contactProfileOpen);
+  useEffect(() => {
+    contactProfileOpenRef.current = contactProfileOpen;
+  }, [contactProfileOpen]);
+  const chatProfileCrmLinkRef = useRef<{ clientId: string | null; leadId: string | null }>({
+    clientId: null,
+    leadId: null,
+  });
 
   const { data: clientGroupsList = [] } = useQuery({
     queryKey: ['client-groups'],
@@ -418,6 +470,26 @@ const Chat = () => {
   const chatClientProfileReturnIdRef = useRef<string | null>(null);
   /** FIFO: um id otimista por envio em voo; o WebSocket remove o mais antigo ao chegar a mensagem real. */
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
+  const [replyingTo, setReplyingTo] = useState<{
+    messageId: string;
+    preview: string;
+    senderName: string;
+  } | null>(null);
+  const [commentForMessage, setCommentForMessage] = useState<ChatMessage | null>(null);
+  const [commentDialogOpen, setCommentDialogOpen] = useState(false);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [commentAlsoProfile, setCommentAlsoProfile] = useState(false);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const [crmNotesPreview, setCrmNotesPreview] = useState<CrmNotePreviewRow[]>([]);
+  const [crmNotesLoading, setCrmNotesLoading] = useState(false);
+  const [newCrmNoteOpen, setNewCrmNoteOpen] = useState(false);
+  const [newCrmNoteText, setNewCrmNoteText] = useState('');
+  const [newCrmNoteSaving, setNewCrmNoteSaving] = useState(false);
+  const messageRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [flashMessageId, setFlashMessageId] = useState<string | null>(null);
+  const [allCommentsDialog, setAllCommentsDialog] = useState<{ messageId: string } | null>(null);
+  const [allCommentsDialogLoading, setAllCommentsDialogLoading] = useState(false);
+  const [allCommentsDialogItems, setAllCommentsDialogItems] = useState<ChatInternalComment[]>([]);
   /** Evita GET /messages em rajada quando `conversation_updated` chega muitas vezes sem mudar o histórico visível. */
   const conversationUpdatedReloadSigRef = useRef<{
     id: string | null;
@@ -1221,6 +1293,10 @@ const Chat = () => {
               sent_at: evt.sent_at,
               external_message_id: evt.provider_message_id,
               media: evt.media_url ? [{ type: evt.message_type || 'unknown', url: evt.media_url }] : [],
+              reply_to_message_id: evt.reply_to_message_id ?? null,
+              reply_preview: evt.reply_preview ?? null,
+              reply_sender_name: evt.reply_sender_name ?? null,
+              reply_message_type: evt.reply_message_type ?? null,
             },
           },
           'v2',
@@ -1256,6 +1332,35 @@ const Chat = () => {
           return next;
         });
       }
+    });
+
+    socket.on('chat.message_comment.created', (payload: any) => {
+      const mid = payload?.message_id;
+      const cid = payload?.conversation_id;
+      const raw = payload?.comment;
+      if (typeof mid !== 'string' || typeof cid !== 'string' || !raw) return;
+      if (selectedConversationIdRef.current !== cid) return;
+      const c = normalizeInternalComment(raw);
+      if (!c) return;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === mid ? mergeInternalCommentIntoMessage(m, c) : m)),
+      );
+    });
+
+    socket.on('crm.note.created', () => {
+      if (!contactProfileOpenRef.current) return;
+      const { clientId, leadId } = chatProfileCrmLinkRef.current;
+      if (!clientId && !leadId) return;
+      void (async () => {
+        try {
+          const notes = clientId
+            ? await chatService.listCrmNotesForClient(clientId, 10)
+            : await chatService.listCrmNotesForLead(leadId!, 10);
+          setCrmNotesPreview(notes.map((n) => mapCrmNoteToPreview(n as Record<string, unknown>)));
+        } catch {
+          /* ignore */
+        }
+      })();
     });
 
     return () => {
@@ -1570,6 +1675,132 @@ const Chat = () => {
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
+
+  useEffect(() => {
+    chatProfileCrmLinkRef.current = {
+      clientId: selectedConversation?.client_id ?? null,
+      leadId: selectedConversation?.leadId ?? null,
+    };
+  }, [selectedConversation?.client_id, selectedConversation?.leadId]);
+
+  const scrollToMessageId = useCallback((id: string) => {
+    const el = messageRowRefs.current[id];
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
+  const openAllCommentsDialogForMessage = useCallback(async (messageId: string) => {
+    setAllCommentsDialog({ messageId });
+    setAllCommentsDialogLoading(true);
+    setAllCommentsDialogItems([]);
+    try {
+      const rows = await chatService.getMessageComments(messageId);
+      const items = rows
+        .map((r) => normalizeInternalComment(r))
+        .filter((x): x is ChatInternalComment => x != null);
+      setAllCommentsDialogItems(items);
+    } catch {
+      toast.error('Não foi possível carregar os comentários');
+    } finally {
+      setAllCommentsDialogLoading(false);
+    }
+  }, []);
+
+  const handleOpenCrmNoteInChat = useCallback(
+    (note: CrmNotePreviewRow) => {
+      const cid = note.conversation_id;
+      const mid = note.message_id;
+      if (!cid || !mid) return;
+      setContactProfileOpen(false);
+      if (selectedConversationId === cid) {
+        const next = new URLSearchParams(searchParams);
+        next.set('focusMessageId', mid);
+        setSearchParams(next, { replace: false });
+      } else {
+        navigate(`/chat/${cid}?focusMessageId=${encodeURIComponent(mid)}`);
+      }
+    },
+    [selectedConversationId, searchParams, setSearchParams, navigate],
+  );
+
+  useEffect(() => {
+    const mid = focusMessageIdParam;
+    const convId = selectedConversationId;
+    if (!mid || !convId || loadingMessages) return;
+    if (!messages.some((m) => m.id === mid)) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const run = () => {
+      if (cancelled || attempts++ > 50) return;
+      const el = messageRowRefs.current[mid];
+      if (!el) {
+        window.setTimeout(run, 60);
+        return;
+      }
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFlashMessageId(mid);
+      setSearchParams((prev) => {
+        const n = new URLSearchParams(prev);
+        n.delete('focusMessageId');
+        return n;
+      }, { replace: true });
+      window.setTimeout(() => setFlashMessageId(null), 2800);
+    };
+    const t = window.setTimeout(run, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [focusMessageIdParam, selectedConversationId, loadingMessages, messages, setSearchParams]);
+
+  useEffect(() => {
+    if (!contactProfileOpen || !selectedConversation) {
+      setCrmNotesPreview([]);
+      return;
+    }
+    const cid = selectedConversation.client_id;
+    const lid = selectedConversation.leadId;
+    if (!cid && !lid) {
+      setCrmNotesPreview([]);
+      return;
+    }
+    let cancelled = false;
+    setCrmNotesLoading(true);
+    void (async () => {
+      try {
+        const notes = cid
+          ? await chatService.listCrmNotesForClient(cid, 10)
+          : await chatService.listCrmNotesForLead(lid!, 10);
+        if (cancelled) return;
+        setCrmNotesPreview(notes.map((n) => mapCrmNoteToPreview(n as Record<string, unknown>)));
+      } catch {
+        if (!cancelled) setCrmNotesPreview([]);
+      } finally {
+        if (!cancelled) setCrmNotesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [contactProfileOpen, selectedConversation?.id, selectedConversation?.client_id, selectedConversation?.leadId]);
+
+  const refreshCrmNotesForProfile = useCallback(async () => {
+    if (!selectedConversation) return;
+    const cid = selectedConversation.client_id;
+    const lid = selectedConversation.leadId;
+    if (!cid && !lid) return;
+    setCrmNotesLoading(true);
+    try {
+      const notes = cid
+        ? await chatService.listCrmNotesForClient(cid, 10)
+        : await chatService.listCrmNotesForLead(lid!, 10);
+      setCrmNotesPreview(notes.map((n) => mapCrmNoteToPreview(n as Record<string, unknown>)));
+    } catch {
+      /* ignore */
+    } finally {
+      setCrmNotesLoading(false);
+    }
+  }, [selectedConversation]);
 
   const linkPageSize = 8;
   const filteredLinkClients = useMemo(() => {
@@ -2142,9 +2373,12 @@ const Chat = () => {
     }
 
     const text = newMessage.trim();
+    const replySnap = replyingTo;
+    const replyId = replySnap?.messageId;
     const optimisticId = `optimistic-${crypto.randomUUID()}`;
     pendingOutgoingOptimisticQueueRef.current.push(optimisticId);
     setNewMessage('');
+    setReplyingTo(null);
     const optimistic: ChatMessage = {
       id: optimisticId,
       conversation_id: selectedConversationId,
@@ -2153,11 +2387,20 @@ const Chat = () => {
       status: 'queued',
       sentAt: new Date().toISOString(),
       created_at: new Date().toISOString(),
+      ...(replyId && replySnap
+        ? {
+            reply_to_message_id: replyId,
+            reply_preview: replySnap.preview,
+            reply_sender_name: replySnap.senderName,
+          }
+        : {}),
     };
     setMessages((prev) => [...prev, optimistic]);
 
     try {
-      await chatService.sendMessage(selectedConversationId, text);
+      await chatService.sendMessage(selectedConversationId, text, {
+        ...(replyId ? { replyToMessageId: replyId } : {}),
+      });
       pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
         (id) => id !== optimisticId
       );
@@ -2172,10 +2415,91 @@ const Chat = () => {
       );
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
       setNewMessage(text);
+      if (replySnap) setReplyingTo(replySnap);
       console.error('Erro ao enviar mensagem:', error);
       toast.error('Não foi possível enviar a mensagem', {
         description: error instanceof Error ? error.message : undefined,
       });
+    }
+  };
+
+  const handleSubmitMessageComment = async () => {
+    if (!commentForMessage?.id || !commentDraft.trim()) return;
+    setCommentSubmitting(true);
+    const alsoNote = commentAlsoProfile;
+    try {
+      const data = await chatService.postMessageComment(commentForMessage.id, {
+        commentText: commentDraft.trim(),
+        alsoCreateCrmNote: alsoNote,
+      });
+      const mid = commentForMessage.id;
+      setCommentDialogOpen(false);
+      setCommentForMessage(null);
+      setCommentDraft('');
+      setCommentAlsoProfile(false);
+      const created = normalizeInternalComment(data?.comment);
+      if (created) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === mid ? mergeInternalCommentIntoMessage(m, created) : m)),
+        );
+      }
+      if (
+        alsoNote &&
+        contactProfileOpen &&
+        (selectedConversation?.client_id || selectedConversation?.leadId)
+      ) {
+        const cid = selectedConversation?.client_id;
+        const lid = selectedConversation?.leadId;
+        try {
+          const notes = cid
+            ? await chatService.listCrmNotesForClient(cid, 10)
+            : await chatService.listCrmNotesForLead(lid!, 10);
+          setCrmNotesPreview(notes.map((n) => mapCrmNoteToPreview(n as Record<string, unknown>)));
+        } catch {
+          /* ignore */
+        }
+      }
+      toast.success('Comentário guardado');
+    } catch (error) {
+      toast.error('Não foi possível guardar o comentário', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setCommentSubmitting(false);
+    }
+  };
+
+  const handleSubmitNewCrmNote = async () => {
+    const t = newCrmNoteText.trim();
+    if (!t || !selectedConversation) return;
+    const cid = selectedConversation.client_id;
+    const lid = selectedConversation.leadId;
+    if (!cid && !lid) {
+      toast.error('Vincule um cliente ou lead para criar anotações.');
+      return;
+    }
+    setNewCrmNoteSaving(true);
+    try {
+      await chatService.postCrmNote({
+        clientId: cid ?? undefined,
+        leadId: lid ?? undefined,
+        conversationId: selectedConversation.id,
+        noteType: 'general',
+        noteText: t,
+      });
+      setNewCrmNoteOpen(false);
+      setNewCrmNoteText('');
+      const notes = cid
+        ? await chatService.listCrmNotesForClient(cid, 10)
+        : await chatService.listCrmNotesForLead(lid!, 10);
+      setCrmNotesPreview(notes.map((n) => mapCrmNoteToPreview(n as Record<string, unknown>)));
+      toast.success('Anotação criada');
+    } catch (error) {
+      toast.error('Não foi possível criar a anotação', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setNewCrmNoteSaving(false);
     }
   };
 
@@ -3995,10 +4319,10 @@ const Chat = () => {
                       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
                         <div
                           className={cn(
-                            'min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50',
+                            'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50',
                           )}
                         >
-                          <div className="px-2 py-2 md:px-4 md:pb-2 md:pt-3">
+                          <div className="min-w-0 max-w-full px-2 py-2 md:px-4 md:pb-2 md:pt-3">
                             {loadingMessages ? (
                               <div className="flex min-h-[10rem] flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
                                 <RefreshCw className="h-7 w-7 animate-spin text-primary/70" aria-hidden />
@@ -4014,39 +4338,222 @@ const Chat = () => {
                                 <p className="text-xs text-muted-foreground">Envie a primeira mensagem abaixo.</p>
                         </div>
                       ) : (
-                              <div className="flex min-h-full w-full flex-col justify-end">
-                                <div className="w-full space-y-2 pb-2 md:space-y-2">
-                                  {messages.map((message) => (
-                                    <div
-                                      key={message.id}
-                                      className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
-                                    >
+                              <div className="flex min-h-full w-full min-w-0 flex-col justify-end">
+                                <div className="w-full min-w-0 space-y-2 pb-2 md:space-y-2">
+                                  {messages.map((message) => {
+                                    const mc = message.message_contract;
+                                    const rawPrev =
+                                      coerceChatPlainText(mc?.body) ||
+                                      coerceChatPlainText(message.body) ||
+                                      '';
+                                    const mk = mc?.kind;
+                                    const replyPreviewPick =
+                                      rawPrev ||
+                                      (mk === 'image'
+                                        ? '[Imagem]'
+                                        : mk === 'audio'
+                                          ? '[Áudio]'
+                                          : mk === 'document'
+                                            ? '[Documento]'
+                                            : mk === 'video'
+                                              ? '[Vídeo]'
+                                              : '[Mensagem]');
+                                    const replySenderPick =
+                                      message.direction === 'incoming'
+                                        ? selectedConversation?.display_name?.trim() ||
+                                          selectedConversation?.displayName?.trim() ||
+                                          selectedConversation?.contactName ||
+                                          'Contato'
+                                        : 'Sua equipe';
+                                    const sortedInternal = [...(message.internal_comments ?? [])].sort(
+                                      (a, b) =>
+                                        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+                                    );
+                                    const visibleInternal = sortedInternal.slice(0, 2);
+                                    const moreInternal = sortedInternal.length - visibleInternal.length;
+                                    const internalAuthorLabel = (c: ChatInternalComment) =>
+                                      c.author_display?.trim() ||
+                                      c.author_email?.split('@')[0]?.trim() ||
+                                      'Equipa';
+                                    return (
                                       <div
-                                        className={`max-w-[min(92%,26rem)] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm md:max-w-[62%] md:rounded-xl md:px-3 md:py-2 ${
-                                          message.direction === 'outgoing'
-                                            ? 'bg-primary text-primary-foreground ring-1 ring-primary/20'
-                                            : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
-                                        }`}
+                                        key={message.id}
+                                        className={cn(
+                                          'group/msg flex min-w-0 flex-col gap-1',
+                                          message.direction === 'outgoing' ? 'items-end' : 'items-start',
+                                        )}
                                       >
-                                        <ChatBubbleContent message={message} />
-                                        <span
-                                          className={`text-[10px] mt-1 flex items-center gap-1 ${
-                                            message.direction === 'outgoing'
-                                              ? 'text-primary-foreground/80'
-                                              : 'text-muted-foreground'
-                                          }`}
+                                        <div
+                                          ref={(el) => {
+                                            messageRowRefs.current[message.id] = el;
+                                          }}
+                                          className={cn(
+                                            'flex min-w-0 flex-col gap-1.5 rounded-2xl transition-shadow duration-300',
+                                            message.direction === 'outgoing' ? 'items-end' : 'items-start',
+                                            flashMessageId === message.id &&
+                                              'ring-2 ring-amber-400/85 ring-offset-2 ring-offset-background',
+                                          )}
                                         >
-                                          <span>{formatHour(message.sentAt)}</span>
-                                          {message.direction === 'outgoing' ? (
-                                            <MessageStatusIndicator
-                                              status={message.status}
-                                              className="h-3 w-3"
-                                            />
+                                          <div
+                                            className={cn(
+                                              'flex max-w-[min(100%,28rem)] min-w-0 items-start gap-0.5 md:max-w-[68%]',
+                                              message.direction === 'outgoing' ? 'flex-row-reverse' : 'flex-row',
+                                            )}
+                                          >
+                                            <div
+                                              className={`max-w-[min(92%,26rem)] min-w-0 rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm md:rounded-xl md:px-3 md:py-2 ${
+                                                message.direction === 'outgoing'
+                                                  ? 'bg-primary text-primary-foreground ring-1 ring-primary/20'
+                                                  : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
+                                              }`}
+                                            >
+                                              {message.reply_to_message_id && message.reply_preview ? (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    message.reply_to_message_id &&
+                                                    scrollToMessageId(message.reply_to_message_id)
+                                                  }
+                                                  className={`mb-2 w-full rounded-lg border px-2 py-1.5 text-left text-xs ${
+                                                    message.direction === 'outgoing'
+                                                      ? 'border-primary-foreground/25 bg-primary-foreground/10'
+                                                      : 'border-border/60 bg-background/50 dark:bg-background/20'
+                                                  }`}
+                                                >
+                                                  <span className="block text-[10px] font-semibold opacity-90">
+                                                    {message.reply_sender_name || 'Mensagem'}
+                                                  </span>
+                                                  <span className="line-clamp-2 opacity-85">{message.reply_preview}</span>
+                                                </button>
+                                              ) : null}
+                                              <ChatBubbleContent message={message} />
+                                              <span
+                                                className={`text-[10px] mt-1 flex items-center gap-1 ${
+                                                  message.direction === 'outgoing'
+                                                    ? 'text-primary-foreground/80'
+                                                    : 'text-muted-foreground'
+                                                }`}
+                                              >
+                                                <span>{formatHour(message.sentAt)}</span>
+                                                {message.direction === 'outgoing' ? (
+                                                  <MessageStatusIndicator
+                                                    status={message.status}
+                                                    className="h-3 w-3"
+                                                  />
+                                                ) : null}
+                                              </span>
+                                            </div>
+                                            <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                              <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className={cn(
+                                                  'h-8 w-8 shrink-0 touch-manipulation text-muted-foreground opacity-70 hover:opacity-100 md:opacity-0 md:group-hover/msg:opacity-100',
+                                                  message.direction === 'outgoing' && 'md:-mr-1',
+                                                )}
+                                                aria-label="Ações da mensagem"
+                                              >
+                                                <MoreVertical className="h-4 w-4" />
+                                              </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent
+                                              align={message.direction === 'outgoing' ? 'end' : 'start'}
+                                              className="z-[85]"
+                                            >
+                                              <DropdownMenuItem
+                                                onSelect={(e) => {
+                                                  e.preventDefault();
+                                                  setReplyingTo({
+                                                    messageId: message.id,
+                                                    preview: replyPreviewPick.slice(0, 280),
+                                                    senderName: replySenderPick,
+                                                  });
+                                                  composerTextareaRef.current?.focus();
+                                                }}
+                                              >
+                                                <Reply className="mr-2 h-4 w-4" />
+                                                Responder
+                                              </DropdownMenuItem>
+                                              <DropdownMenuItem
+                                                onSelect={(e) => {
+                                                  e.preventDefault();
+                                                  setCommentForMessage(message);
+                                                  setCommentDraft('');
+                                                  setCommentAlsoProfile(false);
+                                                  setCommentDialogOpen(true);
+                                                }}
+                                              >
+                                                <MessageCircle className="mr-2 h-4 w-4" />
+                                                Comentário interno
+                                              </DropdownMenuItem>
+                                              <DropdownMenuItem
+                                                onSelect={(e) => {
+                                                  e.preventDefault();
+                                                  const t =
+                                                    coerceChatPlainText(mc?.body) ||
+                                                    coerceChatPlainText(message.body) ||
+                                                    '';
+                                                  void navigator.clipboard.writeText(t);
+                                                  toast.success('Texto copiado');
+                                                }}
+                                              >
+                                                <Copy className="mr-2 h-4 w-4" />
+                                                Copiar texto
+                                              </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                          </DropdownMenu>
+                                          </div>
+                                          {sortedInternal.length > 0 ? (
+                                            <div
+                                              className={cn(
+                                                'flex w-full max-w-[min(100%,28rem)] flex-col gap-1 md:max-w-[68%]',
+                                                message.direction === 'outgoing'
+                                                  ? 'items-end pr-9 md:pr-10'
+                                                  : 'items-start pl-0.5',
+                                              )}
+                                            >
+                                              {visibleInternal.map((c) => (
+                                                <div
+                                                  key={c.id}
+                                                  className="w-full max-w-[min(92%,26rem)] rounded-lg border-l-2 border-amber-400/80 bg-amber-50/85 px-2.5 py-1.5 text-left dark:border-amber-600/60 dark:bg-amber-950/40"
+                                                >
+                                                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-amber-950/90 dark:text-amber-100/90">
+                                                    <StickyNote className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+                                                    <span className="min-w-0 truncate">
+                                                      Comentário interno · {internalAuthorLabel(c)}
+                                                    </span>
+                                                    <Badge
+                                                      variant="outline"
+                                                      className="h-4 border-amber-600/45 px-1 py-0 text-[9px] font-normal text-amber-900/90 dark:text-amber-100/85"
+                                                    >
+                                                      Interno
+                                                    </Badge>
+                                                  </div>
+                                                  <p className="mt-0.5 whitespace-pre-wrap text-[11px] leading-snug text-foreground/95">
+                                                    {c.comment_text}
+                                                  </p>
+                                                  <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                                    {formatHour(c.created_at)}
+                                                  </p>
+                                                </div>
+                                              ))}
+                                              {moreInternal > 0 ? (
+                                                <button
+                                                  type="button"
+                                                  className="text-[10px] font-medium text-primary underline underline-offset-2"
+                                                  onClick={() => void openAllCommentsDialogForMessage(message.id)}
+                                                >
+                                                  Ver todos ({sortedInternal.length})
+                                                </button>
+                                              ) : null}
+                                            </div>
                                           ) : null}
-                                        </span>
+                                        </div>
                                       </div>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}
@@ -4057,7 +4564,7 @@ const Chat = () => {
                         <form
                           onSubmit={handleSendMessage}
                           className={cn(
-                            'flex shrink-0 items-end gap-2 border-t border-border/90 bg-muted/30 p-2 backdrop-blur-sm dark:bg-muted/10 md:items-center md:gap-2 md:px-3 md:py-2 md:mb-0 md:min-h-[56px]',
+                            'flex w-full min-w-0 max-w-full shrink-0 flex-col gap-1 overflow-x-hidden border-t border-border/90 bg-muted/30 p-2 backdrop-blur-sm dark:bg-muted/10 md:gap-1.5 md:px-3 md:py-2 md:mb-0 md:min-h-[56px]',
                             isMobile &&
                               routeConversationId &&
                               'sticky bottom-0 z-40 border-border bg-background/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.12)] pointer-events-auto dark:bg-background/92 dark:shadow-[0_-10px_28px_-14px_rgba(0,0,0,0.45)]',
@@ -4068,6 +4575,27 @@ const Chat = () => {
                               : undefined
                           }
                         >
+                          {replyingTo ? (
+                            <div className="flex min-w-0 items-start gap-2 rounded-lg border border-border/60 bg-background/80 px-2 py-1.5 shadow-sm dark:bg-background/40">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[10px] font-medium text-muted-foreground">
+                                  Respondendo {replyingTo.senderName}
+                                </p>
+                                <p className="line-clamp-2 text-xs text-foreground">{replyingTo.preview}</p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
+                                onClick={() => setReplyingTo(null)}
+                                aria-label="Cancelar resposta"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ) : null}
+                          <div className="flex w-full min-w-0 max-w-full items-end gap-2 md:items-center">
                             <input
                               ref={imageFileInputRef}
                               type="file"
@@ -4202,6 +4730,7 @@ const Chat = () => {
                             >
                               <Send className="h-4 w-4 md:h-4 md:w-4" />
                             </Button>
+                          </div>
                           </form>
                       </CardContent>
                         </>
@@ -4303,6 +4832,14 @@ const Chat = () => {
                               ? 'Escolher vínculo'
                               : 'Vincular conversa'
                           }
+                          crmNotesPreview={crmNotesPreview}
+                          crmNotesLoading={crmNotesLoading}
+                          onCrmNotesRefresh={() => void refreshCrmNotesForProfile()}
+                          onNewCrmNote={() => {
+                            setNewCrmNoteText('');
+                            setNewCrmNoteOpen(true);
+                          }}
+                          onOpenNoteInChat={handleOpenCrmNoteInChat}
                         />
                       ) : null}
                     </div>
@@ -4510,6 +5047,14 @@ const Chat = () => {
               ? 'Escolher vínculo'
               : 'Vincular conversa'
           }
+          crmNotesPreview={crmNotesPreview}
+          crmNotesLoading={crmNotesLoading}
+          onCrmNotesRefresh={() => void refreshCrmNotesForProfile()}
+          onNewCrmNote={() => {
+            setNewCrmNoteText('');
+            setNewCrmNoteOpen(true);
+          }}
+          onOpenNoteInChat={handleOpenCrmNoteInChat}
         />
       ) : null}
 
@@ -4587,6 +5132,134 @@ const Chat = () => {
               onClick={() => void handleConfirmTransfer()}
             >
               {transferSubmitting ? 'A transferir…' : 'Confirmar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={commentDialogOpen}
+        onOpenChange={(o) => {
+          setCommentDialogOpen(o);
+          if (!o) setCommentForMessage(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Comentário interno</DialogTitle>
+            <DialogDescription>
+              Visível só para a equipa no PainelCRM. Não é enviado ao WhatsApp.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={commentDraft}
+            onChange={(e) => setCommentDraft(e.target.value)}
+            rows={4}
+            placeholder="Ex.: follow-up em 7 dias, intenção de fechar…"
+            className="text-sm"
+          />
+          {selectedConversation?.client_id || selectedConversation?.leadId ? (
+            <div className="flex items-center gap-2 pt-1">
+              <Checkbox
+                id="comment-also-profile"
+                checked={commentAlsoProfile}
+                onCheckedChange={(c) => setCommentAlsoProfile(c === true)}
+              />
+              <Label htmlFor="comment-also-profile" className="text-sm font-normal leading-snug">
+                Também salvar no perfil do cliente / lead
+              </Label>
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCommentDialogOpen(false);
+                setCommentForMessage(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={commentSubmitting || !commentDraft.trim() || !commentForMessage}
+              onClick={() => void handleSubmitMessageComment()}
+            >
+              {commentSubmitting ? 'A guardar…' : 'Guardar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={allCommentsDialog != null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setAllCommentsDialog(null);
+            setAllCommentsDialogItems([]);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[min(80vh,520px)] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Comentários internos</DialogTitle>
+            <DialogDescription>
+              Visíveis só para a equipa. Não são enviados ao WhatsApp.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[min(60vh,360px)] pr-2">
+            {allCommentsDialogLoading ? (
+              <p className="text-sm text-muted-foreground">A carregar…</p>
+            ) : allCommentsDialogItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sem comentários.</p>
+            ) : (
+              <ul className="space-y-2">
+                {allCommentsDialogItems.map((c) => (
+                  <li
+                    key={c.id}
+                    className="rounded-lg border-l-2 border-amber-400/80 bg-amber-50/85 px-2.5 py-1.5 dark:border-amber-600/60 dark:bg-amber-950/40"
+                  >
+                    <p className="text-[10px] font-medium text-amber-950/90 dark:text-amber-100/90">
+                      {c.author_display?.trim() || c.author_email?.split('@')[0] || 'Equipa'}
+                    </p>
+                    <p className="mt-0.5 whitespace-pre-wrap text-xs text-foreground/95">{c.comment_text}</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">{formatHour(c.created_at)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={newCrmNoteOpen} onOpenChange={setNewCrmNoteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nova anotação</DialogTitle>
+            <DialogDescription>Guardada no perfil do contacto vinculado.</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={newCrmNoteText}
+            onChange={(e) => setNewCrmNoteText(e.target.value)}
+            rows={4}
+            placeholder="Nota interna…"
+            className="text-sm"
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setNewCrmNoteOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                newCrmNoteSaving ||
+                !newCrmNoteText.trim() ||
+                (!selectedConversation?.client_id && !selectedConversation?.leadId)
+              }
+              onClick={() => void handleSubmitNewCrmNote()}
+            >
+              {newCrmNoteSaving ? 'A guardar…' : 'Guardar'}
             </Button>
           </DialogFooter>
         </DialogContent>

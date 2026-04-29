@@ -108,6 +108,27 @@ export type ChatContactProfileSheetProps = {
   /** Cliente CRM vinculado: botão para página completa do cliente */
   showOpenFullProfile?: boolean;
   onOpenFullProfile?: () => void;
+  /** Notas CRM (painel lateral — últimas entradas) */
+  crmNotesPreview?: Array<{
+    id: string;
+    note_text: string;
+    created_at: string;
+    conversation_id?: string | null;
+    message_id?: string | null;
+    source_comment_id?: string | null;
+  }>;
+  crmNotesLoading?: boolean;
+  onCrmNotesRefresh?: () => void;
+  onNewCrmNote?: () => void;
+  /** Nota com vínculo à conversa/mensagem — abrir chat no ponto certo */
+  onOpenNoteInChat?: (note: {
+    id: string;
+    note_text: string;
+    created_at: string;
+    conversation_id?: string | null;
+    message_id?: string | null;
+    source_comment_id?: string | null;
+  }) => void;
 };
 
 export type ChatContactProfilePanelExtraProps = {
@@ -212,6 +233,11 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
     onDesktopClose,
     showOpenFullProfile,
     onOpenFullProfile,
+    crmNotesPreview = [],
+    crmNotesLoading,
+    onCrmNotesRefresh,
+    onNewCrmNote,
+    onOpenNoteInChat,
     displayName,
     phoneDisplay,
     statusLine,
@@ -461,6 +487,66 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
                     </SelectContent>
                   </Select>
                 </div>
+              ) : null}
+            </section>
+
+            {/* Anotações CRM */}
+            <section className="rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Anotações</p>
+                {onNewCrmNote && kind !== "unlinked" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => closeThen(onNewCrmNote)}
+                  >
+                    Nova
+                  </Button>
+                ) : null}
+              </div>
+              {kind === "unlinked" ? (
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  Vincule este contato a um cliente ou lead para salvar anotações no perfil.
+                </p>
+              ) : crmNotesLoading ? (
+                <p className="mt-2 text-xs text-muted-foreground">A carregar…</p>
+              ) : crmNotesPreview.length === 0 ? (
+                <p className="mt-2 text-xs italic text-muted-foreground">Sem anotações ainda.</p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {crmNotesPreview.slice(0, 3).map((n) => (
+                    <li key={n.id} className="rounded-md bg-muted/40 px-2 py-1.5 text-xs">
+                      <p className="line-clamp-4 whitespace-pre-wrap text-foreground/95">{n.note_text}</p>
+                      <div className="mt-1 flex flex-wrap items-center justify-between gap-1">
+                        <p className="text-[10px] text-muted-foreground">
+                          {n.created_at ? new Date(n.created_at).toLocaleString("pt-BR") : ""}
+                        </p>
+                        {n.conversation_id && n.message_id && onOpenNoteInChat ? (
+                          <Button
+                            type="button"
+                            variant="link"
+                            className="h-auto min-h-0 p-0 text-[10px] font-medium text-primary"
+                            onClick={() => closeThen(() => onOpenNoteInChat(n))}
+                          >
+                            Ver na conversa
+                          </Button>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {kind !== "unlinked" && onCrmNotesRefresh ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  className="mt-1 h-auto px-0 text-xs text-primary"
+                  onClick={() => onCrmNotesRefresh()}
+                >
+                  Ver todas / atualizar
+                </Button>
               ) : null}
             </section>
 

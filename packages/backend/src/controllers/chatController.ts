@@ -166,6 +166,8 @@ const MAX_MEDIA_BASE64_CHARS = 14 * 1024 * 1024; // ~10MB binário em base64
 const sendMessageSchema = z
   .object({
     conversationId: z.string().uuid(),
+    /** Responder mensagem existente (citado no WhatsApp via UazAPI `replyid`). */
+    replyToMessageId: z.string().uuid().optional(),
     /** Padrão: texto. Use `image` ou `document` para mídia via `/send/media`. */
     type: z.enum(['text', 'image', 'document']).optional(),
     text: z.string().optional(),
@@ -1579,6 +1581,11 @@ async function saveMessage(
     resetUnread?: boolean;
     /** Força kind no contrato (ex.: image no envio pelo painel). */
     messageKind?: ChatMessageKind | null;
+    replyToMessageId?: string | null;
+    replyToExternalMessageId?: string | null;
+    replyPreview?: string | null;
+    replySenderName?: string | null;
+    replyMessageType?: string | null;
   }
 ): Promise<{ rowId: string | null; inserted: boolean }> {
   const saveId = randomUUID().substring(0, 8);
@@ -1614,14 +1621,22 @@ async function saveMessage(
     });
   }
 
+  const replyToMessageId = payload.replyToMessageId ?? null;
+  const replyToExternalMessageId = payload.replyToExternalMessageId ?? null;
+  const replyPreview = payload.replyPreview ?? null;
+  const replySenderName = payload.replySenderName ?? null;
+  const replyMessageType = payload.replyMessageType ?? null;
+
   try {
     const messageResult = await pool.query<{ id: string; created_at: string; inserted: boolean }>(
     `
     INSERT INTO chat_messages (
       conversation_id, direction, external_message_id, body,
-      media, status, sent_at, metadata, provider
+      media, status, sent_at, metadata, provider,
+      reply_to_message_id, reply_to_external_message_id, reply_preview, reply_sender_name, reply_message_type
     )
-    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, 'whatsapp_uazapi')
+    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, 'whatsapp_uazapi',
+      $9, $10, $11, $12, $13)
     ON CONFLICT (conversation_id, external_message_id)
     DO UPDATE SET
       status = COALESCE(EXCLUDED.status, chat_messages.status),
@@ -1634,7 +1649,12 @@ async function saveMessage(
           AND jsonb_array_length(EXCLUDED.media) > 0
         THEN EXCLUDED.media
         ELSE COALESCE(chat_messages.media, EXCLUDED.media)
-      END
+      END,
+      reply_to_message_id = COALESCE(EXCLUDED.reply_to_message_id, chat_messages.reply_to_message_id),
+      reply_to_external_message_id = COALESCE(EXCLUDED.reply_to_external_message_id, chat_messages.reply_to_external_message_id),
+      reply_preview = COALESCE(EXCLUDED.reply_preview, chat_messages.reply_preview),
+      reply_sender_name = COALESCE(EXCLUDED.reply_sender_name, chat_messages.reply_sender_name),
+      reply_message_type = COALESCE(EXCLUDED.reply_message_type, chat_messages.reply_message_type)
       RETURNING id, created_at, (xmax = 0) AS inserted
   `,
     [
@@ -1646,6 +1666,11 @@ async function saveMessage(
       payload.status,
       payload.sentAt,
       JSON.stringify(metadataMerged),
+      replyToMessageId,
+      replyToExternalMessageId,
+      replyPreview,
+      replySenderName,
+      replyMessageType,
     ]
   );
 
@@ -5450,7 +5475,35 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
 
     const messages = await pool.query(
       `
-        SELECT m.*
+        SELECT m.*,
+        (
+          SELECT COUNT(*)::int
+          FROM chat_message_comments cmc
+          WHERE cmc.message_id = m.id AND cmc.deleted_at IS NULL
+        ) AS internal_comment_count,
+        (
+          SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', c.id,
+                'author_user_id', c.author_user_id,
+                'comment_text', c.comment_text,
+                'created_at', c.created_at,
+                'author_email', au.email,
+                'author_display', COALESCE(
+                  NULLIF(trim(concat_ws(' ', pr.first_name, pr.last_name)), ''),
+                  split_part(au.email, '@', 1)
+                )
+              )
+              ORDER BY c.created_at ASC
+            ),
+            '[]'::json
+          )
+          FROM chat_message_comments c
+          INNER JOIN users au ON au.id = c.author_user_id
+          LEFT JOIN profiles pr ON pr.id = au.id
+          WHERE c.message_id = m.id AND c.deleted_at IS NULL
+        ) AS internal_comments
         FROM chat_messages m
         INNER JOIN chat_conversations c ON c.id = m.conversation_id
         INNER JOIN users actor ON actor.id = $2
@@ -6593,12 +6646,106 @@ function extractOutgoingFileName(input: { fileName?: string | null; storagePath?
   return null;
 }
 
+const REPLY_PREVIEW_MAX = 280;
+
+function truncateReplyPreview(s: string, max = REPLY_PREVIEW_MAX): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+function replyPreviewFromMessageRow(
+  row: Record<string, unknown>,
+  bodyFallback: string | null
+): { preview: string; messageType: string } {
+  const contract = contractFromDbRow(row);
+  const k = contract.kind;
+  if (k === 'text' || k === 'unknown') {
+    return {
+      preview: truncateReplyPreview(ensurePlainString(contract.body) || bodyFallback || ''),
+      messageType: k,
+    };
+  }
+  if (k === 'image') return { preview: '[Imagem]', messageType: k };
+  if (k === 'video') return { preview: '[Vídeo]', messageType: k };
+  if (k === 'audio') return { preview: '[Áudio]', messageType: k };
+  if (k === 'document') return { preview: '[Documento]', messageType: k };
+  if (k === 'sticker') return { preview: '[Figurinha]', messageType: k };
+  return {
+    preview: truncateReplyPreview(ensurePlainString(contract.body) || bodyFallback || ''),
+    messageType: k,
+  };
+}
+
+type ReplySnapshotPayload = {
+  replyToMessageId: string;
+  replyToExternalMessageId: string | null;
+  replyPreview: string;
+  replySenderName: string;
+  replyMessageType: string;
+  uazReplyId: string | null;
+};
+
+async function loadReplyContextForSend(params: {
+  userId: string;
+  conversationId: string;
+  replyToMessageId: string;
+  contactName: string | null;
+  profileName: string | null;
+}): Promise<ReplySnapshotPayload | { error: string; status: number }> {
+  const r = await pool.query<Record<string, unknown>>(
+    `
+    SELECT m.*
+    FROM chat_messages m
+    INNER JOIN chat_conversations c ON c.id = m.conversation_id
+    WHERE m.id = $1 AND m.conversation_id = $2 AND ${sqlChatAccessPredicate('$3')}
+    `,
+    [params.replyToMessageId, params.conversationId, params.userId]
+  );
+  if (r.rowCount === 0) {
+    return { error: 'Mensagem a citar não encontrada', status: 400 };
+  }
+  const row = r.rows[0];
+  const direction = String(row.direction || '');
+  const extRaw = row.external_message_id;
+  const ext = extRaw == null || extRaw === undefined ? null : String(extRaw);
+  const { preview, messageType } = replyPreviewFromMessageRow(
+    row,
+    row.body == null ? null : String(row.body)
+  );
+  const contact =
+    (params.contactName && String(params.contactName).trim()) ||
+    (params.profileName && String(params.profileName).trim()) ||
+    null;
+  const replySenderName =
+    direction === 'incoming' ? contact || 'Contato' : 'Sua equipe';
+  const uazReplyId =
+    ext && !ext.startsWith('local:') && !ext.startsWith('track_') ? ext : null;
+  if (ext && !uazReplyId) {
+    // UI + DB mantêm a citação; UazAPI precisa do id real do WhatsApp.
+    // TODO: quando o provider confirmar o id da mensagem citada, reenviar com replyid.
+  }
+  return {
+    replyToMessageId: String(row.id),
+    replyToExternalMessageId: ext,
+    replyPreview: preview,
+    replySenderName,
+    replyMessageType: messageType,
+    uazReplyId,
+  };
+}
+
 export async function sendMessage(req: AuthRequest, res: Response) {
   let queuedMessageRowId: string | null = null;
   try {
     const userId = req.userId!;
     const tenantId = await resolveTenantIdForUser(userId);
     const data = sendMessageSchema.parse(req.body);
+
+    if (!(await canChatAction(userId, 'reply', req))) {
+      res.status(403).json({ error: 'Sem permissão para enviar mensagens no chat' });
+      return;
+    }
 
     const conversationResult = await pool.query(
       `
@@ -6616,6 +6763,29 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     }
 
     const conversation = conversationResult.rows[0];
+
+    let replyContext: ReplySnapshotPayload | null = null;
+    if (data.replyToMessageId) {
+      const rc = await loadReplyContextForSend({
+        userId,
+        conversationId: data.conversationId,
+        replyToMessageId: data.replyToMessageId,
+        contactName:
+          typeof (conversation as { contact_name?: string }).contact_name === 'string'
+            ? (conversation as { contact_name?: string }).contact_name ?? null
+            : null,
+        profileName:
+          typeof (conversation as { profile_name?: string }).profile_name === 'string'
+            ? (conversation as { profile_name?: string }).profile_name ?? null
+            : null,
+      });
+      if ('error' in rc) {
+        res.status(rc.status).json({ error: rc.error });
+        return;
+      }
+      replyContext = rc;
+    }
+
     const numberTo = toUazRecipientNumber(
       (conversation as { canonical_phone?: string }).canonical_phone || conversation.phone_number,
       conversation.external_chat_id
@@ -6667,6 +6837,15 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         status: 'queued',
         sentAt: new Date(),
         metadata: { source: 'send/media', track_id: localTrackId, provisional: true },
+        ...(replyContext
+          ? {
+              replyToMessageId: replyContext.replyToMessageId,
+              replyToExternalMessageId: replyContext.replyToExternalMessageId,
+              replyPreview: replyContext.replyPreview,
+              replySenderName: replyContext.replySenderName,
+              replyMessageType: replyContext.replyMessageType,
+            }
+          : {}),
       });
         savedRowId = saveResult.rowId;
       }
@@ -6674,6 +6853,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
 
       messageResponse = (await uazapiService.sendMediaMessage(conversation.instance_token, {
         number: numberTo,
+        ...(replyContext?.uazReplyId ? { replyid: replyContext.uazReplyId } : {}),
         type: msgType,
         file: providerFile,
         ...(data.fileName?.trim()
@@ -6777,6 +6957,15 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         status: 'queued',
         sentAt: new Date(),
         metadata: { source: 'send/text', track_id: localTrackId, provisional: true },
+        ...(replyContext
+          ? {
+              replyToMessageId: replyContext.replyToMessageId,
+              replyToExternalMessageId: replyContext.replyToExternalMessageId,
+              replyPreview: replyContext.replyPreview,
+              replySenderName: replyContext.replySenderName,
+              replyMessageType: replyContext.replyMessageType,
+            }
+          : {}),
       });
         savedRowId = saveResult.rowId;
       }
@@ -6785,6 +6974,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       messageResponse = (await uazapiService.sendTextMessage(conversation.instance_token, {
         number: numberTo,
         text,
+        ...(replyContext?.uazReplyId ? { replyid: replyContext.uazReplyId } : {}),
         readchat: data.readChat,
         readmessages: data.readMessages,
         delay: data.delay,
@@ -6949,6 +7139,11 @@ export async function sendMessage(req: AuthRequest, res: Response) {
               external_message_id: row.external_message_id,
               media: row.media,
               message_contract: contract,
+              reply_to_message_id: row.reply_to_message_id ?? null,
+              reply_to_external_message_id: row.reply_to_external_message_id ?? null,
+              reply_preview: row.reply_preview ?? null,
+              reply_sender_name: row.reply_sender_name ?? null,
+              reply_message_type: row.reply_message_type ?? null,
             },
             conversation.id
           );
@@ -6971,6 +7166,12 @@ export async function sendMessage(req: AuthRequest, res: Response) {
                 sent_at: row.sent_at || new Date(),
                 provider_message_id:
                   row.external_message_id == null ? null : String(row.external_message_id),
+                reply_to_message_id:
+                  row.reply_to_message_id == null ? null : String(row.reply_to_message_id),
+                reply_preview: row.reply_preview == null ? null : String(row.reply_preview),
+                reply_sender_name: row.reply_sender_name == null ? null : String(row.reply_sender_name),
+                reply_message_type:
+                  row.reply_message_type == null ? null : String(row.reply_message_type),
               })
             );
           }
@@ -8049,6 +8250,11 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
               external_message_id: row.external_message_id,
               media: row.media,
               message_contract: contract,
+              reply_to_message_id: row.reply_to_message_id ?? null,
+              reply_to_external_message_id: row.reply_to_external_message_id ?? null,
+              reply_preview: row.reply_preview ?? null,
+              reply_sender_name: row.reply_sender_name ?? null,
+              reply_message_type: row.reply_message_type ?? null,
             };
           }
         }
@@ -8087,6 +8293,22 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
                 media_url: mediaUrl,
                 sent_at: (wsMessagePayload.sent_at as Date | string) ?? sentAt ?? new Date().toISOString(),
                 provider_message_id: effectiveMessageId,
+                reply_to_message_id:
+                  (wsMessagePayload as { reply_to_message_id?: unknown }).reply_to_message_id == null
+                    ? null
+                    : String((wsMessagePayload as { reply_to_message_id?: unknown }).reply_to_message_id),
+                reply_preview:
+                  (wsMessagePayload as { reply_preview?: unknown }).reply_preview == null
+                    ? null
+                    : String((wsMessagePayload as { reply_preview?: unknown }).reply_preview),
+                reply_sender_name:
+                  (wsMessagePayload as { reply_sender_name?: unknown }).reply_sender_name == null
+                    ? null
+                    : String((wsMessagePayload as { reply_sender_name?: unknown }).reply_sender_name),
+                reply_message_type:
+                  (wsMessagePayload as { reply_message_type?: unknown }).reply_message_type == null
+                    ? null
+                    : String((wsMessagePayload as { reply_message_type?: unknown }).reply_message_type),
               })
             );
           }

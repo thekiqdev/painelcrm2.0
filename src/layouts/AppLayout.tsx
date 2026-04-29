@@ -1129,7 +1129,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
           } as React.CSSProperties
         }
       >
-        <div className="flex min-h-screen w-full min-w-0">
+        <div className="flex min-h-[100dvh] min-h-screen w-full min-w-0">
           <div className="hidden md:block">
           <Nav />
           </div>

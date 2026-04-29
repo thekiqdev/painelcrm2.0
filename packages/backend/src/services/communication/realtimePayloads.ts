@@ -10,6 +10,11 @@ export type MessageCreatedRealtimePayload = {
   body: string | null;
   media_url: string | null;
   sent_at: string | Date;
+  /** Citação / resposta (opcional) */
+  reply_to_message_id?: string | null;
+  reply_preview?: string | null;
+  reply_sender_name?: string | null;
+  reply_message_type?: string | null;
 };
 
 export type ConversationUpdatedRealtimePayload = {
@@ -46,6 +51,10 @@ export function buildMessageCreatedPayload(
     body: input.body,
     media_url: input.media_url,
     sent_at: input.sent_at,
+    reply_to_message_id: input.reply_to_message_id,
+    reply_preview: input.reply_preview,
+    reply_sender_name: input.reply_sender_name,
+    reply_message_type: input.reply_message_type,
   };
 }
 
