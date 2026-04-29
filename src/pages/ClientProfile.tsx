@@ -175,6 +175,8 @@ const timelineEventLabelMap: Record<string, string> = {
   chat_contract_draft_saved: "Rascunho de contrato salvo a partir do chat",
   chat_contract_sent_for_signature: "Contrato enviado para assinatura a partir do chat",
   invoice_paid: "Fatura paga",
+  mercado_pago_checkout_created: "Cobrança Mercado Pago (checkout) criada",
+  mercado_pago_webhook_received: "Notificação Mercado Pago recebida",
   agenda_appointment_created: "Compromisso criado na agenda",
   agenda_appointment_updated: "Compromisso atualizado na agenda",
   agenda_appointment_cancelled: "Compromisso cancelado",

@@ -81,3 +81,33 @@ export async function hasChatQueuesTable(): Promise<boolean> {
   );
   return (r.rows[0]?.c ?? '0') === '1';
 }
+
+/** Fase 6: tabelas de automação. */
+export async function hasChatAutomationTables(): Promise<boolean> {
+  const r = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'chat_automation_settings'`
+  );
+  return (r.rows[0]?.c ?? '0') === '1';
+}
+
+/** Fase 7: tabela de logs de automação. */
+export async function hasChatAutomationLogsTable(): Promise<boolean> {
+  const r = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'chat_automation_logs'`
+  );
+  return (r.rows[0]?.c ?? '0') === '1';
+}
+
+/** Fase 8: regras do chatbot (`chat_bot_rules`, não confundir com Fase 6). */
+export async function hasChatBotRulesTable(): Promise<boolean> {
+  const r = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'chat_bot_rules'`
+  );
+  return (r.rows[0]?.c ?? '0') === '1';
+}

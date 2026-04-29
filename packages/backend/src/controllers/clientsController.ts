@@ -90,6 +90,8 @@ const timelineEventNameSchema = z.enum([
   'chat_contract_draft_saved',
   'chat_contract_sent_for_signature',
   'invoice_paid',
+  'mercado_pago_checkout_created',
+  'mercado_pago_webhook_received',
 ]);
 
 const createTimelineEventSchema = z.object({

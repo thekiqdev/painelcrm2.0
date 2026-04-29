@@ -35,6 +35,7 @@ import {
   postChatQueue,
   patchChatQueue,
   getChatMetrics,
+  getChatOperationsDashboard,
   getChatTransfers,
   patchConversationAssign,
   patchConversationTransfer,
@@ -48,12 +49,35 @@ import {
   chatTeamMembersAdd,
   chatTeamMembersRemove,
 } from '../controllers/chatProfessionalController.js';
+import {
+  deleteChatAutomationRule,
+  getChatAutomationSettings,
+  listChatAutomationRules,
+  listChatQueueDistribution,
+  patchChatAutomationRule,
+  patchChatAutomationSettings,
+  postChatAutomationRule,
+  putChatQueueDistribution,
+  getChatAutomationLogs,
+} from '../controllers/chatAutomationController.js';
+import {
+  deleteChatBotRuleRoute,
+  getChatBotRules,
+  patchChatBotRule,
+  postChatBotRule,
+} from '../controllers/chatBotRulesController.js';
+import {
+  postChatConversationCreateMeetNow,
+  postChatConversationScheduleAppointment,
+} from '../controllers/chatAppointmentsController.js';
+import { getChatAvatarProxy } from '../controllers/chatAvatarProxyController.js';
 
 const router = Router();
 
 router.use(...tenantAuthCrm);
 router.use(requireFeature('chat'));
 
+router.get('/avatar-proxy', getChatAvatarProxy);
 router.get('/crm-whatsapp-identity', getCrmWhatsappIdentity);
 router.get('/instances', listInstances);
 router.post('/instances', createInstance);
@@ -67,6 +91,20 @@ router.post('/instances/:id/webhook/force', forceConfigureWebhook);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations/attendance-counts', getConversationAttendanceCounts);
 router.get('/metrics', getChatMetrics);
+router.get('/operations-dashboard', getChatOperationsDashboard);
+router.get('/automation/settings', getChatAutomationSettings);
+router.patch('/automation/settings', patchChatAutomationSettings);
+router.get('/automation/rules', listChatAutomationRules);
+router.post('/automation/rules', postChatAutomationRule);
+router.patch('/automation/rules/:id', patchChatAutomationRule);
+router.delete('/automation/rules/:id', deleteChatAutomationRule);
+router.get('/automation/queue-distribution', listChatQueueDistribution);
+router.put('/automation/queues/:queueId/distribution', putChatQueueDistribution);
+router.get('/automation/logs', getChatAutomationLogs);
+router.get('/bot-rules', getChatBotRules);
+router.post('/bot-rules', postChatBotRule);
+router.patch('/bot-rules/:id', patchChatBotRule);
+router.delete('/bot-rules/:id', deleteChatBotRuleRoute);
 router.get('/queues', getChatQueues);
 router.post('/queues', postChatQueue);
 router.patch('/queues/:id', patchChatQueue);
@@ -96,6 +134,16 @@ router.post('/conversations/:id/messages/sync', syncConversationMessages);
 router.post('/conversations/:id/refresh-identity', refreshConversationIdentity);
 router.post('/messages', sendMessage);
 router.post('/conversations/:id/mark-read', markConversationRead);
+router.post(
+  '/conversations/:id/create-meet-now',
+  requireFeature('agenda'),
+  postChatConversationCreateMeetNow,
+);
+router.post(
+  '/conversations/:id/schedule-appointment',
+  requireFeature('agenda'),
+  postChatConversationScheduleAppointment,
+);
 
 export default router;
 

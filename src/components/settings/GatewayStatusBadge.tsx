@@ -16,6 +16,8 @@ export type GatewayStatusType =
 interface GatewayStatusBadgeProps {
   status: GatewayStatusType;
   className?: string;
+  /** `compact`: menor, abaixo do título nos cards de gateway. */
+  variant?: "default" | "compact";
 }
 
 const CONFIG: Record<
@@ -29,7 +31,7 @@ const CONFIG: Record<
       "border-amber-200 bg-amber-500/10 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-100",
   },
   pending: {
-    label: "Pendente",
+    label: "Em validação",
     icon: Clock,
     className:
       "border-border bg-muted text-muted-foreground dark:bg-muted/70 dark:text-foreground/90",
@@ -70,17 +72,22 @@ export function toGatewayStatusType(item: {
 export const GatewayStatusBadge: React.FC<GatewayStatusBadgeProps> = ({
   status,
   className,
+  variant = "default",
 }) => {
   const { label, icon: Icon, className: statusClass } = CONFIG[status];
+  const isCompact = variant === "compact";
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm font-medium",
+        "inline-flex items-center rounded-md border font-medium",
+        isCompact
+          ? "gap-1 px-1.5 py-0.5 text-xs font-normal leading-tight"
+          : "gap-1.5 px-2.5 py-1 text-sm",
         statusClass,
         className
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" />
+      <Icon className={cn("shrink-0", isCompact ? "h-3 w-3" : "h-4 w-4")} />
       {label}
     </span>
   );

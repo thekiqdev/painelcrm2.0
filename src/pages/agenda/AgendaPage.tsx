@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -14,9 +14,20 @@ import {
   addMonths,
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { CalendarClock, ChevronLeft, ChevronRight, Loader2, MapPin, Plus } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarClock,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Filter,
+  Loader2,
+  MapPin,
+  Plus,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MobilePageHeader } from '@/components/mobile/MobilePageHeader';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,6 +63,8 @@ import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { membersService, type Member } from '@/services/members';
 import { fetchNeBootstrap } from '@/services/notificationsEngineTenant';
+import { listAvailabilityBlocks } from '@/services/appointmentAvailabilityBlocks';
+import { listAppointmentHolidays } from '@/services/appointmentHolidays';
 import {
   type Appointment,
   type AppointmentOutcome,
@@ -78,17 +91,29 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { AgendaListView } from './components/AgendaListView';
 import { AgendaWeekView } from './components/AgendaWeekView';
 import { AgendaMonthView } from './components/AgendaMonthView';
-import { AgendaReportsView } from './components/AgendaReportsView';
+import { AgendaReportsView, type AgendaReportsMobileChromeApi } from './components/AgendaReportsView';
+import { AgendaFiltersSheet } from './components/AgendaFiltersSheet';
+import { AgendaFloatingAction } from './components/AgendaFloatingAction';
 import {
   QK_APPOINTMENTS,
   QK_GCAL_STATUS,
+  QK_APPOINTMENT_TYPE_SETTINGS,
   TYPE_OPTIONS,
+  FALLBACK_TYPE_DURATION_MINUTES,
+  addMinutesToTimeHHmm,
   appointmentAttendanceBadgeClass,
   appointmentAttendanceLabel,
   type DateRangePreset,
   type AgendaLayoutMode,
   canEditAgendaItem,
+  WEEK_VIEW_FALLBACK_HOUR_END,
+  WEEK_VIEW_FALLBACK_HOUR_START,
 } from './agendaConstants';
+import { listAppointmentTypeSettings } from '@/services/appointmentTypeSettings';
+import {
+  getTenantAvailabilitySettings,
+  getUserAvailabilitySettings,
+} from '@/services/appointmentAvailability';
 
 const QK_G = QK_GCAL_STATUS;
 
@@ -225,7 +250,37 @@ export default function Agenda() {
   });
   const [pendingRescheduleFromQuery, setPendingRescheduleFromQuery] = useState(false);
 
+  const clearAgendaFilters = useCallback(() => {
+    setResponsibleFilter('');
+    setStatusFilter('');
+    setTypeFilter('');
+    setConfirmationFilter('');
+  }, []);
+
+  const applyFiltersFromSheet = useCallback(
+    (draft: {
+      responsible: string;
+      status: string;
+      type: string;
+      confirmation:
+        | ''
+        | 'pending'
+        | 'confirmed'
+        | 'not_confirmed'
+        | 'needs_reschedule'
+        | 'declined'
+        | 'no_show';
+    }) => {
+      setResponsibleFilter(draft.responsible);
+      setStatusFilter(draft.status);
+      setTypeFilter(draft.type);
+      setConfirmationFilter(draft.confirmation);
+    },
+    [],
+  );
+
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [filtersSheetOpen, setFiltersSheetOpen] = useState(false);
   /** Modo criação: null. Edição/visualização: id do compromisso. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingRow, setEditingRow] = useState<Appointment | null>(null);
@@ -259,6 +314,11 @@ export default function Agenda() {
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(new Date()));
   const isMobile = useIsMobile();
   const agendaTab = searchParams.get('tab') === 'reports' ? 'reports' : 'calendar';
+  const [reportsMobileChrome, setReportsMobileChrome] = useState<AgendaReportsMobileChromeApi | null>(null);
+
+  useEffect(() => {
+    if (agendaTab !== 'reports') setReportsMobileChrome(null);
+  }, [agendaTab]);
 
   const { data: gStatus } = useQuery({
     queryKey: QK_G,
@@ -279,6 +339,84 @@ export default function Agenda() {
     queryKey: ['members'],
     queryFn: () => membersService.getMembers(),
   });
+
+  const { data: appointmentTypeSettings } = useQuery({
+    queryKey: QK_APPOINTMENT_TYPE_SETTINGS,
+    queryFn: listAppointmentTypeSettings,
+    staleTime: 60_000,
+  });
+
+  const typeLabelByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const o of TYPE_OPTIONS) m[o.value] = o.label;
+    for (const row of appointmentTypeSettings?.items ?? []) {
+      m[row.type_key] = row.label;
+    }
+    return m;
+  }, [appointmentTypeSettings?.items]);
+
+  const typeOptionsForForm = useMemo(() => {
+    const rows = (appointmentTypeSettings?.items ?? [])
+      .filter((x) => x.is_active)
+      .sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label, 'pt-BR'));
+    if (rows.length) return rows.map((r) => ({ value: r.type_key, label: r.label }));
+    return TYPE_OPTIONS;
+  }, [appointmentTypeSettings?.items]);
+
+  const typeOptionsForFilter = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const o of TYPE_OPTIONS) map.set(o.value, o.label);
+    for (const r of appointmentTypeSettings?.items ?? []) {
+      map.set(r.type_key, r.label);
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'))
+      .map(([value, label]) => ({ value, label }));
+  }, [appointmentTypeSettings?.items]);
+
+  const weekAvailabilityEnabled = hasAgenda && agendaTab === 'calendar' && layoutMode === 'week';
+
+  const { data: tenantAvailabilityData, isPending: tenantAvailabilityPending } = useQuery({
+    queryKey: [...QK_APPOINTMENTS, 'tenant-availability-settings'],
+    queryFn: getTenantAvailabilitySettings,
+    enabled: weekAvailabilityEnabled,
+    staleTime: 60_000,
+  });
+
+  const { data: userAvailabilityData, isPending: userAvailabilityPending } = useQuery({
+    queryKey: [...QK_APPOINTMENTS, 'user-availability-settings', responsibleFilter],
+    queryFn: () => getUserAvailabilitySettings(responsibleFilter),
+    enabled: weekAvailabilityEnabled && Boolean(responsibleFilter),
+    staleTime: 60_000,
+  });
+
+  const weekOfficeTimes = useMemo(() => {
+    const fbStart = `${String(WEEK_VIEW_FALLBACK_HOUR_START).padStart(2, '0')}:00`;
+    const fbEnd = `${String(WEEK_VIEW_FALLBACK_HOUR_END).padStart(2, '0')}:00`;
+    if (responsibleFilter && userAvailabilityData?.effective) {
+      return {
+        start: userAvailabilityData.effective.work_start_time || fbStart,
+        end: userAvailabilityData.effective.work_end_time || fbEnd,
+      };
+    }
+    if (tenantAvailabilityData?.settings) {
+      return {
+        start: tenantAvailabilityData.settings.work_start_time || fbStart,
+        end: tenantAvailabilityData.settings.work_end_time || fbEnd,
+      };
+    }
+    return { start: fbStart, end: fbEnd };
+  }, [responsibleFilter, userAvailabilityData, tenantAvailabilityData]);
+
+  const weekAvailabilityLoading =
+    weekAvailabilityEnabled &&
+    (tenantAvailabilityPending || (Boolean(responsibleFilter) && userAvailabilityPending));
+
+  const hasActiveAgendaFilters = Boolean(
+    responsibleFilter || statusFilter || typeFilter || confirmationFilter,
+  );
+
+  const endTimeTouchedRef = useRef(false);
 
   const applyToday = useCallback(() => {
     const n = new Date();
@@ -375,6 +513,51 @@ export default function Agenda() {
   });
   const items = listData?.items ?? [];
 
+  const { data: blocksData, isPending: blocksLoading } = useQuery({
+    queryKey: [...QK_APPOINTMENTS, 'availability-blocks', rangeIso.from, rangeIso.to],
+    queryFn: () =>
+      listAvailabilityBlocks({
+        date_from: rangeIso.from,
+        date_to: rangeIso.to,
+      }),
+    enabled: hasAgenda,
+  });
+  const blockRows = blocksData?.blocks ?? [];
+  const visibleBlocks = useMemo(() => {
+    const active = blockRows.filter((b) => !b.cancelled_at);
+    if (!responsibleFilter) return active;
+    return active.filter(
+      (b) => b.block_scope === 'tenant' || b.user_id === responsibleFilter,
+    );
+  }, [blockRows, responsibleFilter]);
+
+  const holidayQueryRange = useMemo(() => {
+    const a = new Date(rangeIso.from).getFullYear();
+    const b = new Date(rangeIso.to).getFullYear();
+    return { year_from: Math.min(a, b), year_to: Math.max(a, b) };
+  }, [rangeIso]);
+
+  const { data: holidaysData, isPending: holidaysLoading } = useQuery({
+    queryKey: [...QK_APPOINTMENTS, 'holidays', holidayQueryRange],
+    queryFn: () =>
+      listAppointmentHolidays({
+        year_from: holidayQueryRange.year_from,
+        year_to: holidayQueryRange.year_to,
+        active: true,
+      }),
+    enabled: hasAgenda,
+  });
+
+  const visibleHolidays = useMemo(() => {
+    const rows = holidaysData?.holidays ?? [];
+    const fromD = format(parseISO(rangeIso.from), 'yyyy-MM-dd');
+    const toD = format(parseISO(rangeIso.to), 'yyyy-MM-dd');
+    return rows.filter((h) => {
+      const dd = (h.display_date ?? h.holiday_date).slice(0, 10);
+      return dd >= fromD && dd <= toD;
+    });
+  }, [holidaysData?.holidays, rangeIso.from, rangeIso.to]);
+
   const calendarTitle = useMemo(() => {
     if (layoutMode === 'week') {
       const a = startOfWeek(calendarWeekStart, { weekStartsOn: 1 });
@@ -386,6 +569,48 @@ export default function Agenda() {
     }
     if (layoutMode === 'month') {
       return format(startOfMonth(calendarMonth), "MMMM 'de' yyyy", { locale: ptBR });
+    }
+    return '';
+  }, [layoutMode, calendarWeekStart, calendarMonth]);
+
+  const listPeriodLabel = useMemo(() => {
+    if (datePreset === 'today') {
+      return format(dateFrom, "EEEE, d 'de' MMMM yyyy", { locale: ptBR });
+    }
+    if (datePreset === 'week') {
+      if (format(dateFrom, 'yyyy-MM') === format(dateTo, 'yyyy-MM')) {
+        return `${format(dateFrom, 'd', { locale: ptBR })} – ${format(dateTo, "d 'de' MMMM yyyy", { locale: ptBR })}`;
+      }
+      return `${format(dateFrom, "d MMM", { locale: ptBR })} – ${format(dateTo, "d MMM yyyy", { locale: ptBR })}`;
+    }
+    if (datePreset === 'month') {
+      return format(dateFrom, "MMMM 'de' yyyy", { locale: ptBR });
+    }
+    return `${format(dateFrom, 'dd/MM/yyyy')} – ${format(dateTo, 'dd/MM/yyyy')}`;
+  }, [datePreset, dateFrom, dateTo]);
+
+  /** Rótulo curto do período (lista) só para toolbar mobile. */
+  const listPeriodLabelMobile = useMemo(() => {
+    if (datePreset === 'today') {
+      return format(dateFrom, "d MMM yyyy", { locale: ptBR });
+    }
+    if (datePreset === 'week') {
+      return `${format(dateFrom, 'd MMM', { locale: ptBR })} – ${format(dateTo, 'd MMM', { locale: ptBR })}`;
+    }
+    if (datePreset === 'month') {
+      return format(dateFrom, 'MMM yyyy', { locale: ptBR });
+    }
+    return `${format(dateFrom, 'dd/MM')} – ${format(dateTo, 'dd/MM')}`;
+  }, [datePreset, dateFrom, dateTo]);
+
+  const calendarTitleMobile = useMemo(() => {
+    if (layoutMode === 'week') {
+      const a = startOfWeek(calendarWeekStart, { weekStartsOn: 1 });
+      const b = endOfWeek(calendarWeekStart, { weekStartsOn: 1 });
+      return `${format(a, 'd MMM', { locale: ptBR })} – ${format(b, 'd MMM', { locale: ptBR })}`;
+    }
+    if (layoutMode === 'month') {
+      return format(startOfMonth(calendarMonth), 'MMM yyyy', { locale: ptBR });
     }
     return '';
   }, [layoutMode, calendarWeekStart, calendarMonth]);
@@ -473,20 +698,65 @@ export default function Agenda() {
     [editingRow],
   );
 
+  const beginRescheduleForRow = useCallback((ap: Appointment) => {
+    setEditingId(ap.id);
+    setEditingRow(ap);
+    const s = parseISO(ap.starts_at);
+    const e = parseISO(ap.ends_at);
+    setRescheduleMode('tomorrow');
+    setRescheduleReason('');
+    setRescheduleDay(Number.isNaN(s.getTime()) ? new Date() : s);
+    setRescheduleStart(Number.isNaN(s.getTime()) ? '09:00' : format(s, 'HH:mm'));
+    setRescheduleEnd(Number.isNaN(e.getTime()) ? '10:00' : format(e, 'HH:mm'));
+    setRescheduleOpen(true);
+  }, []);
+
+  const beginCompleteForRow = useCallback((ap: Appointment) => {
+    setEditingId(ap.id);
+    setEditingRow(ap);
+    setAttendanceNote(ap.attendance_note ?? '');
+    setCompleteForm(buildCompleteForm(ap.starts_at));
+    setCompleteOpen(true);
+  }, []);
+
   useEffect(() => {
     if (searchParams.get('new') !== '1' || !canCreateA) return;
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     const clientIdRaw = searchParams.get('client_id');
-    const clientIdOk =
-      clientIdRaw && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientIdRaw)
-        ? clientIdRaw
-        : null;
+    const leadIdRaw = searchParams.get('lead_id');
+    const clientIdOk = clientIdRaw && uuidRe.test(clientIdRaw) ? clientIdRaw : null;
+    const leadIdOk = leadIdRaw && uuidRe.test(leadIdRaw) ? leadIdRaw : null;
+    const titleRaw = searchParams.get('title');
+    const titleDecoded =
+      titleRaw && titleRaw.trim()
+        ? (() => {
+            try {
+              return decodeURIComponent(titleRaw.trim());
+            } catch {
+              return titleRaw.trim();
+            }
+          })()
+        : '';
+    endTimeTouchedRef.current = false;
     setEditingId(null);
     setEditingRow(null);
     const base = buildEmptyForm(user?.id);
     if (clientIdOk) {
-      setForm({ ...base, link: 'client' as const, clientId: clientIdOk });
+      setForm({
+        ...base,
+        link: 'client' as const,
+        clientId: clientIdOk,
+        ...(titleDecoded ? { title: titleDecoded } : {}),
+      });
+    } else if (leadIdOk) {
+      setForm({
+        ...base,
+        link: 'lead' as const,
+        leadId: leadIdOk,
+        ...(titleDecoded ? { title: titleDecoded } : {}),
+      });
     } else {
-      setForm(base);
+      setForm(titleDecoded ? { ...base, title: titleDecoded } : base);
     }
     setSheetOpen(true);
     setSearchParams(
@@ -494,6 +764,8 @@ export default function Agenda() {
         const n = new URLSearchParams(prev);
         n.delete('new');
         n.delete('client_id');
+        n.delete('lead_id');
+        n.delete('title');
         return n;
       },
       { replace: true },
@@ -502,6 +774,7 @@ export default function Agenda() {
 
   const openNew = useCallback(() => {
     if (!canCreateA) return;
+    endTimeTouchedRef.current = false;
     setEditingId(null);
     setEditingRow(null);
     setForm(buildEmptyForm(user?.id));
@@ -512,6 +785,7 @@ export default function Agenda() {
   const openDetail = useCallback(
     async (id: string) => {
       try {
+        endTimeTouchedRef.current = true;
         const row = await getAppointment(id);
         setEditingId(row.id);
         setEditingRow(row);
@@ -615,6 +889,7 @@ export default function Agenda() {
   const openNewWithDateTime = useCallback(
     (day: Date, timeStart: string, timeEnd: string) => {
       if (!canCreateA) return;
+      endTimeTouchedRef.current = false;
       setEditingId(null);
       setEditingRow(null);
       setForm({ ...buildEmptyForm(user?.id), day: startOfDay(day), timeStart, timeEnd });
@@ -902,9 +1177,11 @@ export default function Agenda() {
     onError: (e) => toast.error(e instanceof Error ? e.message : 'Erro ao atualizar confirmação'),
   });
   const requestConfirmationMut = useMutation({
-    mutationFn: async () => {
-      if (!editingId) throw new Error('Compromisso inválido');
-      return requestAppointmentConfirmation(editingId, { note: attendanceNote.trim() || null });
+    mutationFn: async (opts?: { appointmentId: string; note: string | null }) => {
+      const id = opts?.appointmentId ?? editingId;
+      const note = opts !== undefined ? opts.note : attendanceNote.trim() || null;
+      if (!id) throw new Error('Compromisso inválido');
+      return requestAppointmentConfirmation(id, { note });
     },
     onSuccess: async (row) => {
       setEditingRow(row);
@@ -914,6 +1191,18 @@ export default function Agenda() {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : 'Erro ao solicitar confirmação'),
   });
+
+  const quickRequestConfirmation = useCallback(
+    (ap: Appointment) => {
+      const ok = window.confirm('Enviar solicitação de confirmação via WhatsApp para este compromisso?');
+      if (!ok) return;
+      requestConfirmationMut.mutate({
+        appointmentId: ap.id,
+        note: (ap.attendance_note ?? '').trim() || null,
+      });
+    },
+    [requestConfirmationMut],
+  );
 
   const onSave = () => {
     if (!form.title.trim()) {
@@ -1038,352 +1327,670 @@ export default function Agenda() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 pb-8">
+    <div className="mx-auto w-full max-w-[1600px] space-y-1.5 px-4 pb-10 md:space-y-3 md:px-6 md:pb-8">
       <div className="md:hidden">
         <MobilePageHeader
           title="Agenda"
+          className="[&>div]:min-h-9 [&_h1]:text-base [&_h1]:font-bold"
+          secondaryActions={
+            agendaTab === 'calendar'
+              ? [
+                  {
+                    icon: (
+                      <span className="relative inline-flex">
+                        <Filter className="h-4 w-4" aria-hidden />
+                        {hasActiveAgendaFilters ? (
+                          <span
+                            className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
+                            title="Filtros ativos"
+                            aria-hidden
+                          />
+                        ) : null}
+                      </span>
+                    ),
+                    onClick: () => setFiltersSheetOpen(true),
+                    ariaLabel: 'Filtros',
+                  },
+                ]
+              : agendaTab === 'reports' && reportsMobileChrome
+                ? [
+                    {
+                      icon: (
+                        <span className="relative inline-flex">
+                          <Filter className="h-4 w-4" aria-hidden />
+                          {reportsMobileChrome.hasActiveFilters ? (
+                            <span
+                              className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
+                              title="Filtros ativos"
+                              aria-hidden
+                            />
+                          ) : null}
+                        </span>
+                      ),
+                      onClick: reportsMobileChrome.openFilters,
+                      ariaLabel: 'Filtros',
+                    },
+                    {
+                      icon: <Download className="h-4 w-4" aria-hidden />,
+                      onClick: () => reportsMobileChrome.exportCsv(),
+                      ariaLabel: 'Exportar CSV',
+                      disabled: !reportsMobileChrome.canExport,
+                    },
+                  ]
+                : []
+          }
           primaryAction={
-            canCreateA
-              ? { label: 'Novo', icon: <Plus className="h-4 w-4" />, onClick: openNew, ariaLabel: 'Novo compromisso' }
-              : undefined
+            canCreateA ? { label: '+ Novo', onClick: openNew, ariaLabel: 'Novo compromisso' } : undefined
           }
         />
       </div>
 
-      <div className="hidden items-center justify-between gap-2 md:flex">
-        <h1 className="text-2xl font-semibold tracking-tight">Agenda</h1>
+      <div className="hidden items-center justify-between gap-3 md:flex">
+        <div className="flex min-w-0 items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Agenda</h1>
+          {gStatus && googleConnected ? (
+            <Badge
+              variant="outline"
+              className="h-6 shrink-0 border-emerald-500/35 bg-emerald-500/10 px-2 text-[11px] font-normal text-emerald-900 dark:text-emerald-100"
+            >
+              Google conectado
+            </Badge>
+          ) : null}
+        </div>
         {canCreateA ? (
-          <Button onClick={openNew} className="gap-2">
+          <Button onClick={openNew} size="sm" className="gap-2 md:h-9">
             <Plus className="h-4 w-4" />
             Novo compromisso
           </Button>
         ) : null}
       </div>
 
-      {googleConnected === false ? (
-        <Alert className="border-muted bg-muted/30">
-          <CalendarClock className="h-4 w-4" />
-          <AlertTitle>Google Agenda</AlertTitle>
-          <AlertDescription className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-            <span>
-              Conecte o Google Agenda para criar eventos, convites e reuniões com Meet automaticamente.
+      {gStatus && !googleConnected ? (
+        <>
+          <div className="flex max-h-9 items-center justify-between gap-2 rounded-md border border-amber-500/25 bg-muted/20 px-2 py-1 md:hidden">
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1 text-[11px] font-medium leading-none text-foreground">
+              <AlertTriangle className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+              <span className="truncate">Google não conectado</span>
             </span>
-            <Button variant="secondary" size="sm" className="shrink-0" asChild>
-              <Link to="/settings?section=googleCalendar">Conectar Google Agenda</Link>
+            <Button variant="secondary" size="sm" className="h-6 shrink-0 px-2 text-[10px] font-semibold" asChild>
+              <Link to="/settings?section=googleCalendar">Conectar</Link>
             </Button>
-          </AlertDescription>
-        </Alert>
+          </div>
+          <div className="hidden flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 md:flex md:flex-row md:items-center md:justify-between md:gap-4 md:py-2">
+            <div className="flex min-w-0 items-start gap-2 md:items-center">
+              <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground md:mt-0" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="text-sm font-medium leading-tight">Google Agenda não conectado</p>
+                <p className="hidden text-xs text-muted-foreground md:block">
+                  Conecte para criar eventos, convites e reuniões com Meet automaticamente.
+                </p>
+              </div>
+            </div>
+            <Button variant="secondary" size="sm" className="h-8 shrink-0 md:mt-0" asChild>
+              <Link to="/settings?section=googleCalendar">Conectar</Link>
+            </Button>
+          </div>
+        </>
       ) : null}
 
-      <div className="space-y-3 rounded-lg border border-border/80 bg-card/40 p-3">
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="mr-1 text-xs text-muted-foreground">Área</span>
-          <Button
-            type="button"
-            size="sm"
-            variant={agendaTab === 'calendar' ? 'default' : 'outline'}
-            className="h-8"
-            onClick={() =>
-              setSearchParams((prev) => {
-                const n = new URLSearchParams(prev);
-                n.delete('tab');
-                return n;
-              })
-            }
-          >
-            Calendário
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={agendaTab === 'reports' ? 'default' : 'outline'}
-            className="h-8"
-            onClick={() =>
-              setSearchParams((prev) => {
-                const n = new URLSearchParams(prev);
-                n.set('tab', 'reports');
-                return n;
-              })
-            }
-          >
-            Relatórios
-          </Button>
-        </div>
-
-        {agendaTab === 'calendar' ? (
-          <>
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="mr-1 text-xs text-muted-foreground">Vista</span>
-          <Button
-            type="button"
-            size="sm"
-            variant={layoutMode === 'list' ? 'default' : 'outline'}
-            className="h-8"
-            onClick={() => onLayoutModeChange('list')}
-          >
-            Lista
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={layoutMode === 'week' ? 'default' : 'outline'}
-            className="h-8"
-            onClick={() => onLayoutModeChange('week')}
-          >
-            Semana
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={layoutMode === 'month' ? 'default' : 'outline'}
-            className="h-8"
-            onClick={() => onLayoutModeChange('month')}
-          >
-            Mês
-          </Button>
-        </div>
-
-        {layoutMode === 'list' ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-1">
-              <span className="mr-1 text-xs text-muted-foreground">Período</span>
-            <Button
-              type="button"
-              size="sm"
-              variant={datePreset === 'today' ? 'default' : 'outline'}
-              className="h-8"
-              onClick={applyToday}
-            >
-              Hoje
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={datePreset === 'week' ? 'default' : 'outline'}
-              className="h-8"
-              onClick={applyWeek}
-            >
-              Semana
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={datePreset === 'month' ? 'default' : 'outline'}
-              className="h-8"
-              onClick={applyMonth}
-            >
-              Mês
-            </Button>
-            {datePreset === 'custom' ? (
-              <span className="ml-1 text-xs text-muted-foreground">(personalizado)</span>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-0.5">
-            {datePreset === 'week' ? (
-              <>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => goWeek(-1)}
-                    aria-label="Semana anterior"
-                  >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="px-0.5 text-xs text-muted-foreground">navegar semana</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => goWeek(1)}
-                    aria-label="Próxima semana"
-                  >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </>
-            ) : null}
-            {datePreset === 'month' ? (
-              <>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => goMonth(-1)}
-                    aria-label="Mês anterior"
-                  >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="px-0.5 text-xs text-muted-foreground">navegar mês</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => goMonth(1)}
-                    aria-label="Próximo mês"
-                  >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </>
-            ) : null}
-          </div>
-        </div>
-        ) : (
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="rounded-lg border border-border/60 bg-card/50 p-1 shadow-sm md:rounded-xl md:p-2">
+        <div className="flex flex-col gap-1 md:gap-1.5">
+          {/* Mobile: duas linhas fixas — alternância Calendário/Relatórios + vista; período sempre na 2.ª linha */}
+          <div className="flex flex-col gap-1 md:hidden">
             <div className="flex flex-wrap items-center gap-1">
-              <Button type="button" size="sm" variant="outline" className="h-8" onClick={onCalendarToday}>
-                Hoje
+              {agendaTab === 'calendar' ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() =>
+                    setSearchParams((prev) => {
+                      const n = new URLSearchParams(prev);
+                      n.set('tab', 'reports');
+                      return n;
+                    })
+                  }
+                >
+                  Relatórios
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={() =>
+                    setSearchParams((prev) => {
+                      const n = new URLSearchParams(prev);
+                      n.delete('tab');
+                      return n;
+                    })
+                  }
+                >
+                  Calendário
+                </Button>
+              )}
+              {agendaTab === 'calendar' ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={layoutMode === 'list' ? 'default' : 'outline'}
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => onLayoutModeChange('list')}
+                  >
+                    Lista
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={layoutMode === 'week' ? 'default' : 'outline'}
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => onLayoutModeChange('week')}
+                  >
+                    Semana
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={layoutMode === 'month' ? 'default' : 'outline'}
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => onLayoutModeChange('month')}
+                  >
+                    Mês
+                  </Button>
+                </>
+              ) : null}
+            </div>
+            {agendaTab === 'calendar' ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                {layoutMode === 'list' ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={datePreset === 'today' ? 'default' : 'outline'}
+                      className="h-6 px-2 text-[11px]"
+                      onClick={applyToday}
+                    >
+                      Hoje
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={datePreset === 'week' ? 'default' : 'outline'}
+                      className="h-6 px-2 text-[11px]"
+                      onClick={applyWeek}
+                    >
+                      Semana
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={datePreset === 'month' ? 'default' : 'outline'}
+                      className="h-6 px-2 text-[11px]"
+                      onClick={applyMonth}
+                    >
+                      Mês
+                    </Button>
+                    {datePreset === 'custom' ? (
+                      <span className="rounded border border-dashed border-border/50 px-1 py-0.5 text-[10px] text-muted-foreground">
+                        Personalizado
+                      </span>
+                    ) : null}
+                    {datePreset === 'week' ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => goWeek(-1)}
+                          aria-label="Semana anterior"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => goWeek(1)}
+                          aria-label="Próxima semana"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    ) : null}
+                    {datePreset === 'month' ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => goMonth(-1)}
+                          aria-label="Mês anterior"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => goMonth(1)}
+                          aria-label="Próximo mês"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    ) : null}
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">
+                      {listPeriodLabelMobile}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-[11px]"
+                      onClick={onCalendarToday}
+                    >
+                      Hoje
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      onClick={onCalendarPrev}
+                      aria-label="Anterior"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 shrink-0"
+                      onClick={onCalendarNext}
+                      aria-label="Próximo"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">
+                      {calendarTitleMobile}
+                    </span>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          {/* Desktop: layout em linha(s) com ambos os botões de área */}
+          <div className="hidden flex-wrap items-center gap-x-1.5 gap-y-1 md:flex md:gap-x-2 md:gap-y-1.5 md:gap-x-2.5">
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Área
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant={agendaTab === 'calendar' ? 'default' : 'outline'}
+                className="h-7 px-2.5 text-xs"
+                onClick={() =>
+                  setSearchParams((prev) => {
+                    const n = new URLSearchParams(prev);
+                    n.delete('tab');
+                    return n;
+                  })
+                }
+              >
+                Calendário
               </Button>
-              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={onCalendarPrev} aria-label="Anterior">
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={onCalendarNext} aria-label="Próximo">
-                <ChevronRight className="h-4 w-4" />
+              <Button
+                type="button"
+                size="sm"
+                variant={agendaTab === 'reports' ? 'default' : 'outline'}
+                className="h-7 px-2.5 text-xs"
+                onClick={() =>
+                  setSearchParams((prev) => {
+                    const n = new URLSearchParams(prev);
+                    n.set('tab', 'reports');
+                    return n;
+                  })
+                }
+              >
+                Relatórios
               </Button>
             </div>
-            <p className="text-center text-sm font-medium sm:text-right">{calendarTitle}</p>
-          </div>
-        )}
+            {agendaTab === 'calendar' ? (
+              <>
+                <span className="hidden h-4 w-px shrink-0 bg-border/60 sm:block" aria-hidden />
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="hidden text-[10px] font-medium uppercase tracking-wide text-muted-foreground md:inline">
+                    Vista
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={layoutMode === 'list' ? 'default' : 'outline'}
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => onLayoutModeChange('list')}
+                  >
+                    Lista
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={layoutMode === 'week' ? 'default' : 'outline'}
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => onLayoutModeChange('week')}
+                  >
+                    Semana
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={layoutMode === 'month' ? 'default' : 'outline'}
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => onLayoutModeChange('month')}
+                  >
+                    Mês
+                  </Button>
+                </div>
+              </>
+            ) : null}
 
-        <div
-          className={cn(
-            'grid gap-3',
-            layoutMode === 'list' ? 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5' : 'sm:grid-cols-1 md:grid-cols-3',
-          )}
-        >
-          {layoutMode === 'list' ? (
+            {agendaTab === 'calendar' && layoutMode === 'list' ? (
+              <>
+                <span className="hidden h-4 w-px shrink-0 bg-border/60 lg:block" aria-hidden />
+                <div className="flex min-w-0 flex-[1_1_220px] flex-wrap items-center gap-1 lg:flex-[1_1_280px]">
+                  <span className="hidden text-[10px] font-medium uppercase tracking-wide text-muted-foreground xl:inline">
+                    Período
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={datePreset === 'today' ? 'default' : 'outline'}
+                    className="h-7 px-2.5 text-xs"
+                    onClick={applyToday}
+                  >
+                    Hoje
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={datePreset === 'week' ? 'default' : 'outline'}
+                    className="h-7 px-2.5 text-xs"
+                    onClick={applyWeek}
+                  >
+                    Semana
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={datePreset === 'month' ? 'default' : 'outline'}
+                    className="h-7 px-2.5 text-xs"
+                    onClick={applyMonth}
+                  >
+                    Mês
+                  </Button>
+                  {datePreset === 'custom' ? (
+                    <span className="rounded border border-dashed border-border/50 px-1 py-0.5 text-[10px] text-muted-foreground">
+                      Personalizado
+                    </span>
+                  ) : null}
+                  {datePreset === 'week' ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => goWeek(-1)}
+                        aria-label="Semana anterior"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => goWeek(1)}
+                        aria-label="Próxima semana"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : null}
+                  {datePreset === 'month' ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => goMonth(-1)}
+                        aria-label="Mês anterior"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => goMonth(1)}
+                        aria-label="Próximo mês"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : null}
+                  <span className="min-w-0 max-w-full truncate text-xs font-medium text-foreground">
+                    {listPeriodLabel}
+                  </span>
+                </div>
+              </>
+            ) : null}
+
+            {agendaTab === 'calendar' && layoutMode !== 'list' ? (
+              <>
+                <span className="hidden h-4 w-px shrink-0 bg-border/60 md:block" aria-hidden />
+                <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2.5 text-xs"
+                    onClick={onCalendarToday}
+                  >
+                    Hoje
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={onCalendarPrev}
+                    aria-label="Anterior"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={onCalendarNext}
+                    aria-label="Próximo"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <span className="min-w-0 max-w-[min(100%,24rem)] truncate text-xs font-medium text-foreground">
+                    {calendarTitle}
+                  </span>
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          {agendaTab === 'calendar' ? (
             <>
-        <div className="space-y-1.5">
-          <Label>De</Label>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="w-full justify-start text-left font-normal">
-                {format(dateFrom, 'P', { locale: ptBR })}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={ptBR} />
-            </PopoverContent>
-          </Popover>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Até</Label>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="w-full justify-start text-left font-normal">
-                {format(dateTo, 'P', { locale: ptBR })}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={ptBR} />
-            </PopoverContent>
-          </Popover>
-        </div>
+              <div className="hidden border-t border-border/40 pt-1.5 md:block">
+                <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-2">
+                  <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Filtros
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 md:gap-2">
+                    {layoutMode === 'list' ? (
+                      <>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className="h-7 w-[8.75rem] justify-start text-left text-xs font-normal md:w-36"
+                              aria-label="Data inicial do período"
+                            >
+                              {format(dateFrom, 'P', { locale: ptBR })}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={ptBR} />
+                          </PopoverContent>
+                        </Popover>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className="h-7 w-[8.75rem] justify-start text-left text-xs font-normal md:w-36"
+                              aria-label="Data final do período"
+                            >
+                              {format(dateTo, 'P', { locale: ptBR })}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={ptBR} />
+                          </PopoverContent>
+                        </Popover>
+                      </>
+                    ) : null}
+                    <Select
+                      value={responsibleFilter || '__all__'}
+                      onValueChange={(v) => setResponsibleFilter(v === '__all__' ? '' : v)}
+                    >
+                      <SelectTrigger className="h-7 w-[min(100%,11rem)] text-xs md:w-40" aria-label="Responsável">
+                        <SelectValue placeholder="Responsável" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">Todos</SelectItem>
+                        {members.map((m: Member) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={statusFilter || '__all__'} onValueChange={(v) => setStatusFilter(v === '__all__' ? '' : v)}>
+                      <SelectTrigger className="h-7 w-[min(100%,9rem)] text-xs md:w-32" aria-label="Status">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">Todos</SelectItem>
+                        <SelectItem value="scheduled">Agendado</SelectItem>
+                        <SelectItem value="done">Concluído</SelectItem>
+                        <SelectItem value="cancelled">Cancelado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter(v === '__all__' ? '' : v)}>
+                      <SelectTrigger className="h-7 w-[min(100%,11rem)] text-xs md:w-36" aria-label="Tipo">
+                        <SelectValue placeholder="Tipo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">Todos</SelectItem>
+                        {typeOptionsForFilter.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={confirmationFilter || '__all__'}
+                      onValueChange={(v) =>
+                        setConfirmationFilter(
+                          v === '__all__'
+                            ? ''
+                            : (v as
+                                | 'pending'
+                                | 'confirmed'
+                                | 'not_confirmed'
+                                | 'needs_reschedule'
+                                | 'declined'
+                                | 'no_show'),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="h-7 w-[min(100%,12rem)] text-xs md:w-44" aria-label="Confirmação">
+                        <SelectValue placeholder="Confirmação" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">Todos</SelectItem>
+                        <SelectItem value="pending">Aguardando confirmação</SelectItem>
+                        <SelectItem value="confirmed">Confirmado</SelectItem>
+                        <SelectItem value="not_confirmed">Não confirmado</SelectItem>
+                        <SelectItem value="needs_reschedule">Precisa remarcar</SelectItem>
+                        <SelectItem value="declined">Recusado</SelectItem>
+                        <SelectItem value="no_show">Não compareceu</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                      disabled={!hasActiveAgendaFilters}
+                      onClick={clearAgendaFilters}
+                    >
+                      Limpar filtros
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              {clientIdFromQuery ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-border/60 bg-muted/15 px-2 py-1.5 text-xs md:px-3">
+                  <span className="text-muted-foreground">Compromissos filtrados por este cliente</span>
+                  <Button type="button" variant="secondary" size="sm" className="h-7" onClick={clearClientFilter}>
+                    Limpar filtro
+                  </Button>
+                </div>
+              ) : null}
             </>
           ) : null}
-        <div className="space-y-1.5">
-          <Label>Responsável</Label>
-          <Select
-            value={responsibleFilter || '__all__'}
-            onValueChange={(v) => setResponsibleFilter(v === '__all__' ? '' : v)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Todos" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Todos</SelectItem>
-              {members.map((m: Member) => (
-                <SelectItem key={m.id} value={m.id}>
-                  {m.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
-        <div className="space-y-1.5">
-          <Label>Status</Label>
-          <Select value={statusFilter || '__all__'} onValueChange={(v) => setStatusFilter(v === '__all__' ? '' : v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Todos" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Todos</SelectItem>
-              <SelectItem value="scheduled">Agendado</SelectItem>
-              <SelectItem value="done">Concluído</SelectItem>
-              <SelectItem value="cancelled">Cancelado</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Tipo</Label>
-          <Select value={typeFilter || '__all__'} onValueChange={(v) => setTypeFilter(v === '__all__' ? '' : v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Todos" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Todos</SelectItem>
-              {TYPE_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-          <div className="space-y-1.5">
-            <Label>Confirmação</Label>
-            <Select
-              value={confirmationFilter || '__all__'}
-              onValueChange={(v) =>
-                setConfirmationFilter(
-                  v === '__all__'
-                    ? ''
-                    : (v as
-                        | 'pending'
-                        | 'confirmed'
-                        | 'not_confirmed'
-                        | 'needs_reschedule'
-                        | 'declined'
-                        | 'no_show'),
-                )
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Todos</SelectItem>
-                <SelectItem value="pending">Aguardando confirmação</SelectItem>
-                <SelectItem value="confirmed">Confirmado</SelectItem>
-                <SelectItem value="not_confirmed">Não confirmado</SelectItem>
-                <SelectItem value="needs_reschedule">Precisa remarcar</SelectItem>
-                <SelectItem value="declined">Recusado</SelectItem>
-                <SelectItem value="no_show">Não compareceu</SelectItem>
-              </SelectContent>
-            </Select>
-                          </div>
-                            </div>
-        {clientIdFromQuery ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-border/60 bg-muted/15 px-3 py-2 text-xs">
-            <span className="text-muted-foreground">Compromissos filtrados por este cliente</span>
-            <Button type="button" variant="secondary" size="sm" className="h-7" onClick={clearClientFilter}>
-              Limpar filtro
-            </Button>
-                            </div>
-                            ) : null}
-          </>
-                              ) : null}
-                            </div>
+      </div>
 
-      {agendaTab === 'reports' ? <AgendaReportsView members={members as Array<{ id: string; name: string }>} /> : null}
+      {agendaTab === 'reports' ? (
+        <AgendaReportsView
+          members={members as Array<{ id: string; name: string }>}
+          typeFilterOptions={typeOptionsForFilter}
+          onMobileChrome={isMobile ? setReportsMobileChrome : undefined}
+        />
+      ) : null}
 
       {agendaTab === 'calendar' && layoutMode === 'list' ? (
         <AgendaListView
           items={items}
-          isLoading={listLoading}
+          blocks={visibleBlocks}
+          holidays={visibleHolidays}
+          typeLabelByKey={typeLabelByKey}
+          isLoading={listLoading || blocksLoading || holidaysLoading}
           canCreate={canCreateA}
           onOpenNew={openNew}
           onOpenDetail={(id) => void openDetail(id)}
@@ -1393,30 +2000,64 @@ export default function Agenda() {
           }}
           onAfterRetry={invalidate}
           canRowEdit={(ap) => canEditA && canEditAgendaItem(user?.id, ap, ownOnly)}
+          onQuickReschedule={canEditA ? beginRescheduleForRow : undefined}
+          onQuickComplete={canEditA ? beginCompleteForRow : undefined}
+          onQuickRequestConfirmation={canEditA ? quickRequestConfirmation : undefined}
+          compactMobile={Boolean(isMobile)}
         />
-                            ) : null}
+      ) : null}
       {agendaTab === 'calendar' && layoutMode === 'week' ? (
         <AgendaWeekView
           weekStart={calendarWeekStart}
           items={items}
-          isLoading={listLoading}
+          blocks={visibleBlocks}
+          holidays={visibleHolidays}
+          isLoading={listLoading || blocksLoading || holidaysLoading || weekAvailabilityLoading}
           isMobile={!!isMobile}
           onEventClick={(id) => void openDetail(id)}
           onEmptyClick={openNewWithDateTime}
+          workStartTime={weekOfficeTimes.start}
+          workEndTime={weekOfficeTimes.end}
         />
-                                ) : null}
+      ) : null}
       {agendaTab === 'calendar' && layoutMode === 'month' ? (
         <AgendaMonthView
           month={calendarMonth}
           items={items}
-          isLoading={listLoading}
+          blocks={visibleBlocks}
+          holidays={visibleHolidays}
+          typeLabelByKey={typeLabelByKey}
+          isLoading={listLoading || blocksLoading || holidaysLoading}
           isMobile={!!isMobile}
           onEventClick={(id) => void openDetail(id)}
           onDayEmptyClick={onOpenNewDayDefault}
           onShowDayList={onShowDayList}
           canCreate={canCreateA}
         />
-                                ) : null}
+      ) : null}
+
+      <AgendaFloatingAction
+        visible={Boolean(isMobile && agendaTab === 'calendar' && canCreateA)}
+        onClick={openNew}
+      />
+
+      <AgendaFiltersSheet
+        open={filtersSheetOpen}
+        onOpenChange={setFiltersSheetOpen}
+        layoutMode={layoutMode}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onPickDateFrom={onPickDateFrom}
+        onPickDateTo={onPickDateTo}
+        members={members}
+        typeOptionsForFilter={typeOptionsForFilter}
+        responsibleFilter={responsibleFilter}
+        statusFilter={statusFilter}
+        typeFilter={typeFilter}
+        confirmationFilter={confirmationFilter}
+        onApply={applyFiltersFromSheet}
+        onClear={clearAgendaFilters}
+      />
 
       <Sheet open={sheetOpen} onOpenChange={closeSheet}>
         <SheetContent
@@ -1458,14 +2099,28 @@ export default function Agenda() {
                 <Label>Tipo</Label>
                 <Select
                   value={form.type}
-                  onValueChange={(v) => setForm((f) => ({ ...f, type: v }))}
+                  onValueChange={(v) =>
+                    setForm((f) => {
+                      if (endTimeTouchedRef.current) return { ...f, type: v };
+                      const dur =
+                        appointmentTypeSettings?.items?.find((x) => x.type_key === v && x.is_active)
+                          ?.default_duration_minutes ??
+                        FALLBACK_TYPE_DURATION_MINUTES[v] ??
+                        60;
+                      return {
+                        ...f,
+                        type: v,
+                        timeEnd: addMinutesToTimeHHmm(f.timeStart, dur),
+                      };
+                    })
+                  }
                   disabled={formDisabled}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {TYPE_OPTIONS.map((o) => (
+                    {typeOptionsForForm.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
                         {o.label}
                       </SelectItem>
@@ -1604,7 +2259,10 @@ export default function Agenda() {
                 <Input
                   type="time"
                   value={form.timeEnd}
-                  onChange={(e) => setForm((f) => ({ ...f, timeEnd: e.target.value }))}
+                  onChange={(e) => {
+                    endTimeTouchedRef.current = true;
+                    setForm((f) => ({ ...f, timeEnd: e.target.value }));
+                  }}
                   disabled={formDisabled}
                 />
               </div>

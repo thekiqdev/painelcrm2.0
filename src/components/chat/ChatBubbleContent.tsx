@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Download, ExternalLink, FileText } from 'lucide-react';
 import { coerceChatPlainText, type ChatMessage } from '@/services/chat';
+import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
 
 /** Primeira URL de mídia utilizável (imagem, áudio, etc.), inclusive objeto aninhado. */
 function firstRenderableMediaUrl(message: ChatMessage): string | null {
@@ -40,6 +41,7 @@ function mediaFileName(message: ChatMessage): string | null {
   }
 }
 
+/** Mesma base da API que `coerceMediaUrl` em chat.ts — garante `/media/...` absoluto no browser. */
 function resolveDocumentHref(rawUrl: string | null): string | null {
   if (!rawUrl) return null;
   const raw = rawUrl.trim();
@@ -49,6 +51,51 @@ function resolveDocumentHref(rawUrl: string | null): string | null {
   if (raw.startsWith('/')) return `${base}${raw}`;
   if (raw.startsWith('media/')) return `${base}/${raw}`;
   return raw;
+}
+
+function ChatMessageImage({
+  rawUrl,
+  caption,
+}: {
+  rawUrl: string;
+  caption?: string | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  const displaySrc = resolveDocumentHref(rawUrl) || rawUrl;
+
+  if (failed) {
+    return (
+      <div className="rounded-md border border-dashed border-border bg-muted/40 px-2 py-3 text-center">
+        <p className="text-xs text-muted-foreground">Imagem indisponível</p>
+        {caption ? <p className="mt-2 whitespace-pre-wrap break-words text-xs opacity-90">{caption}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className="block w-full overflow-hidden rounded-md text-left outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => window.open(displaySrc, '_blank', 'noopener,noreferrer')}
+      >
+        <img
+          src={displaySrc}
+          alt=""
+          className="max-h-64 max-w-full object-contain"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => {
+            chatMediaDebugLog('chat_media_render_failed', { url: displaySrc });
+            setFailed(true);
+          }}
+        />
+      </button>
+      {caption ? (
+        <p className="whitespace-pre-wrap break-words text-sm">{caption}</p>
+      ) : null}
+    </div>
+  );
 }
 
 function dataUriToBlob(dataUri: string): Blob | null {
@@ -79,7 +126,8 @@ function detectDocumentTypeLabel(mime: string, fileName: string | null): string 
 export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const c = message.message_contract;
   const kind = c?.kind;
-  const url = firstRenderableMediaUrl(message);
+  const rawMediaUrl = firstRenderableMediaUrl(message);
+  const url = rawMediaUrl ? resolveDocumentHref(rawMediaUrl) || rawMediaUrl : null;
   const mime =
     c?.media?.[0]?.mimetype ||
     (Array.isArray(message.media) && message.media[0]?.mimetype) ||
@@ -137,7 +185,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
 
   if (isDocumentKind) {
     const typeLabel = detectDocumentTypeLabel(mime, docName);
-    const documentHref = resolveDocumentHref(url);
+    const documentHref = url;
     const isDataDocument = !!documentHref && documentHref.startsWith('data:');
     const handleOpenDocument = () => {
       if (!documentHref) return;
@@ -232,20 +280,28 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
       (kind === 'unknown' && looksLikeImageUrl) ||
       (!kind && looksLikeImageUrl));
 
-  if (showImage) {
+  if (showImage && url && rawMediaUrl) {
+    const captionFromContract =
+      typeof c?.caption === 'string' && c.caption.trim() ? c.caption.trim() : '';
+    const captionFromBody =
+      !captionFromContract &&
+      text &&
+      (kind === 'image' || kind === 'sticker' || kind === 'unknown' || !kind)
+        ? text
+        : '';
+    const cap = captionFromContract || captionFromBody;
+    return <ChatMessageImage rawUrl={rawMediaUrl} caption={cap || undefined} />;
+  }
+
+  if ((kind === 'image' || kind === 'sticker') && !rawMediaUrl) {
+    chatMediaDebugLog('chat_media_url_missing', {
+      messageId: message.id,
+      kind: kind ?? 'unknown',
+    });
     return (
-      <div className="space-y-1">
-        <div className="overflow-hidden rounded-md">
-          <img
-            src={url}
-            alt=""
-            className="max-h-64 max-w-full object-contain"
-            loading="lazy"
-          />
-        </div>
-        {text ? (
-          <p className="whitespace-pre-wrap break-words">{text}</p>
-        ) : null}
+      <div className="rounded-md border border-dashed border-border bg-muted/40 px-2 py-3 text-center">
+        <p className="text-xs text-muted-foreground">Imagem indisponível</p>
+        {text ? <p className="mt-2 whitespace-pre-wrap break-words text-xs">{text}</p> : null}
       </div>
     );
   }
@@ -261,7 +317,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
   if (url) {
     return (
       <p className="text-xs opacity-80">
-        <a href={url} target="_blank" rel="noreferrer" className="underline">
+        <a href={url} target="_blank" rel="noreferrer" className="underline break-all">
           Abrir mídia
         </a>
       </p>

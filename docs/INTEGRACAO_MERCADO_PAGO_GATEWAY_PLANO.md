@@ -367,3 +367,146 @@ Checklist manual: `docs/MERCADO_PAGO_OAUTH_PKCE_QA.md`.
 2. Decisão sobre **criptografia** de credenciais para tokens MP (antes de OAuth em produção).
 3. Iniciar **Fase 2** em branch dedicada: estrutura isolada + OAuth/status, flag desligada em produção até validação; **nenhuma** alteração em payload/validação/endpoints Asaas.
 4. Ao concluir cada fase: executar **§0.8** e registrar evidências (manual ou automatizado).
+
+---
+
+## 11. Fase 3 — Checkout Pro (preferência) — implementado
+
+### Fluxo atual
+
+1. Tenant com OAuth Mercado Pago válido e flag `MERCADO_PAGO_GATEWAY_ENABLED` ativa.
+2. Na fatura CRM (`customer_invoices`), ação **Gerar pagamento Mercado Pago** chama  
+   `POST /api/customer-invoices/:id/mercado-pago/create-payment`  
+   (body opcional: `{ "regenerate": true }`).
+3. Backend obtém `access_token` descriptografado, monta preferência em  
+   `POST https://api.mercadopago.com/checkout/preferences` com `items`, `external_reference`, `payer`, `back_urls`, `auto_return`, `notification_url` (quando configurado), `metadata` (`tenant_id`, `invoice_id`, `customer_id`, `source`).
+4. Persistência:
+   - **Fatura só Asaas / só CRM sem cobrança paralela:**  
+     `gateway = mercado_pago`, `gateway_reference_id = preference_id`, `gateway_status = waiting_payment`,  
+     `idempotency_key = mp_pref_{invoice_id}`,  
+     `gateway_metadata.mercado_pago_checkout` + `invoiceUrl` (link de pagamento).
+   - **Fatura já com cobrança Asaas:** não sobrescreve `gateway`/`gateway_reference_id`; apenas mescla em `gateway_metadata`:  
+     `mercado_pago_checkout`, `mercado_pago_payment_url`.
+5. Link público `/pay/:token`: API pública inclui `payment_urls.mercado_pago_init_point` quando há checkout MP nos metadados (merge invoice + tentativa ativa). Botão **Pagar com Mercado Pago** redireciona para `init_point`/`sandbox_init_point` conforme ambiente OAuth.
+
+### Limitações desta fase (explícitas)
+
+- **Sem webhook Mercado Pago:** não atualiza `paid` pela API MP automaticamente.
+- **Sem marcação manual como paga** ao criar preferência — status permanece `pending` / `waiting_payment` / etc., até confirmação futura (Fase 4).
+- **Polling na página pública:** para `gateway = mercado_pago`, o sync em tempo real com o provedor **não** roda (evita consultar Asaas com id de preferência MP); confirmação virá com webhook/API na Fase 4.
+- **Checkout transparente / Brick:** fora de escopo; apenas redirect Checkout Pro.
+
+### Checklist de teste (manual)
+
+| # | Caso |
+|---|------|
+| 1 | Tenant sem MP conectado não gera cobrança (mensagem orientando Configurações → Pagamentos). |
+| 2 | Tenant com MP conectado gera preferência e recebe `preference_id` + URLs. |
+| 3 | Fatura exclusiva MP: colunas `gateway`, `gateway_reference_id`, `gateway_metadata` coerentes. |
+| 4 | Fatura com cobrança Asaas: colunas Asaas intactas; só metadados MP mesclados. |
+| 5 | Link `init_point` abre checkout Mercado Pago (sandbox ou produção conforme OAuth). |
+| 6 | Fatura `paid` não permite nova cobrança MP. |
+| 7 | Fluxo Asaas (criar/editar/cancelar fatura Asaas) continua igual. |
+| 8 | Após desconectar MP, nova geração falha até reconectar. |
+| 9 | Segundo clique sem `regenerate` reutiliza preferência (idempotência / cache). |
+| 10 | Página pública exibe bloco **Pagar com Mercado Pago** quando houver `mercado_pago_init_point`. |
+
+### Arquivos principais
+
+- `packages/backend/src/services/mercadoPagoCustomerInvoicePaymentService.ts`
+- `packages/backend/src/modules/gateways/mercado_pago/client/mercadoPagoCheckoutPreferencesApi.ts`
+- `packages/backend/src/controllers/customerInvoicesController.ts` — `postCustomerInvoiceMercadoPagoCreatePayment`
+- `packages/backend/src/routes/customerInvoicesRoutes.ts`
+- `packages/backend/src/controllers/publicCustomerInvoicesController.ts` — `payment_urls.mercado_pago_init_point`
+- `packages/backend/src/services/publicPayPayloadMeta.ts`
+- `src/pages/CustomerInvoiceDetail.tsx`, `src/pages/CustomerInvoicePay.tsx`, `src/services/customerInvoices.ts`
+
+---
+
+## 12. Fase 4 — Webhook e conciliação (implementado)
+
+### Endpoint
+
+| Método | Rota | Autenticação |
+|--------|------|----------------|
+| `POST` | `/api/integrations/mercado-pago/webhook` | Público (sem JWT). `MERCADO_PAGO_GATEWAY_ENABLED` deve estar ativo; caso contrário 404. |
+| `POST` | `/api/webhooks/mercado-pago` | Alias do mesmo handler (preferências antigas com `notification_url` legada). |
+
+Corpo típico (IPN v1): `type`, `action`, `data.id` (id do **pagamento**), `user_id` (vendedor / collector), `id` (id da notificação, idempotência). Modo legado: query `?topic=payment&id=...` (exige `user_id` no corpo em outro fluxo; sem collector o processamento é ignorado com log seguro).
+
+### Fluxo
+
+1. Extrair `payment_id` e `user_id` (ignorar evento sem `payment_id`).
+2. Resolver `tenant_id` por `credentials.mercado_pago_user_id` = `user_id` do webhook.
+3. `INSERT` em `payment_events` (`gateway = mercado_pago`, `event_id` estável, `reference_id` = `payment_id`, `payload` bruto). Duplicata → 200 (idempotência).
+4. `GET https://api.mercadopago.com/v1/payments/{id}` com `access_token` OAuth do tenant (fonte da verdade).
+5. Conferir `collector_id` da API com `user_id` do webhook, quando ambos presentes.
+6. Resolver fatura: `external_reference` / `metadata.invoice_id` (UUID) ou `order.id` (preference) vs `gateway_metadata.mercado_pago_checkout.preference_id` / `gateway_reference_id` (exclusivo MP).
+7. Mapear `payment.status` → status interno (ver tabela abaixo); aplicar `canTransition` (anti-regressão).
+8. Gravar `gateway_metadata.mercado_pago_payment` (snapshot), `paid_by_gateway`, `mercado_pago_gateway_status` quando fatura principal é Asaas e quitação veio do MP.
+9. Marcar `payment_events.processed` / `processed_result`.
+
+### Mapeamento de status (Mercado Pago → interno)
+
+| Status MP (GET payment) | Status interno (`customer_invoices.status`) |
+|-------------------------|---------------------------------------------|
+| `approved` | `paid` |
+| `pending` | `waiting_payment` |
+| `in_process`, `authorized` | `processing` |
+| `rejected` | `failed` |
+| `cancelled`, `canceled` | `cancelled` |
+| `refunded`, `charged_back` | `refunded` |
+| `expired` | `cancelled` |
+
+Normalização central: `normalizeGatewayStatus('mercado_pago', ...)`.
+
+### Fatura Asaas + pagamento MP
+
+- Colunas `gateway` e `gateway_reference_id` do **Asaas não são alteradas**.
+- Coluna `gateway_status` **não** recebe status MP (permanece útil para debug Asaas); status MP em `gateway_metadata.mercado_pago_gateway_status` e snapshot em `mercado_pago_payment`.
+- Em pagamento aprovado: `paid_by_gateway = mercado_pago`, `status` da fatura = `paid`, `paid_at` da API MP.
+- `runPostPaidCleanupForCustomerInvoice` usa referência da tentativa MP (preference) ou `payment_id` para superseded/cancel das outras tentativas (ex.: cobrança Asaas pendente).
+
+### Idempotência
+
+- Chave: `(gateway, event_id)` em `payment_events` (mesmo padrão Asaas).
+- `event_id`: preferencialmente `mp_notif_{id}` do corpo; fallback `mp_pay_{payment_id}_{action}`.
+- Falha após insert: `DELETE` do evento para permitir retry (5xx ao Mercado Pago).
+
+### Segurança
+
+- Não registrar tokens no log.
+- **Fase 6:** validação **`x-signature`** (HMAC-SHA256, manifest oficial) quando `MERCADO_PAGO_WEBHOOK_SECRET` está definido; sem segredo, modo compatível com **warn** explícito por requisição. Respostas: `401` se segredo configurado e assinatura ausente/inválida; `400` se `payment_id` com formato inválido. Header **`x-request-id`** repassado em logs e billing.
+- Após assinatura OK: confiança adicional na **consulta autenticada** GET payment + checagem de `collector_id` / tenant.
+- Payload inválido ou tenant/collector incompatível: não altera fatura; evento marcado processado com motivo quando aplicável.
+
+### Limitações
+
+- Webhook sem `user_id` (e sem modo suportado para resolver tenant) é ignorado.
+- Sem `MERCADO_PAGO_WEBHOOK_SECRET`, o POST não prova origem MP — configurar URL HTTPS (`PUBLIC_API_URL`) **e** o segredo do Webhook em produção.
+
+### Checklist de teste (Fase 4)
+
+| # | Caso |
+|---|------|
+| 1 | Evento `approved` → fatura `paid`, `paid_at` preenchido. |
+| 2 | Evento duplicado (mesmo `event_id`) não altera duas vezes. |
+| 3 | `rejected` → `failed` (sem marcar pago). |
+| 4 | `pending` / `in_process` → não `paid`. |
+| 5 | Fatura com Asaas principal paga pelo MP: refs Asaas preservadas; metadados MP preenchidos. |
+| 6 | Asaas (outros fluxos) inalterado. |
+| 7 | Payload sem `payment_id` não altera fatura. |
+
+### Arquivos principais (Fase 4)
+
+- `packages/backend/src/services/mercadoPagoWebhookService.ts`
+- `packages/backend/src/modules/gateways/mercado_pago/client/mercadoPagoPaymentsApi.ts`
+- `packages/backend/src/controllers/mercadoPagoIntegrationController.ts` — `postMercadoPagoWebhook`
+- `packages/backend/src/routes/mercadoPagoIntegrationRoutes.ts`
+- `packages/backend/src/modules/payments/webhook/statusNormalizer.ts` — ramo `mercado_pago`
+- `packages/backend/src/config/mercadoPagoGatewayEnv.ts` — URL de notificação e env do webhook secret
+- `packages/backend/src/services/mercadoPagoWebhookSignature.ts` — **Fase 6** validação `x-signature`
+
+### Documentação operacional (pós–Fase 4)
+
+- Guia de produção, variáveis, `notification_url`, testes, diagnóstico e checklist: **`docs/MERCADO_PAGO_OPERACIONAL.md`** (inclui **§7 Fase 6** e **§9 checklist de assinatura**).

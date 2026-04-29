@@ -335,7 +335,15 @@ const FinancialUnifiedAccountsPage = () => {
   };
 
   return (
-    <div className={cn("space-y-6", financeMobilePageBottomPad)}>
+    <div
+      className={cn(
+        "space-y-6",
+        isMobile && !(open || transferOpen || filterOpen) ? financeMobilePageBottomPad : null,
+        isMobile && (open || transferOpen || filterOpen)
+          ? "max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+          : null
+      )}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Bancos e contas</h2>
@@ -360,7 +368,12 @@ const FinancialUnifiedAccountsPage = () => {
           <Button type="button" variant="outline" onClick={() => setTransferOpen(true)}>
             Transferir
           </Button>
-          <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+          <Popover
+            open={filterOpen && !isMobile}
+            onOpenChange={(next) => {
+              if (!isMobile) setFilterOpen(next);
+            }}
+          >
             <PopoverTrigger asChild>
               <Button
                 type="button"
@@ -585,8 +598,9 @@ const FinancialUnifiedAccountsPage = () => {
           <SheetContent
             side="bottom"
             className={cn(
-              "max-h-[88dvh] flex flex-col gap-0 p-0 rounded-t-2xl",
-              isMobile ? "h-auto max-w-none w-full" : ""
+              "flex w-full max-w-none flex-col gap-0 rounded-t-2xl border-t bg-background p-0",
+              "max-h-[min(90dvh,calc(100dvh-env(safe-area-inset-bottom)))] min-h-[38dvh]",
+              "pb-[env(safe-area-inset-bottom)]"
             )}
           >
             <SheetHeader className="px-5 pt-4 pb-2 text-left space-y-1 border-b">

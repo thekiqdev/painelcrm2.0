@@ -60,5 +60,17 @@ export function normalizeGatewayStatus(
     if (upper === 'PENDING' || upper.startsWith('AWAITING_')) return 'pending';
   }
 
+  /** Mercado Pago — status em GET /v1/payments/:id (normalmente minúsculos). */
+  if (gatewayKey === 'mercado_pago') {
+    const lower = externalStatus.trim().toLowerCase();
+    if (lower === 'approved') return 'paid';
+    if (lower === 'pending') return 'waiting_payment';
+    if (lower === 'in_process' || lower === 'authorized') return 'processing';
+    if (lower === 'rejected') return 'failed';
+    if (lower === 'cancelled' || lower === 'canceled') return 'cancelled';
+    if (lower === 'refunded' || lower === 'charged_back') return 'refunded';
+    if (lower === 'expired') return 'cancelled';
+  }
+
   return 'pending';
 }

@@ -49,6 +49,12 @@
     --sidebar-border: 220 13% 91%;
 
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Desktop /chat: altura útil = 100dvh - topbar - offset + extra (alinhar base ao padding do main). */
+    --app-topbar-height: 5.5rem;
+    --chat-page-offset: 0rem;
+    /* Compensa folga inferior (~padding md:pb-6 do main parcialmente absorvida pelo -m-6). Afinar 0.5–1.5rem se preciso. */
+    --chat-extra-height: 1rem;
   }
 
   /* Dark: superfícies / profundidade inspiradas na landing (.landing-page); primária = azul PainelCRM (#2563eb) */

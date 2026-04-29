@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { AuthRequest } from '../middleware/auth.js';
 import { requireTenantId } from '../middleware/auth.js';
 import { getEffectiveModulePermissions, ModulePermissionError } from '../services/modulePermissionsService.js';
-import { getUserRoleInTenant } from '../services/modulePermissionsService.js';
+import { hasSettingsView, hasSettingsEdit } from '../services/agendaAccessControl.js';
 import {
   assertUserBelongsToTenant,
   ensureTenantAvailabilityRow,
@@ -18,6 +18,10 @@ import {
 const MODULE = 'agenda' as const;
 
 function tenantRowToApi(row: Awaited<ReturnType<typeof getTenantAvailabilitySettingsRow>>) {
+  const cap =
+    typeof row.capacity_per_slot === 'number' && Number.isFinite(row.capacity_per_slot)
+      ? Math.min(20, Math.max(1, Math.floor(row.capacity_per_slot)))
+      : 1;
   return {
     timezone: row.timezone,
     slot_duration_minutes: row.slot_duration_minutes,
@@ -29,10 +33,19 @@ function tenantRowToApi(row: Awaited<ReturnType<typeof getTenantAvailabilitySett
     work_end_time: String(row.work_end_time).slice(0, 5),
     break_start_time: row.break_start_time ? String(row.break_start_time).slice(0, 5) : null,
     break_end_time: row.break_end_time ? String(row.break_end_time).slice(0, 5) : null,
+    capacity_per_slot: cap,
+    block_holidays: row.block_holidays !== false,
+    holiday_country_code: row.holiday_country_code || 'BR',
+    holiday_state_code: row.holiday_state_code,
+    holiday_city: row.holiday_city,
   };
 }
 
 function userRowToApi(row: NonNullable<Awaited<ReturnType<typeof getUserAvailabilitySettingsForApi>>['row']>) {
+  const cap =
+    typeof row.capacity_per_slot === 'number' && Number.isFinite(row.capacity_per_slot)
+      ? Math.min(20, Math.max(1, Math.floor(row.capacity_per_slot)))
+      : 1;
   return {
     timezone: row.timezone,
     slot_duration_minutes: row.slot_duration_minutes,
@@ -44,6 +57,7 @@ function userRowToApi(row: NonNullable<Awaited<ReturnType<typeof getUserAvailabi
     work_end_time: String(row.work_end_time).slice(0, 5),
     break_start_time: row.break_start_time ? String(row.break_start_time).slice(0, 5) : null,
     break_end_time: row.break_end_time ? String(row.break_end_time).slice(0, 5) : null,
+    capacity_per_slot: cap,
     is_active: row.is_active,
   };
 }
@@ -60,6 +74,7 @@ function resolvedToApi(r: ResolvedAvailabilitySettings) {
     work_end_time: r.work_end_time.slice(0, 5),
     break_start_time: r.break_start_time,
     break_end_time: r.break_end_time,
+    capacity_per_slot: r.capacity_per_slot,
     source: r.source,
   };
 }
@@ -70,17 +85,6 @@ async function assertAgendaView(req: AuthRequest): Promise<void> {
   if (p?.can_view === false) {
     throw new ModulePermissionError(403, 'Sem permissão para a Agenda');
   }
-}
-
-async function canEditAvailabilityForUser(actorUserId: string, targetUserId: string): Promise<boolean> {
-  if (actorUserId === targetUserId) return true;
-  const role = await getUserRoleInTenant(actorUserId);
-  return role === 'admin' || role === 'manager';
-}
-
-async function assertTenantAvailabilityAdmin(actorUserId: string): Promise<boolean> {
-  const role = await getUserRoleInTenant(actorUserId);
-  return role === 'admin' || role === 'manager';
 }
 
 const tenantPatchSchema = z.object({
@@ -94,6 +98,11 @@ const tenantPatchSchema = z.object({
   work_end_time: z.string().regex(/^\d{1,2}:\d{2}$/).optional(),
   break_start_time: z.string().regex(/^\d{1,2}:\d{2}$/).nullable().optional(),
   break_end_time: z.string().regex(/^\d{1,2}:\d{2}$/).nullable().optional(),
+  block_holidays: z.boolean().optional(),
+  holiday_country_code: z.string().min(2).max(8).optional(),
+  holiday_state_code: z.string().max(8).nullable().optional(),
+  holiday_city: z.string().max(120).nullable().optional(),
+  capacity_per_slot: z.number().int().min(1).max(20).optional(),
 });
 
 const userPatchSchema = tenantPatchSchema.extend({
@@ -107,6 +116,10 @@ export async function getTenantAvailabilitySettingsHandler(req: AuthRequest, res
   if (!tenantId || !req.userId) return;
   try {
     await assertAgendaView(req);
+    if (!(await hasSettingsView(req.userId!, req))) {
+      res.status(403).json({ error: 'Sem permissão para ver a disponibilidade da empresa.' });
+      return;
+    }
     const row = await getTenantAvailabilitySettingsRow(tenantId);
     res.json({ settings: tenantRowToApi(row) });
   } catch (e) {
@@ -130,9 +143,11 @@ export async function patchTenantAvailabilitySettingsHandler(req: AuthRequest, r
   }
   try {
     await assertAgendaView(req);
-    const ok = await assertTenantAvailabilityAdmin(req.userId);
-    if (!ok) {
-      res.status(403).json({ error: 'Apenas administrador ou gestor pode alterar a disponibilidade geral.' });
+    if (!(await hasSettingsEdit(req.userId!, req))) {
+      res.status(403).json({
+        error:
+          'Apenas administrador, gestor ou permissão de edição em Configurações pode alterar a disponibilidade geral.',
+      });
       return;
     }
     const { weekdays, ...rest } = parsed.data;
@@ -160,8 +175,7 @@ export async function getUserAvailabilitySettingsHandler(req: AuthRequest, res: 
   try {
     await assertAgendaView(req);
     if (targetUserId !== req.userId) {
-      const allow = await canEditAvailabilityForUser(req.userId, targetUserId);
-      if (!allow) {
+      if (!(await hasSettingsEdit(req.userId!, req))) {
         res.status(403).json({ error: 'Sem permissão para ver a disponibilidade deste utilizador.' });
         return;
       }
@@ -201,10 +215,11 @@ export async function patchUserAvailabilitySettingsHandler(req: AuthRequest, res
   const targetUserId = parsed.data.user_id ?? req.userId!;
   try {
     await assertAgendaView(req);
-    const canEdit = await canEditAvailabilityForUser(req.userId, targetUserId);
-    if (!canEdit) {
-      res.status(403).json({ error: 'Sem permissão para editar esta disponibilidade.' });
-      return;
+    if (targetUserId !== req.userId) {
+      if (!(await hasSettingsEdit(req.userId!, req))) {
+        res.status(403).json({ error: 'Sem permissão para editar a disponibilidade deste utilizador.' });
+        return;
+      }
     }
     const inTenant = await assertUserBelongsToTenant(targetUserId, tenantId);
     if (!inTenant) {

@@ -2,6 +2,7 @@ import { apiClient } from '@/integrations/api/client';
 import type { CommunicationProvider } from '@/types/communication';
 import { DEFAULT_COMMUNICATION_PROVIDER } from '@/types/communication';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import { chatAvatarDebugLog } from '@/lib/chatAvatarDebug';
 
 /** Etapa 4 — mesmos valores persistidos em `chat_instances.metadata`. */
 export type InstanceSyncMode = 'none' | 'days_7' | 'days_30' | 'days_90' | 'full';
@@ -72,6 +73,8 @@ export interface ChatConversation {
   avatarUrl?: string | null;
   /** Espelho opcional da coluna/API `avatar_url` (só o que veio no payload; pode ser null se a foto veio só do metadata). */
   avatar_url?: string | null;
+  /** Foto do registo `communication_contacts` (quando a API expõe separado da coluna da conversa). */
+  communication_avatar_url?: string | null;
   /** Identidade canônica (backend / Postgres) — opcional em payloads antigos (camelCase). */
   canonicalChatId?: string | null;
   canonicalPhone?: string | null;
@@ -113,6 +116,10 @@ export interface ChatConversation {
   last_assignment_reason?: string | null;
   assignee_email?: string | null;
   assignee_display?: string | null;
+  /** Fase 5 SLA — quando exposto pela API */
+  first_response_at?: string | null;
+  last_customer_message_at?: string | null;
+  last_agent_message_at?: string | null;
 }
 
 export interface ConversationProfile {
@@ -171,6 +178,7 @@ export function normalizeConversation(raw: any): ChatConversation {
   const trimStr = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
   const avatarColumn = trimStr(raw?.avatar_url);
+  const communicationAvatarColumn = trimStr(raw?.communication_avatar_url);
 
   const avatarMerged =
     avatarColumn ||
@@ -183,6 +191,16 @@ export function normalizeConversation(raw: any): ChatConversation {
     (typeof metadata.whatsapp_profile_photo === 'string' ? metadata.whatsapp_profile_photo : null) ||
     null;
   const avatarUrl = chatAvatarUrlForImgSrc(avatarMerged);
+
+  if (avatarMerged) {
+    chatAvatarDebugLog('normalizeConversation', {
+      conversationId: raw?.id ?? null,
+      raw_avatar_url: avatarColumn,
+      raw_communication_avatar_url: communicationAvatarColumn,
+      avatarMergedPrefix: avatarMerged.length > 120 ? `${avatarMerged.slice(0, 120)}…` : avatarMerged,
+      avatarUrlAfterBrowserPolicy: avatarUrl,
+    });
+  }
 
   const canonical_chat_id = trimStr(raw?.canonical_chat_id);
   const canonical_phone = trimStr(raw?.canonical_phone);
@@ -208,6 +226,7 @@ export function normalizeConversation(raw: any): ChatConversation {
     phoneNumber: raw.phone_number ?? null,
     avatarUrl,
     avatar_url: chatAvatarUrlForImgSrc(avatarColumn),
+    communication_avatar_url: chatAvatarUrlForImgSrc(communicationAvatarColumn),
     canonicalChatId: canonical_chat_id,
     canonicalPhone: canonical_phone,
     displayName: display_name,
@@ -244,6 +263,9 @@ export function normalizeConversation(raw: any): ChatConversation {
     last_assignment_reason: raw.last_assignment_reason ?? null,
     assignee_email: raw.assignee_email ?? null,
     assignee_display: raw.assignee_display ?? null,
+    first_response_at: raw.first_response_at ?? null,
+    last_customer_message_at: raw.last_customer_message_at ?? null,
+    last_agent_message_at: raw.last_agent_message_at ?? null,
   };
 }
 
@@ -339,6 +361,155 @@ export function normalizeChatMessage(raw: any): ChatMessage {
     message_contract: sanitizeMessageContract(contract),
   };
 }
+
+export type ChatOperationalMetrics = {
+  open_total: number;
+  pending_attendance: number;
+  in_progress: number;
+  closed_today: number;
+  avg_first_response_sec: number | null;
+  avg_next_reply_sec: number | null;
+  by_queue: Array<{ queue_id: string; name: string; n: number }>;
+  by_queue_active: Array<{ queue_id: string; name: string; n: number }>;
+  by_assignee: Array<{ user_id: string; email: string; display: string; n: number }>;
+  by_assignee_active: Array<{ user_id: string; email: string; display: string; n: number }>;
+};
+
+export type ChatAutomationSettingsDto = {
+  tenant_id: string;
+  automation_enabled: boolean;
+  auto_status_from_customer: boolean;
+  auto_status_from_agent: boolean;
+  distribution_enabled: boolean;
+  sla_first_response_minutes: number | null;
+  sla_next_response_minutes: number | null;
+  inactivity_reset_minutes: number | null;
+  sla_alerts_enabled?: boolean;
+  sla_risk_percent?: number | null;
+  updated_at: string;
+};
+
+export type ChatAutomationRuleDto = {
+  id: string;
+  tenant_id: string;
+  name?: string | null;
+  priority: number;
+  is_active: boolean;
+  match_type: 'keyword_body' | 'client_tag' | 'client_new' | 'client_existing';
+  pattern: string;
+  action: 'set_queue' | 'set_team' | 'set_priority' | 'assign_user';
+  target_queue_id: string | null;
+  target_team_id: string | null;
+  target_user_id?: string | null;
+  priority_value: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type ChatAutomationRuleInput = {
+  name?: string | null;
+  priority?: number;
+  is_active?: boolean;
+  match_type: 'keyword_body' | 'client_tag' | 'client_new' | 'client_existing';
+  pattern: string;
+  action: 'set_queue' | 'set_team' | 'set_priority' | 'assign_user';
+  target_queue_id?: string | null;
+  target_team_id?: string | null;
+  target_user_id?: string | null;
+  priority_value?: string | null;
+};
+
+export type ChatQueueRowDto = {
+  id: string;
+  tenant_id?: string;
+  name: string;
+  description?: string | null;
+  color?: string | null;
+  is_active: boolean;
+  sla_first_response_minutes?: number | null;
+  sla_next_response_minutes?: number | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type ChatOperationsDashboardDto = {
+  summary: {
+    open: number;
+    pending: number;
+    in_progress: number;
+    waiting_customer: number;
+    closed_today: number;
+    sla_at_risk: number;
+    sla_breached: number;
+    avg_first_response_sec: number | null;
+    avg_next_reply_sec: number | null;
+  };
+  sla_context: {
+    risk_percent: number;
+    tenant_first_minutes: number | null;
+    tenant_next_minutes: number | null;
+  };
+  by_queue: Array<{
+    queue_id: string;
+    name: string;
+    open_count: number;
+    sla_first_minutes: number | null;
+    sla_next_minutes: number | null;
+  }>;
+  by_assignee: Array<unknown>;
+  attendees: Array<{
+    user_id: string;
+    display: string;
+    presence: 'online' | 'offline';
+    in_progress: number;
+    delayed: number;
+    avg_first_response_sec: number | null;
+  }>;
+  automation_logs?: Array<ChatAutomationLogDto>;
+};
+
+export type ChatAutomationLogDto = {
+  id: string;
+  conversation_id: string;
+  rule_id: string | null;
+  event_type: string;
+  action_type: string;
+  result: string;
+  error_message: string | null;
+  metadata?: unknown;
+  created_at: string;
+};
+
+export type ChatQueueDistributionRowDto = {
+  queue_id: string;
+  queue_name: string;
+  distribution_row_id: string | null;
+  team_id: string | null;
+  strategy: string | null;
+  auto_assign: boolean | null;
+  distribution_updated_at?: string | null;
+};
+
+/** Fase 8 — chatbot básico (`chat_bot_rules`). */
+export type ChatBotRuleDto = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  type: 'welcome_message' | 'out_of_hours' | 'menu' | 'keyword';
+  is_active: boolean;
+  trigger_config: Record<string, unknown>;
+  action_config: Record<string, unknown>;
+  priority: number;
+};
+
+export type ChatBotRuleInput = {
+  name: string;
+  type: ChatBotRuleDto['type'];
+  is_active?: boolean;
+  trigger_config?: Record<string, unknown>;
+  action_config?: Record<string, unknown>;
+  priority?: number;
+};
 
 export const chatService = {
   async listInstances(): Promise<ChatInstance[]> {
@@ -455,6 +626,7 @@ export const chatService = {
     inboxScope?: 'owner' | 'tenant';
   }): Promise<{
     queue: number;
+    team: number;
     mine: number;
     unassigned: number;
     closed: number;
@@ -542,7 +714,13 @@ export const chatService = {
 
   async syncConversationMessages(
     conversationId: string,
-    options?: { limit?: number; syncMode?: InstanceSyncMode; force?: boolean }
+    options?: {
+      limit?: number;
+      syncMode?: InstanceSyncMode;
+      force?: boolean;
+      /** Histórico amplo (respeita sync_mode da instância se não enviar syncMode). Omitido = sync leve no backend. */
+      fullHistory?: boolean;
+    }
   ): Promise<{
     synced?: number;
     totalReturned?: number;
@@ -551,17 +729,39 @@ export const chatService = {
     sync_trigger_source?: string;
     identity_refresh_skipped?: boolean;
     skipped_existing_remote?: number;
+    conversation?: ChatConversation;
+    chat_sync_summary?: {
+      messages_requested?: number;
+      messages_returned?: number;
+      messages_saved?: number;
+      messages_skipped_existing?: number;
+      identity_refreshed?: boolean;
+      identity_skipped_cooldown?: boolean;
+      contacts_called?: number;
+      chat_find_called?: number;
+      refresh_identity_endpoint_called?: boolean;
+      duration_ms?: number;
+    };
     [key: string]: unknown;
   }> {
     const response = await apiClient.post(`/api/chat/conversations/${conversationId}/messages/sync`, {
       limit: options?.limit,
       ...(options?.syncMode ? { syncMode: options.syncMode } : {}),
       ...(options?.force === true ? { force: true } : {}),
+      ...(options?.fullHistory === true ? { fullHistory: true } : {}),
     });
     if (response.error) {
       throw new Error(response.error);
     }
-    return (response.data ?? {}) as {
+    const raw = (response.data ?? {}) as Record<string, unknown>;
+    const convRaw = raw.conversation;
+    return {
+      ...raw,
+      conversation:
+        convRaw && typeof convRaw === 'object'
+          ? normalizeConversation(convRaw)
+          : undefined,
+    } as {
       synced?: number;
       totalReturned?: number;
       skipped?: boolean;
@@ -569,6 +769,19 @@ export const chatService = {
       sync_trigger_source?: string;
       identity_refresh_skipped?: boolean;
       skipped_existing_remote?: number;
+      conversation?: ChatConversation;
+      chat_sync_summary?: {
+        messages_requested?: number;
+        messages_returned?: number;
+        messages_saved?: number;
+        messages_skipped_existing?: number;
+        identity_refreshed?: boolean;
+        identity_skipped_cooldown?: boolean;
+        contacts_called?: number;
+        chat_find_called?: number;
+        refresh_identity_endpoint_called?: boolean;
+        duration_ms?: number;
+      };
       [key: string]: unknown;
     };
   },
@@ -606,6 +819,69 @@ export const chatService = {
     });
     if (response.error) {
       throw new Error(response.error);
+    }
+    return response.data;
+  },
+
+  /** Agenda + Meet: cria compromisso imediato e envia link no WhatsApp (quando disponível). */
+  async createMeetNowFromChat(
+    conversationId: string,
+    body?: { duration_minutes?: number; title?: string },
+  ): Promise<{
+    appointment: Record<string, unknown>;
+    meet_link: string | null;
+    message_sent: boolean;
+    message_error: string | null;
+    warnings?: string[];
+  }> {
+    const response = await apiClient.post<{
+      appointment: Record<string, unknown>;
+      meet_link: string | null;
+      message_sent: boolean;
+      message_error: string | null;
+      warnings?: string[];
+    }>(`/api/chat/conversations/${conversationId}/create-meet-now`, body ?? {});
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    if (!response.data) {
+      throw new Error('Resposta vazia');
+    }
+    return response.data;
+  },
+
+  /** Agenda: agendamento futuro com confirmação opcional no chat. */
+  async scheduleAppointmentFromChat(
+    conversationId: string,
+    body: {
+      title: string;
+      starts_at: string;
+      ends_at: string;
+      type?: string;
+      description?: string | null;
+      create_google_event?: boolean;
+      create_meet?: boolean;
+      send_chat_confirmation?: boolean;
+    },
+  ): Promise<{
+    appointment: Record<string, unknown>;
+    meet_link: string | null;
+    message_sent: boolean;
+    message_error: string | null;
+    warnings?: string[];
+  }> {
+    const response = await apiClient.post<{
+      appointment: Record<string, unknown>;
+      meet_link: string | null;
+      message_sent: boolean;
+      message_error: string | null;
+      warnings?: string[];
+    }>(`/api/chat/conversations/${conversationId}/schedule-appointment`, body);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    if (!response.data) {
+      throw new Error('Resposta vazia');
     }
     return response.data;
   },
@@ -717,6 +993,169 @@ export const chatService = {
     }
     const data = response.data || { avatarUrl: null };
     return { avatarUrl: chatAvatarUrlForImgSrc(data.avatarUrl) };
+  },
+
+  /** Fase 6 — métricas operacionais */
+  async getMetrics(): Promise<ChatOperationalMetrics> {
+    const response = await apiClient.get<ChatOperationalMetrics>('/api/chat/metrics');
+    if (response.error) throw new Error(response.error);
+    return (
+      response.data ?? {
+        open_total: 0,
+        pending_attendance: 0,
+        in_progress: 0,
+        closed_today: 0,
+        avg_first_response_sec: null,
+        avg_next_reply_sec: null,
+        by_queue: [],
+        by_queue_active: [],
+        by_assignee: [],
+        by_assignee_active: [],
+      }
+    );
+  },
+
+  /** Fase 7 — painel operacional (mesmo payload que o cartão «Atendimento» no Chat). */
+  async getOperationsDashboard(): Promise<ChatOperationsDashboardDto> {
+    const response = await apiClient.get<ChatOperationsDashboardDto>('/api/chat/operations-dashboard');
+    if (response.error) throw new Error(response.error);
+    return (
+      response.data ?? {
+        summary: {
+          open: 0,
+          pending: 0,
+          in_progress: 0,
+          waiting_customer: 0,
+          closed_today: 0,
+          sla_at_risk: 0,
+          sla_breached: 0,
+          avg_first_response_sec: null,
+          avg_next_reply_sec: null,
+        },
+        sla_context: { risk_percent: 80, tenant_first_minutes: null, tenant_next_minutes: null },
+        by_queue: [],
+        by_assignee: [],
+        attendees: [],
+        automation_logs: [],
+      }
+    );
+  },
+
+  async listQueues(): Promise<{ items: ChatQueueRowDto[] }> {
+    const response = await apiClient.get<{ items: ChatQueueRowDto[] }>('/api/chat/queues');
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { items: [] };
+  },
+
+  async createQueue(payload: {
+    name: string;
+    description?: string | null;
+    color?: string | null;
+  }): Promise<ChatQueueRowDto> {
+    const response = await apiClient.post<ChatQueueRowDto>('/api/chat/queues', payload);
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Falha ao criar fila');
+    return response.data;
+  },
+
+  async patchQueue(
+    id: string,
+    patch: Partial<{
+      name: string;
+      description: string | null;
+      color: string | null;
+      is_active: boolean;
+      sla_first_response_minutes: number | null;
+      sla_next_response_minutes: number | null;
+    }>,
+  ): Promise<ChatQueueRowDto> {
+    const response = await apiClient.patch<ChatQueueRowDto>(`/api/chat/queues/${id}`, patch);
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Falha ao atualizar fila');
+    return response.data;
+  },
+
+  async getAutomationSettings(): Promise<ChatAutomationSettingsDto> {
+    const response = await apiClient.get<ChatAutomationSettingsDto>('/api/chat/automation/settings');
+    if (response.error) throw new Error(response.error);
+    return response.data as ChatAutomationSettingsDto;
+  },
+
+  async patchAutomationSettings(patch: Partial<ChatAutomationSettingsDto>): Promise<ChatAutomationSettingsDto> {
+    const response = await apiClient.patch<ChatAutomationSettingsDto>('/api/chat/automation/settings', patch);
+    if (response.error) throw new Error(response.error);
+    return response.data as ChatAutomationSettingsDto;
+  },
+
+  async listAutomationRules(): Promise<{ items: ChatAutomationRuleDto[] }> {
+    const response = await apiClient.get<{ items: ChatAutomationRuleDto[] }>('/api/chat/automation/rules');
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { items: [] };
+  },
+
+  async createAutomationRule(body: ChatAutomationRuleInput): Promise<ChatAutomationRuleDto> {
+    const response = await apiClient.post<ChatAutomationRuleDto>('/api/chat/automation/rules', body);
+    if (response.error) throw new Error(response.error);
+    return response.data as ChatAutomationRuleDto;
+  },
+
+  async patchAutomationRule(id: string, patch: Partial<ChatAutomationRuleInput>): Promise<ChatAutomationRuleDto> {
+    const response = await apiClient.patch<ChatAutomationRuleDto>(`/api/chat/automation/rules/${id}`, patch);
+    if (response.error) throw new Error(response.error);
+    return response.data as ChatAutomationRuleDto;
+  },
+
+  async listAutomationLogs(limit = 40): Promise<{ items: ChatAutomationLogDto[] }> {
+    const response = await apiClient.get<{ items: ChatAutomationLogDto[] }>(
+      `/api/chat/automation/logs?limit=${encodeURIComponent(String(limit))}`,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { items: [] };
+  },
+
+  async deleteAutomationRule(id: string): Promise<void> {
+    const response = await apiClient.delete(`/api/chat/automation/rules/${id}`);
+    if (response.error) throw new Error(response.error);
+  },
+
+  async listQueueDistribution(): Promise<{ items: ChatQueueDistributionRowDto[] }> {
+    const response = await apiClient.get<{ items: ChatQueueDistributionRowDto[] }>(
+      '/api/chat/automation/queue-distribution'
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { items: [] };
+  },
+
+  async putQueueDistribution(
+    queueId: string,
+    body: { team_id: string | null; strategy: 'none' | 'round_robin' | 'least_open'; auto_assign: boolean }
+  ): Promise<unknown> {
+    const response = await apiClient.put(`/api/chat/automation/queues/${queueId}/distribution`, body);
+    if (response.error) throw new Error(response.error);
+    return response.data;
+  },
+
+  async listBotRules(): Promise<{ items: ChatBotRuleDto[] }> {
+    const response = await apiClient.get<{ items: ChatBotRuleDto[] }>('/api/chat/bot-rules');
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { items: [] };
+  },
+
+  async createBotRule(body: ChatBotRuleInput): Promise<ChatBotRuleDto> {
+    const response = await apiClient.post<ChatBotRuleDto>('/api/chat/bot-rules', body);
+    if (response.error) throw new Error(response.error);
+    return response.data as ChatBotRuleDto;
+  },
+
+  async patchBotRule(id: string, patch: Partial<ChatBotRuleInput>): Promise<ChatBotRuleDto> {
+    const response = await apiClient.patch<ChatBotRuleDto>(`/api/chat/bot-rules/${id}`, patch);
+    if (response.error) throw new Error(response.error);
+    return response.data as ChatBotRuleDto;
+  },
+
+  async deleteBotRule(id: string): Promise<void> {
+    const response = await apiClient.delete(`/api/chat/bot-rules/${id}`);
+    if (response.error) throw new Error(response.error);
   },
 };
 

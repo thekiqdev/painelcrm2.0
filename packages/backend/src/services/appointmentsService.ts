@@ -1,4 +1,5 @@
 import { pool } from '../utils/db.js';
+import { loadTypeLabelsForTenant } from './appointmentTypeSettingsService.js';
 import {
   createEvent,
   updateCalendarEvent,
@@ -420,6 +421,7 @@ export async function getAppointmentsReportsSummary(params: {
     visit: 'Visita',
     other: 'Outro',
   };
+  const customTypeLabels = await loadTypeLabelsForTenant(params.tenantId);
   const outcomeLabel: Record<string, string> = {
     success: 'Sucesso',
     no_show: 'Não compareceu',
@@ -455,7 +457,7 @@ export async function getAppointmentsReportsSummary(params: {
     })),
     by_type: byType.rows.map((r) => ({
       type: r.type,
-      label: typeLabel[r.type] ?? r.type,
+      label: customTypeLabels[r.type] ?? typeLabel[r.type] ?? r.type,
       total: r.total,
       done: r.done,
     })),
@@ -801,6 +803,8 @@ export async function createAppointment(
     reminders?: GoogleCalendarReminder[] | null;
     send_reminder_to_client?: boolean;
     recurrence?: AppointmentRecurrenceInput | null;
+    /** Quando true, não grava `agenda_appointment_created` (ex.: origem chat com evento próprio). */
+    skip_initial_client_timeline?: boolean;
   },
 ): Promise<{ primary: AppointmentRow; createdCount: number; warnings: string[] }> {
   if (data.client_id && data.lead_id) {
@@ -937,7 +941,7 @@ export async function createAppointment(
       );
     }
 
-    if (row.client_id) {
+    if (row.client_id && data.skip_initial_client_timeline !== true) {
       void createClientTimelineEvent({
         tenantId,
         clientId: row.client_id,

@@ -10,6 +10,8 @@ export type InboxNotificationRow = {
   read: boolean;
   read_at: string | null;
   created_at: string;
+  /** Metadados sanitizados (chat, SLA, etc.) — opcional em notificações antigas. */
+  data?: Record<string, unknown>;
 };
 
 export const UPDATES_REFRESH_EVENT = 'painelcrm:notifications-refresh';

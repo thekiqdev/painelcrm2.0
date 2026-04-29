@@ -2,6 +2,8 @@ import * as React from "react"
 import * as AvatarPrimitive from "@radix-ui/react-avatar"
 
 import { cn } from "@/lib/utils"
+import { chatAvatarDebugLogImageError, isChatAvatarDebugEnabled } from "@/lib/chatAvatarDebug"
+import { useChatAvatarProxySrc } from "@/hooks/useChatAvatarProxySrc"
 
 const Avatar = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Root>,
@@ -21,16 +23,19 @@ Avatar.displayName = AvatarPrimitive.Root.displayName
 const AvatarImage = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Image>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
->(({ className, onError, ...props }, ref) => {
-  // Fallback: URLs de CDN WhatsApp devem ser filtradas em `chatAvatarUrlForImgSrc` antes do src.
+>(({ className, onError, src, ...props }, ref) => {
+  const proxyResolved = useChatAvatarProxySrc(typeof src === 'string' ? src : undefined);
+  const displaySrc = typeof src === 'string' && src.includes('/api/chat/avatar-proxy') ? proxyResolved : src
+
   const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
-    // Silenciar erros residuais de domínios WhatsApp (403 anti-hotlink)
     const target = e.target as HTMLImageElement;
-    if (target.src && (target.src.includes('whatsapp.net') || target.src.includes('whatsapp.com'))) {
-      // Erro esperado, não logar
-      return;
+    const srcStr = target.src || '';
+    if (isChatAvatarDebugEnabled()) {
+      chatAvatarDebugLogImageError({
+        srcPrefix: srcStr.length > 200 ? `${srcStr.slice(0, 200)}…` : srcStr,
+        isWhatsappUrl: srcStr.includes('whatsapp.net') || srcStr.includes('whatsapp.com'),
+      });
     }
-    // Para outras imagens, chamar handler original se fornecido
     if (onError) {
       onError(e);
     }
@@ -44,6 +49,7 @@ const AvatarImage = React.forwardRef<
       referrerPolicy="no-referrer"
       onError={handleError}
       {...props}
+      src={displaySrc}
     />
   );
 })

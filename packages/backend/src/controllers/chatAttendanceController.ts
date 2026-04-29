@@ -10,6 +10,12 @@ import { hasAssignedTeamColumn, hasAttendanceColumns } from '../utils/chatAttend
 import { isTenantAdmin } from '../utils/tenant.js';
 import { insertChatTransferRow } from '../services/chatProfessionalService.js';
 import { createNotification } from '../services/notifications.js';
+import {
+  chatInboxHref,
+  loadChatNotificationDisplayContext,
+  loadQueueName,
+  loadUserShortDisplay,
+} from '../services/chatNotificationContext.js';
 
 function respondAttendanceMigrationRequired(res: Response): void {
   res.status(503).json({
@@ -647,15 +653,52 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
         });
       }
       if (body.action === 'reassign' && nextAssigned && nextAssigned !== actorUserId) {
-        await createNotification({
-          userId: nextAssigned,
-          type: 'chat_transferred',
-          title: 'Nova conversa para você',
-          message: 'Você foi definido como responsável pelo atendimento.',
-          data: { conversation_id: conversationId },
-        });
+        const ctx = await loadChatNotificationDisplayContext(conversationId);
+        const actorLabel = await loadUserShortDisplay(actorUserId);
+        const isNewAssignment = prev.assigned_to_user_id == null;
+        const preview = ctx.lastMessagePreview?.trim() || 'Nova interação recebida.';
+        const baseData = {
+          conversationId,
+          contactName: ctx.contactLabel,
+          phone: ctx.phone ?? undefined,
+          lastMessagePreview: preview,
+          href: chatInboxHref(conversationId),
+        };
+        if (isNewAssignment) {
+          await createNotification({
+            userId: nextAssigned,
+            type: 'chat_assigned',
+            title: 'Nova conversa atribuída a você',
+            message: `Você recebeu um novo atendimento de ${ctx.contactLabel}.`,
+            data: { ...baseData, attendanceVariant: 'assigned' },
+          });
+        } else {
+          await createNotification({
+            userId: nextAssigned,
+            type: 'chat_transferred',
+            title: 'Conversa transferida para você',
+            message: actorLabel
+              ? `${actorLabel} transferiu o atendimento de ${ctx.contactLabel}.`
+              : 'Um atendimento foi transferido para você.',
+            data: {
+              ...baseData,
+              attendanceVariant: 'transferred_operator',
+              transferFromName: actorLabel ?? undefined,
+            },
+          });
+        }
       }
       if (body.action === 'reassign_team' && prev.owner_tenant_id && nextTeam) {
+        const ctx = await loadChatNotificationDisplayContext(conversationId);
+        const queueId = (row.queue_id as string | null) ?? null;
+        const queueName = await loadQueueName(queueId);
+        const preview = ctx.lastMessagePreview?.trim() || 'Nova interação recebida.';
+        const destLine = queueName
+          ? `O atendimento de ${ctx.contactLabel} entrou na fila ${queueName}.`
+          : teamName
+            ? `O atendimento de ${ctx.contactLabel} foi encaminhado para a equipe ${teamName}.`
+            : `O atendimento de ${ctx.contactLabel} foi encaminhado para a sua equipe.`;
+        const channelBadge = queueName ? 'Fila' : 'Equipe';
         const leads = await pool.query<{ user_id: string }>(
           `SELECT user_id FROM team_members
            WHERE team_id = $1 AND role IN ('lead', 'supervisor')`,
@@ -666,9 +709,19 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
           await createNotification({
             userId: m.user_id,
             type: 'chat_transferred',
-            title: 'Conversa na equipe',
-            message: 'Uma conversa foi transferida para a sua equipe.',
-            data: { conversation_id: conversationId },
+            title: 'Novo atendimento na sua equipe',
+            message: destLine,
+            data: {
+              conversationId,
+              contactName: ctx.contactLabel,
+              phone: ctx.phone ?? undefined,
+              lastMessagePreview: preview,
+              href: chatInboxHref(conversationId),
+              attendanceVariant: 'transferred_team',
+              queueName: queueName ?? undefined,
+              teamName: teamName ?? undefined,
+              channelBadge,
+            },
           });
         }
       }

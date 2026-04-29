@@ -62,7 +62,10 @@ const FinanceLayout = () => {
 
     if (p === to) return true;
 
-    if (to === "/finance/accounts" && p.startsWith("/finance/accounts")) return true;
+    if (to === "/finance/accounts") {
+      if (p.startsWith("/finance/accounts-payable")) return false;
+      return p.startsWith("/finance/accounts");
+    }
 
     if (to === "/finance/transactions" && p.startsWith("/finance/transactions")) return true;
 

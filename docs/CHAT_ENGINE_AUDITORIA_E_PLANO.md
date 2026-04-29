@@ -642,3 +642,29 @@ Ver `packages/backend/src/services/chatAccess.ts`: `chat_view_all`, `chat_reply`
 
 Ver `docs/CHAT_ATENDIMENTO_PROFISSIONAL.md`.
 
+---
+
+## Fase 7 — Interface operacional do atendimento
+
+**Objetivo:** expor filas, SLA, distribuição, regras automáticas e métricas numa UI clara (Chat + Configurações), sem alterar o motor da Fase 6 além do necessário (logs e colunas já cobertos pela migração).
+
+### Frontend
+
+- `src/pages/Chat.tsx` — painel **Atendimento** (`ChatOperationalPanel`), filtro alinhado aos cartões, badges via `src/lib/chatSlaUi.ts`, *debounced refresh* do painel em eventos Socket.IO relevantes.
+- `src/components/chat/ChatOperationalPanel.tsx` — dados de `chatService.getOperationsDashboard()`.
+- `src/components/settings/ChatAttendanceSettingsSection.tsx` — abas Filas / Equipes / SLA / Automação / Regras.
+
+### Backend (já existente nesta fase)
+
+- `GET /api/chat/operations-dashboard` — `chatProfessionalController.getChatOperationsDashboard`
+- `GET /api/chat/automation/logs` — histórico (`chat_automation_logs`)
+
+### Migração
+
+- `database/init/189_chat_engine_phase7_operational_ui.sql`
+- Espelho Supabase: `supabase/migrations/20260528120000_chat_engine_phase7_operational_ui.sql`
+
+### Critérios de aceite
+
+Painel no Chat; filtros; badges; atendentes; abas em Configurações; regras e histórico; permissões respeitadas; build backend/frontend a verde após aplicar a migração.
+

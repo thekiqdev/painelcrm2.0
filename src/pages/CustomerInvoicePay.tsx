@@ -3,11 +3,12 @@
  * PIX inline; boleto com linha/PDF; cartão com formulário seguro na coluna direita (Desenho A: payWithCreditCard).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { apiClient } from "@/integrations/api/client";
 import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,8 @@ import {
   ChevronDown,
   CalendarDays,
   AlertTriangle,
+  ExternalLink,
+  Info,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
@@ -69,6 +72,8 @@ export interface PayInvoiceResponse {
     bankSlipDigitableLine?: string;
     pixQrCode?: string;
     pixCopyPaste?: string;
+    /** Fase 3 — Checkout Pro Mercado Pago (redirect). */
+    mercado_pago_init_point?: string;
   };
   client_name: string | null;
   tenant_branding?: {
@@ -92,6 +97,12 @@ export interface PayInvoiceResponse {
   payment_options_summary?: "none" | "pix" | "hosted" | "pix_and_hosted";
   /** Quando o backend passar a expor na API pública, exibe data/hora na tela de confirmação. */
   paid_at?: string | null;
+  /** Resumo MP para UX pós-checkout (Fase 4+). */
+  mercado_pago_public?: {
+    has_checkout: boolean;
+    payment_status: string | null;
+    paid_by_mercado_pago: boolean;
+  };
 }
 
 const fetchPayData = (t: string) =>
@@ -163,7 +174,8 @@ function resolveHasPaymentPayload(d: PayInvoiceResponse): boolean {
       (u.pixQrCode ?? "").trim() ||
       (u.invoiceUrl ?? "").trim() ||
       (u.bankSlipUrl ?? "").trim() ||
-      (u.bankSlipDigitableLine ?? "").trim()
+      (u.bankSlipDigitableLine ?? "").trim() ||
+      (u.mercado_pago_init_point ?? "").trim()
   );
 }
 
@@ -205,6 +217,7 @@ function toPixImageSrc(raw: string | undefined): string | null {
 
 const CustomerInvoicePay = () => {
   const { token } = useParams<{ token: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { resolvedTheme } = useTheme();
   const isMobile = useIsMobile();
   const [data, setData] = useState<PayInvoiceResponse | null>(null);
@@ -240,6 +253,21 @@ const CustomerInvoicePay = () => {
   /** Evita disparar o bootstrap automático mais de uma vez por fatura (token) enquanto não há payload. */
   const autoBootstrapAttemptedForTokenRef = useRef<string | null>(null);
   const payPageTokenPrevRef = useRef<string | null>(null);
+  /** Mantém aviso pós-redirect do Checkout Pro (`?mp_return=…`), mesmo após limpar a URL. */
+  const [mercadoPagoReturnHint, setMercadoPagoReturnHint] = useState(false);
+  const mpReturnHandledRef = useRef(false);
+
+  useEffect(() => {
+    const raw = searchParams.get("mp_return");
+    if (raw == null) return;
+    if (!mpReturnHandledRef.current) {
+      mpReturnHandledRef.current = true;
+      setMercadoPagoReturnHint(true);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("mp_return");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const mergePayData = useCallback((next: PayInvoiceResponse) => {
     setData((prev) => {
@@ -595,6 +623,9 @@ const CustomerInvoicePay = () => {
   const canInitiatePayment = ["pending", "waiting_payment", "overdue"].includes(data.status);
   const isProcessingPayment = data.status === "processing";
   const isPaid = data.status === "paid";
+  const isCancelled = data.status === "cancelled";
+  const isFailed = data.status === "failed";
+  const isRefunded = data.status === "refunded";
   /** Cobrança ainda passível de fluxo de pagamento ou confirmação (evita “indisponível” em processing). */
   const showPaymentSection =
     (canInitiatePayment || isProcessingPayment) && !data.needs_customer;
@@ -643,6 +674,12 @@ const CustomerInvoicePay = () => {
   const showCardFormFields = showCardChargeReady && !switchingMethod;
   const showBoletoSection = isBoletoSelected && allowBoleto;
   const hasSecondaryMethods = showBoletoSection || showCardSection;
+  const pixCopyPaste = (data.payment_urls.pixCopyPaste ?? "").trim();
+  const canCopyPix = pixCopyPaste.length > 0;
+  const mercadoPagoInitPoint = (data.payment_urls.mercado_pago_init_point ?? "").trim();
+  const hasMercadoCheckout = mercadoPagoInitPoint.length > 0;
+  /** Checkout MP só é oferecido enquanto a fatura não está quitada. */
+  const showMercadoPagoPaymentButtons = hasMercadoCheckout && !isPaid;
   const awaitingGatewayPayload =
     canInitiatePayment &&
     !data.needs_customer &&
@@ -651,11 +688,9 @@ const CustomerInvoicePay = () => {
       (isPixSelected && hasPix) ||
       hasBoletoDigitable ||
       showCardChargeReady ||
-      (isCardSelected && allowCard && switchingMethod === "CREDIT_CARD")
+      (isCardSelected && allowCard && switchingMethod === "CREDIT_CARD") ||
+      hasMercadoCheckout
     );
-
-  const pixCopyPaste = (data.payment_urls.pixCopyPaste ?? "").trim();
-  const canCopyPix = pixCopyPaste.length > 0;
 
   const itemsTotalCents = (data.items ?? []).reduce((acc, item) => acc + item.total_cents, 0);
   const itemsCount = data.items?.length ?? 0;
@@ -664,6 +699,16 @@ const CustomerInvoicePay = () => {
     ? `Fatura n.º ${data.invoice_number}`
     : "Cobrança";
   const showStickyBar = isMobile && showPaymentSection && !isPaid;
+
+  const mpPublic = data.mercado_pago_public;
+  const mpStatusNorm = (mpPublic?.payment_status ?? "").toLowerCase().trim();
+  const showMpAwaitingBanner =
+    !data.needs_customer &&
+    !isPaid &&
+    !isProcessingPayment &&
+    (mercadoPagoReturnHint ||
+      (Boolean(mpStatusNorm) &&
+        ["pending", "in_process", "authorized", "in_mediation"].includes(mpStatusNorm)));
 
   const handleStickyPrimary = async () => {
     if (isProcessingPayment) {
@@ -741,6 +786,59 @@ const CustomerInvoicePay = () => {
           </div>
         </header>
 
+        {!data.needs_customer && (isCancelled || isFailed) ? (
+          <Alert variant="destructive" className="mb-6">
+            <XCircle className="h-4 w-4 shrink-0" aria-hidden />
+            <AlertDescription className="text-sm">
+              {isCancelled ? (
+                <>
+                  <span className="font-semibold">Cobrança cancelada.</span> Não é possível pagar por este link. Em caso
+                  de dúvida, fale com {tenantName}
+                  {tenantContact ? <> ({tenantContact})</> : null}.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold">Pagamento não concluído.</span> Este link não está ativo para nova
+                  tentativa automática. Solicite um novo meio de pagamento a {tenantName}
+                  {tenantContact ? <> — {tenantContact}</> : null}.
+                </>
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {!data.needs_customer && isRefunded ? (
+          <Alert className="mb-6 border-sky-500/30 bg-sky-500/10">
+            <Info className="h-4 w-4 shrink-0 text-sky-800 dark:text-sky-200" aria-hidden />
+            <AlertDescription className="text-sm text-foreground">
+              <span className="font-semibold">Valores reembolsados.</span> A operação seguiu o fluxo do meio de pagamento.
+              Para novas cobranças, fale com {tenantName}
+              {tenantContact ? <> — {tenantContact}</> : null}.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {showMpAwaitingBanner ? (
+          <Alert className="mb-6 border-sky-500/35 bg-sky-500/10">
+            <Info className="h-4 w-4 shrink-0 text-sky-700 dark:text-sky-300" />
+            <AlertDescription className="text-sm text-foreground">
+              {mercadoPagoReturnHint ? (
+                <>
+                  <span className="font-semibold">Você voltou do Mercado Pago.</span> Se o pagamento foi concluído no
+                  checkout, <strong>esta página atualiza sozinha</strong> em alguns segundos — pode ficar aqui. Não é
+                  necessário pagar de novo por PIX ou boleto abaixo, salvo se quiser usar outro meio.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold">Pagamento em análise.</span> O Mercado Pago ainda está confirmando;
+                  quando liberar, o status aqui muda sozinho. Se já debitou, aguarde ou toque em{" "}
+                  <strong>Atualizar status</strong> na área de pagamento.
+                </>
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {/* Resumo principal — compacto e distribuído no desktop */}
         <section
           className={cn(
@@ -754,8 +852,8 @@ const CustomerInvoicePay = () => {
             <div className="mb-4 flex gap-2 rounded-xl border border-primary/25 bg-primary/5 px-3 py-2.5 text-sm text-foreground">
               <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden />
               <p>
-                <span className="font-semibold">Confirmando pagamento.</span> Estamos verificando com o banco; em
-                geral leva poucos segundos. Use <strong>Atualizar</strong> se o status não mudar.
+                <span className="font-semibold">Aguardando confirmação.</span> Estamos sincronizando com o banco ou com o
+                Mercado Pago — costuma levar poucos segundos. Se não atualizar, use <strong>Atualizar status</strong>.
               </p>
             </div>
           ) : null}
@@ -777,8 +875,10 @@ const CustomerInvoicePay = () => {
                 strokeWidth={1.25}
                 aria-hidden
               />
-              <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-100">Pagamento recebido</p>
-              <p className="text-sm text-muted-foreground">Esta cobrança está quitada. Guarde este comprovativo.</p>
+              <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-100">Pagamento confirmado</p>
+              <p className="text-sm text-muted-foreground">
+                Esta cobrança foi quitada com sucesso. Guarde esta página ou o comprovante do seu banco.
+              </p>
               {data.paid_at ? (
                 <p className="text-xs font-medium text-emerald-800/90 dark:text-emerald-200/90">
                   {format(new Date(data.paid_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
@@ -925,9 +1025,9 @@ const CustomerInvoicePay = () => {
                 >
                   <Loader2 className="mx-auto h-12 w-12 animate-spin text-primary" aria-hidden />
                   <div className="space-y-2">
-                    <h2 className="text-lg font-semibold tracking-tight text-foreground">Confirmando pagamento</h2>
+                    <h2 className="text-lg font-semibold tracking-tight text-foreground">Confirmação em andamento</h2>
                     <p className="text-sm text-muted-foreground">
-                      Não é necessário pagar de novo. Aguarde a confirmação ou atualize o status abaixo.
+                      Não refaça o pagamento. Esta tela atualiza sozinha; se demorar, use <strong>Atualizar status agora</strong>.
                     </p>
                   </div>
                   {POLLABLE_STATUSES.has(data.status) ? (
@@ -989,6 +1089,44 @@ const CustomerInvoicePay = () => {
                     );
                   })}
                 </div>
+
+                {showMercadoPagoPaymentButtons ? (
+                  <div className="rounded-xl border border-sky-500/40 bg-sky-500/[0.07] p-4 shadow-sm dark:bg-sky-950/25">
+                    <p className="text-sm font-semibold text-foreground">Mercado Pago</p>
+                    <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                      Abre o checkout do Mercado Pago em nova aba (cartão, Pix e demais meios habilitados na sua conta).
+                      O status da fatura neste link só muda após confirmação do pagamento.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        className="rounded-xl"
+                        onClick={() =>
+                          window.open(mercadoPagoInitPoint, "_blank", "noopener,noreferrer")
+                        }
+                      >
+                        <ExternalLink className="mr-2 h-4 w-4" aria-hidden />
+                        Pagar com Mercado Pago
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(mercadoPagoInitPoint);
+                            toast.success("Link do Mercado Pago copiado");
+                          } catch {
+                            toast.error("Não foi possível copiar");
+                          }
+                        }}
+                      >
+                        <Copy className="mr-2 h-4 w-4" aria-hidden />
+                        Copiar link MP
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="flex flex-wrap gap-2">
                   <Button

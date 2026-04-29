@@ -19,6 +19,7 @@ import {
   Shield,
   LayoutTemplate,
   Calendar,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +41,8 @@ type SettingSection =
   | "paymentGateway"
   | "googleCalendar"
   | "agendaAvailability"
-  | "chatAttendance";
+  | "chatAttendance"
+  | "chatAutomation";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -63,6 +65,8 @@ const INTEGRATIONS_SUBCATEGORY_ORDER = [
   "Recebimentos",
   "Agenda",
 ] as const;
+
+const CHAT_AUTOMATION_UI_ENABLED = import.meta.env.VITE_CHAT_AUTOMATION_ENABLED === "true";
 
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSelect }) => {
   const location = useLocation();
@@ -101,6 +105,17 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
       category: "Integrações",
       subcategory: "Mensagens",
     },
+    ...(CHAT_AUTOMATION_UI_ENABLED
+      ? ([
+          {
+            id: "chatAutomation" as const,
+            label: "Automação do chat (bot)",
+            icon: <Bot className="h-4 w-4" />,
+            category: "Integrações",
+            subcategory: "Mensagens",
+          },
+        ] as MenuItem[])
+      : []),
     {
       id: "domain",
       label: "Domínio",

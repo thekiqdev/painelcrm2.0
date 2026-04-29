@@ -67,6 +67,7 @@ import googleCalendarIntegrationRoutes from './routes/googleCalendarIntegrationR
 import asaasIntegrationRoutes from './routes/asaasIntegrationRoutes.js';
 import mercadoPagoIntegrationRoutes from './routes/mercadoPagoIntegrationRoutes.js';
 import * as mercadoPagoIntegrationController from './controllers/mercadoPagoIntegrationController.js';
+import { mercadoPagoFeatureGuard } from './middleware/mercadoPagoFeatureGuard.js';
 import appointmentsRoutes from './routes/appointmentsRoutes.js';
 import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
@@ -102,6 +103,8 @@ import { syncOverdueBillingStatuses } from './services/billingOverdueStatusServi
 import { processAnnouncementSendRecipientsBatch } from './services/announcements/announcementSendWorker.js';
 import { runAppointmentRemindersOnce } from './services/appointmentReminderWorkerService.js';
 import { runPendingConfirmationAutomationOnce } from './services/appointmentAutomationService.js';
+import { runChatSlaAutomationTick } from './services/chatSlaWorkerService.js';
+import { getChatAutomationWorkerPollMs } from './config/chatAutomationEnv.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
 import { getAllowedCorsOrigins } from './config/corsOrigins.js';
 
@@ -406,6 +409,8 @@ app.use('/api/me', meProfileRoutes);
 app.use('/api/integrations/google', googleCalendarIntegrationRoutes);
 app.use('/api/integrations/asaas', asaasIntegrationRoutes);
 app.get('/api/integrations/mercado-pago/callback', mercadoPagoIntegrationController.getMercadoPagoOAuthCallback);
+/** Alias legado (notification_url antiga); mesmo handler que POST /api/integrations/mercado-pago/webhook */
+app.post('/api/webhooks/mercado-pago', mercadoPagoFeatureGuard, mercadoPagoIntegrationController.postMercadoPagoWebhook);
 app.use('/api/integrations/mercado-pago', mercadoPagoIntegrationRoutes);
 app.use('/api/appointments', appointmentsRoutes);
 app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
@@ -540,6 +545,11 @@ httpServer.listen(PORT, '0.0.0.0', () => {
       console.error('[agenda-automation] tick error', err),
     );
   }, agendaAutomationMs);
+
+  const chatAutomationMs = getChatAutomationWorkerPollMs();
+  setInterval(() => {
+    void runChatSlaAutomationTick().catch((err) => console.error('[chat-sla-automation] tick error', err));
+  }, chatAutomationMs);
 });
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {

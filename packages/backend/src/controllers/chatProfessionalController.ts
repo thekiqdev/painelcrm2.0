@@ -5,6 +5,7 @@ import { canChatAction } from '../services/chatAccess.js';
 import { listQueuesForTenant, createQueue, patchQueue } from '../services/chatQueueService.js';
 import { hasChatQueuesTable } from '../utils/chatAttendanceSchema.js';
 import { computeChatMetrics } from '../services/chatMetricsService.js';
+import { buildChatOperationsDashboard } from '../services/chatOperationsDashboardService.js';
 import { listTransfersForConversation } from '../services/chatProfessionalService.js';
 import { pool } from '../utils/db.js';
 import { attendConversation, getConversationAssignmentHistory, patchConversationAttendance } from './chatAttendanceController.js';
@@ -21,6 +22,8 @@ const queuePatchSchema = z.object({
   description: z.string().optional().nullable(),
   color: z.string().optional().nullable(),
   is_active: z.boolean().optional(),
+  sla_first_response_minutes: z.number().int().positive().nullable().optional(),
+  sla_next_response_minutes: z.number().int().positive().nullable().optional(),
 });
 
 export async function getChatQueues(req: AuthRequest, res: Response) {
@@ -81,6 +84,24 @@ export async function getChatMetrics(req: AuthRequest, res: Response) {
   }
   const m = await computeChatMetrics(tenantId);
   return res.json(m);
+}
+
+/** Fase 7 — painel operacional + histórico (opcional). */
+export async function getChatOperationsDashboard(req: AuthRequest, res: Response) {
+  const tenantId = req.tenantId;
+  if (!tenantId) return res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+  if (!(await canChatAction(req.userId!, 'view', req))) {
+    return res.status(403).json({ error: 'Sem permissão' });
+  }
+  const includeLogs =
+    (await canChatAction(req.userId!, 'view_metrics', req)) ||
+    (await canChatAction(req.userId!, 'manage_automation', req)) ||
+    (await canChatAction(req.userId!, 'manage_queues', req));
+  const dto = await buildChatOperationsDashboard({
+    tenantId,
+    includeLogs,
+  });
+  return res.json(dto);
 }
 
 /** Histórico Fase 5 (tabela chat_conversation_transfers). */

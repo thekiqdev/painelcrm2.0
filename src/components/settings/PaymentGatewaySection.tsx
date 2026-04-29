@@ -520,7 +520,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
   };
 
   if (!isAsaasGateway) {
-    return (
+  return (
       <Card>
         <CardHeader>
           <CardTitle>Gateway de pagamento</CardTitle>
@@ -528,25 +528,25 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {showGatewaySelect && (
-              <div className="grid gap-2">
-                <Label>Gateway</Label>
-                <Select
-                  value={form.gateway_key}
-                  onValueChange={(v) => setForm((f) => ({ ...f, gateway_key: v }))}
-                  disabled={enabledGateways.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione o gateway" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {enabledGateways.map((g) => (
+              {showGatewaySelect && (
+                <div className="grid gap-2">
+                  <Label>Gateway</Label>
+                  <Select
+                    value={form.gateway_key}
+                    onValueChange={(v) => setForm((f) => ({ ...f, gateway_key: v }))}
+                    disabled={enabledGateways.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione o gateway" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {enabledGateways.map((g) => (
                       <SelectItem key={g.key} value={g.key}>{g.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             <Button type="submit" disabled={saving || enabledGateways.length === 0}>
               {saving ? 'Salvando...' : 'Salvar'}
             </Button>
@@ -561,7 +561,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
+                <div>
               <CardTitle className="flex items-center gap-2 text-xl">
                 <PlugZap className="h-5 w-5 text-primary" />
                 Conectar Asaas
@@ -584,7 +584,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
                         : 'Não configurado'}
               </Badge>
             </div>
-          </div>
+                </div>
         </CardHeader>
       </Card>
 
@@ -597,7 +597,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
             <div className="space-y-2">
               <Skeleton className="h-5 w-full" />
               <Skeleton className="h-5 w-4/5" />
-            </div>
+                  </div>
           ) : (
             <>
               <div className="hidden items-center gap-3 md:flex">
@@ -606,12 +606,12 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
                 <div className="flex items-center gap-2">{stepIcon(step2)} <span className="text-sm">2. Configuração automática</span></div>
                 <Separator orientation="vertical" className="h-4" />
                 <div className="flex items-center gap-2">{stepIcon(step3)} <span className="text-sm">3. Integração pronta</span></div>
-              </div>
+                  </div>
               <div className="space-y-2 md:hidden">
                 <div className="flex items-center gap-2">{stepIcon(step1)} <span className="text-sm">Dados de acesso</span></div>
                 <div className="flex items-center gap-2">{stepIcon(step2)} <span className="text-sm">Configuração automática</span></div>
                 <div className="flex items-center gap-2">{stepIcon(step3)} <span className="text-sm">Integração pronta</span></div>
-              </div>
+                  </div>
             </>
           )}
         </CardContent>
@@ -644,7 +644,7 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
                     <div key={item.label} className="flex items-center gap-2 text-sm">
                       {stepIcon(item.state as StepState)}
                       <span>{item.label}</span>
-                    </div>
+                </div>
                   ))}
                 </div>
                 {asaasStatus?.api === 'connected' && asaasStatus.webhook !== 'created' ? (
@@ -665,34 +665,34 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
             <CardDescription>Preencha os dados e conclua a integração guiada.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 min-w-0 max-w-full overflow-hidden">
-            <div className="grid gap-2">
-              <Label>Ambiente</Label>
-              <RadioGroup
-                value={form.env}
-                onValueChange={(v: 'sandbox' | 'production') => setForm((f) => ({ ...f, env: v }))}
+              <div className="grid gap-2">
+                <Label>Ambiente</Label>
+                <RadioGroup
+                  value={form.env}
+                  onValueChange={(v: 'sandbox' | 'production') => setForm((f) => ({ ...f, env: v }))}
                 className="flex flex-wrap gap-4"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="sandbox" id="env-sandbox" />
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="sandbox" id="env-sandbox" />
                   <Label htmlFor="env-sandbox">Sandbox</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="production" id="env-production" />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="production" id="env-production" />
                   <Label htmlFor="env-production">Produção</Label>
-                </div>
-              </RadioGroup>
-            </div>
+                  </div>
+                </RadioGroup>
+              </div>
 
-            <div className="grid gap-2">
+              <div className="grid gap-2">
               <Label htmlFor="api_key_tenant">Nova API Key</Label>
-              <Input
-                id="api_key_tenant"
-                type="password"
-                autoComplete="off"
+                <Input
+                  id="api_key_tenant"
+                  type="password"
+                  autoComplete="off"
                 placeholder="Cole aqui sua API Key do Asaas"
-                value={form.api_key}
-                onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
-              />
+                  value={form.api_key}
+                  onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
+                />
               {config?.hasCredentials ? (
                 <p className="text-xs text-muted-foreground">
                   Uma API Key já está configurada. Preencha apenas se desejar substituir.
@@ -733,8 +733,8 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
               </a>
               <a href={ASAAS_WEBHOOKS_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:underline">
                 Webhooks no Asaas <ExternalLink className="h-3 w-3" />
-              </a>
-            </div>
+                </a>
+              </div>
           </CardContent>
         </Card>
       </div>
@@ -816,8 +816,8 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
                       <Button type="button" onClick={handleSaveManualToken} disabled={savingManualToken} className="w-full md:w-auto">
                         {savingManualToken ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                         Salvar token
-                      </Button>
-                    </div>
+                </Button>
+              </div>
                   ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -839,8 +839,8 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
                     </Button>
                   ) : null}
                 </div>
-              </CardContent>
-            </Card>
+        </CardContent>
+      </Card>
           </AccordionContent>
         </AccordionItem>
       </Accordion>

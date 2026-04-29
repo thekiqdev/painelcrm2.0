@@ -116,6 +116,8 @@ async function syncPublicInvoiceStatusFromGateway(params: {
   );
   const invoice = row.rows[0];
   if (!invoice?.gateway) return;
+  /** Fase 3–4 MP: sem adapter `getPayment` no registry; evita consultar Asaas com id de preferência MP. */
+  if (invoice.gateway === 'mercado_pago') return;
 
   let gateway = null;
   const gatewayConfig = await getConfigForTest('tenant', params.tenantId, invoice.gateway);
@@ -230,8 +232,22 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
     const metadata = (invoice.gateway_metadata as Record<string, unknown> | null) ?? {};
     const activeAttempt = await getActiveInvoicePaymentAttempt(freshData.invoice_id);
     const attemptsSummary = await listInvoicePaymentAttemptsSummary(freshData.invoice_id);
-    const activeMetadata =
-      (activeAttempt?.gateway_metadata as Record<string, unknown> | null) ?? metadata;
+    const attemptMeta = (activeAttempt?.gateway_metadata as Record<string, unknown> | null) ?? {};
+    const activeMetadata = { ...metadata, ...attemptMeta };
+    const mpBlock = activeMetadata.mercado_pago_checkout as Record<string, unknown> | undefined;
+    const mpOauthEnv = mpBlock?.oauth_environment === 'sandbox' ? 'sandbox' : 'production';
+    const mpFromBlock =
+      mpOauthEnv === 'sandbox' && typeof mpBlock?.sandbox_init_point === 'string'
+        ? mpBlock.sandbox_init_point
+        : typeof mpBlock?.init_point === 'string'
+          ? mpBlock.init_point
+          : undefined;
+    const mercado_pago_init_point =
+      (typeof activeMetadata.mercado_pago_payment_url === 'string'
+        ? activeMetadata.mercado_pago_payment_url.trim()
+        : '') ||
+      (typeof mpFromBlock === 'string' ? mpFromBlock.trim() : '') ||
+      undefined;
     const payment_urls = {
       invoiceUrl: typeof activeMetadata.invoiceUrl === 'string' ? activeMetadata.invoiceUrl : undefined,
       bankSlipUrl: typeof activeMetadata.bankSlipUrl === 'string' ? activeMetadata.bankSlipUrl : undefined,
@@ -241,6 +257,9 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
           : undefined,
       pixQrCode: typeof activeMetadata.pixQrCode === 'string' ? activeMetadata.pixQrCode : undefined,
       pixCopyPaste: typeof activeMetadata.pixCopyPaste === 'string' ? activeMetadata.pixCopyPaste : undefined,
+      ...(mercado_pago_init_point
+        ? { mercado_pago_init_point: mercado_pago_init_point as string }
+        : {}),
     };
     const storedMethodsNorm = Array.isArray(activeMetadata.allowed_payment_methods)
       ? ([
@@ -292,6 +311,10 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
         ? 'missing_client'
         : 'missing_cpf_cnpj';
     const payloadMeta = buildPublicPayPayloadMeta(payment_urls);
+
+    const mpPaymentSnap = activeMetadata.mercado_pago_payment as Record<string, unknown> | undefined;
+    const mercadoPagoPaymentStatus = typeof mpPaymentSnap?.status === 'string' ? mpPaymentSnap.status : null;
+    const paidByMercadoPagoMeta = activeMetadata.paid_by_gateway === 'mercado_pago';
 
     const switchMethodEnabled = isPublicPaySwitchMethodEnabledForTenant(freshData.tenant_id);
 
@@ -351,6 +374,11 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
             company: clientProfile.company,
           }
         : null,
+      mercado_pago_public: {
+        has_checkout: Boolean(mercado_pago_init_point),
+        payment_status: mercadoPagoPaymentStatus,
+        paid_by_mercado_pago: paidByMercadoPagoMeta,
+      },
       ...payloadMeta,
     });
   } catch (error) {

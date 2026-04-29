@@ -1,30 +1,76 @@
 import type { ChatConversation } from '@/services/chat';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import { chatAvatarDebugLog, isChatAvatarDebugEnabled } from '@/lib/chatAvatarDebug';
+import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
 
 /** Campos opcionais vindos do CRM (API pode expor além do tipo `Client`). */
 export type ChatCrmEntity = {
   name?: string | null;
   avatar_url?: string | null;
   photo?: string | null;
+  whatsapp_avatar_url?: string | null;
 } | null;
 
+/** Cadastro CRM (perfil): avatar_url → photo → whatsapp_avatar_url */
 function pickCrmPhoto(entity: ChatCrmEntity): string | null {
   if (!entity) return null;
-  const a = entity.avatar_url || entity.photo;
-  return chatAvatarUrlForImgSrc(a && String(a).trim() ? String(a).trim() : null);
+  const order = [entity.avatar_url, entity.photo, entity.whatsapp_avatar_url];
+  for (const a of order) {
+    const s = a != null && String(a).trim() ? String(a).trim() : '';
+    const u = chatAvatarUrlForImgSrc(s || null);
+    if (u) return u;
+  }
+  return null;
 }
 
-/** Foto WhatsApp: coluna/API `avatar_url` → normalizeConversation.avatarUrl → metadata. */
-function pickWhatsAppPhoto(conv: ChatConversation): string | null {
-  const fromConv = conv.avatarUrl && String(conv.avatarUrl).trim() ? String(conv.avatarUrl).trim() : null;
+/** CRM legado: foto de cadastro (não prioriza whatsapp_avatar_url — essa entra antes na cadeia principal). */
+function pickCrmLegacyPhoto(client: ChatCrmEntity, lead: ChatCrmEntity, conv: ChatConversation): string | null {
+  const entity = conv.client_id ? client : conv.leadId ? lead : null;
+  if (!entity) return null;
+  for (const k of ['avatar_url', 'photo'] as const) {
+    const raw = entity[k];
+    const s = raw != null && String(raw).trim() ? String(raw).trim() : '';
+    const u = chatAvatarUrlForImgSrc(s || null);
+    if (u) return u;
+  }
+  return null;
+}
+
+function pickCrmWhatsappAvatar(client: ChatCrmEntity, lead: ChatCrmEntity, conv: ChatConversation): string | null {
+  const entity = conv.client_id ? client : conv.leadId ? lead : null;
+  if (!entity) return null;
+  const w = entity.whatsapp_avatar_url;
+  const s = w != null && String(w).trim() ? String(w).trim() : '';
+  return chatAvatarUrlForImgSrc(s || null);
+}
+
+function firstMetaAvatarUrl(
+  meta: Record<string, unknown>,
+  keys: string[],
+): string | null {
+  for (const k of keys) {
+    const v = meta[k];
+    if (typeof v === 'string' && v.trim()) {
+      const u = chatAvatarUrlForImgSrc(v.trim());
+      if (u) return u;
+    }
+  }
+  return null;
+}
+
+/** Metadados “resto” / legado (imagem agregada na conversa + campos típicos Uaz). */
+function pickConversationMetaFallback(conv: ChatConversation): string | null {
   const meta = (conv.metadata || {}) as Record<string, unknown>;
-  const fromMeta =
-    (typeof meta.whatsapp_profile_photo === 'string' && meta.whatsapp_profile_photo.trim()) ||
-    (typeof meta.image === 'string' && meta.image.trim()) ||
-    (typeof meta.imagePreview === 'string' && meta.imagePreview.trim()) ||
-    (typeof meta.image_preview === 'string' && meta.image_preview.trim()) ||
-    null;
-  return chatAvatarUrlForImgSrc(fromConv || fromMeta || null);
+  const fromMeta = firstMetaAvatarUrl(meta, [
+    'whatsapp_profile_photo',
+    'image',
+    'imagePreview',
+    'image_preview',
+  ]);
+  if (fromMeta) return fromMeta;
+  const merged =
+    conv.avatarUrl && String(conv.avatarUrl).trim() ? String(conv.avatarUrl).trim() : null;
+  return chatAvatarUrlForImgSrc(merged);
 }
 
 function firstNonEmpty(...vals: (string | null | undefined)[]): string {
@@ -116,9 +162,67 @@ export function resolveConversationIdentity(
       firstNonEmpty(waName, phoneLine, conv.external_chat_id) || '?';
   }
 
-  const crmPhoto = conv.client_id ? pickCrmPhoto(client) : conv.leadId ? pickCrmPhoto(lead) : null;
-  const waPhoto = pickWhatsAppPhoto(conv);
-  const avatarUrl = crmPhoto || waPhoto || null;
+  /**
+   * Prioridade:
+   * 1) coluna avatar da conversa (contact)
+   * 2) communication_contacts.profile_avatar_url (API: communication_avatar_url)
+   * 3) client | lead whatsapp_avatar_url
+   * 4) metadata.profile_picture_url
+   * 5) CRM avatar_url / photo (cadastro)
+   * 6) metadata / avatarUrl agregado (legado)
+   * Não usar nome da instância como rosto do contacto.
+   */
+  const meta = (conv.metadata || {}) as Record<string, unknown>;
+  const fromConvColumn = chatAvatarUrlForImgSrc(
+    (conv.avatar_url && String(conv.avatar_url).trim()) || null,
+  );
+  const fromComm = chatAvatarUrlForImgSrc(
+    (conv.communication_avatar_url && String(conv.communication_avatar_url).trim()) || null,
+  );
+  const fromCrmWa = pickCrmWhatsappAvatar(client, lead, conv);
+  const fromMetaProfile = firstMetaAvatarUrl(meta, [
+    'profile_picture_url',
+    'profilePictureUrl',
+    'profilePicture',
+  ]);
+  const fromCrmLegacy = pickCrmLegacyPhoto(client, lead, conv);
+  const fromMetaFallback = pickConversationMetaFallback(conv);
+
+  const avatarUrl =
+    fromConvColumn ||
+    fromComm ||
+    fromCrmWa ||
+    fromMetaProfile ||
+    fromCrmLegacy ||
+    fromMetaFallback ||
+    null;
+
+  if (isChatAvatarDebugEnabled()) {
+    const pickOrder = [
+      fromConvColumn && 'fromConvColumn',
+      fromComm && 'fromComm',
+      fromCrmWa && 'fromCrmWa',
+      fromMetaProfile && 'fromMetaProfile',
+      fromCrmLegacy && 'fromCrmLegacy',
+      fromMetaFallback && 'fromMetaFallback',
+    ].filter(Boolean);
+    chatAvatarDebugLog('resolveConversationIdentity', {
+      conversationId: conv.id,
+      picked: pickOrder[0] ?? null,
+      finalAvatarPrefix:
+        avatarUrl && avatarUrl.length > 120 ? `${avatarUrl.slice(0, 120)}…` : avatarUrl,
+      conv_avatar_url_column: conv.avatar_url ?? null,
+      conv_communication_avatar_url: conv.communication_avatar_url ?? null,
+    });
+  }
+
+  if (!avatarUrl) {
+    chatMediaDebugLog('chat_avatar_missing', {
+      conversationId: conv.id,
+      hasClient: !!conv.client_id,
+      hasLead: !!conv.leadId,
+    });
+  }
 
   const initials = (displayName.charAt(0) || '?').toUpperCase();
 

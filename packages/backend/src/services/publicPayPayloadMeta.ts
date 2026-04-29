@@ -14,13 +14,16 @@ export function buildPublicPayPayloadMeta(payment_urls: {
   bankSlipDigitableLine?: string;
   pixQrCode?: string;
   pixCopyPaste?: string;
+  /** Fase 3 MP Checkout Pro — URL de redirecionamento seguro (init_point / sandbox). */
+  mercado_pago_init_point?: string;
 }): PublicPayPayloadMeta {
   const pixQr = (payment_urls.pixQrCode ?? '').trim();
   const hasPixVisual = Boolean((payment_urls.pixCopyPaste ?? '').trim() || pixQr.length > 0);
   const hasHosted = Boolean(
     (payment_urls.invoiceUrl ?? '').trim() ||
       (payment_urls.bankSlipUrl ?? '').trim() ||
-      (payment_urls.bankSlipDigitableLine ?? '').trim()
+      (payment_urls.bankSlipDigitableLine ?? '').trim() ||
+      (payment_urls.mercado_pago_init_point ?? '').trim()
   );
   const has_payment_payload = hasPixVisual || hasHosted;
   let payment_options_summary: PaymentOptionsSummary = 'none';

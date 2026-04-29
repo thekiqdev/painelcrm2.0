@@ -7,6 +7,18 @@ import {
   patchUserAvailabilitySettingsHandler,
 } from '../controllers/appointmentAvailabilityController.js';
 import {
+  listAvailabilityBlocksHandler,
+  createAvailabilityBlockHandler,
+  patchAvailabilityBlockHandler,
+  cancelAvailabilityBlockHandler,
+} from '../controllers/appointmentAvailabilityBlocksController.js';
+import {
+  listAppointmentHolidaysHandler,
+  createAppointmentHolidayHandler,
+  patchAppointmentHolidayHandler,
+  disableAppointmentHolidayHandler,
+} from '../controllers/appointmentHolidaysController.js';
+import {
   getAppointmentsHandler,
   getAppointmentConflictsHandler,
   getAppointmentsReportsSummaryHandler,
@@ -25,6 +37,12 @@ import {
   patchRecurrenceSeriesHandler,
   patchAppointmentThisAndFollowingHandler,
 } from '../controllers/appointmentsController.js';
+import {
+  listAppointmentTypeSettingsHandler,
+  postAppointmentTypeSettingsHandler,
+  patchAppointmentTypeSettingsHandler,
+  postAppointmentTypeSettingsDisableHandler,
+} from '../controllers/appointmentTypeSettingsController.js';
 
 const router = Router();
 router.use(...appointmentsAuth);
@@ -33,6 +51,21 @@ router.get('/tenant-availability-settings', getTenantAvailabilitySettingsHandler
 router.patch('/tenant-availability-settings', patchTenantAvailabilitySettingsHandler);
 router.get('/user-availability-settings', getUserAvailabilitySettingsHandler);
 router.patch('/user-availability-settings', patchUserAvailabilitySettingsHandler);
+
+router.get('/holidays', listAppointmentHolidaysHandler);
+router.post('/holidays', createAppointmentHolidayHandler);
+router.patch('/holidays/:id', patchAppointmentHolidayHandler);
+router.post('/holidays/:id/disable', disableAppointmentHolidayHandler);
+
+router.get('/availability-blocks', listAvailabilityBlocksHandler);
+router.post('/availability-blocks', createAvailabilityBlockHandler);
+router.patch('/availability-blocks/:id', patchAvailabilityBlockHandler);
+router.post('/availability-blocks/:id/cancel', cancelAvailabilityBlockHandler);
+
+router.get('/type-settings', listAppointmentTypeSettingsHandler);
+router.post('/type-settings', postAppointmentTypeSettingsHandler);
+router.patch('/type-settings/:id', patchAppointmentTypeSettingsHandler);
+router.post('/type-settings/:id/disable', postAppointmentTypeSettingsDisableHandler);
 
 router.get('/', getAppointmentsHandler);
 router.get('/conflicts', getAppointmentConflictsHandler);

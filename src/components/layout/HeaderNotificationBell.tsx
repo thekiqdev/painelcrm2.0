@@ -1,7 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 import {
   Bell,
   CalendarClock,
@@ -20,7 +18,6 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,6 +40,7 @@ import {
   resolveNotificationHref,
   systemNotificationsService,
 } from '@/services/systemNotifications';
+import { renderInboxNotificationItem } from '@/components/notifications/InboxNotificationItems';
 import { cn } from '@/lib/utils';
 
 type Props = {
@@ -62,6 +60,9 @@ function iconForNotificationType(type: string): LucideIcon {
     t === 'message_read' ||
     t === 'new_conversation'
   ) {
+    return MessageSquare;
+  }
+  if (t === 'chat_assigned' || t === 'chat_transferred' || t === 'chat_sla_breach') {
     return MessageSquare;
   }
   if (t.startsWith('superadmin_')) return Shield;
@@ -148,45 +149,7 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
 
   const renderItem = (n: InboxNotificationRow) => {
     const Icon = iconForNotificationType(n.type);
-    let when = '';
-    try {
-      when = formatDistanceToNow(new Date(n.created_at), { addSuffix: true, locale: ptBR });
-    } catch {
-      when = '';
-    }
-    return (
-      <button
-        key={n.id}
-        type="button"
-        className={cn(
-          'flex w-full gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors last:border-b-0',
-          'hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-          !n.read && 'bg-muted/45',
-        )}
-        onClick={() => void handleClick(n)}
-      >
-        <div
-          className={cn(
-            'mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
-            !n.read ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground',
-          )}
-        >
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium leading-snug text-foreground">{n.title}</p>
-            {!n.read ? (
-              <span className="h-2 w-2 shrink-0 rounded-full bg-primary" title="Não lida" aria-hidden />
-            ) : null}
-          </div>
-          {n.message ? (
-            <p className="text-xs text-muted-foreground line-clamp-2">{n.message}</p>
-          ) : null}
-          {when ? <p className="text-[11px] text-muted-foreground">{when}</p> : null}
-        </div>
-      </button>
-    );
+    return renderInboxNotificationItem(n, Icon, () => void handleClick(n));
   };
 
   return (
@@ -207,8 +170,12 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
             ) : null}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-[min(100vw-2rem,26rem)] p-0" sideOffset={8}>
-          <div className="border-b border-border px-4 py-3">
+        <DropdownMenuContent
+          align="end"
+          className="flex max-h-[min(70dvh,32rem)] w-[min(100vw-2rem,26rem)] flex-col overflow-hidden p-0"
+          sideOffset={8}
+        >
+          <div className="shrink-0 border-b border-border px-4 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 space-y-0.5">
                 <p className="text-sm font-semibold leading-none">Notificações</p>
@@ -239,7 +206,7 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
             </div>
           </div>
 
-          <ScrollArea className="max-h-[min(24rem,70vh)]">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {loading ? (
               <p className="px-4 py-10 text-center text-sm text-muted-foreground">A carregar…</p>
             ) : items.length === 0 ? (
@@ -274,7 +241,7 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
                 ) : null}
               </div>
             )}
-          </ScrollArea>
+          </div>
         </DropdownMenuContent>
       </DropdownMenu>
 

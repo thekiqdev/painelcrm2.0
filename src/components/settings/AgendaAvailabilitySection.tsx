@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
@@ -11,6 +12,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { Loader2 } from "lucide-react";
+import { AgendaAvailabilityBlocksTab } from "./AgendaAvailabilityBlocksTab";
+import { AgendaHolidaysTab } from "./AgendaHolidaysTab";
+import { AgendaAppointmentTypesTab } from "./AgendaAppointmentTypesTab";
 import { getMyTenantUsers, type TenantUser } from "@/services/tenantLimits";
 import {
   getTenantAvailabilitySettings,
@@ -37,11 +41,16 @@ function emptyForm(): AvailabilityForm {
     default_meeting_duration_minutes: 60,
     min_notice_minutes: 120,
     max_days_ahead: 30,
+    capacity_per_slot: 1,
     weekdays: [1, 2, 3, 4, 5],
     work_start_time: "09:00",
     work_end_time: "18:00",
     break_start_time: "12:00",
     break_end_time: "13:00",
+    block_holidays: true,
+    holiday_country_code: "BR",
+    holiday_state_code: null,
+    holiday_city: null,
   };
 }
 
@@ -114,6 +123,23 @@ function AvailabilityFormFields(props: {
           disabled={disabled}
         />
       </div>
+      <div className="space-y-2">
+        <Label>Capacidade por horário</Label>
+        <Input
+          type="number"
+          min={1}
+          max={20}
+          value={value.capacity_per_slot}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            set({ capacity_per_slot: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 1 });
+          }}
+          disabled={disabled}
+        />
+        <p className="text-xs text-muted-foreground">
+          Quantidade máxima de compromissos permitidos no mesmo horário para o mesmo responsável.
+        </p>
+      </div>
       <div className="space-y-2 sm:col-span-2">
         <Label>Dias da semana</Label>
         <div className="flex flex-wrap gap-3">
@@ -173,7 +199,8 @@ function AvailabilityFormFields(props: {
 
 export function AgendaAvailabilitySection() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<"company" | "user">("company");
+  const { permissions, loading: permLoading } = useModulePermissions();
+  const [tab, setTab] = useState<"company" | "user" | "blocks" | "holidays" | "types">("user");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
@@ -183,9 +210,20 @@ export function AgendaAvailabilitySection() {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [effectiveSource, setEffectiveSource] = useState<string>("tenant");
 
-  const myRole = useMemo(() => tenantUsers.find((u) => u.id === user?.id)?.role ?? null, [tenantUsers, user?.id]);
-  const canEditCompany = myRole === "admin" || myRole === "manager" || user?.is_tenant_admin;
-  const canPickUser = canEditCompany;
+  const elevated = useMemo(
+    () => user?.role === "admin" || user?.role === "manager" || !!user?.is_tenant_admin,
+    [user?.role, user?.is_tenant_admin],
+  );
+  const canViewCompanyAvailability = elevated || permissions.settings?.can_view === true;
+  const canEditCompanyAvailability = elevated || permissions.settings?.can_edit === true;
+  const canPickOtherUsers = canEditCompanyAvailability;
+
+  const visibleTabCount = useMemo(() => {
+    let n = 2;
+    if (canViewCompanyAvailability) n += 2;
+    if (canEditCompanyAvailability) n += 1;
+    return n;
+  }, [canViewCompanyAvailability, canEditCompanyAvailability]);
 
   const loadCompany = useCallback(async () => {
     const data = await getTenantAvailabilitySettings();
@@ -207,6 +245,7 @@ export function AgendaAvailabilitySection() {
   );
 
   useEffect(() => {
+    if (permLoading) return;
     let alive = true;
     (async () => {
       setLoading(true);
@@ -216,7 +255,9 @@ export function AgendaAvailabilitySection() {
         setTenantUsers(users);
         const selfId = user?.id ?? "";
         setSelectedUserId(selfId);
-        await loadCompany();
+        if (canViewCompanyAvailability) {
+          await loadCompany();
+        }
         if (selfId) await loadUser(selfId);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Erro ao carregar disponibilidade");
@@ -227,7 +268,14 @@ export function AgendaAvailabilitySection() {
     return () => {
       alive = false;
     };
-  }, [user?.id, loadCompany, loadUser]);
+  }, [user?.id, loadCompany, loadUser, permLoading, canViewCompanyAvailability]);
+
+  useEffect(() => {
+    if (permLoading) return;
+    if (tab === "company" && !canViewCompanyAvailability) setTab("user");
+    if (tab === "holidays" && !canEditCompanyAvailability) setTab("user");
+    if (tab === "types" && !canViewCompanyAvailability) setTab("user");
+  }, [permLoading, tab, canViewCompanyAvailability, canEditCompanyAvailability]);
 
   const onSelectUser = async (uid: string) => {
     setSelectedUserId(uid);
@@ -242,8 +290,8 @@ export function AgendaAvailabilitySection() {
   };
 
   const saveCompany = async () => {
-    if (!canEditCompany) {
-      toast.error("Apenas administrador ou gestor pode alterar a disponibilidade geral.");
+    if (!canEditCompanyAvailability) {
+      toast.error("A disponibilidade da empresa é gerenciada por administradores ou quem tem edição em Configurações.");
       return;
     }
     setSaving(true);
@@ -262,7 +310,7 @@ export function AgendaAvailabilitySection() {
     setSaving(true);
     try {
       const data = await patchUserAvailabilitySettings({
-        user_id: canPickUser ? selectedUserId : undefined,
+        user_id: canPickOtherUsers ? selectedUserId : undefined,
         timezone: userForm.timezone,
         slot_duration_minutes: userForm.slot_duration_minutes,
         default_meeting_duration_minutes: userForm.default_meeting_duration_minutes,
@@ -273,6 +321,7 @@ export function AgendaAvailabilitySection() {
         work_end_time: userForm.work_end_time,
         break_start_time: userForm.break_start_time,
         break_end_time: userForm.break_end_time,
+        capacity_per_slot: userForm.capacity_per_slot,
         is_active: userActive,
       });
       setUserForm({ ...emptyForm(), ...data.user_settings });
@@ -286,7 +335,7 @@ export function AgendaAvailabilitySection() {
     }
   };
 
-  if (loading && !tenantUsers.length) {
+  if (permLoading || (loading && !tenantUsers.length)) {
     return (
       <div className="flex justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -303,12 +352,24 @@ export function AgendaAvailabilitySection() {
         </p>
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "company" | "user")}>
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="company">Empresa</TabsTrigger>
-          <TabsTrigger value="user">Usuários</TabsTrigger>
+      {!canPickOtherUsers ? (
+        <Alert className="border-primary/20 bg-muted/30">
+          <AlertDescription>Você pode configurar apenas sua própria disponibilidade.</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "company" | "user" | "blocks" | "holidays" | "types")}>
+        <TabsList
+          className={`grid w-full max-w-4xl gap-1 ${visibleTabCount <= 3 ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"}`}
+        >
+          {canViewCompanyAvailability ? <TabsTrigger value="company">Empresa</TabsTrigger> : null}
+          <TabsTrigger value="user">{canPickOtherUsers ? "Usuários" : "Minha disponibilidade"}</TabsTrigger>
+          <TabsTrigger value="blocks">Bloqueios</TabsTrigger>
+          {canViewCompanyAvailability ? <TabsTrigger value="types">Tipos</TabsTrigger> : null}
+          {canEditCompanyAvailability ? <TabsTrigger value="holidays">Feriados</TabsTrigger> : null}
         </TabsList>
 
+        {canViewCompanyAvailability ? (
         <TabsContent value="company" className="mt-4">
           <Card>
             <CardHeader>
@@ -318,18 +379,48 @@ export function AgendaAvailabilitySection() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!canEditCompany ? (
+              {!canEditCompanyAvailability ? (
                 <Alert>
-                  <AlertDescription>Só administradores ou gestores podem editar estes campos.</AlertDescription>
+                  <AlertDescription>
+                    A disponibilidade da empresa é gerenciada por administradores ou por utilizadores com permissão de
+                    edição em Configurações.
+                  </AlertDescription>
                 </Alert>
               ) : null}
-              <AvailabilityFormFields value={company} onChange={setCompany} disabled={!canEditCompany} />
-              <Button onClick={() => void saveCompany()} disabled={!canEditCompany || saving}>
+              <AvailabilityFormFields value={company} onChange={setCompany} disabled={!canEditCompanyAvailability} />
+              <div className="flex flex-col gap-3 rounded-lg border border-border/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Bloquear agendamentos em feriados</p>
+                  <p className="text-xs text-muted-foreground">
+                    Slots públicos e remarcação deixam de oferecer datas em feriados ativos (conforme país na base).
+                  </p>
+                </div>
+                <Switch
+                  checked={company.block_holidays}
+                  onCheckedChange={(v) => setCompany({ ...company, block_holidays: v })}
+                  disabled={!canEditCompanyAvailability}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>País (feriados globais)</Label>
+                  <Input value="Brasil (BR)" readOnly disabled className="bg-muted/40" />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label className="text-muted-foreground">Estado / cidade (opcional)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Reservado para evolução futura do calendário regional. Por agora os feriados globais seguem o país
+                    configurado no servidor.
+                  </p>
+                </div>
+              </div>
+              <Button onClick={() => void saveCompany()} disabled={!canEditCompanyAvailability || saving}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Guardar empresa"}
               </Button>
             </CardContent>
           </Card>
         </TabsContent>
+        ) : null}
 
         <TabsContent value="user" className="mt-4">
           <Card>
@@ -340,7 +431,7 @@ export function AgendaAvailabilitySection() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {canPickUser ? (
+              {canPickOtherUsers ? (
                 <div className="space-y-2">
                   <Label>Utilizador</Label>
                   <Select value={selectedUserId} onValueChange={(v) => void onSelectUser(v)}>
@@ -391,6 +482,22 @@ export function AgendaAvailabilitySection() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="blocks" className="mt-4">
+          <AgendaAvailabilityBlocksTab />
+        </TabsContent>
+
+        {canViewCompanyAvailability ? (
+        <TabsContent value="types" className="mt-4">
+          <AgendaAppointmentTypesTab canEdit={canEditCompanyAvailability} />
+        </TabsContent>
+        ) : null}
+
+        {canEditCompanyAvailability ? (
+        <TabsContent value="holidays" className="mt-4">
+          <AgendaHolidaysTab />
+        </TabsContent>
+        ) : null}
       </Tabs>
     </div>
   );

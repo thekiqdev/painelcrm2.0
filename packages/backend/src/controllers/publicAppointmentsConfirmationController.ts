@@ -73,8 +73,13 @@ export async function getPublicAppointmentAvailabilityByToken(req: Request, res:
       timezone: result.timezone,
       slot_duration_minutes: result.slot_duration_minutes,
       default_meeting_duration_minutes: result.default_meeting_duration_minutes,
+      meeting_duration_minutes: result.meeting_duration_minutes,
       settings_source: result.settings_source,
+      capacity_per_slot: result.capacity_per_slot,
       slots: result.slots,
+      ...(result.date ? { date: result.date } : {}),
+      ...(result.unavailable_reason ? { unavailable_reason: result.unavailable_reason } : {}),
+      ...(result.holiday ? { holiday: result.holiday } : {}),
     });
   } catch (e) {
     console.error('[public/appointments/confirm:availability]', e);
@@ -111,6 +116,30 @@ export async function getPublicRescheduleConflictsByToken(req: Request, res: Res
       }
       if (result.code === 'invalid_state') {
         res.status(400).json({ error: result.message || 'Estado inválido', code: 'invalid_state' });
+        return;
+      }
+      if (result.code === 'slot_blocked') {
+        res.status(400).json({
+          error: result.message || 'Indisponível',
+          code: 'slot_blocked',
+          message: result.message || 'Este horário está indisponível. Escolha outro horário.',
+        });
+        return;
+      }
+      if (result.code === 'holiday_blocked') {
+        res.status(400).json({
+          error: result.message || 'Indisponível',
+          code: 'holiday_blocked',
+          message: result.message || 'Este dia não está disponível para agendamento.',
+        });
+        return;
+      }
+      if (result.code === 'slot_unavailable') {
+        res.status(400).json({
+          error: result.message || 'Sem vagas',
+          code: 'slot_unavailable',
+          message: result.message || 'Este horário já não tem vagas disponíveis. Escolha outro horário.',
+        });
         return;
       }
       res.status(400).json({ error: result.message || 'Dados inválidos', code: 'validation_error' });
@@ -166,6 +195,33 @@ export async function postPublicAppointmentConfirmationByToken(req: Request, res
     }
     if (result.status === 'validation_error') {
       res.status(400).json({ error: result.message || 'Dados inválidos', code: 'validation_error' });
+      return;
+    }
+    if (result.status === 'slot_blocked') {
+      const msg = result.message || 'Este horário está indisponível. Escolha outro horário.';
+      res.status(400).json({
+        error: msg,
+        code: 'slot_blocked',
+        message: msg,
+      });
+      return;
+    }
+    if (result.status === 'holiday_blocked') {
+      const msg = result.message || 'Este dia não está disponível para agendamento.';
+      res.status(400).json({
+        error: msg,
+        code: 'holiday_blocked',
+        message: msg,
+      });
+      return;
+    }
+    if (result.status === 'slot_unavailable') {
+      const msg = result.message || 'Este horário já não tem vagas disponíveis. Escolha outro horário.';
+      res.status(400).json({
+        error: msg,
+        code: 'slot_unavailable',
+        message: msg,
+      });
       return;
     }
     if (result.status === 'invalid_state') {

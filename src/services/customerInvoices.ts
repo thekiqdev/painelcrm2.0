@@ -455,4 +455,33 @@ export const customerInvoicesService = {
     const response = await apiClient.delete(`${BASE}/${id}`);
     if (response.error) throw new Error(response.error);
   },
+
+  /** Fase 3 — preferência Checkout Pro Mercado Pago (requer MP conectado; não substitui Asaas na mesma fatura). */
+  async createMercadoPagoCheckoutPayment(
+    id: string,
+    body?: { regenerate?: boolean }
+  ): Promise<{
+    preference_id: string;
+    init_point: string;
+    sandbox_init_point?: string;
+    payment_url: string;
+    invoice_url: string;
+    cached: boolean;
+    oauth_environment: 'sandbox' | 'production';
+  }> {
+    const response = await apiClient.post<{
+      preference_id: string;
+      init_point: string;
+      sandbox_init_point?: string;
+      payment_url: string;
+      invoice_url: string;
+      cached: boolean;
+      oauth_environment: 'sandbox' | 'production';
+    }>(`${BASE}/${id}/mercado-pago/create-payment`, body ?? {});
+    if (response.error) throw new Error(response.error);
+    if (!response.data || typeof response.data !== 'object') {
+      throw new Error('Resposta inválida ao gerar cobrança Mercado Pago');
+    }
+    return response.data;
+  },
 };

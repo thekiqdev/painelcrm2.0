@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
+import { addMinutes, format, parse } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import { toast } from '@/components/ui/sonner';
 import {
   RefreshCw,
@@ -9,9 +11,8 @@ import {
   MessageSquare,
   ChevronLeft,
   Plus,
-  MoreVertical,
+  PanelRight,
   FileText,
-  User,
   Users,
   CalendarIcon,
   Image as ImageIcon,
@@ -21,13 +22,13 @@ import {
   Headphones,
   ArrowRightLeft,
   ListFilter,
+  Video,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -52,6 +53,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
@@ -74,7 +85,15 @@ import {
 } from '@/services/chat';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
+import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { ChatWhatsappModelPickerDialog } from '@/components/chat/ChatWhatsappModelPickerDialog';
+import {
+  buildSlaContextFromDashboard,
+  selectChatBadges,
+  type OperationalPanelFilter,
+  type SlaContextForUi,
+  matchesOperationalFilter,
+} from '@/lib/chatSlaUi';
 import { buildChatInboxTemplateContext } from '@/utils/chatInboxTemplateContext';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
@@ -86,13 +105,18 @@ import { ticketsService } from '@/services/tickets';
 import { normalizeBrazilTaxIdInput } from '@/utils/brazilTaxId';
 import ContractCreateForm from '@/components/contracts/ContractCreateForm';
 import type { Contract } from '@/types/contracts';
-import { clientsService } from '@/services/clients';
+import { clientsService, type Client } from '@/services/clients';
 import { recordClientTimelineEvent } from '@/services/clientTimeline';
 import { messagesService } from '@/services/messages';
 import { customerInvoicesService } from '@/services/customerInvoices';
 import { buildInvoiceLink } from '@/services/chatFinancialAdapter';
 import CustomerInvoiceNew from '@/pages/CustomerInvoiceNew';
-import { ChatContactProfileSheet } from '@/components/chat/ChatContactProfileSheet';
+import {
+  ChatContactProfilePanel,
+  ChatContactProfileSheet,
+  type ChatProfileFieldKey,
+  type ChatProfileFieldRow,
+} from '@/components/chat/ChatContactProfileSheet';
 import { MobileCommerceScreenLayout } from '@/components/mobile/MobileCommerceScreenLayout';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { CrmIdentityListRow } from '@/components/crm/CrmIdentityListRow';
@@ -118,6 +142,7 @@ import {
   logChatRealtimeSocketDisconnected,
   logChatRealtimeV2EventReceived,
 } from '@/lib/chatRealtimeDiagnostics';
+import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
@@ -195,18 +220,6 @@ const formatRelativeDate = (value?: string | null) => {
   });
 };
 
-const statusBadgeClass = (status?: string | null) => {
-  if (!status)
-    return 'border-border bg-muted text-muted-foreground dark:bg-muted/70 dark:text-foreground/90';
-  if (status === 'connected' || status === 'open')
-    return 'border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/45 dark:text-emerald-200';
-  if (status === 'connecting')
-    return 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-200';
-  if (status === 'disconnected' || status === 'closed')
-    return 'border-rose-300 bg-rose-100 text-rose-900 dark:border-rose-800/60 dark:bg-rose-950/45 dark:text-rose-200';
-  return 'border-border bg-muted text-muted-foreground dark:bg-muted/70 dark:text-foreground/90';
-};
-
 /** Etapa 5 — rótulo curto para badge de atendimento (evita confundir com `status` da conversa Uaz). */
 /** Compat: backend Fase 5 usa `in_progress`; valores antigos `in_service`. */
 const attendanceIsInProgress = (s?: string | null) => s === 'in_progress' || s === 'in_service';
@@ -214,17 +227,17 @@ const attendanceIsInProgress = (s?: string | null) => s === 'in_progress' || s =
 const attendanceStatusLabel = (s?: string | null) => {
   switch (s) {
     case 'open':
-      return 'Aberta';
     case 'pending':
+      return 'Aberto';
     case 'unassigned':
-      return 'Aguardando';
+      return 'Sem resp.';
     case 'queued':
       return 'Na fila';
     case 'in_progress':
     case 'in_service':
       return 'Em atendimento';
     case 'waiting_customer':
-      return 'Aguardando cliente';
+      return 'Aguardando';
     case 'closed':
       return 'Encerrada';
     case 'archived':
@@ -299,7 +312,9 @@ const CHAT_COMPOSER_MAX_HEIGHT_PX = 120;
 
 const Chat = () => {
   const { user, session, profile } = useAuth();
-  const { canCreate, loading: modulePermLoading } = useModulePermissions();
+  const { canView, canEdit, canCreate, loading: modulePermLoading } = useModulePermissions();
+  const hasAgendaFeature = useFeatureFlag('agenda');
+  const canCreateAgendaInChat = hasAgendaFeature && canCreate('agenda') && !modulePermLoading;
   const canCreateProposalsInChat = canCreate('proposals') && !modulePermLoading;
   const canCreateContractsInChat = canCreate('contracts') && !modulePermLoading;
   const canCreateInvoicesInChat = canCreate('billing') && !modulePermLoading;
@@ -320,11 +335,20 @@ const Chat = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
   const [whatsappModelPickerOpen, setWhatsappModelPickerOpen] = useState(false);
+  const [meetNowConfirmOpen, setMeetNowConfirmOpen] = useState(false);
+  const [meetNowSubmitting, setMeetNowSubmitting] = useState(false);
+  const [scheduleLaterOpen, setScheduleLaterOpen] = useState(false);
+  const [scheduleLaterBusy, setScheduleLaterBusy] = useState(false);
+  const [schedDay, setSchedDay] = useState<Date>(() => new Date());
+  const [schedTime, setSchedTime] = useState('10:00');
+  const [schedDuration, setSchedDuration] = useState(60);
+  const [schedCreateMeet, setSchedCreateMeet] = useState(true);
+  const [schedNote, setSchedNote] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'leads' | 'clients'>('all');
   /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
   const [chatInboxScope, setChatInboxScope] = useState<'owner' | 'tenant'>('tenant');
   const [chatAttendanceFilter, setChatAttendanceFilter] = useState<
-    '' | 'queue' | 'team' | 'mine' | 'closed' | 'unassigned' | 'waiting'
+    '' | 'queue' | 'team' | 'mine' | 'closed' | 'unassigned'
   >('');
   const [attendanceCounts, setAttendanceCounts] = useState({
     queue: 0,
@@ -334,6 +358,9 @@ const Chat = () => {
     closed: 0,
     unread: 0,
   });
+  const [operationalPanelFilter, setOperationalPanelFilter] = useState<OperationalPanelFilter>('');
+  const [slaUiContext, setSlaUiContext] = useState<SlaContextForUi | null>(null);
+  const [operationsRefreshTick, setOperationsRefreshTick] = useState(0);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [transferUsers, setTransferUsers] = useState<TenantUser[]>([]);
   const [transferTeams, setTransferTeams] = useState<Team[]>([]);
@@ -342,6 +369,13 @@ const Chat = () => {
   const [transferMode, setTransferMode] = useState<'operator' | 'team'>('operator');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [contactProfileOpen, setContactProfileOpen] = useState(false);
+
+  const { data: clientGroupsList = [] } = useQuery({
+    queryKey: ['client-groups'],
+    queryFn: () => clientsService.getClientGroups(),
+    staleTime: 120_000,
+    enabled: contactProfileOpen,
+  });
   const [attendingConversation, setAttendingConversation] = useState(false);
 
   const [loadingInstances, setLoadingInstances] = useState(false);
@@ -353,6 +387,8 @@ const Chat = () => {
   const [currentLead, setCurrentLead] = useState<any | null>(null);
   const [currentClient, setCurrentClient] = useState<any | null>(null);
   const [loadingLead, setLoadingLead] = useState(false);
+  const [profileFieldSaving, setProfileFieldSaving] = useState<string | null>(null);
+  const [savingClientGroup, setSavingClientGroup] = useState(false);
   const [loadingClient, setLoadingClient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
@@ -389,6 +425,7 @@ const Chat = () => {
     preview: string | null;
   }>({ id: null, lastAt: null, preview: null });
   const conversationUpdatedReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const operationsPanelDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Estados para dialogs
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
@@ -414,9 +451,7 @@ const Chat = () => {
     setContactProfileOpen(false);
   }, [selectedConversationId]);
 
-  /** Etapa 3+: modelo oficial (`proposal_templates`) e/ou legado rascunho `proposals` da coluna Kanban. */
-  const [proposalKanbanModelId, setProposalKanbanModelId] = useState<string | null>(null);
-  const [proposalKanbanLegacyDraftId, setProposalKanbanLegacyDraftId] = useState<string | null>(null);
+  /** Etapa 3+: quando o Kanban ligar coluna → Chat, passar `initialTemplateProposalId` (rascunho) em `ProposalCreateForm`. */
   const [unlinkConfirmOpen, setUnlinkConfirmOpen] = useState(false);
   
   // Estados para formulários
@@ -436,6 +471,43 @@ const Chat = () => {
     } finally {
       setLoadingInstances(false);
     }
+  }, []);
+
+  const scheduleOperationsPanelRefresh = useCallback(() => {
+    if (operationsPanelDebounceRef.current) clearTimeout(operationsPanelDebounceRef.current);
+    operationsPanelDebounceRef.current = setTimeout(() => {
+      operationsPanelDebounceRef.current = null;
+      setOperationsRefreshTick((n) => n + 1);
+    }, 550);
+  }, []);
+
+  /** Mantém contexto SLA para badges sem renderizar o painel operacional na página de chat. */
+  useEffect(() => {
+    if (!user?.tenant_id || modulePermLoading || !canView('chat')) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const d = await chatService.getOperationsDashboard();
+        if (cancelled) return;
+        setSlaUiContext(buildSlaContextFromDashboard(d));
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.tenant_id, modulePermLoading, operationsRefreshTick, canView]);
+
+  useEffect(() => {
+    return () => {
+      if (operationsPanelDebounceRef.current) {
+        clearTimeout(operationsPanelDebounceRef.current);
+        operationsPanelDebounceRef.current = null;
+      }
+    };
   }, []);
 
   const loadConversations = useCallback(async (instanceIds: string | string[]) => {
@@ -512,6 +584,8 @@ const Chat = () => {
       } catch {
         /* contagens são auxiliares */
       }
+      scheduleOperationsPanelRefresh();
+      emitChatNavUnreadRefresh();
     } catch (error) {
       console.error('Erro ao carregar conversas:', error);
       toast.error('Erro ao carregar conversas', {
@@ -521,7 +595,14 @@ const Chat = () => {
       setLoadingConversations(false);
       conversationsHydratedRef.current = true;
     }
-  }, [user?.tenant_id, chatInboxScope, chatAttendanceFilter, activeTab, searchTerm]);
+  }, [
+    user?.tenant_id,
+    chatInboxScope,
+    chatAttendanceFilter,
+    activeTab,
+    searchTerm,
+    scheduleOperationsPanelRefresh,
+  ]);
 
   const loadMessages = useCallback(
     async (conversationId: string, opts?: { silent?: boolean }) => {
@@ -610,6 +691,15 @@ const Chat = () => {
       state: buildClientProfileStateFromChat(keys),
     });
   }, [navigate]);
+
+  const toggleContactProfilePanel = useCallback(() => {
+    if (!selectedConversationId) return;
+    setContactProfileOpen((open) => !open);
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (!selectedConversationId) setContactProfileOpen(false);
+  }, [selectedConversationId]);
 
   // Carregar mensagens quando uma conversa é selecionada
   // Nota: Não usamos polling automático pois os webhooks atualizam em tempo real
@@ -932,6 +1022,7 @@ const Chat = () => {
         void loadMessages(updatedConversation.id, { silent: true });
         }, 650);
       }
+      scheduleOperationsPanelRefresh();
     };
 
     socket.on('conversation_attendance_updated', (payload: { conversation?: Record<string, unknown> }) => {
@@ -967,6 +1058,7 @@ const Chat = () => {
         .getConversationAttendanceCounts({ instanceIds: ids, inboxScope: scope })
         .then(setAttendanceCounts)
         .catch(() => {});
+      scheduleOperationsPanelRefresh();
     });
 
     const handleNewMessage = (
@@ -1093,6 +1185,7 @@ const Chat = () => {
         }
         return prev;
       });
+      scheduleOperationsPanelRefresh();
     };
 
     if (preferRealtimeV2) {
@@ -1177,7 +1270,7 @@ const Chat = () => {
         socketRef.current = null;
       }
     };
-  }, [session?.token, loadMessages, user?.tenant_id, chatInboxScope]);
+  }, [session?.token, loadMessages, user?.tenant_id, chatInboxScope, scheduleOperationsPanelRefresh]);
 
   const loadClients = useCallback(async () => {
     try {
@@ -1328,21 +1421,21 @@ const Chat = () => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         run();
-        // Segundo tick: após layout/pintura (Radix ScrollArea, mídia nas bolhas)
+        // Segundo tick: após layout/pintura (área de scroll, mídia nas bolhas)
         requestAnimationFrame(run);
       });
     });
   }, []);
 
   // Scroll para o fim: mensagens novas, troca de conversa, fim do carregamento, ou volta ao painel da conversa
-  // (ex.: criar fatura desmonta o ScrollArea — sem mudar `messages`, o efeito antigo não corria e o scroll ia ao topo)
+  // (ex.: criar fatura desmonta a lista — sem mudar `messages`, o efeito antigo não corria e o scroll ia ao topo)
   useLayoutEffect(() => {
     if (messages.length === 0 || loadingMessages) return;
     if (viewMode !== 'conversation') return;
     scrollMessagesToBottom();
   }, [messages, selectedConversationId, loadingMessages, viewMode, scrollMessagesToBottom]);
 
-  const filteredConversations = useMemo(() => {
+  const searchFilteredConversations = useMemo(() => {
     if (!searchTerm.trim()) return conversations;
     return conversations.filter((conversation) => {
       const term = searchTerm.toLowerCase();
@@ -1354,6 +1447,13 @@ const Chat = () => {
       );
     });
   }, [conversations, searchTerm]);
+
+  const filteredConversations = useMemo(() => {
+    if (!operationalPanelFilter) return searchFilteredConversations;
+    return searchFilteredConversations.filter((c) =>
+      matchesOperationalFilter(c, operationalPanelFilter, slaUiContext),
+    );
+  }, [searchFilteredConversations, operationalPanelFilter, slaUiContext]);
 
   // Filtros de conversas
   const unreadConversations = useMemo(
@@ -1525,6 +1625,40 @@ const Chat = () => {
     );
   }, [selectedConversation, currentClient, currentLead]);
 
+  /** Uma única linha no header mobile: vínculo+estado OU telefone — nunca repetir número. */
+  const mobileThreadHeaderSubline = useMemo(() => {
+    if (!isMobile || !routeConversationId || !selectedConversation || !selectedIdentity) return null;
+    const conv = selectedConversation;
+    const phone = selectedIdentity.phoneLine?.trim() || '';
+    const att = attendanceStatusLabel(conv.attendance_status);
+    const assignee = conv.assignee_display?.trim() ? shortOperatorName(conv.assignee_display) : '';
+    const team =
+      conv.assigned_team_id && conv.assigned_team_name?.trim()
+        ? `Fila ${conv.assigned_team_name.trim()}`
+        : '';
+
+    if (conv.client_id) {
+      const parts = ['Cliente'];
+      if (att) parts.push(att);
+      else if (assignee) parts.push(assignee);
+      else if (team) parts.push(team);
+      return parts.join(' · ');
+    }
+    if (conv.leadId) {
+      const parts = ['Lead'];
+      if (att) parts.push(att);
+      else if (assignee) parts.push(assignee);
+      else if (team) parts.push(team);
+      return parts.join(' · ');
+    }
+    if (conv.link_state === 'review_required') {
+      return att ? `Revisar vínculo · ${att}` : 'Revisar vínculo';
+    }
+    if (phone) return phone;
+    const fallback = [att, assignee, team].filter(Boolean).join(' · ');
+    return fallback || null;
+  }, [isMobile, routeConversationId, selectedConversation, selectedIdentity]);
+
   const chatContractInitialSigners = useMemo(() => {
     const contact = currentClient || currentLead;
     if (!contact) return [];
@@ -1540,6 +1674,7 @@ const Chat = () => {
         email: contact.email || '',
         tax_id: normalizeBrazilTaxIdInput(taxFromClient || taxFromLead || ''),
         role: 'CLIENT' as const,
+        signing_order: 1,
       },
     ];
   }, [currentClient, currentLead]);
@@ -1562,7 +1697,7 @@ const Chat = () => {
     const phoneDisplay =
       (id?.phoneLine && id.phoneLine.trim()) || conv.phoneNumber || conv.canonicalPhone || conv.canonical_phone || null;
     const statusParts: string[] = [];
-    if (id?.waSubtitle) statusParts.push(`WhatsApp: ${id.waSubtitle}`);
+    if (id?.waSubtitle?.trim()) statusParts.push(id.waSubtitle.trim());
     if (attendanceIsInProgress(conv.attendance_status)) statusParts.push('Em atendimento');
     if (conv.attendance_status === 'queued') statusParts.push('Na fila');
     if (conv.attendance_status === 'closed') statusParts.push('Encerrado');
@@ -1572,22 +1707,77 @@ const Chat = () => {
       conv.assignee_display?.trim() ||
       (conv.assigned_to_user_id ? 'Atribuído' : null);
     const teamName = conv.assigned_team_name?.trim() || null;
-    const detailRows: { label: string; value: string }[] = [];
     const contact = currentClient || currentLead;
-    if (contact?.email?.trim()) detailRows.push({ label: 'E-mail', value: contact.email.trim() });
-    if (contact && 'company' in contact && (contact as { company?: string }).company?.trim()) {
-      detailRows.push({ label: 'Empresa', value: String((contact as { company?: string }).company).trim() });
+    const kind = conv.client_id ? ('client' as const) : conv.leadId ? ('lead' as const) : ('unlinked' as const);
+
+    const profileFields: ChatProfileFieldRow[] = [];
+    const leadCpf =
+      currentLead && typeof (currentLead as { cpf_cnpj?: string }).cpf_cnpj === 'string'
+        ? (currentLead as { cpf_cnpj?: string }).cpf_cnpj?.trim()
+        : '';
+    if (contact) {
+      profileFields.push({
+        key: 'name',
+        label: 'Nome',
+        value: (contact.name || '').trim() || null,
+        editable: true,
+      });
+      profileFields.push({
+        key: 'phone',
+        label: 'Telefone',
+        value: (contact.phone || phoneDisplay || '').trim() || null,
+        editable: true,
+      });
+      profileFields.push({
+        key: 'email',
+        label: 'E-mail',
+        value: contact.email?.trim() || null,
+        editable: true,
+      });
+      const cpfVal = currentClient?.cpf_cnpj?.trim() || leadCpf || null;
+      if (kind === 'client' || cpfVal) {
+        profileFields.push({
+          key: 'cpf_cnpj',
+          label: 'CPF/CNPJ',
+          value: cpfVal,
+          editable: true,
+        });
+      }
+      const companyVal =
+        contact && 'company' in contact && (contact as { company?: string }).company?.trim()
+          ? String((contact as { company?: string }).company).trim()
+          : null;
+      profileFields.push({ key: 'company', label: 'Empresa', value: companyVal, editable: true });
+      const src =
+        contact && 'source' in contact && typeof (contact as { source?: string }).source === 'string'
+          ? (contact as { source?: string }).source?.trim() || null
+          : null;
+      profileFields.push({ key: 'source', label: 'Origem', value: src, editable: true });
+    } else {
+      profileFields.push({
+        key: 'name',
+        label: 'Nome',
+        value: displayName !== '—' ? displayName : null,
+        editable: false,
+      });
+      profileFields.push({
+        key: 'phone',
+        label: 'Telefone',
+        value: phoneDisplay,
+        editable: false,
+      });
     }
-    if (currentClient?.cpf_cnpj?.trim()) {
-      detailRows.push({ label: 'CPF/CNPJ', value: currentClient.cpf_cnpj.trim() });
-    }
-    if (currentLead && !currentClient) {
-      const notes = typeof currentLead.notes === 'string' ? currentLead.notes.trim() : '';
-      if (notes) detailRows.push({ label: 'Notas', value: notes.slice(0, 280) + (notes.length > 280 ? '…' : '') });
-    }
+    profileFields.push({
+      key: 'lastInteraction',
+      label: 'Última interação',
+      value: lastInteractionLabel,
+      editable: false,
+    });
+
     const tagLabels: string[] = [];
     if (currentClient?.funnel_stage) tagLabels.push(String(currentClient.funnel_stage));
     if (currentClient?.client_groups?.name) tagLabels.push(currentClient.client_groups.name);
+
     const adminBypass = user.is_tenant_admin === true;
     const canTransferProfile =
       !!user.tenant_id &&
@@ -1600,12 +1790,12 @@ const Chat = () => {
       statusLine,
       avatarUrl: id?.avatarUrl ?? null,
       initials: id?.initials ?? '?',
-      kind: conv.client_id ? ('client' as const) : conv.leadId ? ('lead' as const) : ('unlinked' as const),
-      lastInteractionLabel,
+      kind,
       assigneeDisplay,
       teamName,
-      detailRows,
+      profileFields,
       tagLabels,
+      selectedClientGroupId: currentClient?.group_id ?? null,
       canTransferProfile,
     };
   }, [selectedConversation, user, selectedIdentity, currentClient, currentLead]);
@@ -1646,7 +1836,7 @@ const Chat = () => {
     }
     setSelectedConversationId(conversationId);
 
-    void chatService.syncConversationMessages(conversationId, { limit: 100, syncMode: 'full' }).catch((error) => {
+    void chatService.syncConversationMessages(conversationId, {}).catch((error) => {
       console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
     });
 
@@ -1665,6 +1855,14 @@ const Chat = () => {
     }
 
     void loadConversationProfile(conversationId);
+  };
+
+  const openContactProfileFromList = (conversation: ChatConversation, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (selectedConversationId !== conversation.id) {
+      handleSelectConversation(conversation.id);
+    }
+    setContactProfileOpen(true);
   };
 
   const loadConversationProfile = useCallback(async (conversationId: string) => {
@@ -1691,6 +1889,73 @@ const Chat = () => {
       setLoadingLead(false);
     }
   }, []);
+
+  const canEditChatProfileFields = useMemo(
+    () =>
+      Boolean(currentClient && canEdit('clients')) ||
+      Boolean(currentLead && !currentClient && canEdit('leads')),
+    [currentClient, currentLead, canEdit],
+  );
+
+  const handleSaveChatProfileField = useCallback(
+    async (key: ChatProfileFieldKey, value: string) => {
+      if (!selectedConversationId) return;
+      setProfileFieldSaving(key);
+      try {
+        if (currentClient?.id) {
+          const patch: Partial<Client> = {};
+          if (key === 'name') patch.name = value;
+          else if (key === 'email') patch.email = value;
+          else if (key === 'phone') patch.phone = value;
+          else if (key === 'cpf_cnpj') patch.cpf_cnpj = value ? normalizeBrazilTaxIdInput(value) : null;
+          else if (key === 'company') patch.company = value;
+          else if (key === 'source') patch.source = value;
+          const updated = await clientsService.updateClient(currentClient.id, patch);
+          setCurrentClient(updated);
+          toast.success('Dados atualizados');
+          void queryClient.invalidateQueries({ queryKey: ['clients'] });
+        } else if (currentLead?.id) {
+          const body: Record<string, unknown> = {};
+          if (key === 'name') body.name = value;
+          else if (key === 'email') body.email = value;
+          else if (key === 'phone') body.phone = value;
+          else if (key === 'company') body.company = value;
+          else if (key === 'source') body.source = value;
+          else if (key === 'cpf_cnpj') body.cpf_cnpj = value ? normalizeBrazilTaxIdInput(value) : null;
+          await apiClient.patch(`/api/leads/${currentLead.id}`, body);
+          await loadConversationProfile(selectedConversationId);
+          toast.success('Dados atualizados');
+          void queryClient.invalidateQueries({ queryKey: ['leads'] });
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Erro ao guardar');
+        throw e;
+      } finally {
+        setProfileFieldSaving(null);
+      }
+    },
+    [currentClient, currentLead, selectedConversationId, loadConversationProfile, queryClient],
+  );
+
+  const handleChatClientGroupChange = useCallback(
+    async (groupId: string | null) => {
+      if (!currentClient?.id) return;
+      setSavingClientGroup(true);
+      try {
+        const updated = await clientsService.updateClient(currentClient.id, {
+          group_id: groupId ?? undefined,
+        });
+        setCurrentClient(updated);
+        toast.success('Grupo atualizado');
+        void queryClient.invalidateQueries({ queryKey: ['clients'] });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Erro ao atualizar grupo');
+      } finally {
+        setSavingClientGroup(false);
+      }
+    },
+    [currentClient, queryClient],
+  );
 
   const handleSelectConversationRef = useRef(handleSelectConversation);
   handleSelectConversationRef.current = handleSelectConversation;
@@ -1812,9 +2077,35 @@ const Chat = () => {
   useEffect(() => {
     if (!isMobile) return;
     if (!/^\/chat$/.test(location.pathname)) return;
+    if (searchParams.get('conversationId')?.trim()) return;
     setSelectedConversationId(null);
     setMessages([]);
-  }, [isMobile, location.pathname]);
+  }, [isMobile, location.pathname, searchParams]);
+
+  /** Sininho / links: `/chat?conversationId=` abre a thread (alinha ao backend de notificações). */
+  const conversationIdFromQuery = searchParams.get('conversationId')?.trim() ?? '';
+  useEffect(() => {
+    if (!conversationIdFromQuery) return;
+    if (routeConversationId) return;
+    if (selectedConversationId === conversationIdFromQuery) return;
+    if (loadingConversations) return;
+    if (!conversationsHydratedRef.current) return;
+    if (enabledInstanceIds.size === 0) return;
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('conversationId');
+    setSearchParams(next, { replace: true });
+
+    void handleSelectConversationRef.current(conversationIdFromQuery, undefined);
+  }, [
+    conversationIdFromQuery,
+    routeConversationId,
+    selectedConversationId,
+    loadingConversations,
+    enabledInstanceIds.size,
+    searchParams,
+    setSearchParams,
+  ]);
 
   /** `/chat/:conversationId` — hidrata seleção (deep link ou refresh). */
   useEffect(() => {
@@ -2010,54 +2301,40 @@ const Chat = () => {
     }
   };
 
-  /** Um único ícone: mensagens remotas + dados do contato, depois recarrega lista. */
+  /** Sync com mensagens + tentativa explícita de foto (refresh identity) quando o sync não atualizar identidade. */
   const handleSyncConversation = async () => {
     if (!selectedConversationId) return;
     try {
       setSyncingMessages(true);
-      const convBefore = conversations.find((c) => c.id === selectedConversationId);
       const syncResult = await chatService.syncConversationMessages(selectedConversationId, {
-        limit: 100,
-        syncMode: 'full',
         force: true,
       });
-      const identityState = convBefore?.identityState ?? convBefore?.identity_state;
-      const canonical =
-        convBefore?.canonicalChatId ?? convBefore?.canonical_chat_id ?? null;
-      const display =
-        convBefore?.displayName ?? convBefore?.display_name ?? convBefore?.contactName ?? '';
-      const nameOk = String(display || '').trim().length >= 2;
-      const meta = (convBefore?.metadata || {}) as Record<string, unknown>;
-      const portraitOk = !!(
-        convBefore?.avatarUrl ||
-        convBefore?.avatar_url ||
-        (typeof meta.whatsapp_profile_photo === 'string' && meta.whatsapp_profile_photo.trim()) ||
-        (typeof meta.image === 'string' && meta.image.trim())
-      );
-      const identityAlreadyHydrated =
-        convBefore &&
-        identityState === 'resolved' &&
-        !!String(canonical || '').trim() &&
-        nameOk &&
-        portraitOk;
-
-      const backendSkippedIdentity = syncResult?.identity_refresh_skipped === true;
-
-      if (!backendSkippedIdentity && !identityAlreadyHydrated) {
-        const identityResult = await chatService.refreshConversationIdentity(selectedConversationId);
-        if (identityResult.conversation) {
-          setConversations((prev) =>
-            prev.map((c) => (c.id === selectedConversationId ? identityResult.conversation! : c))
-          );
+      if (syncResult.conversation) {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === selectedConversationId ? syncResult.conversation! : c))
+        );
+      } else if (enabledInstanceIds.size > 0) {
+        await loadConversations(Array.from(enabledInstanceIds));
+      }
+      const summary = syncResult.chat_sync_summary as { identity_refreshed?: boolean; identity_skipped_cooldown?: boolean } | undefined;
+      const identityOk = summary?.identity_refreshed === true;
+      if (!identityOk && summary?.identity_skipped_cooldown !== true) {
+        try {
+          const idRes = await chatService.refreshConversationIdentity(selectedConversationId);
+          if (idRes.conversation) {
+            setConversations((prev) =>
+              prev.map((c) => (c.id === selectedConversationId ? idRes.conversation! : c))
+            );
+          }
+        } catch {
+          /* refresh opcional */
         }
       }
       await loadMessages(selectedConversationId, { silent: true });
-      if (enabledInstanceIds.size > 0) {
-        await loadConversations(Array.from(enabledInstanceIds));
-      }
-      void queryClient.invalidateQueries({ queryKey: ['clients', 'list'] });
-      void queryClient.invalidateQueries({ queryKey: ['leads'] });
-      toast.success('Conversa sincronizada');
+      await loadConversationProfile(selectedConversationId);
+      toast.success('Sincronização concluída', {
+        description: 'Mensagens atualizadas; foto do perfil quando disponível na origem.',
+      });
     } catch (error) {
       console.error('Erro ao sincronizar conversa:', error);
       toast.error('Não foi possível sincronizar a conversa', {
@@ -2215,9 +2492,14 @@ const Chat = () => {
         throw new Error('Erro ao criar cliente');
       }
 
+      const createdClient = clientResult.data as { id?: string };
+      if (!createdClient.id) {
+        throw new Error('Resposta de criação de cliente sem id');
+      }
+
       await apiClient.patch(`/api/leads/${currentLead.id}`, {
         status: 'Convertido',
-        migrated_client_id: clientResult.data.id,
+        migrated_client_id: createdClient.id,
       });
 
       void queryClient.invalidateQueries({ queryKey: ['clients', 'list'] });
@@ -2310,14 +2592,10 @@ const Chat = () => {
   const handleCreateProposal = () => {
     if (!selectedConversation?.client_id && !selectedConversation?.leadId) return;
     consumeKanbanProposalColumnContextIfMatch(selectedConversation.id);
-    setProposalKanbanModelId(null);
-    setProposalKanbanLegacyDraftId(null);
     setViewMode('proposal-create');
   };
 
   const handleBackFromProposalCreate = () => {
-    setProposalKanbanModelId(null);
-    setProposalKanbanLegacyDraftId(null);
     setViewMode('conversation');
   };
 
@@ -2325,8 +2603,6 @@ const Chat = () => {
     created: ProposalCreateSuccessPayload,
     mode: 'sent' | 'draft'
   ) => {
-    setProposalKanbanModelId(null);
-    setProposalKanbanLegacyDraftId(null);
     setViewMode('conversation');
     try {
       const clientIdForTimeline = selectedConversation?.client_id ?? created.client_id ?? null;
@@ -2374,6 +2650,110 @@ const Chat = () => {
       toast.success('Rascunho de proposta salvo');
     }
   };
+
+  const handleChatOpenAgendaComposer = useCallback(() => {
+    if (!selectedConversation) return;
+    if (!selectedConversation.client_id && !selectedConversation.leadId) {
+      toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
+      return;
+    }
+    const label = selectedIdentity?.displayName?.trim() || 'cliente';
+    const title = encodeURIComponent(`Atendimento com ${label}`);
+    if (selectedConversation.client_id) {
+      navigate(`/agenda?new=1&client_id=${selectedConversation.client_id}&title=${title}`);
+      return;
+    }
+    if (selectedConversation.leadId) {
+      navigate(`/agenda?new=1&lead_id=${selectedConversation.leadId}&title=${title}`);
+    }
+  }, [navigate, selectedConversation, selectedIdentity?.displayName]);
+
+  const handleChatMeetNowConfirmed = useCallback(async () => {
+    if (!selectedConversationId) return;
+    setMeetNowConfirmOpen(false);
+    setMeetNowSubmitting(true);
+    try {
+      const r = await chatService.createMeetNowFromChat(selectedConversationId);
+      void loadMessages(selectedConversationId, { silent: true });
+      if (r.warnings?.length) {
+        for (const w of r.warnings) toast.message(w);
+      }
+      if (r.meet_link && r.message_sent) {
+        toast.success('Reunião criada e link enviado no chat.');
+      } else if (r.meet_link && !r.message_sent) {
+        toast.warning('Reunião criada, mas o link não pôde ser enviado no WhatsApp.');
+      } else {
+        toast.warning('Reunião criada sem link do Meet. Verifique o Google Agenda ou a sincronização.');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Não foi possível criar a reunião');
+    } finally {
+      setMeetNowSubmitting(false);
+    }
+  }, [selectedConversationId, loadMessages]);
+
+  const handleChatOpenScheduleLater = useCallback(() => {
+    if (!selectedConversation) return;
+    if (!selectedConversation.client_id && !selectedConversation.leadId) {
+      toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
+      return;
+    }
+    setSchedDay(new Date());
+    setSchedTime('10:00');
+    setSchedDuration(60);
+    setSchedCreateMeet(true);
+    setSchedNote('');
+    setScheduleLaterOpen(true);
+  }, [selectedConversation]);
+
+  const handleChatScheduleLaterSubmit = useCallback(async () => {
+    if (!selectedConversationId || !selectedConversation) return;
+    const dayStr = format(schedDay, 'yyyy-MM-dd');
+    const startLocal = parse(`${dayStr} ${schedTime}`, 'yyyy-MM-dd HH:mm', new Date());
+    if (Number.isNaN(startLocal.getTime())) {
+      toast.error('Data ou horário inválido');
+      return;
+    }
+    const endLocal = addMinutes(startLocal, schedDuration);
+    const label = selectedIdentity?.displayName?.trim() || 'cliente';
+    setScheduleLaterBusy(true);
+    try {
+      const r = await chatService.scheduleAppointmentFromChat(selectedConversationId, {
+        title: `Atendimento com ${label}`,
+        starts_at: startLocal.toISOString(),
+        ends_at: endLocal.toISOString(),
+        type: 'meeting',
+        description: schedNote.trim() || 'Agendado a partir do chat',
+        create_google_event: schedCreateMeet,
+        create_meet: schedCreateMeet,
+        send_chat_confirmation: true,
+      });
+      setScheduleLaterOpen(false);
+      void loadMessages(selectedConversationId, { silent: true });
+      if (r.warnings?.length) {
+        for (const w of r.warnings) toast.message(w);
+      }
+      if (r.message_sent) {
+        toast.success('Compromisso criado e confirmação enviada no chat.');
+      } else {
+        toast.warning('Compromisso criado, mas a mensagem não foi enviada no WhatsApp.');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao agendar');
+    } finally {
+      setScheduleLaterBusy(false);
+    }
+  }, [
+    selectedConversationId,
+    selectedConversation,
+    schedDay,
+    schedTime,
+    schedDuration,
+    schedCreateMeet,
+    schedNote,
+    selectedIdentity?.displayName,
+    loadMessages,
+  ]);
 
   const handleCreateTask = () => {
     setTaskDialogOpen(true);
@@ -2762,27 +3142,8 @@ const Chat = () => {
     const linkedClient = conversation.client_id ? clientsById.get(conversation.client_id) ?? null : null;
     const linkedLead = conversation.leadId ? leadsById.get(conversation.leadId) ?? null : null;
     const identity = resolveConversationIdentity(conversation, linkedClient, linkedLead);
-    const hasProfile = !!(conversation.client_id || conversation.leadId);
     const showPhoneRow =
       Boolean(identity.phoneLine) && identity.displayName.trim() !== identity.phoneLine.trim();
-
-    const handleAvatarClick = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (conversation.client_id) {
-        goToClientProfileFromChat(conversation.client_id, conversation);
-      } else if (conversation.leadId) {
-        toast.info('Visualização de perfil de lead em desenvolvimento');
-      }
-    };
-
-    const handleNameClick = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (conversation.client_id) {
-        goToClientProfileFromChat(conversation.client_id, conversation);
-      } else if (conversation.leadId) {
-        toast.info('Visualização de perfil de lead em desenvolvimento');
-      }
-    };
 
     return (
       <button
@@ -2793,33 +3154,33 @@ const Chat = () => {
           handleSelectConversation(conversation.id);
         }}
         className={cn(
-          'my-1 box-border w-full max-w-full min-w-0 rounded-xl border border-transparent px-3 py-3 text-left transition-colors active:bg-muted/40 md:min-h-0 md:py-2.5',
-          'min-h-[4.5rem] touch-manipulation',
+          'my-0.5 box-border w-full max-w-full min-w-0 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors active:bg-muted/40 md:min-h-0 md:px-2 md:py-1.5',
+          'touch-manipulation',
           isActive
             ? 'bg-primary/10 shadow-none ring-1 ring-primary/25 dark:bg-primary/15 dark:ring-primary/35'
             : 'bg-background/50 hover:border-border/40 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         )}
       >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2 md:gap-2.5">
           <div className="relative shrink-0">
           <Avatar 
               className={cn(
-                'h-11 w-11 md:h-10 md:w-10',
-                hasProfile ? 'cursor-pointer transition-opacity hover:opacity-85' : '',
+                'h-9 w-9 md:h-10 md:w-10',
+                'cursor-pointer transition-opacity hover:opacity-85',
               )}
-            onClick={hasProfile ? handleAvatarClick : undefined}
+            onClick={(e) => openContactProfileFromList(conversation, e)}
           >
             {identity.avatarUrl ? (
                 <AvatarImage src={identity.avatarUrl} alt={identity.displayName || 'Contato'} />
             ) : (
-                <AvatarFallback className="bg-primary/10 text-sm font-semibold uppercase text-primary">
+                <AvatarFallback className="bg-primary/10 text-xs font-semibold uppercase text-primary md:text-[13px]">
               {identity.initials}
               </AvatarFallback>
             )}
         </Avatar>
             {unread > 0 ? (
               <span
-                className="absolute -right-1 -top-1 flex h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-none text-primary-foreground shadow-sm"
+                className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-bold leading-none text-primary-foreground shadow-sm"
                 aria-label={`${unread} não lidas`}
               >
                 {unread > 99 ? '99+' : unread}
@@ -2830,76 +3191,45 @@ const Chat = () => {
             <div className="flex items-start justify-between gap-2">
               <div
                 className={cn(
-                  'min-w-0 flex-1 truncate text-[15px] font-semibold leading-tight md:text-sm md:font-medium',
+                  'min-w-0 flex-1 truncate text-sm font-semibold leading-tight md:text-sm md:font-medium',
                   isActive ? 'text-foreground' : 'text-foreground/95',
-                  hasProfile ? 'cursor-pointer transition-opacity hover:opacity-80' : '',
+                  'cursor-pointer transition-opacity hover:opacity-80',
                 )}
-                onClick={hasProfile ? handleNameClick : undefined}
+                onClick={(e) => openContactProfileFromList(conversation, e)}
               >
-                {identity.displayName}
+                <span>{identity.displayName}</span>
+                {conversation.client_id ? (
+                  <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">· Cliente</span>
+                ) : null}
+                {!conversation.client_id && conversation.leadId ? (
+                  <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">· Lead</span>
+                ) : null}
               </div>
               {shouldShowCommunicationChannelBadge(conversation.provider) ? (
-                <Badge
-                  variant="outline"
-                  className="hidden h-5 shrink-0 px-1.5 text-[10px] font-normal text-muted-foreground sm:inline-flex"
-                >
+                <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">
                   {communicationProviderBadgeLabel(conversation.provider)}
-                </Badge>
+                </span>
               ) : null}
-              <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
+              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
                 {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
             </span>
           </div>
             {showPhoneRow ? (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{identity.phoneLine}</p>
+              <p className="mt-0.5 truncate text-[11px] leading-tight text-muted-foreground">{identity.phoneLine}</p>
             ) : null}
-            <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-muted-foreground md:text-xs">
+            <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-muted-foreground md:text-xs">
               {conversation.lastMessagePreview || 'Sem mensagens recentes'}
           </p>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {conversation.client_id ? (
-                <Badge variant="default" className="px-1.5 py-0 text-[10px] font-medium">
-                  Cliente
-                </Badge>
-              ) : null}
-              {!conversation.client_id && conversation.leadId ? (
-                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium">
-                  Lead
-                </Badge>
-              ) : null}
-              {conversation.status ? (
-                <Badge variant="outline" className={cn('px-1.5 py-0 text-[10px]', statusBadgeClass(conversation.status))}>
-                  {conversation.status}
-              </Badge>
-              ) : null}
-              {conversation.assigned_team_id &&
-              !conversation.assignee_display &&
-              conversation.assigned_team_name ? (
-                <span
-                  className="inline-flex max-w-[9.5rem] items-center gap-1 rounded-md border border-sky-300/80 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-100"
-                  title={`Fila da equipe: ${conversation.assigned_team_name}`}
-                >
-                  <Users className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
-                  <span className="truncate">{conversation.assigned_team_name}</span>
-                </span>
-              ) : null}
-              {attendanceIsInProgress(conversation.attendance_status) && conversation.assignee_display ? (
-                <span
-                  className="inline-flex max-w-[10rem] items-center gap-1 rounded-md border border-violet-300/80 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
-                  title={conversation.assignee_display}
-                >
-                  <Headphones className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
-                  <span className="truncate font-medium">{shortOperatorName(conversation.assignee_display)}</span>
-                </span>
-              ) : attendanceStatusLabel(conversation.attendance_status) ? (
+            <div className="mt-1 flex flex-wrap items-center gap-0.5 md:mt-1 md:gap-1">
+              {selectChatBadges(conversation, slaUiContext).map((b) => (
                 <Badge
-                  variant="outline"
-                  className="max-w-[11rem] truncate border-violet-300/80 bg-violet-500/10 px-1.5 py-0 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
-                  title={attendanceStatusLabel(conversation.attendance_status) || undefined}
+                  key={b.key}
+                  variant={b.variant}
+                  className="h-4 border-border/40 px-1 py-0 text-[10px] font-normal leading-none md:h-4"
                 >
-                  {attendanceStatusLabel(conversation.attendance_status)}
+                  {b.label}
                 </Badge>
-              ) : null}
+              ))}
           </div>
         </div>
         </div>
@@ -2910,33 +3240,37 @@ const Chat = () => {
   return (
     <div
       className={cn(
-        'flex flex-col h-screen max-h-screen -m-6',
+        'flex min-h-0 flex-1 flex-col overflow-hidden max-md:mx-0 max-md:h-full max-md:min-h-0 md:-m-6',
         isMobileConversationView &&
-          'fixed inset-0 z-[60] m-0 h-[100dvh] max-h-[100dvh] bg-background',
+          'fixed inset-0 z-[60] m-0 max-h-[100dvh] h-[100dvh] bg-background',
+        !isMobileConversationView &&
+          'md:h-[calc(100dvh-var(--app-topbar-height)-var(--chat-page-offset)+var(--chat-extra-height))] md:max-h-[calc(100dvh-var(--app-topbar-height)-var(--chat-page-offset)+var(--chat-extra-height))] md:overflow-hidden md:pb-0',
       )}
     >
       {instances.length > 0 ? (
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div className="flex flex-1 flex-col min-h-0 overflow-hidden max-md:h-full max-md:min-h-0 md:h-full">
           {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
-          <div
-            className={cn(
-              'flex-1 flex flex-col min-h-0 px-6 pt-4 pb-6 md:pt-6 overflow-hidden',
-              isMobileConversationView && 'px-0 pt-0 pb-0',
-            )}
-          >
             <div
               className={cn(
-                'grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0',
+                'flex min-h-0 flex-1 flex-col overflow-hidden px-3 pt-2 pb-2 max-md:h-full max-md:min-h-0 md:max-w-none md:px-3 md:pb-0 md:pt-3',
+                isMobileConversationView && 'px-0 pt-0 pb-0',
+                !isMobileConversationView && 'md:h-full md:min-h-0',
+              )}
+            >
+            <div
+              className={cn(
+                'flex min-h-0 flex-1 flex-col gap-3 max-md:h-full max-md:min-h-0 md:flex-row md:items-stretch md:gap-3',
                 isMobileConversationView && 'gap-0',
+                !isMobileConversationView && 'md:h-full md:min-h-0 md:overflow-hidden',
               )}
             >
                 <Card
                   className={cn(
-                    'md:col-span-1 flex flex-col min-h-0 border-border/80 shadow-sm',
+                    'flex min-h-0 flex-col border-border/80 shadow-sm max-md:flex-1 md:h-full md:min-h-0 md:w-[minmax(360px,400px)] md:max-w-[400px] md:shrink-0 md:overflow-hidden md:self-stretch',
                     isMobile && routeConversationId && 'hidden md:flex',
                   )}
                 >
-                  <CardHeader className="flex-shrink-0 space-y-3 border-b border-border bg-muted/20 px-3 py-3">
+                  <CardHeader className="flex-shrink-0 space-y-2 border-b border-border bg-muted/20 px-2 py-2 md:space-y-2 md:px-2.5 md:py-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <div className="relative min-w-0 flex-1">
                         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -2944,7 +3278,7 @@ const Chat = () => {
                           value={searchTerm}
                           onChange={(event) => setSearchTerm(event.target.value)}
                           placeholder="Buscar por nome ou telefone..."
-                          className="h-9 bg-background pl-9"
+                          className="h-9 bg-background pl-9 md:h-8 md:text-[13px]"
                         />
                       </div>
                       <Popover open={filtersPopoverOpen} onOpenChange={setFiltersPopoverOpen}>
@@ -2953,7 +3287,7 @@ const Chat = () => {
                     type="button"
                             variant={filtersPopoverOpen ? 'secondary' : 'outline'}
                             size="icon"
-                            className="h-9 w-9 shrink-0 rounded-lg"
+                            className="h-9 w-9 shrink-0 rounded-lg md:h-8 md:w-8"
                             aria-label="WhatsApp e filtros da lista"
                             aria-expanded={filtersPopoverOpen}
                           >
@@ -2961,11 +3295,23 @@ const Chat = () => {
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent
-                          className="w-[min(100vw-1.5rem,22rem)] p-0"
-                          align="end"
-                          sideOffset={6}
+                          className={cn(
+                            'p-0',
+                            isMobile
+                              ? 'w-[calc(100vw-0.5rem)] max-w-[100vw] rounded-t-2xl border-t p-0'
+                              : 'w-[min(100vw-1.5rem,22rem)]',
+                          )}
+                          align={isMobile ? 'center' : 'end'}
+                          side={isMobile ? 'bottom' : undefined}
+                          sideOffset={isMobile ? 8 : 6}
+                          collisionPadding={8}
                         >
-                          <div className="max-h-[min(72dvh,520px)] overflow-y-auto overscroll-contain">
+                          <div
+                            className={cn(
+                              'overflow-y-auto overscroll-contain',
+                              isMobile ? 'max-h-[min(78dvh,560px)]' : 'max-h-[min(72dvh,520px)]',
+                            )}
+                          >
                             {instances.length > 0 ? (
                               <>
                                 <div className="border-b border-border bg-muted/20 px-3 py-2.5">
@@ -3180,7 +3526,12 @@ const Chat = () => {
                 </PopoverContent>
               </Popover>
             </div>
-                      <div className="overflow-x-auto -mx-0.5 px-0.5 pb-0.5">
+                      <div
+                        className={cn(
+                          '-mx-0.5 overflow-x-auto px-0.5 pb-0.5 max-md:[scrollbar-width:none] max-md:[-ms-overflow-style:none]',
+                          'max-md:[&::-webkit-scrollbar]:hidden',
+                        )}
+                      >
                         <ToggleGroup
                           type="single"
                           value={chatAttendanceFilter === '' ? 'all' : chatAttendanceFilter}
@@ -3190,22 +3541,23 @@ const Chat = () => {
                           }}
                           variant="outline"
                           size="sm"
-                          className="inline-flex w-max min-w-full justify-start gap-1"
+                          className="inline-flex min-h-0 w-max min-w-full flex-nowrap justify-start gap-0.5 md:gap-1"
                         >
-                          {(attendanceCounts.queue > 0 || chatAttendanceFilter === 'queue') && (
-                            <ToggleGroupItem value="queue" className="text-xs px-2.5 h-8 shrink-0 gap-1">
-                              Fila
-                              {attendanceCounts.queue > 0 && (
-                                <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                                  {attendanceCounts.queue > 99 ? '99+' : attendanceCounts.queue}
-                                </span>
-                              )}
-                            </ToggleGroupItem>
-                          )}
+                          <ToggleGroupItem value="all" className="h-7 shrink-0 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
+                            Todas
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value="mine" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
+                            Minhas
+                            {attendanceCounts.mine > 0 && (
+                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                                {attendanceCounts.mine > 99 ? '99+' : attendanceCounts.mine}
+                              </span>
+                            )}
+                          </ToggleGroupItem>
                           {user?.tenant_id &&
                             chatInboxScope === 'tenant' &&
                             (attendanceCounts.team > 0 || chatAttendanceFilter === 'team') && (
-                              <ToggleGroupItem value="team" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                              <ToggleGroupItem value="team" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
                                 Equipe
                                 {attendanceCounts.team > 0 && (
                                   <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
@@ -3214,15 +3566,17 @@ const Chat = () => {
                                 )}
                               </ToggleGroupItem>
                             )}
-                          <ToggleGroupItem value="mine" className="text-xs px-2.5 h-8 shrink-0 gap-1">
-                            Minhas
-                            {attendanceCounts.mine > 0 && (
-                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                                {attendanceCounts.mine > 99 ? '99+' : attendanceCounts.mine}
-                              </span>
-                            )}
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="unassigned" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                          {(attendanceCounts.queue > 0 || chatAttendanceFilter === 'queue') && (
+                            <ToggleGroupItem value="queue" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
+                              Fila
+                              {attendanceCounts.queue > 0 && (
+                                <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
+                                  {attendanceCounts.queue > 99 ? '99+' : attendanceCounts.queue}
+                                </span>
+                              )}
+                            </ToggleGroupItem>
+                          )}
+                          <ToggleGroupItem value="unassigned" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
                             Não atribuídas
                             {attendanceCounts.unassigned > 0 && (
                               <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
@@ -3230,13 +3584,7 @@ const Chat = () => {
                               </span>
                             )}
                           </ToggleGroupItem>
-                          <ToggleGroupItem value="waiting" className="text-xs px-2.5 h-8 shrink-0">
-                            Aguard. cliente
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="all" className="text-xs px-2.5 h-8 shrink-0">
-                            Todas
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="closed" className="text-xs px-2.5 h-8 shrink-0 gap-1">
+                          <ToggleGroupItem value="closed" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
                             Encerradas
                             {attendanceCounts.closed > 0 && (
                               <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
@@ -3247,8 +3595,8 @@ const Chat = () => {
                         </ToggleGroup>
                     </div>
                   </CardHeader>
-                  <CardContent className="p-0 flex-1 min-h-0 overflow-hidden">
-                    <ScrollArea className="h-full [&>div>div[data-radix-scroll-area-viewport]]:!block [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
+                  <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0 max-md:min-h-0">
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50">
                       {loadingConversations ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center text-muted-foreground">
                           <RefreshCw className="h-8 w-8 animate-spin text-primary/70" aria-hidden />
@@ -3282,15 +3630,15 @@ const Chat = () => {
                           </div>
                         </div>
                       ) : (
-                        <div className="min-w-0 px-1 pb-2 pt-0.5">{conversationsToShow.map(renderConversationItem)}</div>
+                        <div className="min-w-0 px-1 pb-1 pt-0.5">{conversationsToShow.map(renderConversationItem)}</div>
                       )}
-                    </ScrollArea>
+                    </div>
                   </CardContent>
                 </Card>
 
                 <Card
                   className={cn(
-                    'md:col-span-2 flex min-h-0 flex-1 flex-col overflow-hidden border-border/80 shadow-sm md:flex-none',
+                    'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border/80 shadow-sm max-md:flex-1 md:min-h-0 md:h-full md:self-stretch',
                     isMobile && !routeConversationId && 'hidden md:flex',
                     isMobileConversationView && 'rounded-none border-0 shadow-none',
                   )}
@@ -3325,7 +3673,7 @@ const Chat = () => {
                           </div>
                           ) : null}
                           <ProposalCreateForm
-                            key={`${selectedConversation.id}:${proposalKanbanModelId ?? 'noM'}:${proposalKanbanLegacyDraftId ?? 'noD'}`}
+                            key={`proposal-create:${selectedConversation.id}`}
                             embedded
                             initialClientId={selectedConversation.client_id ?? null}
                             initialLeadId={
@@ -3343,8 +3691,6 @@ const Chat = () => {
                             lockLeadPicker={
                               Boolean(!selectedConversation.client_id && selectedConversation.leadId)
                             }
-                            initialProposalModelId={proposalKanbanModelId}
-                            initialTemplateProposalId={proposalKanbanLegacyDraftId}
                             onBack={handleBackFromProposalCreate}
                             onCreated={(created, mode) => {
                               void handleProposalCreatedInChat(created, mode);
@@ -3402,20 +3748,20 @@ const Chat = () => {
                         className={cn(
                           'flex-shrink-0 border-b border-border bg-muted/15',
                           isMobile && routeConversationId
-                            ? 'space-y-2 px-3 py-2'
-                            : 'space-y-3 px-4 py-3',
+                            ? 'space-y-1 px-2 py-1.5'
+                            : 'space-y-3 px-4 py-3 md:space-y-0 md:px-3 md:py-2 md:min-h-[4rem]',
                           isMobileConversationView &&
-                            'sticky top-0 z-30 bg-background/96 pb-1.5 pt-[max(0.35rem,env(safe-area-inset-top))] backdrop-blur pointer-events-auto',
+                            'sticky top-0 z-30 bg-background/96 pb-1 pt-[max(0.25rem,env(safe-area-inset-top))] backdrop-blur pointer-events-auto',
                         )}
                       >
-                        <div className="flex items-start justify-between gap-2 md:gap-3">
-                          <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
+                        <div className="flex items-start justify-between gap-1.5 md:items-center md:gap-2">
+                          <div className="flex min-w-0 flex-1 items-center gap-1.5 md:gap-2.5">
                             {isMobile && routeConversationId ? (
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 shrink-0 md:hidden"
+                                className="h-7 w-7 shrink-0 md:hidden"
                                 aria-label={
                                   (location.state as { clientProfileReturnId?: string } | null)
                                     ?.clientProfileReturnId
@@ -3427,18 +3773,21 @@ const Chat = () => {
                                 <ChevronLeft className="h-5 w-5" />
                               </Button>
                             ) : null}
+                            <button
+                              type="button"
+                              className={cn(
+                                'flex min-w-0 flex-1 items-center gap-1.5 text-left md:gap-2.5',
+                                'cursor-pointer rounded-md outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring/40',
+                              )}
+                              onClick={toggleContactProfilePanel}
+                              aria-expanded={contactProfileOpen}
+                              aria-controls="chat-contact-profile-panel"
+                              title="Abrir ou fechar perfil do contato"
+                            >
                             <Avatar 
                               className={cn(
-                                'h-8 w-8 shrink-0 md:h-11 md:w-11',
-                                (currentClient || currentLead) && 'cursor-pointer transition-opacity hover:opacity-80',
+                                'h-7 w-7 shrink-0 md:h-10 md:w-10',
                               )}
-                              onClick={() => {
-                                if (currentClient && selectedConversation) {
-                                  goToClientProfileFromChat(currentClient.id, selectedConversation);
-                                } else if (currentLead) {
-                                  toast.info('Visualização de perfil de lead em desenvolvimento');
-                                }
-                              }}
                             >
                               {selectedIdentity?.avatarUrl ? (
                                 <AvatarImage
@@ -3454,36 +3803,26 @@ const Chat = () => {
                             <div 
                               className={cn(
                                 'min-w-0 flex-1',
-                                (currentClient || currentLead)
-                                  ? 'cursor-pointer transition-opacity hover:opacity-80'
-                                  : '',
                               )}
-                              onClick={() => {
-                                if (currentClient && selectedConversation) {
-                                  goToClientProfileFromChat(currentClient.id, selectedConversation);
-                                } else if (currentLead) {
-                                  toast.info('Visualização de perfil de lead em desenvolvimento');
-                                }
-                              }}
                             >
-                              <div className="flex min-w-0 items-center gap-1.5 md:gap-2">
-                                <h3 className="truncate text-[15px] font-semibold leading-tight md:text-lg">
+                              <div className="flex min-w-0 items-center gap-1.5 md:gap-1.5">
+                                <h3 className="truncate text-sm font-semibold leading-tight md:text-[15px] md:leading-snug">
                                 {selectedIdentity?.displayName ?? '—'}
                               </h3>
                                 {selectedConversation.client_id && (
-                                  <Badge variant="default" className="hidden text-xs md:inline-flex">
+                                  <Badge variant="default" className="hidden h-5 shrink-0 px-1.5 text-[10px] md:inline-flex">
                                     Cliente
                                   </Badge>
                                 )}
                                 {!selectedConversation.client_id && selectedConversation.leadId && (
-                                  <Badge className="hidden border-blue-300/80 bg-blue-500/10 text-xs text-blue-900 hover:bg-blue-500/15 dark:border-blue-800/60 dark:bg-blue-950/45 dark:text-blue-200 dark:hover:bg-blue-950/55 md:inline-flex">
+                                  <Badge className="hidden h-5 shrink-0 border-blue-300/80 bg-blue-500/10 px-1.5 text-[10px] text-blue-900 hover:bg-blue-500/15 dark:border-blue-800/60 dark:bg-blue-950/45 dark:text-blue-200 dark:hover:bg-blue-950/55 md:inline-flex">
                                     Lead
                                   </Badge>
                                 )}
                                 {!selectedConversation.client_id &&
                                   !selectedConversation.leadId &&
                                   selectedConversation.link_state === 'review_required' && (
-                                    <Badge className="hidden border-amber-300/80 bg-amber-500/10 text-xs text-amber-950 hover:bg-amber-500/15 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-100 dark:hover:bg-amber-950/55 md:inline-flex">
+                                    <Badge className="hidden h-5 shrink-0 border-amber-300/80 bg-amber-500/10 px-1.5 text-[10px] text-amber-950 hover:bg-amber-500/15 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-100 dark:hover:bg-amber-950/55 md:inline-flex">
                                       Revisar vínculo
                                     </Badge>
                                   )}
@@ -3493,68 +3832,45 @@ const Chat = () => {
                                     selectedConversation.link_state === 'unlinked') && (
                                     <Badge
                                       variant="outline"
-                                      className="hidden bg-muted text-xs text-muted-foreground md:inline-flex"
+                                      className="hidden h-5 shrink-0 bg-muted px-1.5 text-[10px] text-muted-foreground md:inline-flex"
                                     >
                                       Sem vínculo
                                     </Badge>
                                   )}
                               </div>
-                              {isMobile && routeConversationId ? (
-                                <p className="mt-0.5 truncate text-[11px] text-muted-foreground md:hidden">
-                                  {[
-                                    selectedIdentity?.phoneLine,
-                                    selectedConversation.instance_name ? `WhatsApp ${selectedConversation.instance_name}` : null,
-                                    selectedConversation.assignee_display?.trim()
-                                      ? shortOperatorName(selectedConversation.assignee_display)
-                                      : selectedConversation.assigned_team_id &&
-                                          selectedConversation.assigned_team_name
-                                        ? `Fila ${selectedConversation.assigned_team_name}`
-                                        : null,
-                                    attendanceStatusLabel(selectedConversation.attendance_status),
-                                  ]
-                                    .filter((s): s is string => Boolean(s && String(s).trim()))
-                                    .join(' · ')}
+                              {isMobile && routeConversationId && mobileThreadHeaderSubline ? (
+                                <p className="mt-0.5 truncate text-[11px] leading-tight text-muted-foreground md:hidden">
+                                  {mobileThreadHeaderSubline}
                                 </p>
                               ) : null}
-                              {selectedIdentity?.waSubtitle && (
-                                <p className="hidden max-w-[280px] truncate text-xs text-muted-foreground/90 md:block">
-                                  WhatsApp: {selectedIdentity.waSubtitle}
-                                </p>
-                              )}
                               {selectedIdentity?.phoneLine &&
                                 selectedIdentity.displayName.trim() !== selectedIdentity.phoneLine.trim() && (
-                                  <p className="hidden text-xs text-muted-foreground md:block">
-                                  {selectedIdentity.phoneLine}
-                              </p>
-                              )}
-                              <div className="mt-2 hidden flex-wrap items-center gap-2 md:flex">
-                                <span className="inline-flex items-center rounded-md border border-border/60 bg-background/90 px-2 py-0.5 text-[11px] text-muted-foreground">
-                                  WhatsApp
-                                  {selectedConversation.instance_name
-                                    ? ` · ${selectedConversation.instance_name}`
-                                    : ''}
-                                </span>
+                                  <p className="mt-0.5 hidden max-w-[min(90vw,280px)] truncate text-[11px] text-muted-foreground md:mt-0 md:max-w-[min(36vw,200px)] md:block md:text-[10px]">
+                                    {selectedIdentity.phoneLine}
+                                  </p>
+                                )}
+                              <div className="mt-2 hidden flex-wrap items-center gap-1.5 md:mt-1 md:flex">
                                 {selectedConversation.assigned_team_id &&
                                 !selectedConversation.assignee_display &&
                                 selectedConversation.assigned_team_name ? (
-                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-300/80 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-100">
-                                    <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                                    <span className="font-medium truncate max-w-[200px]">
+                                  <span className="inline-flex max-w-[min(160px,28vw)] items-center gap-1 rounded border border-sky-300/80 bg-sky-500/10 px-1.5 py-0 text-[10px] leading-tight text-sky-900 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-100">
+                                    <Users className="h-3 w-3 shrink-0" aria-hidden />
+                                    <span className="truncate font-medium">
                                       Fila {selectedConversation.assigned_team_name}
                                     </span>
                                   </span>
                                 ) : attendanceIsInProgress(selectedConversation.attendance_status) &&
                                 selectedConversation.assignee_display ? (
-                                  <span className="inline-flex items-center gap-1.5 rounded-md border border-violet-300/80 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100">
-                                    <Headphones className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                                    <span className="font-medium truncate max-w-[200px]">
+                                  <span className="inline-flex max-w-[min(160px,28vw)] items-center gap-1 rounded border border-violet-300/80 bg-violet-500/10 px-1.5 py-0 text-[10px] leading-tight text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100">
+                                    <Headphones className="h-3 w-3 shrink-0" aria-hidden />
+                                    <span className="truncate font-medium">
                                       {shortOperatorName(selectedConversation.assignee_display)}
                                     </span>
                                   </span>
                                 ) : attendanceStatusLabel(selectedConversation.attendance_status) ? (
                                   <Badge
                                     variant="outline"
-                                    className="border-violet-300/80 bg-violet-500/10 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
+                                    className="h-5 border-violet-300/80 bg-violet-500/10 px-1.5 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
                                   >
                                     {attendanceStatusLabel(selectedConversation.attendance_status)}
                                   </Badge>
@@ -3568,15 +3884,16 @@ const Chat = () => {
                                     !selectedConversation.assignee_display &&
                                     selectedConversation.assigned_team_name
                                   ) && (
-                                  <span className="text-[11px] text-muted-foreground">
-                                    <span className="font-medium text-foreground/85">Responsável</span>
-                                    {' · '}
+                                  <span className="text-[10px] text-muted-foreground">
+                                    <span className="font-medium text-foreground/85">Resp.</span>
+                                    {' '}
                                     {selectedConversation.assignee_display?.trim() ||
                                       (selectedConversation.assigned_to_user_id ? 'Atribuído' : '—')}
                                   </span>
                                 )}
                               </div>
                             </div>
+                            </button>
                           </div>
                           <div className="flex shrink-0 items-center justify-end gap-1 md:gap-2">
                             {user &&
@@ -3609,12 +3926,15 @@ const Chat = () => {
                                             className={cn(
                                               'h-7 gap-0.5 px-2 text-[11px] md:h-8 md:gap-1 md:px-3 md:text-sm',
                                               isMobileConversationView && 'h-7 w-7 px-0',
+                                              isMobile && routeConversationId && 'h-7 w-7 px-0',
                                             )}
                                             onClick={() => void handleCloseAttendance()}
                                             title="Encerrar atendimento"
                                           >
                                             <XCircle className={cn('h-3.5 w-3.5', isMobileConversationView && 'h-3.5 w-3.5')} />
-                                            <span className={cn(isMobileConversationView && 'sr-only')}>Encerrar</span>
+                                            <span className={cn((isMobileConversationView || (isMobile && routeConversationId)) && 'sr-only')}>
+                                              Encerrar
+                                            </span>
                                           </Button>
                                         ) : (
                                           <Button
@@ -3623,13 +3943,16 @@ const Chat = () => {
                                             className={cn(
                                               'h-7 gap-0.5 px-2 text-[11px] md:h-8 md:gap-1 md:px-3 md:text-sm',
                                               isMobileConversationView && 'h-7 w-7 px-0',
+                                              isMobile && routeConversationId && 'h-7 w-7 px-0',
                                             )}
                                             disabled={attendingConversation}
                                             onClick={() => void handleAttendConversation()}
                                             title="Atender conversa"
                                           >
                                             <UserCheck className={cn('h-3.5 w-3.5', isMobileConversationView && 'h-3.5 w-3.5')} />
-                                            <span className={cn(isMobileConversationView && 'sr-only')}>Atender</span>
+                                            <span className={cn((isMobileConversationView || (isMobile && routeConversationId)) && 'sr-only')}>
+                                              Atender
+                                            </span>
                                           </Button>
                                         )}
                                       </>
@@ -3649,43 +3972,33 @@ const Chat = () => {
                                 );
                               })()}
                             <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => void handleSyncConversation()}
-                              disabled={syncingMessages}
-                              className={cn(
-                                'h-8 w-8',
-                                isMobile && routeConversationId && 'hidden md:inline-flex md:h-8 md:w-8',
-                              )}
-                              title="Sincronizar mensagens e identidade do contato"
-                            >
-                              <RefreshCw className={`h-4 w-4 ${syncingMessages ? 'animate-spin' : ''}`} />
-                            </Button>
-                            <Button
                               type="button"
                               variant="ghost"
                               size="icon"
                               className={cn(
-                                'h-8 w-8 pointer-events-auto',
+                                'h-8 w-8 pointer-events-auto md:h-7 md:w-7',
                                 isMobile && routeConversationId && 'h-7 w-7 shrink-0',
                               )}
-                              aria-label="Perfil do contato e ações"
-                              title="Perfil do contato e ações"
-                              onClick={() => setContactProfileOpen(true)}
+                              aria-label={
+                                contactProfileOpen ? 'Fechar perfil do contato' : 'Abrir perfil do contato'
+                              }
+                              title={contactProfileOpen ? 'Fechar perfil do contato' : 'Abrir perfil do contato'}
+                              aria-expanded={contactProfileOpen}
+                              aria-controls="chat-contact-profile-panel"
+                              onClick={toggleContactProfilePanel}
                             >
-                              <MoreVertical className="h-3.5 w-3.5" />
+                              <PanelRight className="h-4 w-4 md:h-3.5 md:w-3.5" />
                             </Button>
                           </div>
                         </div>
                       </CardHeader>
                       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-                        <ScrollArea
+                        <div
                           className={cn(
-                            'min-h-0 flex-1 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50',
-                            isMobileConversationView && 'overflow-hidden',
+                            'min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50',
                           )}
                         >
-                          <div className="px-3 py-3 md:p-4">
+                          <div className="px-2 py-2 md:px-4 md:pb-2 md:pt-3">
                             {loadingMessages ? (
                               <div className="flex min-h-[10rem] flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
                                 <RefreshCw className="h-7 w-7 animate-spin text-primary/70" aria-hidden />
@@ -3701,48 +4014,50 @@ const Chat = () => {
                                 <p className="text-xs text-muted-foreground">Envie a primeira mensagem abaixo.</p>
                         </div>
                       ) : (
-                              <div className="mx-auto w-full max-w-3xl space-y-3.5 pb-6 md:space-y-3">
-                            {messages.map((message) => (
-                              <div 
-                                    key={message.id}
-                                    className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
-                              >
-                                <div 
-                                      className={`max-w-[min(88%,28rem)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm md:max-w-[min(82%,28rem)] md:rounded-xl ${
-                                        message.direction === 'outgoing'
-                                      ? 'bg-primary text-primary-foreground ring-1 ring-primary/20' 
-                                      : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
-                                  }`}
-                                >
-                                      <ChatBubbleContent message={message} />
-                                      <span
-                                        className={`text-[10px] mt-1 flex items-center gap-1 ${
+                              <div className="flex min-h-full w-full flex-col justify-end">
+                                <div className="w-full space-y-2 pb-2 md:space-y-2">
+                                  {messages.map((message) => (
+                                    <div
+                                      key={message.id}
+                                      className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                                    >
+                                      <div
+                                        className={`max-w-[min(92%,26rem)] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm md:max-w-[62%] md:rounded-xl md:px-3 md:py-2 ${
                                           message.direction === 'outgoing'
-                                            ? 'text-primary-foreground/80'
-                                            : 'text-muted-foreground'
+                                            ? 'bg-primary text-primary-foreground ring-1 ring-primary/20'
+                                            : 'border border-border/50 bg-muted/90 text-foreground ring-1 ring-border/30 dark:bg-muted/75 dark:ring-border/20'
                                         }`}
                                       >
-                                        <span>{formatHour(message.sentAt)}</span>
-                                        {message.direction === 'outgoing' ? (
-                                          <MessageStatusIndicator
-                                            status={message.status}
-                                            className="h-3 w-3"
-                                          />
-                                        ) : null}
-                                      </span>
+                                        <ChatBubbleContent message={message} />
+                                        <span
+                                          className={`text-[10px] mt-1 flex items-center gap-1 ${
+                                            message.direction === 'outgoing'
+                                              ? 'text-primary-foreground/80'
+                                              : 'text-muted-foreground'
+                                          }`}
+                                        >
+                                          <span>{formatHour(message.sentAt)}</span>
+                                          {message.direction === 'outgoing' ? (
+                                            <MessageStatusIndicator
+                                              status={message.status}
+                                              className="h-3 w-3"
+                                            />
+                                          ) : null}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
                                 </div>
-                              </div>
-                            ))}
                               </div>
                             )}
                             {/* Elemento invisível no final para scroll automático */}
                             <div ref={messagesEndRef} />
                           </div>
-                        </ScrollArea>
+                        </div>
                         <form
                           onSubmit={handleSendMessage}
                           className={cn(
-                            'flex shrink-0 gap-2 border-t border-border bg-muted/20 p-2 backdrop-blur-sm dark:bg-muted/10 md:p-3',
+                            'flex shrink-0 items-end gap-2 border-t border-border/90 bg-muted/30 p-2 backdrop-blur-sm dark:bg-muted/10 md:items-center md:gap-2 md:px-3 md:py-2 md:mb-0 md:min-h-[56px]',
                             isMobile &&
                               routeConversationId &&
                               'sticky bottom-0 z-40 border-border bg-background/95 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.12)] pointer-events-auto dark:bg-background/92 dark:shadow-[0_-10px_28px_-14px_rgba(0,0,0,0.45)]',
@@ -3774,11 +4089,11 @@ const Chat = () => {
                                   variant="outline"
                                   size="icon"
                                   disabled={sendingMessage}
-                                  className="pointer-events-auto"
+                                  className="pointer-events-auto h-9 w-9 shrink-0 md:h-9 md:w-9"
                                   title="Ações rápidas"
                                   aria-label="Ações rápidas"
                                 >
-                                  <Plus className="h-4 w-4" />
+                                  <Plus className="h-4 w-4 md:h-3.5 md:w-3.5" />
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent
@@ -3816,12 +4131,56 @@ const Chat = () => {
                                   <LayoutTemplate className="mr-2 h-4 w-4" />
                                   Usar template
                                 </DropdownMenuItem>
+                                {canCreateAgendaInChat ? (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      disabled={sendingMessage || meetNowSubmitting || !selectedConversationId}
+                                      onSelect={(ev) => {
+                                        ev.preventDefault();
+                                        handleChatOpenAgendaComposer();
+                                      }}
+                                    >
+                                      <CalendarIcon className="mr-2 h-4 w-4" />
+                                      Agendar compromisso
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      disabled={sendingMessage || meetNowSubmitting || !selectedConversationId}
+                                      onSelect={(ev) => {
+                                        ev.preventDefault();
+                                        if (
+                                          !selectedConversation?.client_id &&
+                                          !selectedConversation?.leadId
+                                        ) {
+                                          toast.error(
+                                            'Vincule um cliente a esta conversa para agendar um compromisso.',
+                                          );
+                                          return;
+                                        }
+                                        setMeetNowConfirmOpen(true);
+                                      }}
+                                    >
+                                      <Video className="mr-2 h-4 w-4" />
+                                      Criar reunião para agora
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      disabled={sendingMessage || scheduleLaterBusy || !selectedConversationId}
+                                      onSelect={(ev) => {
+                                        ev.preventDefault();
+                                        handleChatOpenScheduleLater();
+                                      }}
+                                    >
+                                      <CalendarIcon className="mr-2 h-4 w-4" />
+                                      Criar reunião para depois
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : null}
                               </DropdownMenuContent>
                             </DropdownMenu>
                             <Textarea
                               ref={composerTextareaRef}
                               rows={1}
-                              placeholder="Mensagem ou legenda da imagem..."
+                              placeholder="Digite uma mensagem"
                               value={newMessage}
                               onChange={(event) => setNewMessage(event.target.value)}
                               onKeyDown={(e) => {
@@ -3833,14 +4192,15 @@ const Chat = () => {
                               enterKeyHint="send"
                               autoComplete="off"
                               autoCorrect="off"
-                              className="min-h-11 max-h-[min(40dvh,9.5rem)] flex-1 resize-none overflow-y-auto border-border bg-background py-3 text-[15px] leading-snug shadow-sm focus-visible:ring-primary/25 md:min-h-10 md:max-h-[120px] md:py-2.5 md:text-sm"
+                              className="min-h-11 max-h-[min(40dvh,9.5rem)] flex-1 resize-none overflow-y-auto border-border bg-background py-3 text-[15px] leading-snug shadow-sm focus-visible:ring-primary/25 md:min-h-[36px] md:max-h-[min(30dvh,7.5rem)] md:py-2 md:text-sm md:leading-5"
                             />
                             <Button 
                               type="submit" 
                               size="icon"
                             disabled={!newMessage.trim()}
+                            className="h-9 w-9 shrink-0 md:h-9 md:w-9"
                             >
-                              <Send className="h-4 w-4" />
+                              <Send className="h-4 w-4 md:h-4 md:w-4" />
                             </Button>
                           </form>
                       </CardContent>
@@ -3848,7 +4208,7 @@ const Chat = () => {
                       )}
                     </>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center text-center text-muted-foreground px-6">
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-8 text-center text-muted-foreground md:py-6">
                       <div>
                         <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-muted flex items-center justify-center">
                           <MessageSquare className="h-6 w-6 text-muted-foreground" />
@@ -3862,6 +4222,92 @@ const Chat = () => {
                     </div>
                   )}
                 </Card>
+
+                {!isMobile && selectedConversation && user && chatContactProfileModel ? (
+                  <aside
+                    className={cn(
+                      'hidden min-h-0 shrink-0 overflow-hidden bg-background md:flex md:flex-col md:self-stretch md:border-border/70 md:shadow-[inset_1px_0_0_0_hsl(var(--border)/0.35)]',
+                      'md:transition-[width] md:duration-300 md:ease-[cubic-bezier(0.33,1,0.68,1)]',
+                      contactProfileOpen
+                        ? 'md:w-[380px] md:border-l md:opacity-100'
+                        : 'md:w-0 md:border-transparent md:opacity-0 md:pointer-events-none',
+                    )}
+                    aria-hidden={!contactProfileOpen}
+                  >
+                    <div className="flex h-full min-h-0 w-[380px] min-w-[380px] flex-col border-l border-transparent">
+                      {contactProfileOpen ? (
+                        <ChatContactProfilePanel
+                          open={contactProfileOpen}
+                          onOpenChange={setContactProfileOpen}
+                          isMobile={false}
+                          interactionMode="desktop"
+                          onDesktopClose={() => setContactProfileOpen(false)}
+                          showOpenFullProfile={Boolean(selectedConversation.client_id && currentClient?.id)}
+                          onOpenFullProfile={() => {
+                            if (currentClient?.id && selectedConversation) {
+                              goToClientProfileFromChat(currentClient.id, selectedConversation);
+                            }
+                          }}
+                          displayName={chatContactProfileModel.displayName}
+                          phoneDisplay={chatContactProfileModel.phoneDisplay}
+                          statusLine={chatContactProfileModel.statusLine}
+                          avatarUrl={chatContactProfileModel.avatarUrl}
+                          initials={chatContactProfileModel.initials}
+                          kind={chatContactProfileModel.kind}
+                          assigneeDisplay={chatContactProfileModel.assigneeDisplay}
+                          teamName={chatContactProfileModel.teamName}
+                          profileFields={chatContactProfileModel.profileFields}
+                          canEditProfileFields={canEditChatProfileFields}
+                          profileSavingKey={profileFieldSaving}
+                          onSaveProfileField={canEditChatProfileFields ? handleSaveChatProfileField : undefined}
+                          tagLabels={chatContactProfileModel.tagLabels}
+                          clientGroups={clientGroupsList}
+                          selectedClientGroupId={chatContactProfileModel.selectedClientGroupId}
+                          onClientGroupChange={
+                            chatContactProfileModel.kind === 'client' ? handleChatClientGroupChange : undefined
+                          }
+                          savingClientGroup={savingClientGroup}
+                          syncingMessages={syncingMessages}
+                          loadingLead={loadingLead}
+                          canCreateInvoice={Boolean(selectedConversation.client_id && canCreateInvoicesInChat)}
+                          canCreateProposal={Boolean(
+                            (selectedConversation.client_id || selectedConversation.leadId) && canCreateProposalsInChat,
+                          )}
+                          canCreateContract={Boolean(
+                            (selectedConversation.client_id || selectedConversation.leadId) && canCreateContractsInChat,
+                          )}
+                          canTransfer={chatContactProfileModel.canTransferProfile}
+                          showScheduleAppointment={
+                            canCreateAgendaInChat && Boolean(selectedConversation.client_id || selectedConversation.leadId)
+                          }
+                          onBackToConversation={() => setContactProfileOpen(false)}
+                          onCreateInvoice={handleCreateInvoice}
+                          onCreateProposal={handleCreateProposal}
+                          onCreateContract={handleCreateContract}
+                          onTransfer={() => void openTransferDialog()}
+                          onSync={() => void handleSyncConversation()}
+                          onCreateTask={handleCreateTask}
+                          onOpenTicket={handleOpenTicket}
+                          onScheduleAppointment={() => void handleChatOpenScheduleLater()}
+                          onConvertLead={handleConvertToClient}
+                          onLink={openLinkDialog}
+                          onAddLead={() => {
+                            void handleAddLead();
+                          }}
+                          onUnlink={() => setUnlinkConfirmOpen(true)}
+                          showConvertLead={Boolean(selectedConversation.leadId && !selectedConversation.client_id)}
+                          showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
+                          showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
+                          linkConversationLabel={
+                            selectedConversation.link_state === 'review_required'
+                              ? 'Escolher vínculo'
+                              : 'Vincular conversa'
+                          }
+                        />
+                      ) : null}
+                    </div>
+                  </aside>
+                ) : null}
               </div>
                           </div>
                         </div>
@@ -3891,22 +4337,143 @@ const Chat = () => {
         }}
       />
 
-      {selectedConversation && user && chatContactProfileModel ? (
+      <AlertDialog open={meetNowConfirmOpen} onOpenChange={setMeetNowConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Criar reunião com Meet agora?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Será criado um compromisso imediato com Google Meet e o link será enviado nesta conversa. É
+              necessário ter o Google Agenda conectado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={meetNowSubmitting}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              disabled={meetNowSubmitting}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleChatMeetNowConfirmed();
+              }}
+            >
+              {meetNowSubmitting ? 'A criar…' : 'Criar e enviar link'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={scheduleLaterOpen} onOpenChange={setScheduleLaterOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reunião para depois</DialogTitle>
+            <DialogDescription>
+              Cliente ou lead já vinculado à conversa. Confirme data, horário e se deseja Google Meet.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div className="space-y-1.5">
+              <Label>Data</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start font-normal">
+                    {format(schedDay, 'PPP', { locale: ptBR })}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar mode="single" selected={schedDay} onSelect={(d) => d && setSchedDay(d)} locale={ptBR} />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="chat-sched-time">Hora inicial</Label>
+                <Input
+                  id="chat-sched-time"
+                  type="time"
+                  value={schedTime}
+                  onChange={(e) => setSchedTime(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Duração (min)</Label>
+                <Select
+                  value={String(schedDuration)}
+                  onValueChange={(v) => setSchedDuration(Number(v))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30">30</SelectItem>
+                    <SelectItem value="45">45</SelectItem>
+                    <SelectItem value="60">60</SelectItem>
+                    <SelectItem value="90">90</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="chat-sched-meet"
+                checked={schedCreateMeet}
+                onCheckedChange={(c) => setSchedCreateMeet(c === true)}
+              />
+              <Label htmlFor="chat-sched-meet" className="text-sm font-normal">
+                Criar Google Calendar e Meet
+              </Label>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="chat-sched-note">Observação (opcional)</Label>
+              <Textarea
+                id="chat-sched-note"
+                value={schedNote}
+                onChange={(e) => setSchedNote(e.target.value)}
+                rows={2}
+                placeholder="Notas internas / descrição do compromisso"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setScheduleLaterOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" disabled={scheduleLaterBusy} onClick={() => void handleChatScheduleLaterSubmit()}>
+              {scheduleLaterBusy ? 'A guardar…' : 'Agendar e notificar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {selectedConversation && user && chatContactProfileModel && isMobile ? (
         <ChatContactProfileSheet
           open={contactProfileOpen}
           onOpenChange={setContactProfileOpen}
           isMobile={isMobile}
+          showOpenFullProfile={Boolean(selectedConversation.client_id && currentClient?.id)}
+          onOpenFullProfile={() => {
+            if (currentClient?.id && selectedConversation) {
+              goToClientProfileFromChat(currentClient.id, selectedConversation);
+            }
+          }}
           displayName={chatContactProfileModel.displayName}
           phoneDisplay={chatContactProfileModel.phoneDisplay}
           statusLine={chatContactProfileModel.statusLine}
           avatarUrl={chatContactProfileModel.avatarUrl}
           initials={chatContactProfileModel.initials}
           kind={chatContactProfileModel.kind}
-          lastInteractionLabel={chatContactProfileModel.lastInteractionLabel}
           assigneeDisplay={chatContactProfileModel.assigneeDisplay}
           teamName={chatContactProfileModel.teamName}
-          detailRows={chatContactProfileModel.detailRows}
+          profileFields={chatContactProfileModel.profileFields}
+          canEditProfileFields={canEditChatProfileFields}
+          profileSavingKey={profileFieldSaving}
+          onSaveProfileField={canEditChatProfileFields ? handleSaveChatProfileField : undefined}
           tagLabels={chatContactProfileModel.tagLabels}
+          clientGroups={clientGroupsList}
+          selectedClientGroupId={chatContactProfileModel.selectedClientGroupId}
+          onClientGroupChange={chatContactProfileModel.kind === 'client' ? handleChatClientGroupChange : undefined}
+          savingClientGroup={savingClientGroup}
           syncingMessages={syncingMessages}
           loadingLead={loadingLead}
           canCreateInvoice={Boolean(selectedConversation.client_id && canCreateInvoicesInChat)}
@@ -3917,6 +4484,9 @@ const Chat = () => {
             (selectedConversation.client_id || selectedConversation.leadId) && canCreateContractsInChat,
           )}
           canTransfer={chatContactProfileModel.canTransferProfile}
+          showScheduleAppointment={
+            canCreateAgendaInChat && Boolean(selectedConversation.client_id || selectedConversation.leadId)
+          }
           onBackToConversation={() => setContactProfileOpen(false)}
           onCreateInvoice={handleCreateInvoice}
           onCreateProposal={handleCreateProposal}
@@ -3925,6 +4495,7 @@ const Chat = () => {
           onSync={() => void handleSyncConversation()}
           onCreateTask={handleCreateTask}
           onOpenTicket={handleOpenTicket}
+          onScheduleAppointment={() => void handleChatOpenScheduleLater()}
           onConvertLead={handleConvertToClient}
           onLink={openLinkDialog}
           onAddLead={() => {

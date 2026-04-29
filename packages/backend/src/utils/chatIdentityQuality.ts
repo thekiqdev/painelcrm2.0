@@ -3,7 +3,7 @@
  * Objetivo: não persistir nem sobrescrever dados bons com payload fraco do provedor.
  */
 
-import { extractUazapiChatImageUrl } from './uazapiChatIdentity.js';
+import { extractUazapiChatImageUrl, mergeAvatarUrlForPersistence } from './uazapiChatIdentity.js';
 
 export function digitsOnlyMsisdn(s: string): string {
   return s.replace(/\D/g, '');
@@ -84,6 +84,8 @@ export function mergeChatMetadataForIdentity(
     'profilePicUrl',
     'profilePicture',
     'pictureUrl',
+    'whatsapp_profile_photo',
+    'profile_pic_url',
   ]) {
     const v = inc[k as keyof typeof inc];
     if (v === '' || v === null) delete inc[k];
@@ -91,7 +93,7 @@ export function mergeChatMetadataForIdentity(
   const merged: Record<string, unknown> = { ...currentMeta, ...inc };
   const oldUrl = extractUazapiChatImageUrl(currentMeta);
   const newUrl = extractUazapiChatImageUrl(inc);
-  const best = newUrl || oldUrl;
+  const best = mergeAvatarUrlForPersistence(newUrl, oldUrl);
   if (best) {
     merged.whatsapp_profile_photo = best;
   }

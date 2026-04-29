@@ -92,3 +92,16 @@ export async function clearMercadoPagoTenantCredentials(tenantId: string): Promi
     [tenantId, GATEWAY_KEY],
   );
 }
+
+/** Webhook Fase 4: `user_id` no POST = collector (mesmo valor guardado em oauth como mercado_pago_user_id). */
+export async function findTenantIdByMercadoPagoCollectorId(collectorUserId: string): Promise<string | null> {
+  const r = await pool.query<{ tenant_id: string }>(
+    `SELECT tenant_id::text AS tenant_id
+     FROM payment_gateway_configs
+     WHERE scope = 'tenant' AND gateway_key = $1
+       AND (credentials->>'mercado_pago_user_id') = $2
+     LIMIT 1`,
+    [GATEWAY_KEY, collectorUserId],
+  );
+  return r.rows[0]?.tenant_id ?? null;
+}

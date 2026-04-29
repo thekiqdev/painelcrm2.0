@@ -6,6 +6,11 @@ import {
   hasAttendanceColumns,
   hasChatPhase5SlaColumns,
 } from '../utils/chatAttendanceSchema.js';
+import {
+  applyChatPhase6MessageStatus,
+  runInboundChatRoutingAsync,
+} from '../services/chatInboundAutomationHooks.js';
+import { runChatbotPhase8Inbound } from '../services/chatbotPhase8Runner.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { resolveOutgoingMediaPayload } from '../services/outgoingMediaPayloadResolver.js';
@@ -50,8 +55,11 @@ import {
   enrichNormalizedChatFromContactCatalog,
   indexContactsByMsisdn,
   resolveMessageFindChatId,
+  shouldLoadContactCatalogForIdentityEnrichment,
   type UazContactCatalogEntry,
 } from '../utils/uazapiIdentityResolve.js';
+import { chatAvatarDebugLog, isChatAvatarDebugEnabled } from '../utils/chatAvatarDebug.js';
+import { logChatAvatarSyncResult } from '../utils/chatAvatarSyncResultLog.js';
 import {
   computeCanonicalIdentityFromChatPayload,
   incomingChatPayloadHasEmptyProfileImages,
@@ -137,6 +145,11 @@ const syncMessagesSchema = z.object({
   before: z.string().optional(),
   after: z.string().optional(),
   syncMode: syncModeSchema.optional(),
+  /**
+   * Quando true, respeita `sync_mode` da instância se `syncMode` não vier no body (histórico amplo).
+   * Omitido/false no POST manual: sync leve (`days_30` + teto de mensagens menor).
+   */
+  fullHistory: z.boolean().optional(),
   /**
    * Quando true, ignora apenas gates HTTP (recent / debounce / lock) para rodar `message/find` de novo.
    * Não reimporta mensagens cujo `external_message_id` já existe (evita 50× save + log em conversas maduras).
@@ -1728,6 +1741,11 @@ async function saveMessage(
           console.warn('[SaveMessage] SLA columns update skipped', slaErr);
         }
       }
+      try {
+        await applyChatPhase6MessageStatus(conversationId, direction);
+      } catch (p6Err: unknown) {
+        console.warn('[SaveMessage] Phase 6 status automation skipped', p6Err);
+      }
       if (saveVerbose) {
       const updated = conversationResult.rows[0];
       console.log(`[SaveMessage ${saveId}] Conversation updated successfully`, {
@@ -1740,6 +1758,19 @@ async function saveMessage(
         newMessagePreview: messagePreview?.substring(0, 50),
       });
       }
+    }
+
+    if (inserted && direction === 'incoming') {
+      void runInboundChatRoutingAsync({
+        conversationId,
+        messageBody: bodyForInsert,
+        inserted: true,
+      }).catch((e) => console.warn('[SaveMessage] inbound routing async failed', e));
+      void runChatbotPhase8Inbound({
+        conversationId,
+        messageBody: bodyForInsert,
+        inserted: true,
+      }).catch((e) => console.warn('[SaveMessage] chatbot phase8 async failed', e));
     }
 
     return { rowId: messageResult.rows[0]?.id ?? null, inserted: true };
@@ -2029,6 +2060,16 @@ const MESSAGE_SYNC_HTTP_DEBOUNCE_MS = 30_000;
 const MESSAGE_SYNC_RECENT_FULL_SKIP_MS = 30_000;
 /** Evita duas execuções HTTP sobrepostas da mesma conversa (lock por processo). */
 const MESSAGE_SYNC_IN_FLIGHT_LOCK_MS = 12_000;
+/** Entre refreshes remotos de identidade (Uaz `chat/find` + contacts opcional), exceto `forceRefresh`. */
+const IDENTITY_REMOTE_FETCH_COOLDOWN_MS = 3 * 60 * 1000;
+/** Teto de mensagens no POST manual quando `fullHistory` não é true (sync leve). */
+const MANUAL_LIGHT_SYNC_MSG_CAP = 30;
+
+type RemoteIdentityTelemetry = {
+  contacts_called: number;
+  chat_find_called: number;
+  skipped_cooldown?: boolean;
+};
 
 /** conversation_id → timestamp ms do início do último sync em andamento (ou muito recente). */
 const conversationMessageSyncInFlight = new Map<string, number>();
@@ -3052,7 +3093,20 @@ async function performSyncConversationMessagesForConversation(
   /** True quando o sync não disparou `fetchAndUpsertRemoteChatIdentity` ao final (identidade já ok ou opt-out). */
   identity_refresh_skipped?: boolean;
   skipped_existing_remote?: number;
+  chat_sync_summary?: {
+    messages_requested: number;
+    messages_returned: number;
+    messages_saved: number;
+    messages_skipped_existing: number;
+    identity_refreshed: boolean;
+    identity_skipped_cooldown: boolean;
+    contacts_called: number;
+    chat_find_called: number;
+    refresh_identity_endpoint_called: boolean;
+    duration_ms: number;
+  };
 }> {
+  const syncT0 = Date.now();
   const tenantId = opts.tenantId ?? (await resolveTenantIdForUser(userId));
   const event_type = opts.eventType || 'sync_messages';
   const syncTriggerSource = opts.syncTriggerSource ?? opts.trigger ?? 'unspecified';
@@ -3108,12 +3162,44 @@ async function performSyncConversationMessagesForConversation(
       detail:
         'Fase C não executada: canonical_chat_id ausente ou identidade não resolvida — sem chamada a message/find',
     });
+    const durationBlocked = Date.now() - syncT0;
+    logUazChat('info', {
+      event_type: 'chat_sync_summary',
+      phase: 'blocked_unresolved_identity',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: conversation.instance_id,
+      conversation_id: conversation.id,
+      sync_trigger_source: syncTriggerSource,
+      messages_requested: requestedLimit,
+      messages_returned: 0,
+      messages_saved: 0,
+      messages_skipped_existing: 0,
+      identity_refreshed: false,
+      identity_skipped_cooldown: false,
+      contacts_called: 0,
+      chat_find_called: 0,
+      refresh_identity_endpoint_called: false,
+      duration_ms: durationBlocked,
+    });
     return {
       synced: 0,
       totalReturned: 0,
       messagesResponse: {},
       history_sync_blocked: true,
       history_sync_reason: reason,
+      chat_sync_summary: {
+        messages_requested: requestedLimit,
+        messages_returned: 0,
+        messages_saved: 0,
+        messages_skipped_existing: 0,
+        identity_refreshed: false,
+        identity_skipped_cooldown: false,
+        contacts_called: 0,
+        chat_find_called: 0,
+        refresh_identity_endpoint_called: false,
+        duration_ms: durationBlocked,
+      },
     };
   }
 
@@ -3359,16 +3445,45 @@ async function performSyncConversationMessagesForConversation(
     ]
   );
 
+  /** Sync manual HTTP ou force=true: sempre reconsulta nome/foto no provider (não usar gate "já resolvido"). */
+  const userInitiatedConversationSync =
+    opts.eventType === 'sync_messages_http' && opts.skipTerminalIdentityRefresh !== true;
+  const shouldAlwaysRefreshIdentity =
+    userInitiatedConversationSync ||
+    opts.force === true ||
+    syncTriggerSource === 'sync_forced_manual';
+
+  const identityTelemetry: RemoteIdentityTelemetry = { contacts_called: 0, chat_find_called: 0 };
+  let identityUpserted: AnyObject | null = null;
+
+  if (shouldAlwaysRefreshIdentity) {
+    logUazChat('info', {
+      event_type: 'identity_refresh_forced_manual',
+      phase: 'before_remote_fetch',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: conversation.instance_id,
+      conversation_id: conversation.id,
+      sync_trigger_source: syncTriggerSource,
+      opts: {
+        force: opts.force === true,
+        eventType: opts.eventType ?? null,
+      },
+      skipTerminalIdentityRefresh: opts.skipTerminalIdentityRefresh === true,
+    });
+  }
+
   const skipTerminalIdentity =
     opts.skipTerminalIdentityRefresh === true ||
-    shouldSkipTerminalIdentityRefreshAfterMessageSync({
-      identity_state: crow?.identity_state ?? null,
-      canonical_chat_id: crow?.canonical_chat_id ?? null,
-      display_name: crow?.display_name ?? null,
-      contact_name: crow?.contact_name ?? null,
-      avatar_url: crow?.avatar_url ?? null,
-      metadata: crow?.metadata ?? null,
-    });
+    (!shouldAlwaysRefreshIdentity &&
+      shouldSkipTerminalIdentityRefreshAfterMessageSync({
+        identity_state: crow?.identity_state ?? null,
+        canonical_chat_id: crow?.canonical_chat_id ?? null,
+        display_name: crow?.display_name ?? null,
+        contact_name: crow?.contact_name ?? null,
+        avatar_url: crow?.avatar_url ?? null,
+        metadata: crow?.metadata ?? null,
+      }));
 
   if (skipTerminalIdentity) {
     logUazChat('info', {
@@ -3387,7 +3502,14 @@ async function performSyncConversationMessagesForConversation(
     try {
       const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
       if (instRow) {
-        await fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id);
+        identityUpserted = await fetchAndUpsertRemoteChatIdentity(
+          instRow as ChatInstanceRow,
+          conversation.external_chat_id,
+          {
+            forceRefresh: shouldAlwaysRefreshIdentity,
+            telemetry: identityTelemetry,
+          }
+        );
       }
     } catch (idErr: any) {
       logUazChat('warn', {
@@ -3401,6 +3523,35 @@ async function performSyncConversationMessagesForConversation(
     }
   }
 
+  const durationMs = Date.now() - syncT0;
+  const messagesReturnedCount =
+    typeof messagesResponse?.returnedMessages === 'number'
+      ? messagesResponse.returnedMessages
+      : remoteMessages.length;
+  const identityRefreshed = !skipTerminalIdentity && identityUpserted != null;
+  const identitySkippedCooldown =
+    !skipTerminalIdentity && identityTelemetry.skipped_cooldown === true;
+
+  logUazChat('info', {
+    event_type: 'chat_sync_summary',
+    phase: 'complete',
+    tenant_id: tenantId,
+    user_id: userId,
+    instance_id: conversation.instance_id,
+    conversation_id: conversation.id,
+    sync_trigger_source: syncTriggerSource,
+    messages_requested: requestedLimit,
+    messages_returned: messagesReturnedCount,
+    messages_saved: saved,
+    messages_skipped_existing: skippedExistingRemote,
+    identity_refreshed: identityRefreshed,
+    identity_skipped_cooldown: identitySkippedCooldown,
+    contacts_called: skipTerminalIdentity ? 0 : identityTelemetry.contacts_called,
+    chat_find_called: skipTerminalIdentity ? 0 : identityTelemetry.chat_find_called,
+    refresh_identity_endpoint_called: false,
+    duration_ms: durationMs,
+  });
+
   return {
     synced: saved,
     totalReturned: remoteMessages.length,
@@ -3408,6 +3559,18 @@ async function performSyncConversationMessagesForConversation(
     history_sync_blocked: false,
     identity_refresh_skipped: skipTerminalIdentity,
     skipped_existing_remote: skippedExistingRemote,
+    chat_sync_summary: {
+      messages_requested: requestedLimit,
+      messages_returned: messagesReturnedCount,
+      messages_saved: saved,
+      messages_skipped_existing: skippedExistingRemote,
+      identity_refreshed: identityRefreshed,
+      identity_skipped_cooldown: identitySkippedCooldown,
+      contacts_called: skipTerminalIdentity ? 0 : identityTelemetry.contacts_called,
+      chat_find_called: skipTerminalIdentity ? 0 : identityTelemetry.chat_find_called,
+      refresh_identity_endpoint_called: false,
+      duration_ms: durationMs,
+    },
   };
 }
 
@@ -4675,6 +4838,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
     const leadSelect = leadColumnAvailable ? 'c.lead_id' : 'NULL::uuid as lead_id';
     const attendanceCols = await hasAttendanceColumns();
     const teamCols = attendanceCols && (await hasAssignedTeamColumn());
+    const slaPhase5Cols = await hasChatPhase5SlaColumns();
 
     const attendanceSelectAndJoins = attendanceCols
       ? {
@@ -4749,7 +4913,14 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.metadata,
         c.created_at,
         c.updated_at,
-        c.client_id,
+        ${
+          slaPhase5Cols
+            ? `c.first_response_at,
+        c.last_customer_message_at,
+        c.last_agent_message_at,
+        `
+            : ''
+        }c.client_id,
         ${attendanceSelectAndJoins.select}
         ${leadSelect},
         i.name as instance_name,
@@ -4940,6 +5111,55 @@ export async function getConversations(req: AuthRequest, res: Response) {
         avatar_url: avatarUrl,
       });
     });
+
+    const chatMediaDebug =
+      process.env.CHAT_MEDIA_DEBUG === '1' || process.env.CHAT_MEDIA_DEBUG === 'true';
+    if (chatMediaDebug && rowsForClient.length > 0) {
+      const sample = rowsForClient[0] as Record<string, unknown>;
+      console.log('[CHAT_MEDIA_DEBUG]', {
+        event: 'chat_avatar_resolution_sample',
+        conversationId: sample.id,
+        avatar_url: sample.avatar_url,
+        communication_avatar_url: sample.communication_avatar_url,
+      });
+    }
+
+    if (isChatAvatarDebugEnabled() && rowsForClient.length > 0) {
+      let rowsWithAvatar = 0;
+      let rowsWhatsappHost = 0;
+      const samples: Array<{ id: unknown; host: string | null; prefix: string }> = [];
+      for (const row of rowsForClient) {
+        const rec = row as Record<string, unknown>;
+        const a = rec.avatar_url;
+        if (typeof a === 'string' && a.trim()) {
+          rowsWithAvatar += 1;
+          try {
+            const host = new URL(a).hostname.toLowerCase();
+            if (host === 'whatsapp.net' || host.endsWith('.whatsapp.net')) {
+              rowsWhatsappHost += 1;
+            }
+            if (samples.length < 5 && (host.includes('whatsapp') || a.length > 0)) {
+              samples.push({
+                id: rec.id,
+                host,
+                prefix: a.length > 100 ? `${a.slice(0, 100)}…` : a,
+              });
+            }
+          } catch {
+            if (samples.length < 5) {
+              samples.push({ id: rec.id, host: null, prefix: '(unparseable url)' });
+            }
+          }
+        }
+      }
+      chatAvatarDebugLog('getConversations_api_payload', {
+        rowCount: rowsForClient.length,
+        rowsWithAvatarUrl: rowsWithAvatar,
+        rowsAvatarHostWhatsappNet: rowsWhatsappHost,
+        sampleRows: samples,
+        note: 'Frontend ainda pode anular whatsapp.net em chatAvatarUrlForImgSrc (sem proxy).',
+      });
+    }
 
     const tenantRow = await pool.query<{ tenant_id: string | null }>(
       'SELECT tenant_id FROM users WHERE id = $1',
@@ -5734,23 +5954,52 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
 }
 
 /**
- * POST /chat/find (wa_chatid) + merge com agenda GET/POST contacts quando disponível + upsert local.
- * `chat/find` complementa foto/metadata; agenda é fonte preferida de nome e JID PN para @lid.
+ * POST /chat/find (wa_chatid) + opcional GET/POST contacts + upsert local.
+ * Contacts só quando necessário (@lid sem PN ou nomes fracos) — evita agenda completa a cada sync.
  */
 async function fetchAndUpsertRemoteChatIdentity(
   instance: ChatInstanceRow,
   externalChatId: string,
-  opts?: { contactCatalog?: Map<string, UazContactCatalogEntry> }
+  opts?: {
+    contactCatalog?: Map<string, UazContactCatalogEntry>;
+    /** true: ignora `metadata.last_identity_sync_at` (sync manual, botão “atualizar perfil”, hidratação de lacunas). */
+    forceRefresh?: boolean;
+    telemetry?: RemoteIdentityTelemetry;
+  }
 ): Promise<AnyObject | null> {
-  let catalog = opts?.contactCatalog;
-  if (!catalog || catalog.size === 0) {
-    try {
-      catalog = await fetchUazContactCatalogMap(instance.instance_token);
-    } catch {
-      catalog = new Map();
+  const telemetry = opts?.telemetry;
+
+  const bumpContacts = () => {
+    if (telemetry) telemetry.contacts_called += 1;
+  };
+  const bumpChatFind = () => {
+    if (telemetry) telemetry.chat_find_called += 1;
+  };
+
+  if (!opts?.forceRefresh) {
+    const cooldownRow = await pool.query<{ metadata: Record<string, unknown> | null }>(
+      `SELECT metadata FROM chat_conversations WHERE instance_id = $1 AND external_chat_id = $2 LIMIT 1`,
+      [instance.id, externalChatId]
+    );
+    const cmeta = cooldownRow.rows[0]?.metadata;
+    const last =
+      cmeta && typeof cmeta.last_identity_sync_at === 'string' ? cmeta.last_identity_sync_at : null;
+    if (last && Date.now() - Date.parse(last) < IDENTITY_REMOTE_FETCH_COOLDOWN_MS) {
+      if (telemetry) telemetry.skipped_cooldown = true;
+      const tenantIdCd = await resolveTenantIdForUser(instance.user_id);
+      logUazChat('info', {
+        event_type: 'identity_fetch_skipped_cooldown',
+        tenant_id: tenantIdCd,
+        user_id: instance.user_id,
+        instance_id: instance.id,
+        external_chat_id: externalChatId,
+        detail: `within_${IDENTITY_REMOTE_FETCH_COOLDOWN_MS}ms`,
+      });
+      return null;
     }
   }
 
+  bumpChatFind();
   const remoteChats = (await uazapiService.findChats(instance.instance_token, {
     wa_chatid: externalChatId,
     limit: 20,
@@ -5772,7 +6021,6 @@ async function fetchAndUpsertRemoteChatIdentity(
       break;
     }
   }
-  // Não usar chatsArray[0] como fallback: pode ser outro chat e corromper nome/foto.
   if (!item) {
     return null;
   }
@@ -5780,10 +6028,58 @@ async function fetchAndUpsertRemoteChatIdentity(
   if (!normalized) {
     return null;
   }
+
+  let catalog = opts?.contactCatalog;
+  const catalogPreloaded = catalog != null && catalog.size > 0;
+
+  if (!catalogPreloaded) {
+    if (
+      shouldLoadContactCatalogForIdentityEnrichment({
+        externalChatId,
+        contactName: normalized.contactName,
+        profileName: normalized.profileName,
+        phoneNumber: normalized.phoneNumber,
+        metadata: normalized.metadata,
+      })
+    ) {
+      bumpContacts();
+      try {
+        catalog = await fetchUazContactCatalogMap(instance.instance_token);
+      } catch {
+        catalog = new Map();
+      }
+    } else {
+      catalog = new Map();
+    }
+  }
+
   enrichNormalizedChatFromContactCatalog(normalized, catalog ?? new Map());
+
+  const prevMeta =
+    normalized.metadata && typeof normalized.metadata === 'object' && !Array.isArray(normalized.metadata)
+      ? { ...(normalized.metadata as Record<string, unknown>) }
+      : {};
+  prevMeta.last_identity_sync_at = new Date().toISOString();
+  normalized.metadata = prevMeta;
+
   const tenantId = await resolveTenantIdForUser(instance.user_id);
   const ccId = await syncCommunicationContactFromNormalized(tenantId, normalized);
-  return (await upsertConversation(instance, normalized, { communicationContactId: ccId })) as AnyObject | null;
+  const upserted = (await upsertConversation(instance, normalized, {
+    communicationContactId: ccId,
+  })) as AnyObject | null;
+  if (upserted) {
+    const metaForLog =
+      normalized.metadata && typeof normalized.metadata === 'object' && !Array.isArray(normalized.metadata)
+        ? (normalized.metadata as Record<string, unknown>)
+        : {};
+    void logChatAvatarSyncResult({
+      conversationId: String(upserted.id),
+      tenantId,
+      normalizedMetadata: metaForLog,
+      upsertedRow: upserted as Record<string, unknown>,
+    }).catch(() => {});
+  }
+  return upserted;
 }
 
 async function hydrateMissingIdentityFromStoredConversations(
@@ -5815,7 +6111,7 @@ async function hydrateMissingIdentityFromStoredConversations(
     const prevDisplay = before.rows[0]?.display_name ?? null;
     const prevAvatar = before.rows[0]?.avatar_url ?? null;
 
-    await fetchAndUpsertRemoteChatIdentity(instance, row.external_chat_id);
+    await fetchAndUpsertRemoteChatIdentity(instance, row.external_chat_id, { forceRefresh: true });
 
     const after = await pool.query<{ display_name: string | null; avatar_url: string | null }>(
       `SELECT display_name, avatar_url
@@ -5863,10 +6159,17 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
 
     const conversation = conversationResult.rows[0];
     const instMeta = (conversation as any).instance_metadata as Record<string, unknown> | undefined;
+    const fullHistory = payload.data.fullHistory === true;
     const explicitMsgMode = payload.data.syncMode != null;
-    const effectiveMsgMode = explicitMsgMode
-      ? normalizeSyncMode(payload.data.syncMode)
-      : normalizeSyncMode(instMeta?.sync_mode);
+    const explicitModeNorm = explicitMsgMode ? normalizeSyncMode(payload.data.syncMode) : null;
+    const effectiveMsgMode =
+      explicitModeNorm != null
+        ? explicitModeNorm
+        : fullHistory
+          ? normalizeSyncMode(instMeta?.sync_mode)
+          : 'days_30';
+    /** Janela “pesada”: flag explícita ou syncMode full no body (ex.: Kanban). */
+    const treatAsDeepHistory = fullHistory || effectiveMsgMode === 'full';
 
     if (effectiveMsgMode === 'none') {
       logUazChat('info', {
@@ -5892,10 +6195,13 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
 
     const tenantId = await resolveTenantIdForUser(userId);
 
-    const rawLimitRequested = payload.data.limit ?? BOOTSTRAP_MSG_LIMIT;
+    const rawLimitRequested =
+      payload.data.limit ??
+      (treatAsDeepHistory ? BOOTSTRAP_MSG_LIMIT : MANUAL_LIGHT_SYNC_MSG_CAP);
+    const msgCapUpper = treatAsDeepHistory ? BOOTSTRAP_MSG_LIMIT : MANUAL_LIGHT_SYNC_MSG_CAP;
     const effectiveHttpLimit = Math.min(
-      BOOTSTRAP_MSG_LIMIT,
-      Math.min(UAZ_MESSAGE_FIND_MAX_LIMIT, Math.max(1, rawLimitRequested))
+      msgCapUpper,
+      Math.min(BOOTSTRAP_MSG_LIMIT, Math.min(UAZ_MESSAGE_FIND_MAX_LIMIT, Math.max(1, rawLimitRequested)))
     );
 
     const forceSync = payload.data.force === true;
@@ -6083,6 +6389,7 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
         syncMode: effectiveMsgMode,
         sync_trigger_source: syncTriggerSource,
         pagination: null,
+        chat_sync_summary: performResult.chat_sync_summary ?? null,
       });
       return;
     }
@@ -6107,6 +6414,18 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
       ]
     );
 
+    const convFresh = await pool.query(
+      `SELECT c.*, i.name AS instance_name
+       FROM chat_conversations c
+       INNER JOIN chat_instances i ON i.id = c.instance_id
+       WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}`,
+      [conversation.id, userId]
+    );
+    const conversationOut =
+      convFresh.rows[0] != null
+        ? conversationRowForClientApi(convFresh.rows[0] as Record<string, unknown>)
+        : undefined;
+
     res.json({
       synced: saved,
       totalReturned,
@@ -6115,6 +6434,8 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
       sync_trigger_source: syncTriggerSource,
       identity_refresh_skipped: identity_refresh_skipped === true,
       skipped_existing_remote: skipped_existing_remote ?? 0,
+      conversation: conversationOut,
+      chat_sync_summary: performResult.chat_sync_summary ?? null,
       pagination: {
         returnedMessages: messagesResponse?.returnedMessages,
         limit: messagesResponse?.limit,
@@ -6156,7 +6477,9 @@ export async function refreshConversationIdentity(req: AuthRequest, res: Respons
     const instance = await loadInstanceForOperate(userId, instanceId, res);
     if (!instance) return;
 
-    const upserted = await fetchAndUpsertRemoteChatIdentity(instance, externalChatId);
+    const upserted = await fetchAndUpsertRemoteChatIdentity(instance, externalChatId, {
+      forceRefresh: true,
+    });
     if (!upserted) {
       res.json({ ok: true, updated: false, reason: 'no_remote_chat' });
       return;
@@ -7781,6 +8104,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           await notificationService.notifyNewMessage(instance.user_id, {
             conversationId: conversation.id,
             conversationName: conversation.contact_name || conversation.profile_name || conversation.phone_number,
+            phoneNumber: conversation.phone_number ?? undefined,
             messagePreview: ensurePlainString(messageBody),
             messageId: effectiveMessageId,
             isGroup: extracted.isGroup,

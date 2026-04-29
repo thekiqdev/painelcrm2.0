@@ -23,7 +23,8 @@ export type NotificationType =
   | 'agenda_public_reschedule_done'
   | 'agenda_pending_confirmation_alert'
   | 'chat_assigned'
-  | 'chat_transferred';
+  | 'chat_transferred'
+  | 'chat_sla_breach';
 
 /**
  * Interface para criar notificação
@@ -66,11 +67,84 @@ export type NotificationListItemDto = {
   read: boolean;
   read_at: string | null;
   created_at: string;
+  /** Metadados sanitizados para UI rica (chat, SLA, etc.). */
+  data?: Record<string, unknown>;
 };
 
 function asData(n: Notification): Record<string, any> {
   const d = n.data;
   return d && typeof d === 'object' && !Array.isArray(d) ? (d as Record<string, any>) : {};
+}
+
+function chatConversationHref(conversationId: string): string {
+  return `/chat?conversationId=${encodeURIComponent(conversationId)}`;
+}
+
+/** Expõe só chaves seguras para o cliente (sem payload bruto). */
+export function sanitizeClientNotificationData(
+  type: string,
+  raw: Record<string, any>
+): Record<string, unknown> | undefined {
+  const t = String(type);
+  const allow = new Set([
+    'new_message',
+    'message_delivered',
+    'message_read',
+    'new_conversation',
+    'chat_assigned',
+    'chat_transferred',
+    'chat_sla_breach',
+  ]);
+  if (!allow.has(t)) return undefined;
+
+  const out: Record<string, unknown> = {};
+  const cid =
+    (typeof raw.conversationId === 'string' && raw.conversationId.trim()) ||
+    (typeof raw.conversation_id === 'string' && raw.conversation_id.trim()) ||
+    '';
+  if (cid) out.conversationId = cid;
+
+  const pick = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v.trim() : undefined;
+
+  const contactName =
+    pick(raw.contactName) ||
+    pick(raw.contact_name) ||
+    pick(raw.conversationName) ||
+    pick(raw.conversation_name);
+  if (contactName) out.contactName = contactName;
+
+  const phone = pick(raw.phone) || pick(raw.phone_number) || pick(raw.phoneNumber);
+  if (phone) out.phone = phone;
+
+  const preview =
+    pick(raw.lastMessagePreview) ||
+    pick(raw.last_message_preview) ||
+    pick(raw.messagePreview) ||
+    pick(raw.message_preview);
+  if (preview) out.lastMessagePreview = preview;
+
+  const transferFrom =
+    pick(raw.transferFromName) || pick(raw.transfer_from_name) || pick(raw.fromOperatorName);
+  if (transferFrom) out.transferFromName = transferFrom;
+
+  const qn = pick(raw.queueName) || pick(raw.queue_name);
+  if (qn) out.queueName = qn;
+  const tn = pick(raw.teamName) || pick(raw.team_name);
+  if (tn) out.teamName = tn;
+
+  const av = pick(raw.attendanceVariant) || pick(raw.attendance_variant);
+  if (av) out.attendanceVariant = av;
+
+  const ss = pick(raw.slaSeverity) || pick(raw.sla_severity);
+  if (ss === 'at_risk' || ss === 'overdue') out.slaSeverity = ss;
+
+  const ch = pick(raw.channelBadge) || pick(raw.channel_badge);
+  if (ch) out.channelBadge = ch;
+
+  if (raw.isGroup === true) out.isGroup = true;
+
+  return Object.keys(out).length ? out : undefined;
 }
 
 /**
@@ -95,7 +169,7 @@ export function resolveNotificationHrefForRow(n: Notification): string {
     contract: (id) => `/contracts/${id}`,
     task: (id) => `/tasks`,
     ticket: (id) => `/support/tickets/${id}`,
-    conversation: (id) => `/chat/${encodeURIComponent(id)}`,
+    conversation: (id) => chatConversationHref(id),
   };
 
   if (n.entity_id && et && entityMap[et]) {
@@ -120,9 +194,10 @@ export function resolveNotificationHrefForRow(n: Notification): string {
       type === 'new_conversation' ||
       type === 'kanban_automation' ||
       type === 'chat_assigned' ||
-      type === 'chat_transferred'
+      type === 'chat_transferred' ||
+      type === 'chat_sla_breach'
     ) {
-      return `/chat/${encodeURIComponent(conv)}`;
+      return chatConversationHref(conv);
     }
   }
 
@@ -172,7 +247,7 @@ export function resolveNotificationHrefForRow(n: Notification): string {
     return '/settings';
   }
 
-  if (conv) return `/chat/${encodeURIComponent(conv)}`;
+  if (conv) return chatConversationHref(conv);
 
   return '/dashboard';
 }
@@ -189,6 +264,8 @@ function toIsoString(d: Date | string | null | undefined): string | null {
 }
 
 export function notificationToListDto(row: Notification): NotificationListItemDto {
+  const d = asData(row);
+  const sanitized = sanitizeClientNotificationData(String(row.type), d);
   return {
     id: row.id,
     type: String(row.type),
@@ -198,6 +275,7 @@ export function notificationToListDto(row: Notification): NotificationListItemDt
     read: row.read === true,
     read_at: toIsoString(row.read_at),
     created_at: toIsoString(row.created_at) ?? new Date().toISOString(),
+    data: sanitized,
   };
 }
 
@@ -262,20 +340,32 @@ export async function notifyNewMessage(
   options: {
     conversationId: string;
     conversationName?: string;
+    phoneNumber?: string;
     messagePreview?: string;
     messageId?: string;
     isGroup?: boolean;
   }
 ): Promise<Notification> {
-  const { conversationId, conversationName, messagePreview, messageId, isGroup } = options;
+  const { conversationId, conversationName, phoneNumber, messagePreview, messageId, isGroup } = options;
 
-  const title = isGroup
-    ? `Nova mensagem em ${conversationName || 'grupo'}`
-    : `Nova mensagem de ${conversationName || 'contato'}`;
+  const rawName = conversationName?.trim() || '';
+  const phone = phoneNumber?.trim() || '';
+  let contactLabel = rawName;
+  if (!contactLabel && phone) contactLabel = phone;
+  if (!contactLabel) contactLabel = 'Contato WhatsApp';
 
-  const message = messagePreview
-    ? messagePreview.substring(0, 100) + (messagePreview.length > 100 ? '...' : '')
-    : 'Você recebeu uma nova mensagem';
+  const trimmedPrev = messagePreview?.trim() || '';
+  const preview =
+    trimmedPrev.length > 0
+      ? trimmedPrev.length > 160
+        ? `${trimmedPrev.slice(0, 160)}…`
+        : trimmedPrev
+      : 'Nova interação recebida.';
+
+  const title = isGroup ? `Nova mensagem — ${conversationName?.trim() || 'Grupo'}` : 'Nova mensagem';
+  const message = isGroup
+    ? 'Há uma nova mensagem no grupo.'
+    : `Você recebeu uma mensagem de ${contactLabel}.`;
 
   return createNotification({
     userId,
@@ -285,8 +375,11 @@ export async function notifyNewMessage(
     data: {
       conversationId,
       messageId,
-      isGroup,
-      conversationName,
+      isGroup: isGroup === true,
+      contactName: contactLabel,
+      phone: phone || undefined,
+      lastMessagePreview: preview,
+      href: chatConversationHref(conversationId),
     },
   });
 }
@@ -311,6 +404,7 @@ export async function notifyMessageDelivered(
       conversationId: options.conversationId,
       messageId: options.messageId,
       conversationName: options.conversationName,
+      href: chatConversationHref(options.conversationId),
     },
   });
 }
@@ -335,6 +429,7 @@ export async function notifyMessageRead(
       conversationId: options.conversationId,
       messageId: options.messageId,
       conversationName: options.conversationName,
+      href: chatConversationHref(options.conversationId),
     },
   });
 }
@@ -353,15 +448,16 @@ export async function notifyNewConversation(
 ): Promise<Notification> {
   const { conversationId, conversationName, phoneNumber, isGroup } = options;
 
-  const title = isGroup
-    ? 'Nova conversa em grupo'
-    : 'Nova conversa iniciada';
+  const rawName = conversationName?.trim() || '';
+  const phone = phoneNumber?.trim() || '';
+  let contactLabel = rawName;
+  if (!contactLabel && phone) contactLabel = phone;
+  if (!contactLabel) contactLabel = 'Contato WhatsApp';
 
-  const message = conversationName
-    ? `${conversationName} iniciou uma conversa`
-    : phoneNumber
-    ? `Conversa iniciada com ${phoneNumber}`
-    : 'Uma nova conversa foi iniciada';
+  const title = isGroup ? 'Nova conversa em grupo' : 'Nova conversa';
+  const message = isGroup
+    ? 'Um novo grupo iniciou o atendimento.'
+    : `${contactLabel} iniciou um atendimento.`;
 
   return createNotification({
     userId,
@@ -370,9 +466,11 @@ export async function notifyNewConversation(
     message,
     data: {
       conversationId,
-      conversationName,
-      phoneNumber,
-      isGroup,
+      contactName: contactLabel,
+      phone: phone || undefined,
+      lastMessagePreview: 'Nova interação recebida.',
+      isGroup: isGroup === true,
+      href: chatConversationHref(conversationId),
     },
   });
 }

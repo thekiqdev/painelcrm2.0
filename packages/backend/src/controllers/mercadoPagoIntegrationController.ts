@@ -12,6 +12,7 @@ import {
   testMercadoPagoIntegration,
   disconnectMercadoPagoIntegration,
 } from '../services/mercadoPagoIntegrationService.js';
+import { processMercadoPagoWebhookNotification } from '../services/mercadoPagoWebhookService.js';
 
 function getTenantId(req: AuthRequest): string | null {
   return req.tenantId ?? null;
@@ -99,6 +100,40 @@ export async function getMercadoPagoStatus(req: Request, res: Response): Promise
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     res.status(500).json({ error: message });
+  }
+}
+
+/**
+ * POST /api/integrations/mercado-pago/webhook (público, sem JWT).
+ * Fase 4 — GET /v1/payments/:id com token OAuth; Fase 6 — validação x-signature quando MERCADO_PAGO_WEBHOOK_SECRET.
+ */
+export async function postMercadoPagoWebhook(req: Request, res: Response): Promise<void> {
+  const requestId =
+    (typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id']) ||
+    (Array.isArray(req.headers['x-request-id']) ? req.headers['x-request-id'][0] : '') ||
+    undefined;
+  try {
+    const q = req.query as Record<string, string | string[] | undefined>;
+    const result = await processMercadoPagoWebhookNotification({
+      body: req.body,
+      query: q,
+      headers: req.headers as Record<string, string | string[] | undefined>,
+    });
+    if (result.httpStatus) {
+      res
+        .status(result.httpStatus)
+        .json({ received: false, error: result.errorCode ?? 'rejected' });
+      return;
+    }
+    if (!result.ok) {
+      res.status(500).json({ received: false, error: 'processing_failed' });
+      return;
+    }
+    res.status(200).json({ received: true });
+  } catch (err) {
+    const rid = requestId ? ` request_id=${requestId}` : '';
+    console.error(`[mercadoPagoIntegrationController] postMercadoPagoWebhook:${rid}`, err);
+    res.status(500).json({ received: false });
   }
 }
 

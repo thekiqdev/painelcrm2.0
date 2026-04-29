@@ -273,6 +273,13 @@ function readDecryptedAccessToken(credentials: Record<string, unknown>): string 
   return decryptMercadoPagoOAuthToken(ct);
 }
 
+/** Fase 3 Checkout Pro: token OAuth do tenant (nunca expor ao cliente). */
+export async function getMercadoPagoAccessTokenForTenant(tenantId: string): Promise<string> {
+  const row = await getMercadoPagoTenantConfigRow(tenantId);
+  if (!row) throw new Error('Mercado Pago não conectado para este tenant.');
+  return readDecryptedAccessToken(row.credentials);
+}
+
 export async function testMercadoPagoIntegration(tenantId: string): Promise<{
   ok: boolean;
   status: MercadoPagoIntegrationStatusDto;

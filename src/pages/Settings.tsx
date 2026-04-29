@@ -17,7 +17,11 @@ import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesS
 import { GoogleCalendarSection } from "@/components/settings/GoogleCalendarSection";
 import { AgendaAvailabilitySection } from "@/components/settings/AgendaAvailabilitySection";
 import { ChatAttendanceSettingsSection } from "@/components/settings/ChatAttendanceSettingsSection";
+import { ChatAutomationSettingsSection } from "@/components/settings/ChatAutomationSettings";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/sonner";
+
+const CHAT_AUTOMATION_UI_ENABLED = import.meta.env.VITE_CHAT_AUTOMATION_ENABLED === "true";
 
 const Settings = () => {
   const ctx = useContext(SettingsLayoutContext);
@@ -66,6 +70,22 @@ const Settings = () => {
       return <AgendaAvailabilitySection />;
     case "chatAttendance":
       return <ChatAttendanceSettingsSection />;
+    case "chatAutomation":
+      if (!CHAT_AUTOMATION_UI_ENABLED) {
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Automação do chat</CardTitle>
+              <CardDescription>
+                Esta área só aparece quando{" "}
+                <code className="rounded bg-muted px-1">VITE_CHAT_AUTOMATION_ENABLED=true</code> está definido no
+                ambiente de build.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        );
+      }
+      return <ChatAutomationSettingsSection />;
     default:
       return <CompanyDataSection handleSave={handleSave} />;
   }

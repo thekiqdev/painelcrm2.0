@@ -86,6 +86,7 @@ import {
   useMobileShellChrome,
 } from '@/contexts/MobileShellChromeContext';
 import { useInAppNotificationBadges } from '@/hooks/useInAppNotificationBadges';
+import { useChatNavUnreadCount } from '@/hooks/useChatNavUnreadCount';
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { HeaderNotificationBell } from '@/components/layout/HeaderNotificationBell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -168,19 +169,79 @@ const Nav = () => {
     icon: Icon,
     label,
     preload,
+    excludeActiveWhenPathStartsWith,
   }: {
     to: string;
     end?: boolean;
     icon: LucideIcon;
     label: string;
     preload?: () => void;
+    /** Evita match por prefixo (ex.: `/finance/accounts` vs `/finance/accounts-payable`). */
+    excludeActiveWhenPathStartsWith?: string;
   }) {
+    const { pathname } = useLocation();
+    const excluded =
+      Boolean(excludeActiveWhenPathStartsWith) && pathname.startsWith(excludeActiveWhenPathStartsWith!);
     return (
       <SidebarMenuItem>
         <SidebarMenuButton asChild tooltip={label}>
-          <NavLink to={to} end={end} onMouseEnter={preload} className={({ isActive }) => navLinkClassFn(isActive)}>
+          <NavLink
+            to={to}
+            end={end}
+            onMouseEnter={preload}
+            className={({ isActive }) => navLinkClassFn(isActive && !excluded)}
+          >
             <Icon className="size-4 shrink-0 opacity-90" aria-hidden />
             {!collapsed && <span className="truncate">{label}</span>}
+          </NavLink>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
+  function ChatSidebarNavItem() {
+    const chatAllowed = show(hasChat, 'chat');
+    const unread = useChatNavUnreadCount(chatAllowed);
+    const badgeLabel =
+      unread <= 0 ? null : unread > 99 ? '99+' : unread > 9 ? '9+' : String(unread);
+
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild tooltip="Chat">
+          <NavLink
+            to="/chat"
+            end
+            onMouseEnter={() => routePreload.chat()}
+            className={({ isActive }) =>
+              cn(navLinkClassFn(isActive), 'relative', badgeLabel && 'gap-2')
+            }
+          >
+            <MessageSquare className="size-4 shrink-0 opacity-90" aria-hidden />
+            {!collapsed ? (
+              <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                <span className="truncate">Chat</span>
+                {badgeLabel ? (
+                  <span
+                    className={cn(
+                      'flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full',
+                      'bg-primary px-1.5 text-[10px] font-semibold tabular-nums leading-none text-primary-foreground',
+                    )}
+                  >
+                    {badgeLabel}
+                  </span>
+                ) : null}
+              </span>
+            ) : badgeLabel ? (
+              <span
+                className={cn(
+                  'pointer-events-none absolute right-0.5 top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full',
+                  'bg-primary px-0.5 text-[9px] font-bold tabular-nums leading-none text-primary-foreground',
+                )}
+                aria-hidden
+              >
+                {badgeLabel}
+              </span>
+            ) : null}
           </NavLink>
         </SidebarMenuButton>
       </SidebarMenuItem>
@@ -261,9 +322,7 @@ const Nav = () => {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {show(hasChat, 'chat') && (
-                <NavLinkItem to="/chat" end icon={MessageSquare} label="Chat" preload={() => routePreload.chat()} />
-              )}
+              {show(hasChat, 'chat') && <ChatSidebarNavItem />}
               {show(hasChat, 'chat') && (
                 <NavLinkItem to="/chat/kanbam" icon={LayoutGrid} label="Kanban" preload={() => routePreload.chatKanban()} />
               )}
@@ -383,7 +442,13 @@ const Nav = () => {
               {show(hasExpenses, 'finance') && (
                 <>
                   <NavLinkItem to="/finance" end icon={LayoutDashboard} label="Resumo geral" preload={() => routePreload.finance()} />
-                  <NavLinkItem to="/finance/accounts" icon={Landmark} label="Bancos e contas" preload={() => routePreload.finance()} />
+                  <NavLinkItem
+                    to="/finance/accounts"
+                    icon={Landmark}
+                    label="Bancos e contas"
+                    excludeActiveWhenPathStartsWith="/finance/accounts-payable"
+                    preload={() => routePreload.finance()}
+                  />
                   <NavLinkItem
                     to="/finance/transactions"
                     icon={ArrowLeftRight}

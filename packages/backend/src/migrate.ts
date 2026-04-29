@@ -278,6 +278,20 @@ const order = [
   '184_appointment_user_availability_settings.sql',
   /** Chat Engine Fase 5: filas, status padronizados, transferências, SLA básico */
   '185_chat_engine_phase5_professional.sql',
+  /** Agenda Fase 5.3: bloqueios de indisponibilidade (tenant / utilizador) */
+  '186_appointment_availability_blocks.sql',
+  /** Chat Engine Fase 6: automação, distribuição, SLA, regras */
+  '187_chat_engine_phase6_automation.sql',
+  /** Agenda Fase 5.4: feriados e bloqueio automático */
+  '188_appointment_holidays.sql',
+  /** Chat Engine Fase 7: logs, SLA por fila, regras UI */
+  '189_chat_engine_phase7_operational_ui.sql',
+  /** Chat Engine Fase 8: chatbot básico (tabela chat_bot_rules) */
+  '190_chat_engine_phase8_chatbot.sql',
+  /** Agenda Fase 5.7: capacidade por slot (público / mesmo responsável) */
+  '191_appointment_capacity_per_slot.sql',
+  /** Agenda Fase 5.8: tipos de compromisso (duração padrão / labels) */
+  '192_appointment_type_settings.sql',
   'create-admin-user.sql',
 ];
 

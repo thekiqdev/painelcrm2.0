@@ -116,11 +116,14 @@ export default function PublicAppointmentConfirmation() {
     void publicApiGet<{
       slots: { starts_at: string; ends_at: string }[];
       default_meeting_duration_minutes: number;
+      meeting_duration_minutes?: number;
     }>(`/api/public/appointments/confirm/${encodedToken}/availability`).then((res) => {
       setSlotsLoading(false);
       if (res.data) {
         setPublicSlots(res.data.slots || []);
-        setSlotDurationMin(res.data.default_meeting_duration_minutes ?? 60);
+        const eff =
+          res.data.meeting_duration_minutes ?? res.data.default_meeting_duration_minutes ?? 60;
+        setSlotDurationMin(eff);
       }
     });
   }

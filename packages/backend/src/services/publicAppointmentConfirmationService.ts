@@ -8,7 +8,11 @@ import {
   updateCalendarEvent,
   type GoogleCalendarReminder,
 } from './googleCalendarService.js';
-import { validatePublicRescheduleAgainstAvailability } from './appointmentAvailabilityService.js';
+import {
+  validatePublicRescheduleAgainstAvailability,
+  resolveEffectiveAvailabilitySettings,
+} from './appointmentAvailabilityService.js';
+import { resolvePublicRescheduleMeetingMinutes } from './appointmentTypeSettingsService.js';
 
 export type PublicConfirmationResponse = 'confirmed' | 'needs_reschedule' | 'declined';
 
@@ -19,6 +23,7 @@ type AppointmentPublicRow = {
   lead_id: string | null;
   responsible_user_id: string | null;
   created_by: string | null;
+  type: string;
   title: string;
   description: string | null;
   starts_at: string;
@@ -56,6 +61,9 @@ export type SubmitPublicConfirmationResult =
   | { status: 'expired' }
   | { status: 'already_responded' }
   | { status: 'validation_error'; message: string }
+  | { status: 'slot_blocked'; message: string }
+  | { status: 'holiday_blocked'; message: string }
+  | { status: 'slot_unavailable'; message: string }
   | { status: 'invalid_state'; message: string };
 
 const MAX_PUBLIC_RESCHEDULE_DURATION_MS = 8 * 60 * 60 * 1000;
@@ -81,6 +89,19 @@ function remindersFromJson(v: unknown): GoogleCalendarReminder[] | null | undefi
       .filter(Boolean) as GoogleCalendarReminder[];
   }
   return undefined;
+}
+
+async function expectedMeetingMinutesForPublicRow(
+  row: Pick<AppointmentPublicRow, 'tenant_id' | 'responsible_user_id' | 'type' | 'starts_at' | 'ends_at'>,
+): Promise<number> {
+  const settings = await resolveEffectiveAvailabilitySettings(row.tenant_id, row.responsible_user_id);
+  return resolvePublicRescheduleMeetingMinutes({
+    tenantId: row.tenant_id,
+    appointmentType: row.type,
+    appointmentStartsAtIso: row.starts_at,
+    appointmentEndsAtIso: row.ends_at,
+    availabilityFallbackMinutes: settings.default_meeting_duration_minutes,
+  });
 }
 
 async function listConflictsForResponsible(params: {
@@ -252,6 +273,7 @@ const appointmentPublicSelect = `
        a.lead_id,
        a.responsible_user_id,
        a.created_by,
+       a.type,
        a.title,
        a.description,
        a.starts_at,
@@ -372,14 +394,27 @@ export async function getPublicRescheduleConflictPreview(params: {
   if (expiresAtMs <= Date.now()) return { ok: false, code: 'expired' };
   if (row.status !== 'scheduled') return { ok: false, code: 'invalid_state', message: 'Compromisso não está agendado.' };
 
+  const expectedMin = await expectedMeetingMinutesForPublicRow(row);
   const avail = await validatePublicRescheduleAgainstAvailability({
     tenantId: row.tenant_id,
     responsibleUserId: row.responsible_user_id,
     excludeAppointmentId: row.id,
     startsAtIso: params.starts_at,
     endsAtIso: params.ends_at,
+    expectedMeetingMinutes: expectedMin,
   });
-  if (!avail.ok) return { ok: false, code: 'validation_error', message: avail.message };
+  if (!avail.ok) {
+    if (avail.code === 'slot_blocked') {
+      return { ok: false, code: 'slot_blocked', message: avail.message };
+    }
+    if (avail.code === 'holiday_blocked') {
+      return { ok: false, code: 'holiday_blocked', message: avail.message };
+    }
+    if (avail.code === 'slot_unavailable') {
+      return { ok: false, code: 'slot_unavailable', message: avail.message };
+    }
+    return { ok: false, code: 'validation_error', message: avail.message };
+  }
 
   const conflicts = await listConflictsForResponsible({
     tenantId: row.tenant_id,
@@ -449,15 +484,26 @@ export async function submitPublicConfirmationByToken(params: {
     const note = params.note?.trim() || null;
 
     if (params.response === 'needs_reschedule' && params.starts_at && params.ends_at) {
+      const expectedMin = await expectedMeetingMinutesForPublicRow(row);
       const avail = await validatePublicRescheduleAgainstAvailability({
         tenantId: row.tenant_id,
         responsibleUserId: row.responsible_user_id,
         excludeAppointmentId: row.id,
         startsAtIso: params.starts_at,
         endsAtIso: params.ends_at,
+        expectedMeetingMinutes: expectedMin,
       });
       if (!avail.ok) {
         await client.query('ROLLBACK');
+        if (avail.code === 'slot_blocked') {
+          return { status: 'slot_blocked', message: avail.message };
+        }
+        if (avail.code === 'holiday_blocked') {
+          return { status: 'holiday_blocked', message: avail.message };
+        }
+        if (avail.code === 'slot_unavailable') {
+          return { status: 'slot_unavailable', message: avail.message };
+        }
         return { status: 'validation_error', message: avail.message };
       }
 

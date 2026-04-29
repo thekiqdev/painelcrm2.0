@@ -7,6 +7,7 @@ export type MobilePageSecondaryAction = {
   icon: React.ReactNode;
   onClick: () => void;
   ariaLabel: string;
+  disabled?: boolean;
 };
 
 export type MobilePagePrimaryAction = {
@@ -106,7 +107,8 @@ export function MobilePageHeader({
               type="button"
               variant="ghost"
               size="icon"
-              className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground active:scale-95 motion-safe:transition-transform motion-reduce:transition-none"
+              disabled={a.disabled}
+              className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground active:scale-95 motion-safe:transition-transform motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-40"
               aria-label={a.ariaLabel}
               onClick={a.onClick}
             >

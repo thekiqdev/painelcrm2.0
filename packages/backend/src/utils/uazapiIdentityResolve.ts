@@ -10,6 +10,7 @@ import {
   isStrongChatDisplayName,
   isWeakChatDisplayName,
 } from './chatIdentityQuality.js';
+import { extractUazapiChatImageUrl, mergeAvatarUrlForPersistence } from './uazapiChatIdentity.js';
 
 export type WhatsAppJidClass = 'group' | 'lid' | 's_whatsapp' | 'c_us' | 'other';
 
@@ -109,6 +110,42 @@ export type UazContactCatalogEntry = {
 /**
  * Indexa contatos da UazAPI por dígitos do local-part do JID (MSISDN).
  */
+/**
+ * Decide se vale carregar GET/POST contacts (agenda completa) após `chat/find`.
+ * Regra: @lid sem JID PN no metadata precisa da agenda; ou nome ainda fraco com MSISDN conhecido.
+ */
+export function shouldLoadContactCatalogForIdentityEnrichment(args: {
+  externalChatId: string;
+  contactName: string | null;
+  profileName: string | null;
+  phoneNumber: string | null;
+  metadata: unknown;
+}): boolean {
+  const ext = String(args.externalChatId || '').trim();
+  const extLower = ext.toLowerCase();
+  const meta =
+    args.metadata && typeof args.metadata === 'object' && !Array.isArray(args.metadata)
+      ? (args.metadata as Record<string, unknown>)
+      : {};
+  const hinted =
+    typeof meta.uaz_message_find_chatid === 'string' ? meta.uaz_message_find_chatid.trim() : '';
+  const hasPnHint =
+    hinted.length > 0 && hinted.toLowerCase().includes('@s.whatsapp.net');
+
+  if (extLower.endsWith('@lid') && !hasPnHint) {
+    return true;
+  }
+
+  const digits = digitsOnlyMsisdn(String(args.phoneNumber || ''));
+  if (digits.length < 10) {
+    return false;
+  }
+
+  const weakContact = isWeakChatDisplayName(args.contactName, digits, ext);
+  const weakProfile = isWeakChatDisplayName(args.profileName, digits, ext);
+  return weakContact && weakProfile;
+}
+
 export function indexContactsByMsisdn(
   rows: Array<Record<string, unknown>>
 ): Map<string, UazContactCatalogEntry> {
@@ -249,19 +286,20 @@ export function conversationRowForClientApi(row: Record<string, unknown>): Recor
     external_chat_id: row.external_chat_id as string | null,
     identity_state: row.identity_state as string | null,
   });
-  const av =
-    typeof row.avatar_url === 'string' && row.avatar_url.trim()
-      ? row.avatar_url.trim()
-      : null;
   const baseMeta =
     row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
       ? { ...(row.metadata as Record<string, unknown>) }
       : {};
+  const fromCol =
+    typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null;
+  const fromMeta = extractUazapiChatImageUrl(baseMeta);
+  const av = mergeAvatarUrlForPersistence(fromCol, fromMeta);
   if (av) {
     baseMeta.whatsapp_profile_photo = av;
   }
   return {
     ...row,
+    avatar_url: av ?? row.avatar_url ?? null,
     contact_name: display ?? row.contact_name ?? null,
     metadata: Object.keys(baseMeta).length > 0 ? baseMeta : row.metadata ?? null,
   };

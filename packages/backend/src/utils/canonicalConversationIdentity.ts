@@ -7,7 +7,7 @@ import {
   isStrongChatDisplayName,
   isWeakChatDisplayName,
 } from './chatIdentityQuality.js';
-import { extractUazapiChatImageUrl } from './uazapiChatIdentity.js';
+import { extractUazapiChatImageUrl, mergeAvatarUrlForPersistence } from './uazapiChatIdentity.js';
 import { classifyWhatsAppJid } from './uazapiIdentityResolve.js';
 
 export type IdentityState = 'resolved' | 'unresolved';
@@ -169,7 +169,7 @@ export function mergeCanonicalIdentityForUpsert(
   external_chat_id: string,
   existing: CanonicalRowSnapshot | null,
   incoming: CanonicalIdentityComputed,
-  opts: { incomingMetadataHasEmptyImages: boolean }
+  _opts: { incomingMetadataHasEmptyImages: boolean }
 ): {
   merged: CanonicalIdentityComputed;
   degraded_write_blocked: {
@@ -243,16 +243,14 @@ export function mergeCanonicalIdentityForUpsert(
     if (exS && !inS) degraded_write_blocked.display_name = true;
   }
 
-  let mergedAvatar = incoming.avatar_url;
-  const exAv = existing.avatar_url?.trim() || extractUazapiChatImageUrl(existing.metadata) || null;
+  const exAv =
+    (existing.avatar_url && String(existing.avatar_url).trim()) ||
+    extractUazapiChatImageUrl(existing.metadata) ||
+    null;
   const incAv = incoming.avatar_url?.trim() || null;
-  if (exAv && (!incAv || opts.incomingMetadataHasEmptyImages)) {
-    mergedAvatar = exAv;
-    if (!incAv) degraded_write_blocked.avatar_url = true;
-  } else if (!exAv && incAv) {
-    mergedAvatar = incAv;
-  } else {
-    mergedAvatar = incAv || exAv;
+  const mergedAvatar = mergeAvatarUrlForPersistence(incAv, exAv);
+  if (!incAv && exAv) {
+    degraded_write_blocked.avatar_url = true;
   }
 
   const identity_state: IdentityState = mergedCanonical ? 'resolved' : 'unresolved';
@@ -316,8 +314,8 @@ function preferStrongerCanonical(a: string, b: string, _ext: string): string {
   return b;
 }
 
+/** Alinhado a `extractUazapiChatImageUrl` — evita sinal falso de “sem foto” quando a URL vem noutros campos. */
 export function incomingChatPayloadHasEmptyProfileImages(meta: Record<string, unknown> | null): boolean {
   if (!meta || typeof meta !== 'object') return true;
-  const img = meta.image ?? meta.imagePreview ?? meta.image_preview;
-  return img === '' || img == null;
+  return extractUazapiChatImageUrl(meta) == null;
 }

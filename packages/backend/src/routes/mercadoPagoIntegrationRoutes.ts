@@ -5,6 +5,8 @@ import * as ctrl from '../controllers/mercadoPagoIntegrationController.js';
 
 const router = Router();
 
+router.post('/webhook', mercadoPagoFeatureGuard, ctrl.postMercadoPagoWebhook);
+
 router.get('/availability', ctrl.getMercadoPagoAvailability);
 
 router.get(

@@ -275,6 +275,28 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'GET', ...init });
   }
 
+  /** GET binário (imagem) com Authorization — ex.: `/api/chat/avatar-proxy`. */
+  async getBlob(
+    endpoint: string,
+    init?: Pick<RequestInit, 'signal'>,
+  ): Promise<{ blob?: Blob; error?: string; status?: number }> {
+    const url = `${this.baseURL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const headers = new Headers();
+    if (this.token) {
+      headers.set('Authorization', `Bearer ${this.token}`);
+    }
+    try {
+      const response = await fetch(url, { method: 'GET', headers, ...init });
+      if (!response.ok) {
+        return { error: `HTTP ${response.status}`, status: response.status };
+      }
+      const blob = await response.blob();
+      return { blob };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : 'Network error' };
+    }
+  }
+
   async post<T>(
     endpoint: string,
     body?: any,

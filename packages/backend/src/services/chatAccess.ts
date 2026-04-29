@@ -15,7 +15,11 @@ export type ChatAction =
   | 'close'
   | 'manage_queues'
   | 'manage_teams'
-  | 'view_all';
+  | 'view_all'
+  /** Fase 7 — métricas completas / dashboard operacional */
+  | 'view_metrics'
+  /** Fase 7 — automação e regras (fallback: manage_queues) */
+  | 'manage_automation';
 
 async function getMap(req: AuthRequest | undefined, userId: string): Promise<ModulePermissionsMap> {
   if (req?.permissionMap?.[userId]) return req.permissionMap[userId];
@@ -59,6 +63,16 @@ export async function canChatAction(
       return chat.can_edit === true && extraFlag(ex, 'chat_manage_queues', false);
     case 'manage_teams':
       return chat.can_edit === true && extraFlag(ex, 'chat_manage_teams', false);
+    case 'view_metrics':
+      return (
+        chat.can_view === true &&
+        extraFlag(ex, 'chat_view_metrics', false)
+      );
+    case 'manage_automation':
+      return (
+        chat.can_edit === true &&
+        (extraFlag(ex, 'chat_manage_automation', false) || extraFlag(ex, 'chat_manage_queues', false))
+      );
     default:
       return false;
   }

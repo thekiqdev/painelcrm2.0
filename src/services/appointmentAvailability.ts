@@ -6,11 +6,17 @@ export type AvailabilityForm = {
   default_meeting_duration_minutes: number;
   min_notice_minutes: number;
   max_days_ahead: number;
+  /** Máx. compromissos no mesmo horário (mesmo responsável) na remarcação pública; 1–20. */
+  capacity_per_slot: number;
   weekdays: number[];
   work_start_time: string;
   work_end_time: string;
   break_start_time: string | null;
   break_end_time: string | null;
+  block_holidays: boolean;
+  holiday_country_code: string;
+  holiday_state_code: string | null;
+  holiday_city: string | null;
 };
 
 export async function getTenantAvailabilitySettings(): Promise<{ settings: AvailabilityForm }> {

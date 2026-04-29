@@ -30,6 +30,7 @@ import {
 import { getCustomerInvoiceRecurrenceInsight } from '../services/customerInvoiceRecurrenceInsightService.js';
 import { patchCustomerSubscriptionNextBillingFromPaidInvoice } from '../services/customerInvoiceRecurrenceNextBillingService.js';
 import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
+import { createMercadoPagoCheckoutPreferenceForInvoice } from '../services/mercadoPagoCustomerInvoicePaymentService.js';
 
 const createItemSchema = z.object({
   description: z.string().min(1, 'Descrição é obrigatória'),
@@ -476,6 +477,69 @@ export async function patchCustomerInvoiceRecurrenceNextBilling(req: AuthRequest
     }
     console.error('[customerInvoicesController] patchCustomerInvoiceRecurrenceNextBilling error:', err);
     res.status(500).json({ error: 'Erro ao atualizar próxima cobrança' });
+  }
+}
+
+const mercadoPagoCreatePaymentBodySchema = z.object({
+  regenerate: z.boolean().optional(),
+});
+
+/**
+ * POST /api/customer-invoices/:id/mercado-pago/create-payment
+ * Fase 3 — Checkout Pro (preferência); não marca paga; não altera Asaas na fatura com cobrança Asaas ativa.
+ */
+export async function postCustomerInvoiceMercadoPagoCreatePayment(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const { id: invoiceId } = req.params;
+    if (!invoiceId || !z.string().uuid().safeParse(invoiceId).success) {
+      res.status(400).json({ error: 'ID da fatura inválido' });
+      return;
+    }
+    const parsed = mercadoPagoCreatePaymentBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const result = await createMercadoPagoCheckoutPreferenceForInvoice({
+      tenantId,
+      invoiceId,
+      regenerate: parsed.data.regenerate === true,
+    });
+    res.json({
+      preference_id: result.preference_id,
+      init_point: result.init_point,
+      sandbox_init_point: result.sandbox_init_point,
+      payment_url: result.payment_url,
+      invoice_url: result.invoice_url,
+      cached: result.cached,
+      oauth_environment: result.oauth_environment,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro ao gerar cobrança Mercado Pago';
+    if (msg.includes('não encontrada')) {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (
+      msg.includes('já está paga') ||
+      msg.includes('não permite') ||
+      msg.includes('Conecte o Mercado Pago') ||
+      msg.includes('desativado') ||
+      msg.includes('payment_token') ||
+      msg.includes('Estado da fatura') ||
+      msg.includes('Mercado Pago está desativado') ||
+      msg.includes('sem preference id')
+    ) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error('[customerInvoicesController] postCustomerInvoiceMercadoPagoCreatePayment error:', err);
+    res.status(500).json({ error: 'Erro ao gerar cobrança Mercado Pago' });
   }
 }
 

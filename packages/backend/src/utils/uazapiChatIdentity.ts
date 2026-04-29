@@ -1,4 +1,18 @@
 /**
+ * Regra de persistência: só substitui avatar quando o incoming é URL não vazia;
+ * nunca gravar null por cima de valor já salvo (sync/webhook sem foto).
+ */
+export function mergeAvatarUrlForPersistence(
+  incoming: string | null | undefined,
+  existing: string | null | undefined
+): string | null {
+  const inc = typeof incoming === 'string' && incoming.trim() ? incoming.trim() : null;
+  if (inc) return inc;
+  const ex = typeof existing === 'string' && existing.trim() ? existing.trim() : null;
+  return ex;
+}
+
+/**
  * Campos de foto conforme schema Chat em docs/uazapi-openapi-spec.yaml:
  * - image (URL da imagem do chat)
  * - imagePreview (URL da miniatura — camelCase na API)
@@ -13,7 +27,9 @@ export function extractUazapiChatImageUrl(meta: Record<string, unknown> | null |
     meta.image_preview,
     meta.profilePicUrl,
     meta.profilePicture,
+    meta.profilePictureUrl,
     meta.pictureUrl,
+    meta.profile_pic_url,
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim()) return c.trim();
