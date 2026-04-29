@@ -1,6 +1,7 @@
 import { pool } from '../utils/db.js';
 import { emitNotification, emitUnreadCount } from './websocketService.js';
 import { emitToTenant } from './realtimeService.js';
+import { loadChatNotificationDisplayContext } from './chatNotificationContext.js';
 
 /**
  * Tipos de notificações disponíveis
@@ -143,6 +144,9 @@ export function sanitizeClientNotificationData(
   if (ch) out.channelBadge = ch;
 
   if (raw.isGroup === true) out.isGroup = true;
+
+  const avu = pick(raw.avatarUrl) || pick(raw.avatar_url);
+  if (avu) out.avatarUrl = avu;
 
   return Object.keys(out).length ? out : undefined;
 }
@@ -367,6 +371,14 @@ export async function notifyNewMessage(
     ? 'Há uma nova mensagem no grupo.'
     : `Você recebeu uma mensagem de ${contactLabel}.`;
 
+  let avatarUrl: string | undefined;
+  try {
+    const ctx = await loadChatNotificationDisplayContext(conversationId);
+    if (ctx.avatarUrl) avatarUrl = ctx.avatarUrl;
+  } catch {
+    /* ignore */
+  }
+
   return createNotification({
     userId,
     type: 'new_message',
@@ -380,6 +392,7 @@ export async function notifyNewMessage(
       phone: phone || undefined,
       lastMessagePreview: preview,
       href: chatConversationHref(conversationId),
+      ...(avatarUrl ? { avatarUrl } : {}),
     },
   });
 }
@@ -459,6 +472,14 @@ export async function notifyNewConversation(
     ? 'Um novo grupo iniciou o atendimento.'
     : `${contactLabel} iniciou um atendimento.`;
 
+  let avatarUrl: string | undefined;
+  try {
+    const ctx = await loadChatNotificationDisplayContext(conversationId);
+    if (ctx.avatarUrl) avatarUrl = ctx.avatarUrl;
+  } catch {
+    /* ignore */
+  }
+
   return createNotification({
     userId,
     type: 'new_conversation',
@@ -471,6 +492,7 @@ export async function notifyNewConversation(
       lastMessagePreview: 'Nova interação recebida.',
       isGroup: isGroup === true,
       href: chatConversationHref(conversationId),
+      ...(avatarUrl ? { avatarUrl } : {}),
     },
   });
 }

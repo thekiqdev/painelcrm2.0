@@ -143,6 +143,7 @@ async function notifySlaUsers(
     href: chatInboxHref(conversationId),
     entity_type: 'conversation',
     entity_id: conversationId,
+    ...(ctx?.avatarUrl ? { avatarUrl: ctx.avatarUrl } : {}),
   };
 
   for (const uid of uniq) {

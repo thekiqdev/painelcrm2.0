@@ -663,6 +663,7 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
           phone: ctx.phone ?? undefined,
           lastMessagePreview: preview,
           href: chatInboxHref(conversationId),
+          ...(ctx.avatarUrl ? { avatarUrl: ctx.avatarUrl } : {}),
         };
         if (isNewAssignment) {
           await createNotification({
@@ -721,6 +722,7 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
               queueName: queueName ?? undefined,
               teamName: teamName ?? undefined,
               channelBadge,
+              ...(ctx.avatarUrl ? { avatarUrl: ctx.avatarUrl } : {}),
             },
           });
         }

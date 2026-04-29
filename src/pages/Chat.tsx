@@ -436,6 +436,8 @@ const Chat = () => {
   const [syncingConversations, setSyncingConversations] = useState(false);
   const [syncingMessages, setSyncingMessages] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
+  /** Envio de texto em curso (API + reload silencioso) — evita duplo envio e permite logs/diagnosticar mobile. */
+  const [textSendInFlight, setTextSendInFlight] = useState(false);
   const [currentLead, setCurrentLead] = useState<any | null>(null);
   const [currentClient, setCurrentClient] = useState<any | null>(null);
   const [loadingLead, setLoadingLead] = useState(false);
@@ -443,6 +445,8 @@ const Chat = () => {
   const [savingClientGroup, setSavingClientGroup] = useState(false);
   const [loadingClient, setLoadingClient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  /** Lista de mensagens (overflow-y-auto) — scroll direto evita scrollIntoView no fim, que no mobile tira foco do composer. */
+  const messagesScrollContainerRef = useRef<HTMLDivElement>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const documentFileInputRef = useRef<HTMLInputElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -518,6 +522,20 @@ const Chat = () => {
   const keyboardInset = useVisualKeyboardInset(
     Boolean(isMobile && routeConversationId && viewMode === 'conversation'),
   );
+
+  /** Logs temporários (dev + mobile + thread) — diagnosticar composer. Remover quando estável. */
+  useEffect(() => {
+    if (!import.meta.env.DEV || !isMobile || !routeConversationId) return;
+    const busy = sendingMessage || textSendInFlight;
+    console.log('[mobile-composer]', {
+      isSending: busy,
+      disabled: busy,
+      hasText: Boolean(composerTextareaRef.current?.value?.trim()),
+      activeElement: typeof document !== 'undefined' ? document.activeElement?.tagName : undefined,
+      composerMounted: Boolean(composerTextareaRef.current),
+      keyboardInset,
+    });
+  }, [isMobile, routeConversationId, sendingMessage, textSendInFlight, keyboardInset]);
 
   useEffect(() => {
     setContactProfileOpen(false);
@@ -1514,6 +1532,11 @@ const Chat = () => {
   /** Mantém o viewport no fim do histórico (mensagem mais recente visível). */
   const scrollMessagesToBottom = useCallback(() => {
     const run = () => {
+      const scrollEl = messagesScrollContainerRef.current;
+      if (scrollEl) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+        return;
+      }
       const end = messagesEndRef.current;
       if (!end) return;
       const viewport = end.closest('[data-radix-scroll-area-viewport]') as HTMLElement | null;
@@ -2371,6 +2394,9 @@ const Chat = () => {
     if (!selectedConversationId || !newMessage.trim()) {
       return;
     }
+    if (textSendInFlight) {
+      return;
+    }
 
     const text = newMessage.trim();
     const replySnap = replyingTo;
@@ -2397,6 +2423,7 @@ const Chat = () => {
     };
     setMessages((prev) => [...prev, optimistic]);
 
+    setTextSendInFlight(true);
     try {
       await chatService.sendMessage(selectedConversationId, text, {
         ...(replyId ? { replyToMessageId: replyId } : {}),
@@ -2420,6 +2447,26 @@ const Chat = () => {
       toast.error('Não foi possível enviar a mensagem', {
         description: error instanceof Error ? error.message : undefined,
       });
+    } finally {
+      setTextSendInFlight(false);
+      if (isMobile && routeConversationId) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const ta = composerTextareaRef.current;
+            ta?.focus({ preventScroll: true });
+            if (import.meta.env.DEV) {
+              console.log('[mobile-composer]', {
+                isSending: false,
+                disabled: false,
+                hasText: Boolean(ta?.value?.trim()),
+                activeElement: typeof document !== 'undefined' ? document.activeElement?.tagName : undefined,
+                composerMounted: Boolean(ta),
+                phase: 'after-send-focus',
+              });
+            }
+          });
+        });
+      }
     }
   };
 
@@ -4318,6 +4365,7 @@ const Chat = () => {
                       </CardHeader>
                       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
                         <div
+                          ref={messagesScrollContainerRef}
                           className={cn(
                             'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50',
                           )}
@@ -4616,7 +4664,7 @@ const Chat = () => {
                                   type="button"
                                   variant="outline"
                                   size="icon"
-                                  disabled={sendingMessage}
+                                  disabled={sendingMessage || textSendInFlight}
                                   className="pointer-events-auto h-9 w-9 shrink-0 md:h-9 md:w-9"
                                   title="Ações rápidas"
                                   aria-label="Ações rápidas"
@@ -4630,7 +4678,7 @@ const Chat = () => {
                                 className="z-[80] w-56"
                               >
                                 <DropdownMenuItem
-                                  disabled={sendingMessage}
+                                  disabled={sendingMessage || textSendInFlight}
                                   onSelect={(ev) => {
                                     ev.preventDefault();
                                     imageFileInputRef.current?.click();
@@ -4640,7 +4688,7 @@ const Chat = () => {
                                   Enviar imagem
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  disabled={sendingMessage}
+                                  disabled={sendingMessage || textSendInFlight}
                                   onSelect={(ev) => {
                                     ev.preventDefault();
                                     documentFileInputRef.current?.click();
@@ -4650,7 +4698,7 @@ const Chat = () => {
                                   Enviar documento
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  disabled={sendingMessage || !selectedConversationId}
+                                  disabled={sendingMessage || textSendInFlight || !selectedConversationId}
                                   onSelect={(ev) => {
                                     ev.preventDefault();
                                     setWhatsappModelPickerOpen(true);
@@ -4663,7 +4711,9 @@ const Chat = () => {
                                   <>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
-                                      disabled={sendingMessage || meetNowSubmitting || !selectedConversationId}
+                                      disabled={
+                                        sendingMessage || textSendInFlight || meetNowSubmitting || !selectedConversationId
+                                      }
                                       onSelect={(ev) => {
                                         ev.preventDefault();
                                         handleChatOpenAgendaComposer();
@@ -4673,7 +4723,9 @@ const Chat = () => {
                                       Agendar compromisso
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      disabled={sendingMessage || meetNowSubmitting || !selectedConversationId}
+                                      disabled={
+                                        sendingMessage || textSendInFlight || meetNowSubmitting || !selectedConversationId
+                                      }
                                       onSelect={(ev) => {
                                         ev.preventDefault();
                                         if (
@@ -4692,7 +4744,9 @@ const Chat = () => {
                                       Criar reunião para agora
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      disabled={sendingMessage || scheduleLaterBusy || !selectedConversationId}
+                                      disabled={
+                                        sendingMessage || textSendInFlight || scheduleLaterBusy || !selectedConversationId
+                                      }
                                       onSelect={(ev) => {
                                         ev.preventDefault();
                                         handleChatOpenScheduleLater();
@@ -4710,6 +4764,7 @@ const Chat = () => {
                               rows={1}
                               placeholder="Digite uma mensagem"
                               value={newMessage}
+                              aria-busy={sendingMessage || textSendInFlight}
                               onChange={(event) => setNewMessage(event.target.value)}
                               onKeyDown={(e) => {
                                 if (!isMobile) return;
@@ -4720,12 +4775,12 @@ const Chat = () => {
                               enterKeyHint="send"
                               autoComplete="off"
                               autoCorrect="off"
-                              className="min-h-11 max-h-[min(40dvh,9.5rem)] flex-1 resize-none overflow-y-auto border-border bg-background py-3 text-[15px] leading-snug shadow-sm focus-visible:ring-primary/25 md:min-h-[36px] md:max-h-[min(30dvh,7.5rem)] md:py-2 md:text-sm md:leading-5"
+                              className="min-h-12 max-h-[min(40dvh,9.5rem)] flex-1 resize-none overflow-y-auto border-border bg-background py-3 text-base leading-snug shadow-sm focus-visible:ring-primary/25 max-md:min-h-[3rem] md:min-h-[36px] md:max-h-[min(30dvh,7.5rem)] md:py-2 md:text-sm md:leading-5"
                             />
                             <Button 
                               type="submit" 
                               size="icon"
-                            disabled={!newMessage.trim()}
+                            disabled={!newMessage.trim() || textSendInFlight || sendingMessage}
                             className="h-9 w-9 shrink-0 md:h-9 md:w-9"
                             >
                               <Send className="h-4 w-4 md:h-4 md:w-4" />

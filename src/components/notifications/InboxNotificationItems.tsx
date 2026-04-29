@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { LucideIcon } from 'lucide-react';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import type { InboxNotificationRow } from '@/services/systemNotifications';
+import { resolveChatNotificationAvatarFromPayload } from '@/lib/chatNotificationAvatar';
 import { cn } from '@/lib/utils';
 
 function initialsFromName(name: string): string {
@@ -32,6 +33,8 @@ type ChatData = {
   queueName?: string;
   teamName?: string;
   isGroup?: boolean;
+  /** URL resolvida no backend (WhatsApp / contact / CRM); normalizada com `chatAvatarUrlForImgSrc`. */
+  avatarUrl?: string;
 };
 
 function asChatData(data: InboxNotificationRow['data']): ChatData {
@@ -49,18 +52,23 @@ function asChatData(data: InboxNotificationRow['data']): ChatData {
     queueName: str('queueName'),
     teamName: str('teamName'),
     isGroup: d.isGroup === true,
+    avatarUrl: str('avatarUrl') || str('avatar_url'),
   };
 }
 
-function ContactAvatar({
+function ChatNotificationAvatar({
   contactName,
+  data,
   className,
 }: {
   contactName: string;
+  data: ChatData;
   className?: string;
 }) {
+  const src = resolveChatNotificationAvatarFromPayload(data as Record<string, unknown>);
   return (
     <Avatar className={cn('h-10 w-10 shrink-0 border border-border/60', className)}>
+      {src ? <AvatarImage src={src} alt="" className="object-cover" /> : null}
       <AvatarFallback className="bg-emerald-600/15 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-100">
         {initialsFromName(contactName)}
       </AvatarFallback>
@@ -161,7 +169,7 @@ export function ChatMessageNotificationItem({
     <NotificationItemShell
       unread={!n.read}
       onClick={onClick}
-      left={<ContactAvatar contactName={contact} />}
+      left={<ChatNotificationAvatar contactName={contact} data={d} />}
       badge={badge}
       title={n.title}
       description={n.message}
@@ -188,7 +196,7 @@ export function ChatAssignedNotificationItem({
     <NotificationItemShell
       unread={!n.read}
       onClick={onClick}
-      left={<ContactAvatar contactName={contact} />}
+      left={<ChatNotificationAvatar contactName={contact} data={d} />}
       badge="Nova conversa"
       title="Nova conversa atribuída a você"
       description={n.message}
@@ -219,7 +227,7 @@ export function ChatTransferredNotificationItem({
     <NotificationItemShell
       unread={!n.read}
       onClick={onClick}
-      left={<ContactAvatar contactName={contact} />}
+      left={<ChatNotificationAvatar contactName={contact} data={d} />}
       badge={badge}
       title={n.title}
       description={n.message}
@@ -246,7 +254,7 @@ export function ChatSlaNotificationItem({
     <NotificationItemShell
       unread={!n.read}
       onClick={onClick}
-      left={<ContactAvatar contactName={contact} />}
+      left={<ChatNotificationAvatar contactName={contact} data={d} />}
       badge={overdue ? 'Crítico' : 'Atenção'}
       badgeVariant={overdue ? 'destructive' : 'secondary'}
       title={n.title}
