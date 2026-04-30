@@ -6,7 +6,36 @@ export type ChatNotificationDisplayContext = {
   lastMessagePreview: string | null;
   /** URL bruta (mesma prioridade que `resolveConversationIdentity` no frontend). */
   avatarUrl: string | null;
+  clientId: string | null;
+  leadId: string | null;
+  /** Apenas `clients.whatsapp_avatar_url` ou `leads.whatsapp_avatar_url` (ex.: retorno de fallback na UI). */
+  crmWhatsappAvatarUrl: string | null;
 };
+
+/**
+ * Enriquecimento padrão do JSON `notifications.data` para o inbox / sininho.
+ * Mantém as chaves antigas (`conversationId`, `avatarUrl`) e acrescenta snake_case para persistência/retrocompat.
+ */
+export function mergeConversationFieldsIntoNotificationData(
+  conversationId: string,
+  data: Record<string, unknown>,
+  ctx: ChatNotificationDisplayContext | null
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    ...data,
+    conversationId,
+    conversation_id: conversationId,
+  };
+  if (!ctx) return base;
+  if (ctx.clientId) base.client_id = ctx.clientId;
+  if (ctx.leadId) base.lead_id = ctx.leadId;
+  if (ctx.crmWhatsappAvatarUrl) base.whatsapp_avatar_url = ctx.crmWhatsappAvatarUrl;
+  if (ctx.avatarUrl) {
+    base.avatarUrl = ctx.avatarUrl;
+    base.contact_avatar_url = ctx.avatarUrl;
+  }
+  return base;
+}
 
 function trimUrl(v: unknown): string | null {
   if (v == null) return null;
@@ -99,23 +128,44 @@ export async function loadChatNotificationDisplayContext(
     [conversationId]
   );
   const row = r.rows[0];
+  if (!row) {
+    return {
+      contactLabel: 'Contato WhatsApp',
+      phone: null,
+      lastMessagePreview: null,
+      avatarUrl: null,
+      clientId: null,
+      leadId: null,
+      crmWhatsappAvatarUrl: null,
+    };
+  }
   const rawName =
-    (row?.display_name && String(row.display_name).trim()) ||
-    (row?.contact_name && String(row.contact_name).trim()) ||
-    (row?.profile_name && String(row.profile_name).trim()) ||
+    (row.display_name && String(row.display_name).trim()) ||
+    (row.contact_name && String(row.contact_name).trim()) ||
+    (row.profile_name && String(row.profile_name).trim()) ||
     '';
-  const phone = row?.phone_number?.trim() || null;
+  const phone = row.phone_number?.trim() || null;
   let contactLabel = rawName;
   if (!contactLabel && phone) contactLabel = phone;
   if (!contactLabel) contactLabel = 'Contato WhatsApp';
 
-  const avatarUrl = row ? resolveChatAvatarUrlFromConversationRow(row) : null;
+  const avatarUrl = resolveChatAvatarUrlFromConversationRow(row);
+  const hasClient = row.client_id != null && String(row.client_id).trim() !== '';
+  const hasLead = row.lead_id != null && String(row.lead_id).trim() !== '';
+  const crmWhatsappAvatarUrl = hasClient
+    ? trimUrl(row.client_whatsapp_avatar_url)
+    : hasLead
+      ? trimUrl(row.lead_whatsapp_avatar_url)
+      : null;
 
   return {
     contactLabel,
     phone,
-    lastMessagePreview: row?.last_message_preview?.trim() || null,
+    lastMessagePreview: row.last_message_preview?.trim() || null,
     avatarUrl,
+    clientId: hasClient ? String(row.client_id) : null,
+    leadId: hasLead ? String(row.lead_id) : null,
+    crmWhatsappAvatarUrl,
   };
 }
 

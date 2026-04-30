@@ -15,6 +15,7 @@ import {
   loadChatNotificationDisplayContext,
   loadQueueName,
   loadUserShortDisplay,
+  mergeConversationFieldsIntoNotificationData,
 } from '../services/chatNotificationContext.js';
 
 function respondAttendanceMigrationRequired(res: Response): void {
@@ -713,16 +714,22 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
             title: 'Novo atendimento na sua equipe',
             message: destLine,
             data: {
-              conversationId,
-              contactName: ctx.contactLabel,
-              phone: ctx.phone ?? undefined,
-              lastMessagePreview: preview,
-              href: chatInboxHref(conversationId),
-              attendanceVariant: 'transferred_team',
-              queueName: queueName ?? undefined,
-              teamName: teamName ?? undefined,
-              channelBadge,
-              ...(ctx.avatarUrl ? { avatarUrl: ctx.avatarUrl } : {}),
+              ...mergeConversationFieldsIntoNotificationData(
+                conversationId,
+                {
+                  contactName: ctx.contactLabel,
+                  contact_name: ctx.contactLabel,
+                  phone: ctx.phone ?? undefined,
+                  contact_phone: ctx.phone ?? undefined,
+                  lastMessagePreview: preview,
+                  href: chatInboxHref(conversationId),
+                  attendanceVariant: 'transferred_team',
+                  queueName: queueName ?? undefined,
+                  teamName: teamName ?? undefined,
+                  channelBadge,
+                },
+                ctx
+              ),
             },
           });
         }

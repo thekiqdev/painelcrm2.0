@@ -5,7 +5,11 @@ import {
   hasChatPhase5SlaColumns,
 } from '../utils/chatAttendanceSchema.js';
 import * as notifications from './notifications.js';
-import { chatInboxHref, loadChatNotificationDisplayContext } from './chatNotificationContext.js';
+import {
+  chatInboxHref,
+  loadChatNotificationDisplayContext,
+  mergeConversationFieldsIntoNotificationData,
+} from './chatNotificationContext.js';
 import { conversationRowForClientApi } from '../utils/uazapiIdentityResolve.js';
 import { emitConversationAttendanceUpdated } from './websocketService.js';
 
@@ -133,18 +137,21 @@ async function notifySlaUsers(
       ? `O atendimento de ${contactLabel} ultrapassou o tempo de resposta.`
       : `O atendimento de ${contactLabel} precisa de resposta em breve.`;
 
-  const data = {
+  const data = mergeConversationFieldsIntoNotificationData(
     conversationId,
-    conversation_id: conversationId,
-    contactName: contactLabel,
-    phone,
-    lastMessagePreview: preview,
-    slaSeverity: severity,
-    href: chatInboxHref(conversationId),
-    entity_type: 'conversation',
-    entity_id: conversationId,
-    ...(ctx?.avatarUrl ? { avatarUrl: ctx.avatarUrl } : {}),
-  };
+    {
+      contactName: contactLabel,
+      contact_name: contactLabel,
+      phone,
+      contact_phone: phone,
+      lastMessagePreview: preview,
+      slaSeverity: severity,
+      href: chatInboxHref(conversationId),
+      entity_type: 'conversation',
+      entity_id: conversationId,
+    },
+    ctx
+  );
 
   for (const uid of uniq) {
     try {

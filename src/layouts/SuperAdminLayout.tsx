@@ -17,6 +17,7 @@ import {
   Receipt,
   Megaphone,
   Scale,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -162,6 +163,14 @@ export default function SuperAdminLayout() {
                     <NavLink to="/superadmin/notifications-engine" className={getNavClass}>
                       <Settings2 className="mr-2 h-5 w-5" />
                       <span>Motor CRM (tenants)</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink to="/superadmin/notification-templates" className={getNavClass}>
+                      <FileText className="mr-2 h-5 w-5" />
+                      <span>Templates padrão (CRM)</span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

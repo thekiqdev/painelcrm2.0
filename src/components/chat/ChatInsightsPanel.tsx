@@ -488,7 +488,7 @@ export const ChatInsightsPanel: React.FC<Props> = ({
                           key={rule.id}
                           className="flex items-start justify-between gap-2 rounded-md bg-muted/40 px-2 py-1.5"
                         >
-                          <span className="min-w-0 break-all">
+                          <span className="min-w-0 [word-break:break-word] [overflow-wrap:break-word]">
                             <span className="font-medium">{rule.match_type}</span> «{rule.pattern}» →{' '}
                             {rule.action}
                           </span>

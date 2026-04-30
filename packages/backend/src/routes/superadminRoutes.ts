@@ -9,6 +9,7 @@ import * as systemFeaturesController from '../controllers/systemFeaturesControll
 import * as paymentGatewayConfigController from '../controllers/paymentGatewayConfigController.js';
 import * as superadminBillingController from '../controllers/superadminBillingController.js';
 import * as superadminNotificationsEngineController from '../controllers/superadminNotificationsEngineController.js';
+import * as superadminCrmNotificationTemplatesController from '../controllers/superadminCrmNotificationTemplatesController.js';
 import * as superadminPlatformNotificationsController from '../controllers/superadminPlatformNotificationsController.js';
 import * as superadminPlatformWhatsAppController from '../controllers/superadminPlatformWhatsAppController.js';
 import * as superadminPlatformBillingsController from '../controllers/superadminPlatformBillingsController.js';
@@ -81,6 +82,11 @@ router.put(
 
 router.get('/notifications-engine/summary', superadminNotificationsEngineController.getNotificationsEngineOpsSummary);
 router.get('/notifications-engine/deliveries', superadminNotificationsEngineController.listNotificationsEngineDeliveries);
+
+/** Templates padrão globais do motor CRM (notification_template_system) */
+router.get('/notification-templates', superadminCrmNotificationTemplatesController.listCrmNotificationSystemTemplates);
+router.patch('/notification-templates', superadminCrmNotificationTemplatesController.patchCrmNotificationSystemTemplate);
+router.post('/notification-templates/preview', superadminCrmNotificationTemplatesController.postCrmNotificationTemplatePreview);
 
 // Motor de Notificações da PLATAFORMA (domínio separado do tenant)
 router.get(

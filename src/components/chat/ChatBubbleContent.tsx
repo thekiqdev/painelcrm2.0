@@ -3,9 +3,9 @@ import { Download, ExternalLink, FileText } from 'lucide-react';
 import { coerceChatPlainText, type ChatMessage } from '@/services/chat';
 import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
 
-/** Quebra URLs longas sem criar scroll horizontal no mobile */
+/** Texto da bolha: preserva quebras do remetente; quebra só por palavras / overflow normal (evita “uma letra por linha”). */
 const CHAT_MSG_TEXT =
-  'min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]';
+  'min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:break-word] [word-break:normal]';
 
 /** Primeira URL de mídia utilizável (imagem, áudio, etc.), inclusive objeto aninhado. */
 function firstRenderableMediaUrl(message: ChatMessage): string | null {
@@ -325,7 +325,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
           href={url}
           target="_blank"
           rel="noreferrer"
-          className="underline [overflow-wrap:anywhere] break-all"
+          className="underline break-words [overflow-wrap:break-word] [word-break:normal]"
         >
           Abrir mídia
         </a>

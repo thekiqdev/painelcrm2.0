@@ -818,3 +818,79 @@ export async function deleteTenantNotificationOverride(
   );
   return r.rowCount ?? 0;
 }
+
+/** Linhas de `notification_template_system` + catálogo — Super Admin (templates padrão globais). */
+export type CrmSystemTemplateListRow = {
+  id: string;
+  event_key: string;
+  module: string;
+  description: string | null;
+  default_channel: string;
+  merge_fields: unknown;
+  channel: string;
+  locale: string;
+  subject_template: string | null;
+  body_template: string;
+  version: number;
+  is_active: boolean;
+};
+
+export async function listCrmSystemTemplatesJoined(
+  client: Pool | PoolClient,
+  filters: {
+    module?: string | null;
+    channel?: string | null;
+    locale?: string | null;
+    search?: string | null;
+  },
+): Promise<CrmSystemTemplateListRow[]> {
+  const module = filters.module?.trim() || null;
+  const channel = filters.channel?.trim() || null;
+  const locale = filters.locale?.trim() || null;
+  const search = filters.search?.trim() || null;
+  const r = await client.query<CrmSystemTemplateListRow>(
+    `
+    SELECT ts.id, ts.event_key, c.module, c.description, c.default_channel, c.merge_fields,
+           ts.channel, ts.locale, ts.subject_template, ts.body_template, ts.version, ts.is_active
+    FROM notification_template_system ts
+    INNER JOIN notification_event_catalog c ON c.event_key = ts.event_key
+    WHERE c.is_active = true AND ts.is_active = true
+      AND ($1::text IS NULL OR c.module = $1)
+      AND ($2::text IS NULL OR ts.channel = $2)
+      AND ($3::text IS NULL OR ts.locale = $3)
+      AND (
+        $4::text IS NULL
+        OR ts.event_key ILIKE '%' || $4 || '%'
+        OR COALESCE(c.description, '') ILIKE '%' || $4 || '%'
+      )
+    ORDER BY c.module, ts.event_key, ts.channel, ts.locale
+    `,
+    [module, channel, locale, search],
+  );
+  return r.rows;
+}
+
+export async function updateCrmSystemTemplate(
+  client: Pool | PoolClient,
+  params: {
+    eventKey: string;
+    channel: string;
+    locale: string;
+    bodyTemplate: string;
+    subjectTemplate: string | null;
+  },
+): Promise<SystemTemplateRow | null> {
+  const r = await client.query<SystemTemplateRow>(
+    `
+    UPDATE notification_template_system
+    SET body_template = $1,
+        subject_template = $2,
+        version = version + 1,
+        updated_at = now()
+    WHERE event_key = $3 AND channel = $4 AND locale = $5 AND is_active = true
+    RETURNING id, event_key, channel, locale, subject_template, body_template, version, is_active
+    `,
+    [params.bodyTemplate, params.subjectTemplate, params.eventKey, params.channel, params.locale],
+  );
+  return r.rows[0] ?? null;
+}

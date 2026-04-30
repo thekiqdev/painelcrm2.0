@@ -355,7 +355,7 @@ const Dashboard = () => {
               return (
                 <div className="space-y-2.5">
                   {items.map((task) => (
-                    <Link
+              <Link
                       key={task.id}
                       to={`/tasks?task=${encodeURIComponent(task.id)}`}
                       className="block rounded-lg border p-2.5 transition-colors active:scale-[0.99]"
@@ -401,8 +401,8 @@ const Dashboard = () => {
                       {new Date(a.starts_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
                       {a.client_name ? ` · ${a.client_name}` : ""}
                     </p>
-                  </Link>
-                ))}
+              </Link>
+            ))}
               </div>
             )}
           </div>

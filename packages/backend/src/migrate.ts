@@ -295,6 +295,8 @@ const order = [
   /** Chat: resposta citada, comentários internos, notas CRM */
   '193_chat_collaboration.sql',
   '194_crm_notes_source_comment.sql',
+  /** Inbox: preencher contact_avatar_url em notificações de chat antigas a partir da conversa */
+  '195_notification_chat_contact_avatar_backfill.sql',
   'create-admin-user.sql',
 ];
 

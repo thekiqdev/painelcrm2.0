@@ -35,6 +35,8 @@ type ChatData = {
   isGroup?: boolean;
   /** URL resolvida no backend (WhatsApp / contact / CRM); normalizada com `chatAvatarUrlForImgSrc`. */
   avatarUrl?: string;
+  contact_avatar_url?: string;
+  conversationId?: string;
 };
 
 function asChatData(data: InboxNotificationRow['data']): ChatData {
@@ -52,7 +54,10 @@ function asChatData(data: InboxNotificationRow['data']): ChatData {
     queueName: str('queueName'),
     teamName: str('teamName'),
     isGroup: d.isGroup === true,
-    avatarUrl: str('avatarUrl') || str('avatar_url'),
+    avatarUrl:
+      str('avatarUrl') || str('avatar_url') || str('contact_avatar_url') || str('contactAvatarUrl'),
+    contact_avatar_url: str('contact_avatar_url') || str('contactAvatarUrl'),
+    conversationId: str('conversationId') || str('conversation_id'),
   };
 }
 

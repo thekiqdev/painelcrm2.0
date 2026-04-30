@@ -308,10 +308,10 @@ const CustomerInvoiceNew = ({
               toast.info(
                 "Esta fatura já está paga: não é possível editar a cobrança atual aqui. No detalhe da fatura use «Alterar próxima renovação» para mudar o ciclo da assinatura."
               );
-              navigate(`/customer-invoices/${editInvoiceId}`);
+          navigate(`/customer-invoices/${editInvoiceId}`);
             }
-            return;
-          }
+          return;
+        }
           // URL canónica: fatura paga de assinatura só edita ciclo com ?flow=renewal
           if (editFlowQuery !== "renewal") {
             if (!cancelled) {
@@ -524,7 +524,7 @@ const CustomerInvoiceNew = ({
     });
     if (embedded) {
       setCreationKind("one_off");
-      setStep("form");
+    setStep("form");
     } else {
       const kindFromUrl =
         billingKindQuery === "subscription"
@@ -610,31 +610,31 @@ const CustomerInvoiceNew = ({
 
   const appendLineFromCatalog = useCallback(
     (p: Product) => {
-      const unit =
-        resolvePublicCatalogUnitPrice({
-          price: p.price ?? null,
-          discount_price: p.discount_price ?? null,
-        }) ?? 0;
-      const desc =
-        [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
-      setLines((prev) => [
-        ...prev,
-        {
-          ...defaultLine(),
-          id: crypto.randomUUID(),
-          product_id: p.id,
-          description: desc.slice(0, 2000),
-          quantity: "1",
-          unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
-          discount: "0",
-          discount_kind: "fixed",
+    const unit =
+      resolvePublicCatalogUnitPrice({
+        price: p.price ?? null,
+        discount_price: p.discount_price ?? null,
+      }) ?? 0;
+    const desc =
+      [p.name, p.short_description || p.description || ""].filter(Boolean).join(" — ") || p.name;
+    setLines((prev) => [
+      ...prev,
+      {
+        ...defaultLine(),
+        id: crypto.randomUUID(),
+        product_id: p.id,
+        description: desc.slice(0, 2000),
+        quantity: "1",
+        unit_price: unit > 0 ? formatBrlDisplay(unit) : "",
+        discount: "0",
+        discount_kind: "fixed",
           ...(creationKind === "subscription"
             ? { is_recurring: true, recurring_interval: billingInterval }
             : {}),
-        },
-      ]);
-      setInvoicePickerOpen(null);
-      setInvoicePickerQuery("");
+      },
+    ]);
+    setInvoicePickerOpen(null);
+    setInvoicePickerQuery("");
     },
     [creationKind, billingInterval]
   );
@@ -1796,7 +1796,7 @@ const CustomerInvoiceNew = ({
                     {mobileShell ? "Assinatura" : "Dados da assinatura"}
                   </h3>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
+              <div>
                       <Label htmlFor="billing_interval_sub">Periodicidade</Label>
                       <Select
                         value={billingInterval}
@@ -2743,7 +2743,7 @@ const CustomerInvoiceNew = ({
                       ? "Salvar alterações"
                       : creationKind === "subscription"
                         ? "Criar assinatura e primeira fatura"
-                        : "Criar fatura"}
+                      : "Criar fatura"}
                 </Button>
               </div>
             </form>

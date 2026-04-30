@@ -1,7 +1,10 @@
 import { pool } from '../utils/db.js';
 import { emitNotification, emitUnreadCount } from './websocketService.js';
 import { emitToTenant } from './realtimeService.js';
-import { loadChatNotificationDisplayContext } from './chatNotificationContext.js';
+import {
+  loadChatNotificationDisplayContext,
+  mergeConversationFieldsIntoNotificationData,
+} from './chatNotificationContext.js';
 
 /**
  * Tipos de notificações disponíveis
@@ -145,8 +148,21 @@ export function sanitizeClientNotificationData(
 
   if (raw.isGroup === true) out.isGroup = true;
 
-  const avu = pick(raw.avatarUrl) || pick(raw.avatar_url);
+  const avu =
+    pick(raw.avatarUrl) ||
+    pick(raw.avatar_url) ||
+    pick(raw.contact_avatar_url) ||
+    pick(raw.contactAvatarUrl);
   if (avu) out.avatarUrl = avu;
+
+  const wavu = pick(raw.whatsapp_avatar_url) || pick(raw.whatsappAvatarUrl);
+  if (wavu) out.whatsappAvatarUrl = wavu;
+
+  const cidExtra = pick(raw.clientId) || pick(raw.client_id);
+  if (cidExtra) out.clientId = cidExtra;
+
+  const lidExtra = pick(raw.leadId) || pick(raw.lead_id);
+  if (lidExtra) out.leadId = lidExtra;
 
   return Object.keys(out).length ? out : undefined;
 }
@@ -371,29 +387,30 @@ export async function notifyNewMessage(
     ? 'Há uma nova mensagem no grupo.'
     : `Você recebeu uma mensagem de ${contactLabel}.`;
 
-  let avatarUrl: string | undefined;
+  let ctx: Awaited<ReturnType<typeof loadChatNotificationDisplayContext>> | null = null;
   try {
-    const ctx = await loadChatNotificationDisplayContext(conversationId);
-    if (ctx.avatarUrl) avatarUrl = ctx.avatarUrl;
+    ctx = await loadChatNotificationDisplayContext(conversationId);
   } catch {
-    /* ignore */
+    ctx = null;
   }
+
+  const base: Record<string, unknown> = {
+    messageId,
+    isGroup: isGroup === true,
+    contactName: contactLabel,
+    contact_name: contactLabel,
+    phone: phone || undefined,
+    contact_phone: phone || undefined,
+    lastMessagePreview: preview,
+    href: chatConversationHref(conversationId),
+  };
 
   return createNotification({
     userId,
     type: 'new_message',
     title,
     message,
-    data: {
-      conversationId,
-      messageId,
-      isGroup: isGroup === true,
-      contactName: contactLabel,
-      phone: phone || undefined,
-      lastMessagePreview: preview,
-      href: chatConversationHref(conversationId),
-      ...(avatarUrl ? { avatarUrl } : {}),
-    },
+    data: mergeConversationFieldsIntoNotificationData(conversationId, base, ctx),
   });
 }
 
@@ -408,17 +425,26 @@ export async function notifyMessageDelivered(
     conversationName?: string;
   }
 ): Promise<Notification> {
+  let ctx: Awaited<ReturnType<typeof loadChatNotificationDisplayContext>> | null = null;
+  try {
+    ctx = await loadChatNotificationDisplayContext(options.conversationId);
+  } catch {
+    ctx = null;
+  }
   return createNotification({
     userId,
     type: 'message_delivered',
     title: 'Mensagem entregue',
     message: `Sua mensagem foi entregue${options.conversationName ? ` em ${options.conversationName}` : ''}`,
-    data: {
-      conversationId: options.conversationId,
-      messageId: options.messageId,
-      conversationName: options.conversationName,
-      href: chatConversationHref(options.conversationId),
-    },
+    data: mergeConversationFieldsIntoNotificationData(
+      options.conversationId,
+      {
+        messageId: options.messageId,
+        conversationName: options.conversationName,
+        href: chatConversationHref(options.conversationId),
+      },
+      ctx
+    ),
   });
 }
 
@@ -433,17 +459,26 @@ export async function notifyMessageRead(
     conversationName?: string;
   }
 ): Promise<Notification> {
+  let ctx: Awaited<ReturnType<typeof loadChatNotificationDisplayContext>> | null = null;
+  try {
+    ctx = await loadChatNotificationDisplayContext(options.conversationId);
+  } catch {
+    ctx = null;
+  }
   return createNotification({
     userId,
     type: 'message_read',
     title: 'Mensagem lida',
     message: `Sua mensagem foi lida${options.conversationName ? ` por ${options.conversationName}` : ''}`,
-    data: {
-      conversationId: options.conversationId,
-      messageId: options.messageId,
-      conversationName: options.conversationName,
-      href: chatConversationHref(options.conversationId),
-    },
+    data: mergeConversationFieldsIntoNotificationData(
+      options.conversationId,
+      {
+        messageId: options.messageId,
+        conversationName: options.conversationName,
+        href: chatConversationHref(options.conversationId),
+      },
+      ctx
+    ),
   });
 }
 
@@ -472,12 +507,11 @@ export async function notifyNewConversation(
     ? 'Um novo grupo iniciou o atendimento.'
     : `${contactLabel} iniciou um atendimento.`;
 
-  let avatarUrl: string | undefined;
+  let ctx: Awaited<ReturnType<typeof loadChatNotificationDisplayContext>> | null = null;
   try {
-    const ctx = await loadChatNotificationDisplayContext(conversationId);
-    if (ctx.avatarUrl) avatarUrl = ctx.avatarUrl;
+    ctx = await loadChatNotificationDisplayContext(conversationId);
   } catch {
-    /* ignore */
+    ctx = null;
   }
 
   return createNotification({
@@ -485,15 +519,19 @@ export async function notifyNewConversation(
     type: 'new_conversation',
     title,
     message,
-    data: {
+    data: mergeConversationFieldsIntoNotificationData(
       conversationId,
-      contactName: contactLabel,
-      phone: phone || undefined,
-      lastMessagePreview: 'Nova interação recebida.',
-      isGroup: isGroup === true,
-      href: chatConversationHref(conversationId),
-      ...(avatarUrl ? { avatarUrl } : {}),
-    },
+      {
+        contactName: contactLabel,
+        contact_name: contactLabel,
+        phone: phone || undefined,
+        contact_phone: phone || undefined,
+        lastMessagePreview: 'Nova interação recebida.',
+        isGroup: isGroup === true,
+        href: chatConversationHref(conversationId),
+      },
+      ctx
+    ),
   });
 }
 

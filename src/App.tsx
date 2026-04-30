@@ -112,6 +112,7 @@ const SuperAdminUsers = lazy(() => import("./pages/superadmin/SuperAdminUsers"))
 const SuperAdminNotifications = lazy(() => import("./pages/superadmin/SuperAdminNotifications"));
 const SuperAdminPagamentos = lazy(() => import("./pages/superadmin/SuperAdminPagamentos"));
 const SuperAdminNotificationsEngineSettings = lazy(() => import("./pages/superadmin/SuperAdminNotificationsEngineSettings"));
+const SuperAdminCrmNotificationTemplates = lazy(() => import("./pages/superadmin/SuperAdminCrmNotificationTemplates"));
 const SuperAdminPlatformNotifications = lazy(() => import("./pages/superadmin/SuperAdminPlatformNotifications"));
 const SuperAdminPlatformBillings = lazy(() => import("./pages/superadmin/SuperAdminPlatformBillings"));
 const PublicSaasBillingPay = lazy(() => import("./pages/PublicSaasBillingPay"));
@@ -825,6 +826,14 @@ const App = () => (
                 <Route path="notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotifications /></Suspense>} />
                 <Route path="pagamentos" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPagamentos /></Suspense>} />
                 <Route path="notifications-engine" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotificationsEngineSettings /></Suspense>} />
+                <Route
+                  path="notification-templates"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminCrmNotificationTemplates />
+                    </Suspense>
+                  }
+                />
                 <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
                 <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
                 <Route path="platform-billings" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformBillings /></Suspense>} />
