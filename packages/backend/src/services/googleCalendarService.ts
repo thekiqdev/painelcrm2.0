@@ -11,15 +11,14 @@ import {
 
 /**
  * openid + email + profile: necessários para userinfo e id_token (e-mail da conta).
- * Calendário: eventos e calendário completo (solicitado no produto).
- * Ordem no URL: o Google concatena; manter tudo o que a consola "Dados" listar.
+ * Calendário: apenas eventos (escopo https://www.googleapis.com/auth/calendar.events).
+ * Ordem no URL: o Google concatena; manter alinhado à consola OAuth.
  */
 const GOOGLE_CALENDAR_SCOPE_PARTS = [
   'openid',
   'email',
   'profile',
   'https://www.googleapis.com/auth/calendar.events',
-  'https://www.googleapis.com/auth/calendar',
 ] as const;
 export const GOOGLE_CALENDAR_SCOPES = GOOGLE_CALENDAR_SCOPE_PARTS.join(' ');
 
