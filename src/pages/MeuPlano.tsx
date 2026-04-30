@@ -1095,15 +1095,15 @@ export default function MeuPlano() {
             Gerencie sua assinatura, usuários e cobranças.
           </p>
           <div className="mt-3 md:hidden">
-            <span
+        <span
               className={cn(
                 'inline-flex w-fit items-center rounded-full px-3 py-1 text-xs font-medium',
                 statusBadge.className
               )}
-            >
-              {statusBadge.label}
-            </span>
-          </div>
+        >
+          {statusBadge.label}
+        </span>
+      </div>
         </div>
         <span
           className={cn(
@@ -1128,13 +1128,13 @@ export default function MeuPlano() {
             {canManage ? (
               <div className="flex w-full flex-col gap-2 sm:max-w-xs sm:flex-shrink-0">
                 <Button type="button" className="w-full gap-2" size="lg" onClick={hero.onPrimary}>
-                  <CreditCard className="h-4 w-4" />
-                  {hero.primaryLabel}
-                </Button>
+            <CreditCard className="h-4 w-4" />
+            {hero.primaryLabel}
+          </Button>
                 {hero.secondaryLabel && hero.onSecondary ? (
                   <Button type="button" variant="outline" className="w-full" onClick={hero.onSecondary}>
-                    {hero.secondaryLabel}
-                  </Button>
+              {hero.secondaryLabel}
+            </Button>
                 ) : null}
               </div>
             ) : (
@@ -1142,9 +1142,9 @@ export default function MeuPlano() {
                 A gestão de pagamento e de plano é feita pelo administrador da conta. Peça a essa pessoa que abra a
                 tela <strong>Meu plano</strong> e conclua a regularização.
               </p>
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </CardContent>
+      </Card>
       )}
 
       <Card
@@ -1154,20 +1154,20 @@ export default function MeuPlano() {
         <CardHeader className="space-y-1 pb-2 md:pb-3">
           <CardDescription className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             Plano atual
-          </CardDescription>
+            </CardDescription>
           <CardTitle className="text-xl font-bold leading-tight md:text-2xl lg:text-3xl">{plan.name}</CardTitle>
-        </CardHeader>
+          </CardHeader>
         <CardContent className="space-y-4 text-sm md:space-y-5">
           {commercialMode === 'active' && !showPendingDetailCard && (
             <div className="flex items-start gap-2.5 rounded-xl bg-emerald-500/10 px-3 py-2.5 text-emerald-900 dark:text-emerald-200">
               <Check className="mt-0.5 h-4 w-4 shrink-0 md:h-5 md:w-5" />
-              <div>
+                  <div>
                 <p className="text-sm font-medium leading-tight">Tudo certo com sua assinatura.</p>
                 <p className="mt-0.5 text-xs text-emerald-800/80 dark:text-emerald-200/80">
                   Seu plano está ativo e pronto para uso.
-                </p>
-              </div>
-            </div>
+                    </p>
+                  </div>
+                  </div>
           )}
 
           {pendingBilling && (
@@ -1191,7 +1191,7 @@ export default function MeuPlano() {
                   Regularizar pagamento
                 </Button>
               )}
-            </div>
+              </div>
           )}
 
           <div className="md:hidden space-y-2.5 border-b border-border/50 pb-4 text-sm">
@@ -1201,14 +1201,14 @@ export default function MeuPlano() {
                 {!showPlanAsGratis ? (
                   <span className="text-base font-normal text-muted-foreground"> / {billingIntervalLabel}</span>
                 ) : null}
-              </p>
-            </div>
+                  </p>
+                </div>
             <p className="text-[15px] text-muted-foreground">{usersCompactLine}</p>
             <p>
               <span className="text-muted-foreground">Próxima cobrança </span>
               <span className="font-medium tabular-nums text-foreground">{nextBillingLine}</span>
-            </p>
-            <p>
+                </p>
+                <p>
               <span className="text-muted-foreground">Período </span>
               <span className="font-medium tabular-nums text-foreground">{periodLineMobile}</span>
             </p>
@@ -1249,8 +1249,8 @@ export default function MeuPlano() {
           {!canManage && (
             <p className="text-xs text-muted-foreground">
               Só o administrador principal da conta pode alterar o plano, contrair usuários extras ou trocar de oferta.
-            </p>
-          )}
+                  </p>
+                )}
 
           <div className="flex flex-col gap-2 pt-0.5 sm:flex-row sm:flex-wrap sm:items-center">
             {canManage && (commercialMode === 'active' || commercialMode === 'trial_active') && (
@@ -1270,8 +1270,8 @@ export default function MeuPlano() {
                     onClick={() => scrollToId('meu-plano-usuarios-assentos')}
                   >
                     Gerenciar usuários
-                  </Button>
-                )}
+                    </Button>
+                  )}
                 {showCancelSubscriptionBtn ? (
                   <Button
                     type="button"
@@ -1300,8 +1300,8 @@ export default function MeuPlano() {
               </p>
             )}
           </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4 md:items-start">
         <Card
@@ -1365,7 +1365,7 @@ export default function MeuPlano() {
                   <p className="mt-0.5 text-lg font-semibold tabular-nums">
                     {availableSeats ?? 0} disponíveis
                   </p>
-                </div>
+              </div>
               )}
             </div>
           ) : (
@@ -1384,15 +1384,15 @@ export default function MeuPlano() {
                 confirmação do pagamento.
               </p>
               {canManage ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="mt-3"
-                  variant="secondary"
-                  onClick={() => goOpenSaasBillingPay(myPlan.pending_seat_addon_billing!.billing_id)}
-                >
-                  Continuar para pagamento
-                </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="mt-3"
+                variant="secondary"
+                onClick={() => goOpenSaasBillingPay(myPlan.pending_seat_addon_billing!.billing_id)}
+              >
+                Continuar para pagamento
+              </Button>
               ) : null}
             </div>
           )}
@@ -1682,13 +1682,13 @@ export default function MeuPlano() {
           >
             {includedFeatures.map((b, i) => {
               const IconC = BENEFIT_ICON_MAP[b.icon] ?? Check;
-              return (
+                return (
                 <li key={i} className="flex items-start gap-2 py-1.5 sm:py-1">
                   <IconC className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/80" />
                   <span className="leading-tight text-foreground/90">{b.label}</span>
-                </li>
-              );
-            })}
+                  </li>
+                );
+              })}
           </ul>
         </CardContent>
       </Card>
@@ -1816,7 +1816,7 @@ export default function MeuPlano() {
                     );
                   })}
                 </tbody>
-                </table>
+              </table>
               </div>
             </div>
           )}
@@ -1876,31 +1876,31 @@ export default function MeuPlano() {
                     <div className="mt-auto flex flex-col gap-2 pt-1">
                       {canManage ? (
                         <>
-                          <Button
+                    <Button
                             type="button"
                             className="h-11 w-full gap-2"
-                            disabled={saving}
-                            onClick={() =>
-                              navigate('/checkout', {
-                                state: {
-                                  plan: {
-                                    id: p.id,
-                                    name: p.name,
-                                    plan_type: p.plan_type,
-                                    price_cents: p.price_cents,
-                                    interval_prices: p.interval_prices,
-                                    description: p.description,
-                                    benefits: p.benefits,
-                                  },
+                      disabled={saving}
+                      onClick={() =>
+                        navigate('/checkout', {
+                          state: {
+                            plan: {
+                              id: p.id,
+                              name: p.name,
+                              plan_type: p.plan_type,
+                              price_cents: p.price_cents,
+                              interval_prices: p.interval_prices,
+                              description: p.description,
+                              benefits: p.benefits,
+                            },
                                   billingInterval: selectedIntervalKey,
-                                  usersCount: p.plan_type === 'custom' ? contractedSeats : undefined,
-                                },
-                              })
-                            }
-                          >
+                            usersCount: p.plan_type === 'custom' ? contractedSeats : undefined,
+                          },
+                        })
+                      }
+                    >
                             {checkoutLabel}
-                            <ArrowRight className="h-4 w-4" />
-                          </Button>
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
                           <Button
                             type="button"
                             variant="outline"
@@ -1909,15 +1909,15 @@ export default function MeuPlano() {
                             onClick={() => changePlan(p.id)}
                           >
                             {changeLabel}
-                          </Button>
+                    </Button>
                         </>
                       ) : (
                         <p className="rounded-lg border border-dashed bg-muted/20 px-3 py-2 text-center text-xs text-muted-foreground">
                           Apenas o administrador da conta pode trocar de plano.
                         </p>
                       )}
-                    </div>
                   </div>
+                </div>
                 );
               })}
             </div>

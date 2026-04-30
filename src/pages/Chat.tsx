@@ -4478,7 +4478,7 @@ const Chat = () => {
                                           <div
                                             className={cn(
                                               'flex w-full min-w-0 max-w-[min(100%,28rem)] items-start gap-0.5 md:max-w-[68%]',
-                                              message.direction === 'outgoing'
+                                        message.direction === 'outgoing'
                                                 ? 'ml-auto flex-row-reverse'
                                                 : 'mr-auto flex-row',
                                             )}

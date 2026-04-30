@@ -757,18 +757,18 @@ const CustomerInvoicePay = () => {
         {/* Cabeçalho — marca e identificação */}
         <header className="mb-8 text-center sm:text-left">
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
-            {tb ? (
-              <PublicTenantBrandMark
-                branding={tb}
-                nameShownElsewhere
+                {tb ? (
+                  <PublicTenantBrandMark
+                    branding={tb}
+                    nameShownElsewhere
                 className="shrink-0 items-center sm:items-start"
                 imgClassName="max-h-14 max-w-[220px] sm:max-h-12"
-              />
-            ) : (
+                  />
+                ) : (
               <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border bg-card text-sm font-bold shadow-sm">
-                {tenantName.slice(0, 2).toUpperCase()}
-              </div>
-            )}
+                    {tenantName.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
             <div className="min-w-0 flex-1 space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {tenantName}
@@ -781,7 +781,7 @@ const CustomerInvoicePay = () => {
                 <p className="text-xs text-muted-foreground">
                   {[billingEmail, billingPhone].filter(Boolean).join(" · ")}
                 </p>
-              ) : null}
+                      ) : null}
             </div>
           </div>
         </header>
@@ -795,9 +795,9 @@ const CustomerInvoicePay = () => {
                   <span className="font-semibold">Cobrança cancelada.</span> Não é possível pagar por este link. Em caso
                   de dúvida, fale com {tenantName}
                   {tenantContact ? <> ({tenantContact})</> : null}.
-                </>
-              ) : (
-                <>
+                    </>
+                  ) : (
+                    <>
                   <span className="font-semibold">Pagamento não concluído.</span> Este link não está ativo para nova
                   tentativa automática. Solicite um novo meio de pagamento a {tenantName}
                   {tenantContact ? <> — {tenantContact}</> : null}.
@@ -805,7 +805,7 @@ const CustomerInvoicePay = () => {
               )}
             </AlertDescription>
           </Alert>
-        ) : null}
+                      ) : null}
 
         {!data.needs_customer && isRefunded ? (
           <Alert className="mb-6 border-sky-500/30 bg-sky-500/10">
@@ -816,7 +816,7 @@ const CustomerInvoicePay = () => {
               {tenantContact ? <> — {tenantContact}</> : null}.
             </AlertDescription>
           </Alert>
-        ) : null}
+                      ) : null}
 
         {showMpAwaitingBanner ? (
           <Alert className="mb-6 border-sky-500/35 bg-sky-500/10">
@@ -833,15 +833,15 @@ const CustomerInvoicePay = () => {
                   <span className="font-semibold">Pagamento em análise.</span> O Mercado Pago ainda está confirmando;
                   quando liberar, o status aqui muda sozinho. Se já debitou, aguarde ou toque em{" "}
                   <strong>Atualizar status</strong> na área de pagamento.
-                </>
-              )}
+                    </>
+                  )}
             </AlertDescription>
           </Alert>
         ) : null}
 
         {/* Resumo principal — compacto e distribuído no desktop */}
         <section
-          className={cn(
+                className={cn(
             "mb-6 rounded-2xl border bg-card p-4 shadow-sm sm:p-5",
             data.status === "overdue" && canInitiatePayment && "border-amber-500/40 ring-1 ring-amber-500/20",
             isPaid && "border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-950/20",
@@ -855,7 +855,7 @@ const CustomerInvoicePay = () => {
                 <span className="font-semibold">Aguardando confirmação.</span> Estamos sincronizando com o banco ou com o
                 Mercado Pago — costuma levar poucos segundos. Se não atualizar, use <strong>Atualizar status</strong>.
               </p>
-            </div>
+              </div>
           ) : null}
 
           {data.status === "overdue" && canInitiatePayment ? (
@@ -865,26 +865,26 @@ const CustomerInvoicePay = () => {
                 <span className="font-semibold">Vencida.</span> Pode pagar abaixo com o mesmo link — não é necessário
                 pedir nova cobrança.
               </p>
-            </div>
+                </div>
           ) : null}
 
           {!data.needs_customer && isPaid ? (
             <div className="mb-5 flex flex-col items-center gap-2 text-center">
-              <CheckCircle
+                <CheckCircle
                 className="h-12 w-12 text-emerald-600 dark:text-emerald-400"
                 strokeWidth={1.25}
-                aria-hidden
-              />
+                  aria-hidden
+                />
               <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-100">Pagamento confirmado</p>
               <p className="text-sm text-muted-foreground">
                 Esta cobrança foi quitada com sucesso. Guarde esta página ou o comprovante do seu banco.
-              </p>
-              {data.paid_at ? (
-                <p className="text-xs font-medium text-emerald-800/90 dark:text-emerald-200/90">
-                  {format(new Date(data.paid_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
                 </p>
-              ) : null}
-            </div>
+                {data.paid_at ? (
+                <p className="text-xs font-medium text-emerald-800/90 dark:text-emerald-200/90">
+                    {format(new Date(data.paid_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                  </p>
+                ) : null}
+              </div>
           ) : null}
 
           <p id="pay-amount-heading" className="sr-only">
@@ -1129,10 +1129,10 @@ const CustomerInvoicePay = () => {
                 ) : null}
 
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
                     className="h-10 rounded-xl text-xs font-medium"
                     onClick={async () => {
                       try {
@@ -1162,18 +1162,18 @@ const CustomerInvoicePay = () => {
                     variant="ghost"
                     size="sm"
                     className="h-9 self-start sm:self-auto text-muted-foreground"
-                    onClick={() => void handleRefreshStatus()}
-                    disabled={refreshing}
-                  >
-                    {refreshing ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      onClick={() => void handleRefreshStatus()}
+                      disabled={refreshing}
+                    >
+                      {refreshing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                         A atualizar…
-                      </>
-                    ) : (
+                        </>
+                      ) : (
                       "Já paguei — atualizar"
-                    )}
-                  </Button>
+                      )}
+                    </Button>
                 </div>
 
                 <div className="space-y-4">
@@ -1200,45 +1200,45 @@ const CustomerInvoicePay = () => {
                     </Collapsible>
 
                     <div className="grid gap-4 lg:grid-cols-[220px_1fr] lg:items-start">
-                      {pixImageSrc ? (
+                    {pixImageSrc ? (
                         <div className="flex justify-center lg:justify-start">
-                          <img
-                            src={pixImageSrc}
-                            alt="QR Code PIX"
+                        <img
+                          src={pixImageSrc}
+                          alt="QR Code PIX"
                             className="h-44 w-44 rounded border bg-white p-2 lg:h-52 lg:w-52"
-                          />
-                        </div>
-                      ) : null}
+                        />
+                      </div>
+                    ) : null}
 
                       {canCopyPix ? (
-                        <div className="space-y-2">
-                          <Label className="text-xs text-muted-foreground">PIX copia e cola</Label>
-                          <div className="flex items-start gap-2">
-                            <code className="text-xs bg-muted px-2 py-1.5 rounded break-all flex-1 min-w-0">
-                              {pixCopyPaste}
-                            </code>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={async () => {
-                                if (!pixCopyPaste) {
-                                  toast.error("Código PIX indisponível");
-                                  return;
-                                }
-                                try {
-                                  await navigator.clipboard.writeText(pixCopyPaste);
-                                  toast.success("Código PIX copiado");
-                                } catch {
-                                  toast.error("Não foi possível copiar automaticamente");
-                                }
-                              }}
-                            >
-                              <Copy className="h-4 w-4 mr-1" />
-                              Copiar
-                            </Button>
-                          </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">PIX copia e cola</Label>
+                        <div className="flex items-start gap-2">
+                          <code className="text-xs bg-muted px-2 py-1.5 rounded break-all flex-1 min-w-0">
+                            {pixCopyPaste}
+                          </code>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              if (!pixCopyPaste) {
+                                toast.error("Código PIX indisponível");
+                                return;
+                              }
+                              try {
+                                await navigator.clipboard.writeText(pixCopyPaste);
+                                toast.success("Código PIX copiado");
+                              } catch {
+                                toast.error("Não foi possível copiar automaticamente");
+                              }
+                            }}
+                          >
+                            <Copy className="h-4 w-4 mr-1" />
+                            Copiar
+                          </Button>
                         </div>
+                      </div>
                       ) : null}
                     </div>
                   </div>
@@ -1280,7 +1280,7 @@ const CustomerInvoicePay = () => {
                                 Copiar código
                               </Button>
                             </div>
-                            <p className="text-xs text-muted-foreground leading-relaxed">
+                          <p className="text-xs text-muted-foreground leading-relaxed">
                               Copie o código e pague no app do seu banco. O status desta cobrança será atualizado
                               automaticamente após a confirmação.
                             </p>
@@ -1334,7 +1334,7 @@ const CustomerInvoicePay = () => {
                     Em dúvida, contacte <strong>{tenantName}</strong>
                     {tenantContact ? <> — {tenantContact}</> : null}.
                   </p>
-                </div>
+              </div>
               )}
 
               <footer className="mt-10 space-y-3 border-t border-border/60 pt-6 text-center sm:text-left">
@@ -1344,7 +1344,7 @@ const CustomerInvoicePay = () => {
                   {tenantContact ? <> — {tenantContact}</> : null}.
                 </p>
               </footer>
-          </div>
+              </div>
 
           <>
             <aside className="hidden lg:block lg:sticky lg:top-6">
@@ -1355,11 +1355,11 @@ const CustomerInvoicePay = () => {
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-muted-foreground">Valor</span>
                       <span className="font-semibold tabular-nums">R$ {totalBrl}</span>
-                    </div>
+            </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-muted-foreground">Vencimento</span>
                       <span className="font-medium">{formatInvoiceDueDatePtBr(data.due_date)}</span>
-                    </div>
+      </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-muted-foreground">Status</span>
                       <CustomerInvoiceStatusBadge status={data.status} />

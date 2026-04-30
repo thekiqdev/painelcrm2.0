@@ -90,6 +90,7 @@ import { useChatNavUnreadCount } from '@/hooks/useChatNavUnreadCount';
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { HeaderNotificationBell } from '@/components/layout/HeaderNotificationBell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { FloatingChatProvider, FloatingChatWidget } from '@/features/floating-chat';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -1119,25 +1120,28 @@ function AppLayoutMainColumn({ children }: AppLayoutProps) {
 const AppLayout = ({ children }: AppLayoutProps) => {
   return (
     <TenantBrandProvider>
-      <SidebarProvider
-        className="min-w-0"
-        style={
-          {
-            // Largura do painel e do espaçador: mais estreita e alinhada (evita trigger a “puxar” a largura).
-            '--sidebar-width': '13.5rem',
-            '--sidebar-width-icon': '3.25rem',
-          } as React.CSSProperties
-        }
-      >
-        <div className="flex min-h-[100dvh] min-h-screen w-full min-w-0">
-          <div className="hidden md:block">
-          <Nav />
+      <FloatingChatProvider>
+        <SidebarProvider
+          className="min-w-0"
+          style={
+            {
+              // Largura do painel e do espaçador: mais estreita e alinhada (evita trigger a “puxar” a largura).
+              '--sidebar-width': '13.5rem',
+              '--sidebar-width-icon': '3.25rem',
+            } as React.CSSProperties
+          }
+        >
+          <div className="flex min-h-[100dvh] min-h-screen w-full min-w-0">
+            <div className="hidden md:block">
+              <Nav />
+            </div>
+            <MobileShellChromeProvider>
+              <AppLayoutMainColumn>{children}</AppLayoutMainColumn>
+            </MobileShellChromeProvider>
+            <FloatingChatWidget />
           </div>
-          <MobileShellChromeProvider>
-            <AppLayoutMainColumn>{children}</AppLayoutMainColumn>
-          </MobileShellChromeProvider>
-        </div>
-      </SidebarProvider>
+        </SidebarProvider>
+      </FloatingChatProvider>
     </TenantBrandProvider>
   );
 };
