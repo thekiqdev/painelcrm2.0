@@ -20,7 +20,6 @@ import {
   FLOATING_Z_BUBBLE,
   FLOATING_Z_LIST,
 } from './constants';
-import { viteEnvIsTruthy } from '@/lib/viteEnvTruthy';
 import { shouldHideFloatingChat } from './floatingChatRouteGuard';
 import { getFloatingChatLayout } from './floatingChatLayout';
 
@@ -30,28 +29,13 @@ const bubbleRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right
 const listBottom = `calc(var(--floating-chat-bottom) + ${FLOATING_LIST_STACK_ABOVE_BUBBLE_PX}px + ${FLOATING_LIST_GAP_ABOVE_BUBBLE_PX}px + env(safe-area-inset-bottom, 0px))`;
 const listRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right, 0px))';
 
-/**
- * O valor é fixado no **build** (`vite build`). Definir só no `.env` do container nginx
- * **depois** do build não altera o bundle — use ARG no Docker / CI ou `npm run build` com a var no ambiente.
- * Opcional em runtime: `window.__PAINELCRM_FLOATING_CHAT__ === true` (último recurso sem novo build).
- */
-function floatingChatEnvEnabled(): boolean {
-  if (typeof window !== 'undefined') {
-    const w = window as unknown as { __PAINELCRM_FLOATING_CHAT__?: boolean };
-    if (w.__PAINELCRM_FLOATING_CHAT__ === true) return true;
-    if (w.__PAINELCRM_FLOATING_CHAT__ === false) return false;
-  }
-  return viteEnvIsTruthy(import.meta.env.VITE_FLOATING_CHAT_ENABLED);
-}
-
 function useFloatingChatShellEligible(): boolean {
   const { pathname } = useLocation();
   const hasChat = useFeatureFlag('chat');
   const { canView } = useModulePermissions();
   const desktop = useMediaQuery('(min-width: 1024px)');
-  const envOk = floatingChatEnvEnabled();
 
-  if (!envOk || !desktop || !hasChat || !canView('chat')) return false;
+  if (!desktop || !hasChat || !canView('chat')) return false;
   if (shouldHideFloatingChat(pathname)) return false;
   return true;
 }

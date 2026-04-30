@@ -10,8 +10,6 @@ interface ImportMetaEnv {
   readonly VITE_CHAT_MEDIA_DEBUG?: string;
   /** Logs de diagnóstico da pipeline de avatar (URL bruta vs bloqueio WhatsApp no browser). */
   readonly VITE_CHAT_AVATAR_DEBUG?: string;
-  /** Chat flutuante estilo Messenger no desktop (não substitui /chat). */
-  readonly VITE_FLOATING_CHAT_ENABLED?: string;
 }
 
 interface ImportMeta {
