@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { chatService, type ChatConversation } from '@/services/chat';
@@ -25,7 +26,8 @@ export function MinimizedChatDock({
   dockRightPx: number;
   onDockWidthChange?: (widthPx: number) => void;
 }) {
-  const { panels, expandPanel, instanceIds, inboxScope, pulseUntil } = useFloatingChat();
+  const { panels, expandPanel, closeFloatingConversation, instanceIds, inboxScope, pulseUntil } =
+    useFloatingChat();
   const minimized = panels.filter((p) => p.minimized);
   const shellRef = useRef<HTMLDivElement>(null);
   const minimizedIdsKey = minimized.map((p) => p.conversationId).join(',');
@@ -91,36 +93,58 @@ export function MinimizedChatDock({
         const unread = c?.unreadCount ?? 0;
         const pulsing = (pulseUntil[p.conversationId] ?? 0) > now;
         return (
-          <button
+          <div
             key={p.conversationId}
-            type="button"
-            title={id.displayName}
             className={cn(
-              'flex max-w-[11rem] items-center gap-2 rounded-full border py-1 pl-1 pr-2.5 shadow-md transition',
+              'group relative flex max-w-[11rem] items-stretch rounded-full border shadow-md transition',
               'border-primary/25 bg-background/95 hover:border-primary/40 hover:bg-muted/90 hover:shadow-lg',
               'dark:border-border/80 dark:bg-background/95',
               pulsing && 'floating-chat-minimized-pulse border-primary/50 ring-2 ring-primary/25',
             )}
-            onClick={() => expandPanel(p.conversationId)}
           >
-            <Avatar className="h-8 w-8 shrink-0 ring-2 ring-background">
-              {id.avatarUrl ? (
-                <AvatarImage src={id.avatarUrl} alt="" className="object-cover" />
+            <button
+              type="button"
+              title={id.displayName}
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-full py-1 pl-1 pr-2.5 text-left"
+              onClick={() => expandPanel(p.conversationId)}
+            >
+              <Avatar className="h-8 w-8 shrink-0 ring-2 ring-background">
+                {id.avatarUrl ? (
+                  <AvatarImage src={id.avatarUrl} alt="" className="object-cover" />
+                ) : null}
+                <AvatarFallback className="text-[9px] font-medium">{id.initials}</AvatarFallback>
+              </Avatar>
+              <span className="min-w-0 truncate text-xs font-semibold text-foreground">
+                {shortName(id.displayName)}
+              </span>
+              {unread > 0 ? (
+                <Badge
+                  variant="destructive"
+                  className="h-5 min-w-[1.125rem] justify-center px-1.5 text-[10px] font-semibold tabular-nums shadow-sm"
+                >
+                  {unread > 99 ? '99+' : unread}
+                </Badge>
               ) : null}
-              <AvatarFallback className="text-[9px] font-medium">{id.initials}</AvatarFallback>
-            </Avatar>
-            <span className="min-w-0 truncate text-xs font-semibold text-foreground">
-              {shortName(id.displayName)}
-            </span>
-            {unread > 0 ? (
-              <Badge
-                variant="destructive"
-                className="h-5 min-w-[1.125rem] justify-center px-1.5 text-[10px] font-semibold tabular-nums shadow-sm"
-              >
-                {unread > 99 ? '99+' : unread}
-              </Badge>
-            ) : null}
-          </button>
+            </button>
+            <button
+              type="button"
+              className={cn(
+                'absolute -right-0.5 -top-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full',
+                'border border-border/80 bg-background/95 text-muted-foreground shadow-sm',
+                'transition hover:bg-destructive/15 hover:text-destructive',
+                'pointer-coarse:opacity-100 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100',
+              )}
+              title="Remover da barra"
+              aria-label={`Remover conversa ${id.displayName} da barra`}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                closeFloatingConversation(p.conversationId);
+              }}
+            >
+              <X className="h-3 w-3" strokeWidth={2.5} />
+            </button>
+          </div>
         );
       })}
     </div>

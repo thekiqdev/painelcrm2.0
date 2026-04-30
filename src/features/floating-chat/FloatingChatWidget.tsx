@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
@@ -20,6 +20,7 @@ import {
   FLOATING_Z_BUBBLE,
   FLOATING_Z_LIST,
 } from './constants';
+import { viteEnvIsTruthy } from '@/lib/viteEnvTruthy';
 import { shouldHideFloatingChat } from './floatingChatRouteGuard';
 import { getFloatingChatLayout } from './floatingChatLayout';
 
@@ -29,8 +30,18 @@ const bubbleRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right
 const listBottom = `calc(var(--floating-chat-bottom) + ${FLOATING_LIST_STACK_ABOVE_BUBBLE_PX}px + ${FLOATING_LIST_GAP_ABOVE_BUBBLE_PX}px + env(safe-area-inset-bottom, 0px))`;
 const listRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right, 0px))';
 
+/**
+ * O valor é fixado no **build** (`vite build`). Definir só no `.env` do container nginx
+ * **depois** do build não altera o bundle — use ARG no Docker / CI ou `npm run build` com a var no ambiente.
+ * Opcional em runtime: `window.__PAINELCRM_FLOATING_CHAT__ === true` (último recurso sem novo build).
+ */
 function floatingChatEnvEnabled(): boolean {
-  return import.meta.env.VITE_FLOATING_CHAT_ENABLED === 'true';
+  if (typeof window !== 'undefined') {
+    const w = window as unknown as { __PAINELCRM_FLOATING_CHAT__?: boolean };
+    if (w.__PAINELCRM_FLOATING_CHAT__ === true) return true;
+    if (w.__PAINELCRM_FLOATING_CHAT__ === false) return false;
+  }
+  return viteEnvIsTruthy(import.meta.env.VITE_FLOATING_CHAT_ENABLED);
 }
 
 function useFloatingChatShellEligible(): boolean {
@@ -46,16 +57,7 @@ function useFloatingChatShellEligible(): boolean {
 }
 
 function FloatingChatChrome() {
-  const { listOpen, toggleList, panels, setListOpen, activeWindowId, focusWindow } = useFloatingChat();
-
-  useEffect(() => {
-    if (!listOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setListOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [listOpen, setListOpen]);
+  const { listOpen, toggleList, panels, activeWindowId, focusWindow } = useFloatingChat();
 
   const expanded = useMemo(() => panels.filter((p) => !p.minimized), [panels]);
 

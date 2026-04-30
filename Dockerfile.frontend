@@ -3,9 +3,12 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Aceitar build args para variáveis de ambiente do Vite
+# Aceitar build args para variáveis de ambiente do Vite (só existem no bundle se passadas aqui no build)
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
+
+ARG VITE_FLOATING_CHAT_ENABLED
+ENV VITE_FLOATING_CHAT_ENABLED=$VITE_FLOATING_CHAT_ENABLED
 
 # Copiar package.json
 COPY package*.json ./

@@ -14,7 +14,13 @@ import { chatService } from '@/services/chat';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
 import { FLOATING_CHAT_MAX_EXPANDED } from './constants';
-import { loadFloatingChatPersisted, saveFloatingChatPersisted } from './persist';
+import { isFloatingChatEscapeBlocked } from './floatingChatEscapeGuard';
+import {
+  loadFloatingChatPersisted,
+  panelsToPersistedState,
+  persistedStateToPanels,
+  saveFloatingChatPersisted,
+} from './persist';
 import type { FloatingChatPanel } from './floatingChatTypes';
 
 type FloatingChatContextValue = {
@@ -30,6 +36,8 @@ type FloatingChatContextValue = {
   minimizePanel: (conversationId: string) => void;
   expandPanel: (conversationId: string) => void;
   closePanel: (conversationId: string) => void;
+  /** Remove só do shell flutuante (não encerra atendimento). */
+  closeFloatingConversation: (conversationId: string) => void;
   composerDrafts: Record<string, string>;
   setComposerDraft: (conversationId: string, text: string) => void;
   instanceIds: string[];
@@ -42,10 +50,33 @@ function countExpanded(panels: FloatingChatPanel[]): number {
   return panels.filter((p) => !p.minimized).length;
 }
 
+const PERSIST_DEBOUNCE_MS = 160;
+
+async function filterExistingConversationIds(ids: string[]): Promise<Set<string>> {
+  const valid = new Set<string>();
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        await chatService.getConversationProfile(id);
+        valid.add(id);
+      } catch {
+        /* conversa inexistente ou sem acesso */
+      }
+    }),
+  );
+  return valid;
+}
+
 export function FloatingChatProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const hydrated = useRef(false);
+  const persistEnabledRef = useRef(false);
+  const persistTimerRef = useRef<number | null>(null);
+  const latestPersistRef = useRef({
+    listOpen: false,
+    panels: [] as FloatingChatPanel[],
+    activeWindowId: null as string | null,
+  });
   const [listOpen, setListOpen] = useState(false);
   const [panels, setPanels] = useState<FloatingChatPanel[]>([]);
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
@@ -61,6 +92,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     activeWindowIdRef.current = activeWindowId;
   }, [activeWindowId]);
+  useEffect(() => {
+    latestPersistRef.current = { listOpen, panels, activeWindowId };
+  }, [listOpen, panels, activeWindowId]);
 
   const inboxScope = user?.tenant_id ? ('tenant' as const) : ('owner' as const);
 
@@ -91,24 +125,37 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     const saved = loadFloatingChatPersisted();
     if (saved) {
       setListOpen(saved.listOpen);
-      setPanels(saved.panels);
-      setActiveWindowId(saved.activeWindowId);
+      setPanels(persistedStateToPanels(saved));
+      setActiveWindowId(saved.activeConversationId);
     }
-    hydrated.current = true;
+    persistEnabledRef.current = true;
   }, []);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    saveFloatingChatPersisted({
-      v: 1,
-      listOpen,
-      panels: panels.map((p) => ({
-        conversationId: p.conversationId,
-        minimized: p.minimized,
-      })),
-      activeWindowId,
-    });
+    if (!persistEnabledRef.current) return;
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+    }
+    persistTimerRef.current = window.setTimeout(() => {
+      persistTimerRef.current = null;
+      const { listOpen: lo, panels: ps, activeWindowId: aw } = latestPersistRef.current;
+      saveFloatingChatPersisted(panelsToPersistedState(ps, aw, lo));
+    }, PERSIST_DEBOUNCE_MS);
+    return () => {
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+    };
   }, [listOpen, panels, activeWindowId]);
+
+  useEffect(() => {
+    return () => {
+      if (!persistEnabledRef.current) return;
+      const { listOpen: lo, panels: ps, activeWindowId: aw } = latestPersistRef.current;
+      saveFloatingChatPersisted(panelsToPersistedState(ps, aw, lo));
+    };
+  }, []);
 
   useEffect(() => {
     const onConvUpd = () => {
@@ -185,24 +232,16 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     return () => window.clearInterval(t);
   }, []);
 
-  /** Remover painéis cujo ID já não existe (após instâncias carregarem). Pequeno atraso evita podar antes da lista remota estar estável após refresh. */
+  /** Validar IDs restaurados (não depende da lista de conversas já carregada). */
   useEffect(() => {
-    if (!hydrated.current || instanceIds.length === 0) return;
+    if (!user?.id) return;
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      const currentPanels = panelsRef.current;
-      if (currentPanels.length === 0) return;
+    const t = window.setTimeout(() => {
+      const current = panelsRef.current;
+      const ids = [...new Set(current.map((p) => p.conversationId))];
+      if (ids.length === 0) return;
       void (async () => {
-        const valid = new Set<string>();
-        for (const iid of instanceIds) {
-          try {
-            const rows = await chatService.getConversations({ instanceId: iid, inboxScope });
-            if (cancelled) return;
-            rows.forEach((r) => valid.add(r.id));
-          } catch {
-            /* ignora instância */
-          }
-        }
+        const valid = await filterExistingConversationIds(ids);
         if (cancelled) return;
         setPanels((prev) => {
           const next = prev.filter((p) => valid.has(p.conversationId));
@@ -210,12 +249,37 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
         });
         setActiveWindowId((prev) => (prev && valid.has(prev) ? prev : null));
       })();
-    }, 750);
+    }, 0);
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      window.clearTimeout(t);
     };
-  }, [instanceIds, inboxScope]);
+  }, [user?.id]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      if (isFloatingChatEscapeBlocked()) return;
+
+      const aw = activeWindowIdRef.current;
+      const list = panelsRef.current;
+      const activeExpanded =
+        aw && list.some((p) => p.conversationId === aw && !p.minimized);
+
+      if (activeExpanded) {
+        event.preventDefault();
+        minimizePanelRef.current(aw);
+        return;
+      }
+
+      if (latestPersistRef.current.listOpen) {
+        event.preventDefault();
+        setListOpen(false);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const setComposerDraft = useCallback((conversationId: string, text: string) => {
     setComposerDraftsState((prev) => ({ ...prev, [conversationId]: text }));
@@ -286,6 +350,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     setActiveWindowId((prev) => (prev === conversationId ? null : prev));
   }, []);
 
+  const minimizePanelRef = useRef(minimizePanel);
+  minimizePanelRef.current = minimizePanel;
+
   const expandPanel = useCallback(
     (conversationId: string) => {
       setActiveWindowId(conversationId);
@@ -337,6 +404,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       minimizePanel,
       expandPanel,
       closePanel,
+      closeFloatingConversation: closePanel,
       composerDrafts,
       setComposerDraft,
       instanceIds,
