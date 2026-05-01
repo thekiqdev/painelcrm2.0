@@ -97,3 +97,92 @@ export function chatAvatarUrlForImgSrc(url: string | null | undefined): string |
   });
   return t;
 }
+
+/** Espelha `isUsablePersistedAvatar` do backend — URLs aceites para persistência/exibição estável (não CDN WA, não proxy). */
+export function isUsablePersistedAvatarUrl(url: string | null | undefined): boolean {
+  if (url == null || typeof url !== 'string') return false;
+  const t = url.trim();
+  if (!t) return false;
+  if (t.includes('/api/chat/avatar-proxy')) return false;
+  try {
+    const h = new URL(t).hostname.toLowerCase();
+    if (
+      h === 'whatsapp.net' ||
+      h.endsWith('.whatsapp.net') ||
+      h === 'whatsapp.com' ||
+      h.endsWith('.whatsapp.com')
+    ) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Mesma ordem que `resolveFinalConversationAvatarUrl` no backend (`uazapiChatIdentity.ts`).
+ * Inclui `final_avatar_url` quando a API já resolveu a linha (conversationRowForClientApi).
+ */
+export function resolveFinalConversationAvatarUrlFrontend(row: Record<string, unknown>): string | null {
+  const pick = (u: unknown): string | null => {
+    if (typeof u !== 'string') return null;
+    const t = u.trim();
+    return t && isUsablePersistedAvatarUrl(t) ? t : null;
+  };
+  return (
+    pick(row.final_avatar_url) ||
+    pick(row.avatar_cached_url) ||
+    pick(row.client_whatsapp_avatar_cached_url) ||
+    pick(row.lead_whatsapp_avatar_cached_url) ||
+    pick(row.communication_avatar_cached_url) ||
+    pick(row.communication_avatar_url) ||
+    pick(row.avatar_url) ||
+    pick(row.client_whatsapp_avatar_url) ||
+    pick(row.lead_whatsapp_avatar_url) ||
+    null
+  );
+}
+
+/** Metadados típicos UazAPI / WhatsApp para foto quando não há URL persistível. */
+export function extractUazapiChatImageUrlFromMeta(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta || typeof meta !== 'object') return null;
+  const candidates = [
+    meta.whatsapp_profile_photo,
+    meta.image,
+    meta.imagePreview,
+    meta.image_preview,
+    meta.profilePicUrl,
+    meta.profilePicture,
+    meta.profilePictureUrl,
+    meta.pictureUrl,
+    meta.profile_pic_url,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+  return null;
+}
+
+/**
+ * URL bruta para avatar no chat: catálogo/CRM primeiro; CDN WhatsApp só como último recurso
+ * (evita depender do proxy no servidor quando já existe cópia cacheada).
+ */
+export function pickConversationAvatarRawForDisplay(
+  row: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+): string | null {
+  const usable = resolveFinalConversationAvatarUrlFrontend(row);
+  if (usable) return usable;
+  const fromMeta = extractUazapiChatImageUrlFromMeta(metadata);
+  if (fromMeta) return fromMeta;
+  const legacyKeys = ['image', 'image_preview', 'imagePreview'] as const;
+  for (const k of legacyKeys) {
+    const v = row[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  const rawAvatarCol =
+    typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null;
+  if (rawAvatarCol) return rawAvatarCol;
+  return null;
+}

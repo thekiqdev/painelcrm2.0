@@ -1,5 +1,8 @@
 import type { ChatConversation } from '@/services/chat';
-import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import {
+  chatAvatarUrlForImgSrc,
+  pickConversationAvatarRawForDisplay,
+} from '@/lib/chatAvatarUrl';
 import { chatAvatarDebugLog, isChatAvatarDebugEnabled } from '@/lib/chatAvatarDebug';
 import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
 
@@ -9,6 +12,7 @@ export type ChatCrmEntity = {
   avatar_url?: string | null;
   photo?: string | null;
   whatsapp_avatar_url?: string | null;
+  whatsapp_avatar_cached_url?: string | null;
 } | null;
 
 /** Cadastro CRM (perfil): avatar_url → photo → whatsapp_avatar_url */
@@ -68,9 +72,9 @@ function pickConversationMetaFallback(conv: ChatConversation): string | null {
     'image_preview',
   ]);
   if (fromMeta) return fromMeta;
-  const merged =
-    conv.avatarUrl && String(conv.avatarUrl).trim() ? String(conv.avatarUrl).trim() : null;
-  return chatAvatarUrlForImgSrc(merged);
+  const rawCol =
+    conv.avatar_url && String(conv.avatar_url).trim() ? String(conv.avatar_url).trim() : null;
+  return chatAvatarUrlForImgSrc(rawCol);
 }
 
 function firstNonEmpty(...vals: (string | null | undefined)[]): string {
@@ -163,21 +167,35 @@ export function resolveConversationIdentity(
   }
 
   /**
-   * Prioridade:
-   * 1) coluna avatar da conversa (contact)
-   * 2) communication_contacts.profile_avatar_url (API: communication_avatar_url)
-   * 3) client | lead whatsapp_avatar_url
+   * Prioridade (alinhar ao backend `resolveFinalConversationAvatarUrl` + último recurso CDN):
+   * 1) cache catálogo / CRM na linha da conversa + joins (avatar_cached_url, etc.)
+   * 2) communication + coluna avatar quando utilizáveis
+   * 3) whatsapp_avatar do CRM
    * 4) metadata.profile_picture_url
    * 5) CRM avatar_url / photo (cadastro)
    * 6) metadata / avatarUrl agregado (legado)
    * Não usar nome da instância como rosto do contacto.
    */
   const meta = (conv.metadata || {}) as Record<string, unknown>;
-  const fromConvColumn = chatAvatarUrlForImgSrc(
-    (conv.avatar_url && String(conv.avatar_url).trim()) || null,
-  );
-  const fromComm = chatAvatarUrlForImgSrc(
-    (conv.communication_avatar_url && String(conv.communication_avatar_url).trim()) || null,
+  const mergedRow: Record<string, unknown> = {
+    final_avatar_url: conv.final_avatar_url,
+    avatar_cached_url: conv.avatar_cached_url,
+    client_whatsapp_avatar_cached_url:
+      conv.client_whatsapp_avatar_cached_url ??
+      (client?.whatsapp_avatar_cached_url as string | undefined),
+    lead_whatsapp_avatar_cached_url:
+      conv.lead_whatsapp_avatar_cached_url ??
+      (lead?.whatsapp_avatar_cached_url as string | undefined),
+    communication_avatar_cached_url: conv.communication_avatar_cached_url,
+    communication_avatar_url: conv.communication_avatar_url,
+    avatar_url: conv.avatar_url,
+    client_whatsapp_avatar_url:
+      conv.client_whatsapp_avatar_url ?? (client?.whatsapp_avatar_url as string | undefined),
+    lead_whatsapp_avatar_url:
+      conv.lead_whatsapp_avatar_url ?? (lead?.whatsapp_avatar_url as string | undefined),
+  };
+  const fromPick = chatAvatarUrlForImgSrc(
+    pickConversationAvatarRawForDisplay(mergedRow, meta),
   );
   const fromCrmWa = pickCrmWhatsappAvatar(client, lead, conv);
   const fromMetaProfile = firstMetaAvatarUrl(meta, [
@@ -189,8 +207,7 @@ export function resolveConversationIdentity(
   const fromMetaFallback = pickConversationMetaFallback(conv);
 
   const avatarUrl =
-    fromConvColumn ||
-    fromComm ||
+    fromPick ||
     fromCrmWa ||
     fromMetaProfile ||
     fromCrmLegacy ||
@@ -199,8 +216,7 @@ export function resolveConversationIdentity(
 
   if (isChatAvatarDebugEnabled()) {
     const pickOrder = [
-      fromConvColumn && 'fromConvColumn',
-      fromComm && 'fromComm',
+      fromPick && 'fromPick',
       fromCrmWa && 'fromCrmWa',
       fromMetaProfile && 'fromMetaProfile',
       fromCrmLegacy && 'fromCrmLegacy',

@@ -1,7 +1,10 @@
 import { apiClient, getApiUrl } from '@/integrations/api/client';
 import type { CommunicationProvider } from '@/types/communication';
 import { DEFAULT_COMMUNICATION_PROVIDER } from '@/types/communication';
-import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import {
+  chatAvatarUrlForImgSrc,
+  pickConversationAvatarRawForDisplay,
+} from '@/lib/chatAvatarUrl';
 import { chatAvatarDebugLog } from '@/lib/chatAvatarDebug';
 
 /** Etapa 4 — mesmos valores persistidos em `chat_instances.metadata`. */
@@ -71,10 +74,18 @@ export interface ChatConversation {
    * URL efetiva para UI (prioridade: coluna `avatar_url` da API → metadata Uaz).
    */
   avatarUrl?: string | null;
-  /** Espelho opcional da coluna/API `avatar_url` (só o que veio no payload; pode ser null se a foto veio só do metadata). */
+  /** Espelho opcional da coluna/API `avatar_url` (valor bruto do payload; pode ser CDN). */
   avatar_url?: string | null;
   /** Foto do registo `communication_contacts` (quando a API expõe separado da coluna da conversa). */
   communication_avatar_url?: string | null;
+  /** Resolução explícita da API (`conversationRowForClientApi`). */
+  final_avatar_url?: string | null;
+  avatar_cached_url?: string | null;
+  client_whatsapp_avatar_cached_url?: string | null;
+  lead_whatsapp_avatar_cached_url?: string | null;
+  communication_avatar_cached_url?: string | null;
+  client_whatsapp_avatar_url?: string | null;
+  lead_whatsapp_avatar_url?: string | null;
   /** Identidade canônica (backend / Postgres) — opcional em payloads antigos (camelCase). */
   canonicalChatId?: string | null;
   canonicalPhone?: string | null;
@@ -235,8 +246,24 @@ export function normalizeConversation(raw: any): ChatConversation {
 
   const avatarColumn = trimStr(raw?.avatar_url);
   const communicationAvatarColumn = trimStr(raw?.communication_avatar_url);
+  const rowForPick: Record<string, unknown> = {
+    final_avatar_url: raw?.final_avatar_url,
+    avatar_cached_url: raw?.avatar_cached_url,
+    client_whatsapp_avatar_cached_url: raw?.client_whatsapp_avatar_cached_url,
+    lead_whatsapp_avatar_cached_url: raw?.lead_whatsapp_avatar_cached_url,
+    communication_avatar_cached_url: raw?.communication_avatar_cached_url,
+    communication_avatar_url: raw?.communication_avatar_url,
+    avatar_url: raw?.avatar_url,
+    client_whatsapp_avatar_url: raw?.client_whatsapp_avatar_url,
+    lead_whatsapp_avatar_url: raw?.lead_whatsapp_avatar_url,
+    image: raw?.image,
+    image_preview: raw?.image_preview,
+    imagePreview: raw?.imagePreview,
+  };
+  const metaObj = (metadata && typeof metadata === 'object' ? metadata : {}) as Record<string, unknown>;
 
   const avatarMerged =
+    pickConversationAvatarRawForDisplay(rowForPick, metaObj) ||
     avatarColumn ||
     raw?.image ||
     raw?.image_preview ||
@@ -281,8 +308,15 @@ export function normalizeConversation(raw: any): ChatConversation {
     profileName: raw.profile_name ?? null,
     phoneNumber: raw.phone_number ?? null,
     avatarUrl,
-    avatar_url: chatAvatarUrlForImgSrc(avatarColumn),
-    communication_avatar_url: chatAvatarUrlForImgSrc(communicationAvatarColumn),
+    avatar_url: avatarColumn,
+    final_avatar_url: trimStr(raw?.final_avatar_url),
+    avatar_cached_url: trimStr(raw?.avatar_cached_url),
+    client_whatsapp_avatar_cached_url: trimStr(raw?.client_whatsapp_avatar_cached_url),
+    lead_whatsapp_avatar_cached_url: trimStr(raw?.lead_whatsapp_avatar_cached_url),
+    communication_avatar_cached_url: trimStr(raw?.communication_avatar_cached_url),
+    client_whatsapp_avatar_url: trimStr(raw?.client_whatsapp_avatar_url),
+    lead_whatsapp_avatar_url: trimStr(raw?.lead_whatsapp_avatar_url),
+    communication_avatar_url: communicationAvatarColumn,
     canonicalChatId: canonical_chat_id,
     canonicalPhone: canonical_phone,
     displayName: display_name,
