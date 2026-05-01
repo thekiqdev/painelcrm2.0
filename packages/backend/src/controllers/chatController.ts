@@ -1636,7 +1636,10 @@ async function saveMessage(
       : null;
 
   try {
-    let messageResult: { rows: Array<{ id: string; created_at: string; inserted: boolean }>; rowCount?: number };
+    let messageResult: {
+      rows: Array<{ id: string; created_at: string; inserted: boolean }>;
+      rowCount?: number | null;
+    };
     try {
       messageResult = await pool.query<{ id: string; created_at: string; inserted: boolean }>(
         `
