@@ -50,6 +50,11 @@ import {
 } from '../services/proposalPublicLinkCrmStore.js';
 import type { KanbanAutoCreatedProposalPayload } from '../services/kanbanColumnAutoProposalService.js';
 import { runKanbanAutoCreateProposalInTransaction } from '../services/kanbanColumnAutoProposalService.js';
+import {
+  extractUazapiChatImageUrl,
+  mergeAvatarUrlForPersistence,
+  resolveFinalConversationAvatarUrl,
+} from '../utils/uazapiChatIdentity.js';
 
 /** Modelo oficial (`proposal_templates`) ou legado (`proposals` em draft). */
 async function assertValidKanbanProposalColumnRefs(
@@ -276,30 +281,103 @@ async function loadCard(tenantId: string, cardId: string) {
   return r.rows[0] ?? null;
 }
 
-let hasConversationAvatarCachedUrlColumnPromise: Promise<boolean> | null = null;
-async function hasConversationAvatarCachedUrlColumn(): Promise<boolean> {
-  if (!hasConversationAvatarCachedUrlColumnPromise) {
-    hasConversationAvatarCachedUrlColumnPromise = (async () => {
+let chatKanbanLeadIdColumnPromise: Promise<boolean> | null = null;
+async function hasChatKanbanLeadIdColumn(): Promise<boolean> {
+  if (!chatKanbanLeadIdColumnPromise) {
+    chatKanbanLeadIdColumnPromise = (async () => {
       const r = await pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = 'chat_conversations'
-           AND column_name = 'avatar_cached_url'`,
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'chat_conversations'
+           AND column_name = 'lead_id'`,
       );
       return (r.rows[0]?.c ?? '0') === '1';
     })();
   }
-  return hasConversationAvatarCachedUrlColumnPromise;
+  return chatKanbanLeadIdColumnPromise;
 }
 
-async function kanbanConversationAvatarSqlExpr(): Promise<string> {
-  return (await hasConversationAvatarCachedUrlColumn())
-    ? 'COALESCE(c.avatar_cached_url, c.avatar_url)'
-    : 'c.avatar_url';
+/**
+ * Mesmos joins/campos que `getConversations` para resolver avatar (cache conversa + CRM + communication_contacts).
+ * `tenantParamIndex`: bind `$n` = `tenant_id` do cartão (queries Kanban usam `$2`).
+ */
+async function kanbanConversationAvatarResolutionFragments(tenantParamIndex: number): Promise<{
+  joins: string;
+  resolverSelect: string;
+}> {
+  const leadOk = await hasChatKanbanLeadIdColumn();
+  const leadJoinSql = leadOk
+    ? 'LEFT JOIN leads l ON l.id = c.lead_id AND l.user_id = c.user_id'
+    : '';
+  const leadAvatarSelect = leadOk
+    ? `l.whatsapp_avatar_url AS lead_whatsapp_avatar_url,
+        l.whatsapp_avatar_cached_url AS lead_whatsapp_avatar_cached_url,`
+    : `NULL::text AS lead_whatsapp_avatar_url,
+        NULL::text AS lead_whatsapp_avatar_cached_url,`;
+
+  const joins = `
+      LEFT JOIN clients cl ON cl.id = c.client_id AND cl.user_id = c.user_id
+      ${leadJoinSql}
+      LEFT JOIN LATERAL (
+        SELECT cc.profile_avatar_url, cc.avatar_cached_url AS communication_avatar_cached_url
+        FROM communication_contacts cc
+        WHERE cc.provider = COALESCE(NULLIF(btrim(c.provider), ''), 'whatsapp_uazapi')
+          AND cc.tenant_id = $${tenantParamIndex}
+          AND (
+            (c.canonical_chat_id IS NOT NULL AND btrim(c.canonical_chat_id) <> '' AND cc.provider_contact_id = c.canonical_chat_id)
+            OR (c.external_chat_id IS NOT NULL AND btrim(c.external_chat_id) <> '' AND cc.provider_contact_id = c.external_chat_id)
+            OR (c.canonical_phone IS NOT NULL AND btrim(c.canonical_phone) <> '' AND cc.phone = regexp_replace(c.canonical_phone, '\\D', '', 'g'))
+            OR (c.phone_number IS NOT NULL AND btrim(c.phone_number) <> '' AND cc.phone = regexp_replace(c.phone_number, '\\D', '', 'g'))
+          )
+        ORDER BY cc.updated_at DESC
+        LIMIT 1
+      ) cc_ext ON true`;
+
+  const resolverSelect = `
+        c.avatar_url AS avatar_url,
+        c.avatar_cached_url AS avatar_cached_url,
+        cl.whatsapp_avatar_url AS client_whatsapp_avatar_url,
+        cl.whatsapp_avatar_cached_url AS client_whatsapp_avatar_cached_url,
+        ${leadAvatarSelect}
+        cc_ext.profile_avatar_url AS communication_avatar_url,
+        cc_ext.communication_avatar_cached_url,`;
+
+  return { joins, resolverSelect };
+}
+
+/** Alinha com `conversationRowForClientApi`: cache/catálogo/CRM antes de CDN/meta. */
+function kanbanResolveConvAvatarUrl(row: Record<string, unknown>): string | null {
+  const layered = resolveFinalConversationAvatarUrl(row);
+  if (layered) return layered;
+  const fromCol =
+    typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null;
+  const meta = row.conv_metadata;
+  const fromMeta = extractUazapiChatImageUrl(
+    meta && typeof meta === 'object' && !Array.isArray(meta) ? (meta as Record<string, unknown>) : null,
+  );
+  return mergeAvatarUrlForPersistence(fromCol, fromMeta);
+}
+
+function finalizeKanbanEnrichedCardRow(row: Record<string, unknown>): Record<string, unknown> {
+  const conv_avatar_url = kanbanResolveConvAvatarUrl(row);
+  const {
+    avatar_url: _au,
+    avatar_cached_url: _ac,
+    client_whatsapp_avatar_url: _c1,
+    client_whatsapp_avatar_cached_url: _c2,
+    lead_whatsapp_avatar_url: _l1,
+    lead_whatsapp_avatar_cached_url: _l2,
+    communication_avatar_url: _co1,
+    communication_avatar_cached_url: _co2,
+    ...rest
+  } = row;
+  return { ...rest, conv_avatar_url };
 }
 
 /** Mesma projeção que `listCards`, para um cartão (resposta de PATCH com dados de conversa atualizados). */
 async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
-  const avatarExpr = await kanbanConversationAvatarSqlExpr();
+  const av = await kanbanConversationAvatarResolutionFragments(2);
   const q = `
  SELECT
         kc.id,
@@ -324,7 +402,7 @@ async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
         COALESCE(c.unread_count, 0)::int AS conv_unread_count,
         c.client_id AS conv_client_id,
         c.lead_id AS conv_lead_id,
-        ${avatarExpr} AS conv_avatar_url,
+        ${av.resolverSelect}
         c.attendance_status AS conv_attendance_status,
         c.assigned_to_user_id AS conv_assigned_to_user_id,
         c.assigned_team_id AS conv_assigned_team_id,
@@ -345,6 +423,7 @@ async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
         proposal_agg.proposal_accepted_total
       FROM chat_kanban_cards kc
       INNER JOIN chat_conversations c ON c.id = kc.conversation_id
+      ${av.joins}
       LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
       LEFT JOIN profiles pf ON pf.id = assignee.id
       LEFT JOIN teams t_team ON t_team.id = c.assigned_team_id
@@ -362,7 +441,8 @@ async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
       LIMIT 1
     `;
   const r = await pool.query(q, [cardId, tenantId]);
-  return r.rows[0] ?? null;
+  const row = r.rows[0];
+  return row ? finalizeKanbanEnrichedCardRow(row as Record<string, unknown>) : null;
 }
 
 /** Próxima position na coluna (fractional indexing; novos cards ao fim). */
@@ -1127,7 +1207,7 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
     if (!(await requireVisibleKanbanBoard(req, res, tenantId, boardId))) return;
     const includeArchived = String(req.query.includeArchived || '') === 'true' || String(req.query.includeArchived || '') === '1';
     const archivedClause = includeArchived ? '' : 'AND kc.archived_at IS NULL';
-    const avatarExpr = await kanbanConversationAvatarSqlExpr();
+    const av = await kanbanConversationAvatarResolutionFragments(2);
     const q = `
       SELECT
         kc.id,
@@ -1152,7 +1232,7 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
         COALESCE(c.unread_count, 0)::int AS conv_unread_count,
         c.client_id AS conv_client_id,
         c.lead_id AS conv_lead_id,
-        ${avatarExpr} AS conv_avatar_url,
+        ${av.resolverSelect}
         c.attendance_status AS conv_attendance_status,
         c.assigned_to_user_id AS conv_assigned_to_user_id,
         c.assigned_team_id AS conv_assigned_team_id,
@@ -1173,6 +1253,7 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
         proposal_agg.proposal_accepted_total
       FROM chat_kanban_cards kc
       INNER JOIN chat_conversations c ON c.id = kc.conversation_id
+      ${av.joins}
       LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
       LEFT JOIN profiles pf ON pf.id = assignee.id
       LEFT JOIN teams t_team ON t_team.id = c.assigned_team_id
@@ -1191,7 +1272,7 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
       ORDER BY kc.column_id, kc.position ASC, kc.created_at ASC
     `;
     const r = await pool.query(q, [boardId, tenantId]);
-    res.json(r.rows);
+    res.json(r.rows.map((row) => finalizeKanbanEnrichedCardRow(row as Record<string, unknown>)));
   } catch (e: any) {
     console.error('[chatKanban] listCards', e);
     res.status(500).json({ error: e?.message || 'Erro' });
