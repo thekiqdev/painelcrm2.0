@@ -18,34 +18,7 @@ import {
   saveFloatingChatPersisted,
 } from './persist';
 import type { FloatingChatPanel } from './floatingChatTypes';
-
-type FloatingChatContextValue = {
-  listOpen: boolean;
-  setListOpen: (v: boolean) => void;
-  toggleList: () => void;
-  panels: FloatingChatPanel[];
-  activeWindowId: string | null;
-  focusWindow: (conversationId: string) => void;
-  /** epoch ms até quando mostrar pulse na pill minimizada */
-  pulseUntil: Record<string, number>;
-  openOrFocusConversation: (conversationId: string) => void;
-  minimizePanel: (conversationId: string) => void;
-  expandPanel: (conversationId: string) => void;
-  closePanel: (conversationId: string) => void;
-  /** Remove só do shell flutuante (não encerra atendimento). */
-  closeFloatingConversation: (conversationId: string) => void;
-  composerDrafts: Record<string, string>;
-  setComposerDraft: (conversationId: string, text: string) => void;
-  instanceIds: string[];
-  inboxScope: 'tenant' | 'owner';
-  /** Desktop: janela flutuante; mobile (< md): overlay full-screen sem mudar de rota. */
-  openConversationInContext: (conversationId: string) => void;
-  openChatForClient: (clientId: string) => Promise<void>;
-  openChatForLead: (leadId: string) => Promise<void>;
-  closeMobileConversationOverlay: () => void;
-};
-
-const FloatingChatContext = createContext<FloatingChatContextValue | null>(null);
+import { FloatingChatContext, type FloatingChatContextValue } from './floatingChatContext';
 
 function countExpanded(panels: FloatingChatPanel[]): number {
   return panels.filter((p) => !p.minimized).length;
