@@ -6,8 +6,13 @@ import { Badge } from '@/components/ui/badge';
 import { chatService, type ChatConversation } from '@/services/chat';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { cn } from '@/lib/utils';
-import { useFloatingChat } from './FloatingChatProvider';
+import { useFloatingChat } from './floatingChatContext';
 import { FLOATING_Z_MINIMIZED } from './constants';
+import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
+import {
+  applyConversationDragPreview,
+  conversationDragPreviewFromChatConversation,
+} from '@/lib/conversationDragPreview';
 
 function shortName(displayName: string): string {
   const first = displayName.split(/\s+/)[0]?.trim();
@@ -95,15 +100,32 @@ export function MinimizedChatDock({
         return (
           <div
             key={p.conversationId}
+            draggable
+            title="Arrastar para o Kanban"
             className={cn(
-              'group relative flex max-w-[11rem] items-stretch rounded-full border shadow-md transition',
+              'group relative flex max-w-[11rem] cursor-grab items-stretch rounded-full border shadow-md transition active:cursor-grabbing',
               'border-primary/25 bg-background/95 hover:border-primary/40 hover:bg-muted/90 hover:shadow-lg',
               'dark:border-border/80 dark:bg-background/95',
               pulsing && 'floating-chat-minimized-pulse border-primary/50 ring-2 ring-primary/25',
             )}
+            onDragStart={(e) => {
+              const conv = c;
+              beginConversationDragSession(e.dataTransfer, {
+                type: 'conversation',
+                conversationId: p.conversationId,
+                hasClient: Boolean(conv?.client_id),
+                hasLead: Boolean(conv?.leadId),
+              });
+              applyConversationDragPreview(
+                e,
+                conversationDragPreviewFromChatConversation(conv ?? null, p.conversationId),
+              );
+            }}
+            onDragEnd={() => endConversationDragSession()}
           >
             <button
               type="button"
+              draggable={false}
               title={id.displayName}
               className="flex min-w-0 flex-1 items-center gap-2 rounded-full py-1 pl-1 pr-2.5 text-left"
               onClick={() => expandPanel(p.conversationId)}
@@ -128,6 +150,7 @@ export function MinimizedChatDock({
             </button>
             <button
               type="button"
+              draggable={false}
               className={cn(
                 'absolute -right-0.5 -top-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full',
                 'border border-border/80 bg-background/95 text-muted-foreground shadow-sm',

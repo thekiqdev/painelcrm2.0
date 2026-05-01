@@ -1,5 +1,4 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
 import {
   Building2,
   Mail,
@@ -72,6 +71,7 @@ const LeadMobileCardList: React.FC<Props> = ({
   onDelete,
   canProposal = true,
 }) => {
+  const { openChatForLead } = useFloatingChat();
   if (leads.length === 0) {
     return (
       <div className="flex min-h-[9rem] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/80 bg-muted/15 px-3 py-8 text-center md:hidden">
@@ -162,18 +162,17 @@ const LeadMobileCardList: React.FC<Props> = ({
                     </Button>
                   ) : null}
                   <Button
+                    type="button"
                     variant="secondary"
                     size="sm"
                     className="h-8 min-w-0 flex-1 touch-manipulation px-2 text-xs"
-                    asChild
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void openChatForLead(lead.id);
+                    }}
                   >
-                    <Link
-                      to={`/chat${chatOpenQueryWithReturn({ openLeadId: lead.id })}`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <MessageCircle className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
-                      Chat
-                    </Link>
+                    <MessageCircle className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+                    Chat
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

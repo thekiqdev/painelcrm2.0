@@ -94,11 +94,20 @@ export function ChatKanbanAddCardDialog({
         if (auto.public_link_path?.trim()) {
           setStoredProposalPublicUrl(auto.id, `${window.location.origin}${auto.public_link_path.trim()}`);
         }
-        toast.success('Conversa adicionada ao quadro', {
-          description: `Proposta criada: ${auto.title}`,
+        toast.success('Proposta criada automaticamente', {
+          description: auto.title,
+          action: auto.public_link_path
+            ? {
+                label: 'Abrir link',
+                onClick: () =>
+                  window.open(
+                    `${window.location.origin}${auto.public_link_path!.trim()}`,
+                    '_blank',
+                    'noopener,noreferrer',
+                  ),
+              }
+            : undefined,
         });
-      } else {
-        toast.success('Conversa adicionada ao quadro');
       }
       onCreated();
       onOpenChange(false);

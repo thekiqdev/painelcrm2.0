@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import {
   Bell,
   CalendarClock,
@@ -42,6 +42,58 @@ import {
 } from '@/services/systemNotifications';
 import { renderInboxNotificationItem } from '@/components/notifications/InboxNotificationItems';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { useFloatingChat } from '@/features/floating-chat';
+
+/** Mobile: abre overlay sem navegar para `/chat` quando o href é uma conversa CRM. */
+function navigateNotificationHref(
+  href: string,
+  isMobile: boolean,
+  navigate: NavigateFunction,
+  chat: {
+    openConversationInContext: (id: string) => void;
+    openChatForClient: (id: string) => Promise<void>;
+    openChatForLead: (id: string) => Promise<void>;
+  },
+): void {
+  if (!isMobile) {
+    navigate(href);
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(href, typeof window !== 'undefined' ? window.location.origin : 'http://local');
+  } catch {
+    navigate(href);
+    return;
+  }
+  const path = (url.pathname.replace(/\/$/, '') || '/').toLowerCase();
+  if (path === '/chat') {
+    const cid = url.searchParams.get('conversationId')?.trim();
+    if (cid) {
+      chat.openConversationInContext(cid);
+      return;
+    }
+    const openClientId = url.searchParams.get('openClientId')?.trim();
+    if (openClientId) {
+      void chat.openChatForClient(openClientId);
+      return;
+    }
+    const openLeadId = url.searchParams.get('openLeadId')?.trim();
+    if (openLeadId) {
+      void chat.openChatForLead(openLeadId);
+      return;
+    }
+    navigate(href);
+    return;
+  }
+  const segMatch = /^\/chat\/([^/]+)$/i.exec(url.pathname);
+  if (segMatch?.[1]) {
+    chat.openConversationInContext(segMatch[1]);
+    return;
+  }
+  navigate(href);
+}
 
 type Props = {
   unreadCount: number;
@@ -75,6 +127,8 @@ function iconForNotificationType(type: string): LucideIcon {
 
 export function HeaderNotificationBell({ unreadCount }: Props) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const { openConversationInContext, openChatForClient, openChatForLead } = useFloatingChat();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<InboxNotificationRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -115,7 +169,11 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
     }
     emitInAppNotificationsRefresh();
     setOpen(false);
-    navigate(href);
+    navigateNotificationHref(href, isMobile, navigate, {
+      openConversationInContext,
+      openChatForClient,
+      openChatForLead,
+    });
   };
 
   const handleMarkAll = async () => {

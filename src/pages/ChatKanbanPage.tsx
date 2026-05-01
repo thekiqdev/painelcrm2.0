@@ -36,7 +36,6 @@ import { ChatKanbanCard } from '@/components/chat-kanban/ChatKanbanCard';
 import { useChatKanbanBoardDnd } from '@/components/chat-kanban/useChatKanbanBoardDnd';
 import { ChatKanbanAddCardDialog } from '@/components/chat-kanban/ChatKanbanAddCardDialog';
 import { ChatKanbanColumnManagerDialog } from '@/components/chat-kanban/ChatKanbanColumnManagerDialog';
-import { ChatKanbanConversationDrawer } from '@/components/chat-kanban/ChatKanbanConversationDrawer';
 import { ChatKanbanEmptyState } from '@/components/chat-kanban/ChatKanbanEmptyState';
 import { ChatKanbanMoveReasonDialog } from '@/components/chat-kanban/ChatKanbanMoveReasonDialog';
 import { ChatKanbanMoveConfirmDialog } from '@/components/chat-kanban/ChatKanbanMoveConfirmDialog';
@@ -48,20 +47,30 @@ import {
   type ChatKanbanBoardCard,
   type ChatKanbanColumn,
 } from '@/services/chatKanban';
-import { parseKanbanColumnUi, parseKanbanProposalsDisplay } from '@/utils/kanbanColumnRulesUi';
+import { parseKanbanColumnUi } from '@/utils/kanbanColumnRulesUi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKanbanAttendanceSocketRefresh } from '@/hooks/useKanbanAttendanceSocketRefresh';
+import { useKanbanBoardRealtimeCards } from '@/hooks/useKanbanBoardRealtimeCards';
 import { fetchFunnels } from '@/services/funnels';
+import {
+  dataTransferHasConversationDragMime,
+  endConversationDragSession,
+  getActiveConversationDrag,
+  isNativeConversationDragActive,
+  readConversationDragFromDataTransfer,
+} from '@/lib/chatKanbanConversationDrag';
+import { useFloatingChatOptional } from '@/features/floating-chat';
+import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
 
 type FunnelOption = { id: string; name: string };
 
 const ChatKanbanPage = () => {
   const { session } = useAuth();
+  const floatingChat = useFloatingChatOptional();
   const [boards, setBoards] = useState<ChatKanbanBoard[]>([]);
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [columns, setColumns] = useState<ChatKanbanColumn[]>([]);
   const [cards, setCards] = useState<ChatKanbanBoardCard[]>([]);
-  const [drawerCard, setDrawerCard] = useState<ChatKanbanBoardCard | null>(null);
   const [loadingBoards, setLoadingBoards] = useState(true);
   const [loadingBoardData, setLoadingBoardData] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +89,18 @@ const ChatKanbanPage = () => {
 
   const moveConfirmWaiterRef = useRef<{ resolve: (v: boolean) => void } | null>(null);
   const [moveConfirmUi, setMoveConfirmUi] = useState<{ columnName: string } | null>(null);
+
+  const [nativeDragHoverColumnId, setNativeDragHoverColumnId] = useState<string | null>(null);
+  const [attachMoveReason, setAttachMoveReason] = useState<{
+    colId: string;
+    convId: string;
+    columnName: string;
+  } | null>(null);
+  const [attachMoveConfirm, setAttachMoveConfirm] = useState<{
+    colId: string;
+    convId: string;
+    columnName: string;
+  } | null>(null);
 
   const requestMoveReason = useCallback((args: { columnName: string }) => {
     return new Promise<string | null>((resolve) => {
@@ -217,9 +238,158 @@ const ChatKanbanPage = () => {
     refreshCardsOnly,
   );
 
-  const handleCardSynced = useCallback((u: ChatKanbanBoardCard) => {
-    setDrawerCard((d) => (d && d.id === u.id ? { ...d, ...u } : d));
+  const { pulseUnreadUntilByConversationId } = useKanbanBoardRealtimeCards(
+    Boolean(selectedBoardId && !loadingBoardData),
+    cards,
+    setCards,
+  );
+
+  useEffect(() => {
+    const onDragEndClear = () => setNativeDragHoverColumnId(null);
+    window.addEventListener('painelcrm:conversation-drag-end', onDragEndClear);
+    return () => window.removeEventListener('painelcrm:conversation-drag-end', onDragEndClear);
   }, []);
+
+  const runAttachConversation = useCallback(
+    async (
+      columnId: string,
+      conversationId: string,
+      opts?: { move_reason?: string; move_confirmed?: boolean },
+    ) => {
+      if (!selectedBoardId) return;
+      try {
+        const updated = await chatKanbanService.attachConversation({
+          board_id: selectedBoardId,
+          column_id: columnId,
+          conversation_id: conversationId,
+          ...opts,
+        });
+        const auto = updated.kanban_auto_created_proposal;
+        if (auto) {
+          if (auto.public_link_path?.trim()) {
+            const full = `${window.location.origin}${auto.public_link_path.trim()}`;
+            setStoredProposalPublicUrl(auto.id, full);
+          }
+          toast.success('Proposta criada automaticamente', {
+            description: auto.title,
+            action: auto.public_link_path
+              ? {
+                  label: 'Abrir link',
+                  onClick: () =>
+                    window.open(
+                      `${window.location.origin}${auto.public_link_path!.trim()}`,
+                      '_blank',
+                      'noopener,noreferrer',
+                    ),
+                }
+              : undefined,
+          });
+        }
+        await refreshCardsOnly();
+      } catch (err: unknown) {
+        const e = err as Error & { code?: string };
+        if (e.code === 'KANBAN_MOVE_REASON_REQUIRED') {
+          const col = columns.find((c) => c.id === columnId);
+          setAttachMoveReason({
+            colId: columnId,
+            convId: conversationId,
+            columnName: col?.name?.trim() || 'Coluna',
+          });
+          return;
+        }
+        if (e.code === 'KANBAN_MOVE_CONFIRMATION_REQUIRED') {
+          const col = columns.find((c) => c.id === columnId);
+          setAttachMoveConfirm({
+            colId: columnId,
+            convId: conversationId,
+            columnName: col?.name?.trim() || 'Coluna',
+          });
+          return;
+        }
+        toast.error(e.message || 'Não foi possível anexar a conversa ao quadro');
+      }
+    },
+    [selectedBoardId, cards, columns, refreshCardsOnly],
+  );
+
+  const handleNativeConversationDrop = useCallback(
+    async (e: React.DragEvent, columnId: string) => {
+      e.preventDefault();
+      const payload =
+        readConversationDragFromDataTransfer(e.dataTransfer) || getActiveConversationDrag();
+      endConversationDragSession();
+      setNativeDragHoverColumnId(null);
+      if (!payload?.conversationId || !selectedBoardId) return;
+      await runAttachConversation(columnId, payload.conversationId);
+    },
+    [selectedBoardId, runAttachConversation],
+  );
+
+  const buildNativeDropForColumn = useCallback(
+    (columnId: string) => {
+      if (!selectedBoardId || loadingBoardData || visibleSortedColumns.length === 0) return null;
+      const session = getActiveConversationDrag();
+      const convId = session?.conversationId;
+      const onBoard = convId ? cards.some((c) => c.conversation_id === convId) : false;
+      let hint = 'Soltar conversa nesta etapa';
+      if (session) {
+        if (onBoard) hint = 'Mover para esta etapa';
+        else if (session.hasLead || session.hasClient) hint = 'Soltar para adicionar ao funil';
+        else hint = 'Soltar conversa nesta etapa';
+      }
+
+      return {
+        nativeConversationDragOver: nativeDragHoverColumnId === columnId,
+        nativeDropTitle: nativeDragHoverColumnId === columnId ? hint : null,
+        onNativeDragEnter: (ev: React.DragEvent) => {
+          const allow =
+            isNativeConversationDragActive() || dataTransferHasConversationDragMime(ev.dataTransfer);
+          if (!allow) return;
+          setNativeDragHoverColumnId(columnId);
+        },
+        onNativeDragOver: (ev: React.DragEvent) => {
+          const allow =
+            isNativeConversationDragActive() || dataTransferHasConversationDragMime(ev.dataTransfer);
+          if (!allow) return;
+          ev.preventDefault();
+          ev.dataTransfer.dropEffect = 'copy';
+          setNativeDragHoverColumnId(columnId);
+        },
+        onNativeDragLeave: (ev: React.DragEvent) => {
+          if (!ev.currentTarget.contains(ev.relatedTarget as Node)) {
+            setNativeDragHoverColumnId((prev) => (prev === columnId ? null : prev));
+          }
+        },
+        onNativeDrop: (ev: React.DragEvent) => {
+          void handleNativeConversationDrop(ev, columnId);
+        },
+      };
+    },
+    [
+      selectedBoardId,
+      loadingBoardData,
+      visibleSortedColumns.length,
+      nativeDragHoverColumnId,
+      cards,
+      handleNativeConversationDrop,
+    ],
+  );
+
+  const openKanbanCardInFloating = useCallback(
+    (card: ChatKanbanBoardCard) => {
+      const id = card.conversation_id;
+      if (floatingChat) {
+        floatingChat.openConversationInContext(id);
+      } else {
+        window.dispatchEvent(
+          new CustomEvent('painelcrm:floating-chat-open', {
+            detail: { conversationId: id, source: 'kanban_card' },
+          }),
+        );
+      }
+    },
+    [floatingChat],
+  );
 
   const boardDnd = useChatKanbanBoardDnd({
     cards,
@@ -228,7 +398,6 @@ const ChatKanbanPage = () => {
     enabled: Boolean(selectedBoardId && visibleSortedColumns.length > 0 && !loadingBoardData),
     requestMoveReason,
     requestMoveConfirmation,
-    onCardSynced: handleCardSynced,
   });
 
   const dragOverlayColumnMetadata = useMemo(() => {
@@ -295,21 +464,6 @@ const ChatKanbanPage = () => {
     () => boards.find((b) => b.id === selectedBoardId) ?? null,
     [boards, selectedBoardId],
   );
-
-  const drawerColumnName = useMemo(() => {
-    if (!drawerCard) return null;
-    return columns.find((c) => c.id === drawerCard.column_id)?.name ?? null;
-  }, [drawerCard, columns]);
-
-  /** Coluna com criação automática de proposta ao entrar. */
-  const drawerColumnAutoCreatesProposal = useMemo(() => {
-    if (!drawerCard) return false;
-    const col = columns.find((c) => c.id === drawerCard.column_id);
-    if (!col) return false;
-    const d = parseKanbanProposalsDisplay(col.metadata);
-    if (!d.auto_create_proposal_on_enter) return false;
-    return Boolean(d.default_proposal_model_id?.trim() || d.default_proposal_template_id?.trim());
-  }, [drawerCard, columns]);
 
   const kanbanBoardScrollRef = useRef<HTMLDivElement>(null);
   const kanbanBoardInnerRef = useRef<HTMLDivElement>(null);
@@ -496,43 +650,38 @@ const ChatKanbanPage = () => {
                         column={col}
                         cardIds={boardDnd.dndItems[col.id] ?? []}
                         cardMap={cardMap}
-                        onCardClick={(c) => setDrawerCard(c)}
+                        onCardClick={openKanbanCardInFloating}
                         onAddCard={() => setAddCardColumnId(col.id)}
                         onConfigureColumn={(c) => setSettingsColumn(c)}
+                        nativeDrop={buildNativeDropForColumn(col.id)}
+                        pulseUnreadUntilByConversationId={pulseUnreadUntilByConversationId}
                       />
                     ))}
                   </div>
                 </div>
               </div>
               <DragOverlay dropAnimation={{ duration: 180, easing: 'ease' }}>
-                {boardDnd.activeId && cardMap.get(boardDnd.activeId) ? (
-                  <div className="pointer-events-none w-[264px] max-w-[86vw] rotate-1 scale-[1.02] shadow-2xl opacity-95">
-                    <ChatKanbanCard
-                      card={cardMap.get(boardDnd.activeId)!}
-                      columnMetadata={dragOverlayColumnMetadata}
-                      onClick={() => {}}
-                    />
-                  </div>
-                ) : null}
+                {(() => {
+                  const dragCard = boardDnd.activeId ? cardMap.get(boardDnd.activeId) : undefined;
+                  if (!dragCard) return null;
+                  const pulseUnreadHighlight =
+                    (pulseUnreadUntilByConversationId[dragCard.conversation_id] ?? 0) > Date.now();
+                  return (
+                    <div className="pointer-events-none w-[264px] max-w-[86vw] rotate-1 scale-[1.02] shadow-2xl opacity-95">
+                      <ChatKanbanCard
+                        card={dragCard}
+                        columnMetadata={dragOverlayColumnMetadata}
+                        onClick={() => {}}
+                        pulseUnreadHighlight={pulseUnreadHighlight}
+                      />
+                    </div>
+                  );
+                })()}
               </DragOverlay>
             </DndContext>
           )}
         </div>
       )}
-
-      <ChatKanbanConversationDrawer
-        open={drawerCard !== null}
-        onOpenChange={(o) => {
-          if (!o) setDrawerCard(null);
-        }}
-        card={drawerCard}
-        boardName={selectedBoard?.name ?? null}
-        columnName={drawerColumnName}
-        columnAutoCreatesProposal={drawerColumnAutoCreatesProposal}
-        onAfterSend={() => {
-          if (selectedBoardId) void loadBoardDetail(selectedBoardId);
-        }}
-      />
 
       <ChatKanbanColumnManagerDialog
         open={columnManagerOpen}
@@ -591,6 +740,28 @@ const ChatKanbanPage = () => {
         columnName={moveConfirmUi?.columnName ?? ''}
         onCancel={() => finishMoveConfirm(false)}
         onConfirm={() => finishMoveConfirm(true)}
+      />
+
+      <ChatKanbanMoveReasonDialog
+        open={attachMoveReason !== null}
+        columnName={attachMoveReason?.columnName ?? ''}
+        onCancel={() => setAttachMoveReason(null)}
+        onConfirm={(r) => {
+          const ctx = attachMoveReason;
+          setAttachMoveReason(null);
+          if (ctx) void runAttachConversation(ctx.colId, ctx.convId, { move_reason: r });
+        }}
+      />
+
+      <ChatKanbanMoveConfirmDialog
+        open={attachMoveConfirm !== null}
+        columnName={attachMoveConfirm?.columnName ?? ''}
+        onCancel={() => setAttachMoveConfirm(null)}
+        onConfirm={() => {
+          const ctx = attachMoveConfirm;
+          setAttachMoveConfirm(null);
+          if (ctx) void runAttachConversation(ctx.colId, ctx.convId, { move_confirmed: true });
+        }}
       />
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

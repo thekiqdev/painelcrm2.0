@@ -12,6 +12,7 @@ import {
 } from '@/utils/chatKanbanCardDisplay';
 import { parseKanbanProposalsDisplay } from '@/utils/kanbanColumnRulesUi';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import { cn } from '@/lib/utils';
 
 function kanbanLabelsFromMetadata(meta: unknown): string[] {
   if (!meta || typeof meta !== 'object') return [];
@@ -27,18 +28,26 @@ type Props = {
   onClick: () => void;
   /** Atributos/listeners do @dnd-kit (PointerSensor com distância evita conflito com clique). */
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
+  /** Destaque animado após nova mensagem recebida (alguns segundos). */
+  pulseUnreadHighlight?: boolean;
 };
 
 function formatBrl(n: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n);
 }
 
-export function ChatKanbanCard({ card, columnMetadata, onClick, dragHandleProps }: Props) {
+export function ChatKanbanCard({
+  card,
+  columnMetadata,
+  onClick,
+  dragHandleProps,
+  pulseUnreadHighlight = false,
+}: Props) {
   const title = kanbanCardTitle(card);
   const phone = kanbanCardPhoneLine(card);
   const preview = (card.conv_last_message_preview || '').trim() || 'Sem mensagens ainda';
   const when = formatKanbanActivity(card.conv_last_message_at);
-  const unread = card.conv_unread_count ?? 0;
+  const unread = Math.max(0, Number(card.conv_unread_count ?? 0));
   const att = kanbanAttendanceShort(card.conv_attendance_status);
   const kanbanLabels = kanbanLabelsFromMetadata(card.conv_metadata);
   const pp = parseKanbanProposalsDisplay(columnMetadata);
@@ -56,8 +65,25 @@ export function ChatKanbanCard({ card, columnMetadata, onClick, dragHandleProps 
       data-kanban-card-id={card.id}
       data-conversation-id={card.conversation_id}
       data-column-id={card.column_id}
-      className="w-full text-left rounded-lg border border-border/70 bg-card p-2.5 shadow-sm transition-colors hover:border-primary/35 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-grab active:cursor-grabbing"
+      className={cn(
+        'relative w-full text-left rounded-lg border bg-card p-2.5 shadow-sm transition-[box-shadow,border-color,background-color] hover:border-primary/35 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-grab active:cursor-grabbing',
+        unread > 0
+          ? 'border-sky-500/35 ring-1 ring-sky-500/15 bg-muted/25 dark:border-sky-400/30 dark:ring-sky-400/20'
+          : 'border-border/70',
+        pulseUnreadHighlight && 'animate-kanban-card-unread-attn motion-reduce:animate-none',
+      )}
     >
+      {unread > 0 ? (
+        <span
+          className={cn(
+            'absolute -top-1.5 -right-1.5 z-[1] flex h-[1.35rem] min-w-[1.35rem] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-destructive-foreground shadow-md ring-2 ring-card',
+            pulseUnreadHighlight && 'motion-safe:animate-pulse',
+          )}
+          aria-label={`${unread} mensagens não lidas`}
+        >
+          {unread > 99 ? '99+' : unread}
+        </span>
+      ) : null}
       <div className="flex gap-2 min-w-0">
         <Avatar className="h-9 w-9 shrink-0 rounded-md">
           {convAvatar ? (
@@ -85,11 +111,6 @@ export function ChatKanbanCard({ card, columnMetadata, onClick, dragHandleProps 
             </div>
           ) : null}
           <div className="flex flex-wrap gap-1 pt-0.5">
-            {unread > 0 ? (
-              <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-5">
-                {unread > 99 ? '99+' : unread} nova{unread === 1 ? '' : 's'}
-              </Badge>
-            ) : null}
             {card.conv_client_id ? (
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-5">
                 Cliente

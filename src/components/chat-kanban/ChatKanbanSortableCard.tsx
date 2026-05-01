@@ -8,9 +8,15 @@ type Props = {
   /** Metadata da coluna do cartão (ex.: `kanban_proposals`). */
   columnMetadata?: Record<string, unknown> | null;
   onCardClick: (card: ChatKanbanBoardCard) => void;
+  pulseUnreadHighlight?: boolean;
 };
 
-export function ChatKanbanSortableCard({ card, columnMetadata, onCardClick }: Props) {
+export function ChatKanbanSortableCard({
+  card,
+  columnMetadata,
+  onCardClick,
+  pulseUnreadHighlight,
+}: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
     data: { type: 'kanban-card' },
@@ -28,6 +34,7 @@ export function ChatKanbanSortableCard({ card, columnMetadata, onCardClick }: Pr
         columnMetadata={columnMetadata}
         onClick={() => onCardClick(card)}
         dragHandleProps={{ ...attributes, ...listeners }}
+        pulseUnreadHighlight={pulseUnreadHighlight}
       />
       {isDragging ? (
         <div

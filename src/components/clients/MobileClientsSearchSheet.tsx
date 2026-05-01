@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { clientsService, type Client } from "@/services/clients";
-import { chatOpenQueryWithReturn } from "@/lib/chatListNavigation";
+import { useFloatingChat } from "@/features/floating-chat";
 import { saveClientsListScrollPosition } from "@/lib/clientsListRestore";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
@@ -87,6 +87,7 @@ export function MobileClientsSearchSheet({
   const navigate = useNavigate();
   const { user } = useAuth();
   const userId = user?.id;
+  const floatingChat = useFloatingChat();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [localQuery, setLocalQuery] = useState("");
@@ -169,9 +170,9 @@ export function MobileClientsSearchSheet({
     (row: MobileClientsSearchSheetRecent) => {
       pushRecent(userId, row);
       onOpenChange(false);
-      navigate(`/chat${chatOpenQueryWithReturn({ openClientId: row.id })}`);
+      void floatingChat.openChatForClient(row.id);
     },
-    [navigate, onOpenChange, userId],
+    [floatingChat, onOpenChange, userId],
   );
 
   const pendingDebounce =

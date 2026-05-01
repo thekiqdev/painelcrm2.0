@@ -2012,42 +2012,13 @@ async function notifyOperator(ctx: KanbanPhase2AutomationContext, dedupe: Set<st
     return;
   }
   dedupe.add(dedupeKey);
-  try {
-    await createNotification({
-      userId: destinationUserId,
-      type: 'kanban_automation',
-      title: `Kanban: cartão movido para ${ctx.columnName}`,
-      message: `Conversa ${ctx.conversationDisplayName || ctx.conversationId} entrou na coluna ${ctx.columnName}.`,
-      data: {
-        source: 'chat_kanban_phase2',
-        automation: 'notify_operator',
-        board_id: ctx.boardId,
-        column_id: ctx.columnId,
-        card_id: ctx.cardId,
-        conversation_id: ctx.conversationId,
-      },
-    });
-    await insertAutomationAudit(
-      ctx,
-      operation,
-      'executed',
-      'status=executed;reason=notification_sent',
-      destinationUserId,
-    );
-  } catch (e: any) {
-    await insertAutomationAudit(
-      ctx,
-      operation,
-      'failed',
-      `status=failed;reason=notification_error;detail=${String(e?.message || 'unknown')}`,
-      destinationUserId,
-    );
-    console.error('[chatKanban] phase2 notify_operator failed', {
-      conversationId: ctx.conversationId,
-      destinationUserId,
-      error: e,
-    });
-  }
+  await insertAutomationAudit(
+    ctx,
+    operation,
+    'skipped',
+    'status=skipped;reason=operator_move_in_app_notification_disabled',
+    destinationUserId,
+  );
 }
 
 async function notifyTeamMembers(ctx: KanbanPhase2AutomationContext, dedupe: Set<string>): Promise<void> {

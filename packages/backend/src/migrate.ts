@@ -297,6 +297,8 @@ const order = [
   '194_crm_notes_source_comment.sql',
   /** Inbox: preencher contact_avatar_url em notificações de chat antigas a partir da conversa */
   '195_notification_chat_contact_avatar_backfill.sql',
+  /** Chat: client_message_id + índice único (idempotência outbound) */
+  '196_chat_messages_client_message_id.sql',
   'create-admin-user.sql',
 ];
 

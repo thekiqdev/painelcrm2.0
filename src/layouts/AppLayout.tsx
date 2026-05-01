@@ -73,7 +73,6 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { useDebouncedGlobalGroupedSearch } from '@/hooks/useGlobalSearch';
-import { chatOpenQueryWithReturn } from '@/lib/chatListNavigation';
 import { TenantBrandProvider } from '@/contexts/TenantBrandContext';
 import { TenantSidebarMark } from '@/components/tenant/TenantMarks';
 import { RequireModuleView } from '@/components/RequireModuleView';
@@ -90,7 +89,7 @@ import { useChatNavUnreadCount } from '@/hooks/useChatNavUnreadCount';
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { HeaderNotificationBell } from '@/components/layout/HeaderNotificationBell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { FloatingChatProvider, FloatingChatWidget } from '@/features/floating-chat';
+import { FloatingChatProvider, FloatingChatWidget, useFloatingChat } from '@/features/floating-chat';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -502,6 +501,7 @@ const Header = () => {
   const { showMobileGlobalHeader } = useMobileShellChrome();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const floatingChatCtx = useFloatingChat();
   const [commandDialogOpen, setCommandDialogOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -855,7 +855,7 @@ const Header = () => {
     setCommandDialogOpen(false);
     setSearchQuery('');
     setCommandSearchQuery('');
-    navigate(`/chat${chatOpenQueryWithReturn({ openClientId: clientId })}`);
+    void floatingChatCtx.openChatForClient(clientId);
   };
 
   const handleChatLead = (leadId: string) => {
@@ -863,7 +863,7 @@ const Header = () => {
     setCommandDialogOpen(false);
     setSearchQuery('');
     setCommandSearchQuery('');
-    navigate(`/chat${chatOpenQueryWithReturn({ openLeadId: leadId })}`);
+    void floatingChatCtx.openChatForLead(leadId);
   };
 
   const handleNewInvoiceClient = (clientId: string) => {

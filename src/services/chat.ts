@@ -170,6 +170,8 @@ export interface ChatMessage {
   id: string;
   conversation_id: string;
   direction: 'incoming' | 'outgoing';
+  /** Idempotência / fila no cliente (espelha coluna `client_message_id` quando existir). */
+  client_message_id?: string | null;
   external_message_id?: string | null;
   body?: string | null;
   status?: string | null;
@@ -407,10 +409,14 @@ export function normalizeChatMessage(raw: any): ChatMessage {
     typeof icc === 'number' ? icc : icc != null ? Math.max(0, Math.floor(Number(icc)) || 0) : undefined;
   const internal_comment_count =
     internal_comments.length > 0 ? internal_comments.length : countFromScalar ?? 0;
+  const meta = raw.metadata && typeof raw.metadata === 'object' ? (raw.metadata as Record<string, unknown>) : null;
+  const clientFromMeta =
+    meta && typeof meta.client_message_id === 'string' ? meta.client_message_id : null;
   return {
     id: raw.id,
     conversation_id: raw.conversation_id,
     direction: raw.direction === 'outgoing' ? 'outgoing' : 'incoming',
+    client_message_id: raw.client_message_id ?? clientFromMeta ?? null,
     external_message_id: raw.external_message_id ?? null,
     body: coerceChatPlainText(raw.body) || null,
     status: raw.status ?? null,
@@ -882,17 +888,30 @@ export const chatService = {
   async sendMessage(
     conversationId: string,
     text: string,
-    options?: { replyToMessageId?: string }
-  ) {
-    const response = await apiClient.post(`/api/chat/messages`, {
+    options?: { replyToMessageId?: string; clientMessageId?: string }
+  ): Promise<{ message?: ChatMessage; response?: unknown; duplicate?: boolean }> {
+    const response = await apiClient.post<{
+      message?: Record<string, unknown>;
+      response?: unknown;
+      duplicate?: boolean;
+    }>(`/api/chat/messages`, {
       conversationId,
       text,
       ...(options?.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
+      ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
     });
     if (response.error) {
       throw new Error(response.error);
     }
-    return response.data;
+    const data = response.data;
+    const rawMsg = data?.message;
+    const message =
+      rawMsg != null && typeof rawMsg === 'object' ? normalizeChatMessage(rawMsg) : undefined;
+    return {
+      message,
+      response: data?.response,
+      duplicate: data?.duplicate === true,
+    };
   },
 
   async postMessageComment(
@@ -1104,6 +1123,20 @@ export const chatService = {
       throw new Error(response.error);
     }
     return response.data || { type: null, profile: null };
+  },
+
+  /**
+   * Restauro do Floating Chat após F5: só tratar como removível quando a API devolve 404.
+   * Rede / 401 transitório / 5xx → `uncertain` (mantém painel e não apaga localStorage).
+   */
+  async probeFloatingChatConversationPersist(
+    conversationId: string,
+  ): Promise<'valid' | 'missing' | 'uncertain'> {
+    const response = await apiClient.get<ConversationProfile>(`/api/chat/conversations/${conversationId}/profile`);
+    if (!response.error) return 'valid';
+    const status = typeof response.details?.status === 'number' ? response.details.status : undefined;
+    if (status === 404) return 'missing';
+    return 'uncertain';
   },
 
   async getClientMessages(clientId: string): Promise<{ messages: ChatMessage[]; conversationId: string | null; conversationIds: string[] }> {

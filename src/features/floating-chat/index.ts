@@ -1,3 +1,9 @@
 export { FloatingChatWidget } from './FloatingChatWidget';
-export { FloatingChatProvider, useFloatingChat, useFloatingChatOptional } from './FloatingChatProvider';
+export { FloatingChatProvider } from './FloatingChatProvider';
+export {
+  FloatingChatContext,
+  useFloatingChat,
+  useFloatingChatOptional,
+  type FloatingChatContextValue,
+} from './floatingChatContext';
 export { getFloatingChatLayout, getDockAnchorRightPx } from './floatingChatLayout';

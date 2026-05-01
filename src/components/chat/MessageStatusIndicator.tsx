@@ -6,7 +6,7 @@ type UiMessageStatus = 'queued' | 'provider_sent' | 'delivered' | 'read' | 'fail
 function toUiStatus(raw: string | null | undefined): UiMessageStatus {
   const s = String(raw || '').trim().toLowerCase();
   if (!s) return 'unknown';
-  if (s === 'queued' || s === 'pending') return 'queued';
+  if (s === 'queued' || s === 'pending' || s === 'sending') return 'queued';
   if (s === 'provider_sent' || s === 'sent' || s === 'server_ack') return 'provider_sent';
   if (s === 'delivered' || s === 'delivery' || s === 'received') return 'delivered';
   if (s === 'read' || s === 'seen') return 'read';

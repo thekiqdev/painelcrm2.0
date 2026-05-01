@@ -17,6 +17,8 @@ import { kanbanCardPhoneLine, kanbanCardTitle } from '@/utils/chatKanbanCardDisp
 import { useAuth } from '@/contexts/AuthContext';
 import { buildKanbanDrawerTemplateContext } from '@/utils/kanbanDrawerTemplateContext';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import { emitKanbanConversationUnread } from '@/lib/kanbanConversationUnreadBridge';
+import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -52,12 +54,15 @@ export function ChatKanbanConversationDrawer({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [newMessage, setNewMessage] = useState('');
-  const [sending, setSending] = useState(false);
+  const [mediaSending, setMediaSending] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [whatsappModelPickerOpen, setWhatsappModelPickerOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const activeConversationIdRef = useRef<string | null>(null);
+  const newMessageRef = useRef('');
+  const pendingWsFifoRef = useRef<string[]>([]);
+  const isSubmittingCurrentMessageRef = useRef(false);
 
   const conversationId = card?.conversation_id ?? null;
 
@@ -96,6 +101,23 @@ export function ChatKanbanConversationDrawer({
     }
   }, []);
 
+  const afterOutboundItemDone = useCallback(() => {
+    if (!conversationId) return;
+    void loadThread(conversationId, { silent: true });
+    onAfterSend?.();
+  }, [conversationId, loadThread, onAfterSend]);
+
+  const { enqueueText, retryFailed } = useChatOutboundQueue({
+    conversationId,
+    applyMessages: setMessages,
+    pendingWsFifoRef,
+    afterItemDone: afterOutboundItemDone,
+  });
+
+  useEffect(() => {
+    newMessageRef.current = newMessage;
+  }, [newMessage]);
+
   useEffect(() => {
     activeConversationIdRef.current = conversationId;
   }, [conversationId]);
@@ -103,10 +125,12 @@ export function ChatKanbanConversationDrawer({
   useEffect(() => {
     if (!open || !conversationId) {
       setMessages([]);
+      newMessageRef.current = '';
       setNewMessage('');
       return;
     }
     setMessages([]);
+    emitKanbanConversationUnread(conversationId, 0);
     void chatService.markConversationRead(conversationId).catch(() => {});
     void loadThread(conversationId);
   }, [open, conversationId, loadThread]);
@@ -116,36 +140,18 @@ export function ChatKanbanConversationDrawer({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [open, messages.length]);
 
-  const handleSend = async (e: React.FormEvent) => {
+  const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!conversationId || !newMessage.trim()) return;
-    const text = newMessage.trim();
-    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    if (!conversationId || isSubmittingCurrentMessageRef.current) return;
+    const text = newMessageRef.current.trim();
+    if (!text) return;
+    isSubmittingCurrentMessageRef.current = true;
+    newMessageRef.current = '';
     setNewMessage('');
-    const optimistic: ChatMessage = {
-      id: optimisticId,
-      conversation_id: conversationId,
-      direction: 'outgoing',
-      body: text,
-      status: 'queued',
-      sentAt: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, optimistic]);
-    try {
-      setSending(true);
-      await chatService.sendMessage(conversationId, text);
-      await loadThread(conversationId, { silent: true });
-      onAfterSend?.();
-    } catch (err) {
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-      setNewMessage(text);
-      toast.error('Não foi possível enviar', {
-        description: err instanceof Error ? err.message : undefined,
-      });
-    } finally {
-      setSending(false);
-    }
+    enqueueText(text, null);
+    queueMicrotask(() => {
+      isSubmittingCurrentMessageRef.current = false;
+    });
   };
 
   const handleImageChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
@@ -157,9 +163,10 @@ export function ChatKanbanConversationDrawer({
       return;
     }
     const caption = newMessage.trim();
+    newMessageRef.current = '';
     setNewMessage('');
     try {
-      setSending(true);
+      setMediaSending(true);
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
         r.onload = () => resolve(r.result as string);
@@ -176,12 +183,13 @@ export function ChatKanbanConversationDrawer({
       await loadThread(conversationId, { silent: true });
       onAfterSend?.();
     } catch (err) {
+      newMessageRef.current = caption;
       setNewMessage(caption);
       toast.error('Falha ao enviar imagem', {
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
-      setSending(false);
+      setMediaSending(false);
     }
   };
 
@@ -195,7 +203,10 @@ export function ChatKanbanConversationDrawer({
         open={templatePickerOpen}
         onOpenChange={setTemplatePickerOpen}
         context={templateContext}
-        onApply={(text) => setNewMessage(text)}
+        onApply={(text) => {
+          newMessageRef.current = text;
+          setNewMessage(text);
+        }}
       />
       <ChatWhatsappModelPickerDialog
         open={whatsappModelPickerOpen}
@@ -298,7 +309,18 @@ export function ChatKanbanConversationDrawer({
                       >
                         <span>{formatHour(message.sentAt)}</span>
                         {message.direction === 'outgoing' ? (
-                          <MessageStatusIndicator status={message.status} className="h-3 w-3" />
+                          <>
+                            <MessageStatusIndicator status={message.status} className="h-3 w-3" />
+                            {message.status === 'failed' ? (
+                              <button
+                                type="button"
+                                className="ml-1 text-[10px] font-semibold underline underline-offset-2"
+                                onClick={() => retryFailed(message)}
+                              >
+                                Reenviar
+                              </button>
+                            ) : null}
+                          </>
                         ) : null}
                       </span>
                     </div>
@@ -322,7 +344,7 @@ export function ChatKanbanConversationDrawer({
             type="button"
             variant="outline"
             size="icon"
-            disabled={sending || !conversationId}
+            disabled={mediaSending || !conversationId}
             title="Enviar imagem"
             onClick={() => imageInputRef.current?.click()}
           >
@@ -332,7 +354,7 @@ export function ChatKanbanConversationDrawer({
             type="button"
             variant="outline"
             size="icon"
-            disabled={sending || !conversationId}
+            disabled={mediaSending || !conversationId}
             title="Usar template interno"
             onClick={() => setTemplatePickerOpen(true)}
           >
@@ -342,7 +364,7 @@ export function ChatKanbanConversationDrawer({
             type="button"
             variant="outline"
             size="icon"
-            disabled={sending || !conversationId}
+            disabled={mediaSending || !conversationId}
             title="Usar modelo WhatsApp (sequência)"
             onClick={() => setWhatsappModelPickerOpen(true)}
           >
@@ -351,11 +373,15 @@ export function ChatKanbanConversationDrawer({
           <Input
             placeholder="Mensagem…"
             value={newMessage}
-            onChange={(ev) => setNewMessage(ev.target.value)}
-            disabled={sending || !conversationId}
+            onChange={(ev) => {
+              const v = ev.target.value;
+              newMessageRef.current = v;
+              setNewMessage(v);
+            }}
+            disabled={!conversationId}
           />
-          <Button type="submit" size="icon" disabled={sending || !newMessage.trim() || !conversationId}>
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          <Button type="submit" size="icon" disabled={!newMessage.trim() || !conversationId}>
+            <Send className="h-4 w-4" />
           </Button>
         </form>
       </SheetContent>

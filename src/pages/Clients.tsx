@@ -99,7 +99,7 @@ import {
 import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
 import { CommercialListingPageHeader } from "@/components/listing/CommercialListingPageHeader";
 import { MobileClientsSearchSheet } from "@/components/clients/MobileClientsSearchSheet";
-import { chatOpenQueryWithReturn } from "@/lib/chatListNavigation";
+import { useFloatingChat } from "@/features/floating-chat";
 import { useFeatureFlag } from "@/hooks/useFeatureFlag";
 import {
   appendClientsListReturnPath,
@@ -169,6 +169,7 @@ const Clients = () => {
   const queryClient = useQueryClient();
   const { canCreate, canEdit, canDelete, canView } = useModulePermissions();
   const hasChat = useFeatureFlag("chat");
+  const floatingChat = useFloatingChat();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get("q") ?? "");
@@ -2227,18 +2228,17 @@ const Clients = () => {
                           </button>
                           <div className="flex items-center gap-1.5 border-t border-border/50 bg-muted/15 px-2 py-1.5">
                             <Button
-                              asChild
+                              type="button"
                               size="sm"
                               variant="secondary"
                               className="h-8 min-w-0 flex-1 touch-manipulation px-2 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void floatingChat.openChatForClient(client.id);
+                              }}
                             >
-                              <Link
-                                to={`/chat${chatOpenQueryWithReturn({ openClientId: client.id })}`}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <MessageCircle className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
-                                Chat
-                              </Link>
+                              <MessageCircle className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+                              Chat
                             </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>

@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { useFloatingChat } from './FloatingChatProvider';
+import { useFloatingChat } from './floatingChatContext';
 import { FloatingConversationList } from './FloatingConversationList';
 import { FloatingConversationWindow } from './FloatingConversationWindow';
 import { MinimizedChatDock } from './MinimizedChatDock';

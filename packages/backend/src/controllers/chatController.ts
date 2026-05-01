@@ -166,6 +166,8 @@ const MAX_MEDIA_BASE64_CHARS = 14 * 1024 * 1024; // ~10MB binário em base64
 const sendMessageSchema = z
   .object({
     conversationId: z.string().uuid(),
+    /** Idempotência / correlação no cliente (UUID v4). */
+    clientMessageId: z.string().uuid().optional(),
     /** Responder mensagem existente (citado no WhatsApp via UazAPI `replyid`). */
     replyToMessageId: z.string().uuid().optional(),
     /** Padrão: texto. Use `image` ou `document` para mídia via `/send/media`. */
@@ -1586,6 +1588,8 @@ async function saveMessage(
     replyPreview?: string | null;
     replySenderName?: string | null;
     replyMessageType?: string | null;
+    /** Idempotência / fila no cliente (coluna dedicada + metadata). */
+    clientMessageId?: string | null;
   }
 ): Promise<{ rowId: string | null; inserted: boolean }> {
   const saveId = randomUUID().substring(0, 8);
@@ -1626,17 +1630,24 @@ async function saveMessage(
   const replyPreview = payload.replyPreview ?? null;
   const replySenderName = payload.replySenderName ?? null;
   const replyMessageType = payload.replyMessageType ?? null;
+  const clientMessageIdForRow =
+    typeof payload.clientMessageId === 'string' && payload.clientMessageId.length > 0
+      ? payload.clientMessageId
+      : null;
 
   try {
-    const messageResult = await pool.query<{ id: string; created_at: string; inserted: boolean }>(
-    `
+    let messageResult: { rows: Array<{ id: string; created_at: string; inserted: boolean }>; rowCount?: number };
+    try {
+      messageResult = await pool.query<{ id: string; created_at: string; inserted: boolean }>(
+        `
     INSERT INTO chat_messages (
       conversation_id, direction, external_message_id, body,
       media, status, sent_at, metadata, provider,
-      reply_to_message_id, reply_to_external_message_id, reply_preview, reply_sender_name, reply_message_type
+      reply_to_message_id, reply_to_external_message_id, reply_preview, reply_sender_name, reply_message_type,
+      client_message_id
     )
     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, 'whatsapp_uazapi',
-      $9, $10, $11, $12, $13)
+      $9, $10, $11, $12, $13, $14)
     ON CONFLICT (conversation_id, external_message_id)
     DO UPDATE SET
       status = COALESCE(EXCLUDED.status, chat_messages.status),
@@ -1654,25 +1665,45 @@ async function saveMessage(
       reply_to_external_message_id = COALESCE(EXCLUDED.reply_to_external_message_id, chat_messages.reply_to_external_message_id),
       reply_preview = COALESCE(EXCLUDED.reply_preview, chat_messages.reply_preview),
       reply_sender_name = COALESCE(EXCLUDED.reply_sender_name, chat_messages.reply_sender_name),
-      reply_message_type = COALESCE(EXCLUDED.reply_message_type, chat_messages.reply_message_type)
+      reply_message_type = COALESCE(EXCLUDED.reply_message_type, chat_messages.reply_message_type),
+      client_message_id = COALESCE(EXCLUDED.client_message_id, chat_messages.client_message_id)
       RETURNING id, created_at, (xmax = 0) AS inserted
   `,
-    [
-      conversationId,
-      direction,
-      payload.externalMessageId,
-      bodyForInsert,
-      JSON.stringify(mediaArr.length > 0 ? mediaArr : []),
-      payload.status,
-      payload.sentAt,
-      JSON.stringify(metadataMerged),
-      replyToMessageId,
-      replyToExternalMessageId,
-      replyPreview,
-      replySenderName,
-      replyMessageType,
-    ]
-  );
+        [
+          conversationId,
+          direction,
+          payload.externalMessageId,
+          bodyForInsert,
+          JSON.stringify(mediaArr.length > 0 ? mediaArr : []),
+          payload.status,
+          payload.sentAt,
+          JSON.stringify(metadataMerged),
+          replyToMessageId,
+          replyToExternalMessageId,
+          replyPreview,
+          replySenderName,
+          replyMessageType,
+          clientMessageIdForRow,
+        ]
+      );
+    } catch (insErr: any) {
+      if (insErr?.code === '23505' && clientMessageIdForRow) {
+        const dup = await pool.query<{ id: string; created_at: string }>(
+          `SELECT id, created_at FROM chat_messages WHERE conversation_id = $1 AND client_message_id = $2::uuid LIMIT 1`,
+          [conversationId, clientMessageIdForRow]
+        );
+        if (dup.rows[0]) {
+          messageResult = {
+            rows: [{ id: dup.rows[0].id, created_at: dup.rows[0].created_at, inserted: false }],
+            rowCount: 1,
+          };
+        } else {
+          throw insErr;
+        }
+      } else {
+        throw insErr;
+      }
+    }
 
     if (messageResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] No row returned from message insert`);
@@ -6792,6 +6823,26 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     );
     const msgType = data.type ?? 'text';
 
+    if (msgType === 'text' && data.clientMessageId) {
+      const dupPred = sqlChatAccessPredicate('$3');
+      const dupQ = await pool.query(
+        `SELECT m.* FROM chat_messages m
+         INNER JOIN chat_conversations c ON c.id = m.conversation_id
+         WHERE m.conversation_id = $1 AND m.client_message_id = $2::uuid
+         AND ${dupPred}
+         LIMIT 1`,
+        [data.conversationId, data.clientMessageId, userId]
+      );
+      if (dupQ.rowCount && dupQ.rows[0]) {
+        const row: any = dupQ.rows[0];
+        res.status(200).json({
+          message: { ...row, message_contract: contractFromDbRow(row) },
+          duplicate: true,
+        });
+        return;
+      }
+    }
+
     let messageResponse: AnyObject;
     let savedRowId: string | null = null;
     const localTrackId = `track_${randomUUID()}`;
@@ -6956,7 +7007,13 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         messageKind: 'text',
         status: 'queued',
         sentAt: new Date(),
-        metadata: { source: 'send/text', track_id: localTrackId, provisional: true },
+        clientMessageId: data.clientMessageId ?? null,
+        metadata: {
+          source: 'send/text',
+          track_id: localTrackId,
+          provisional: true,
+          ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
+        },
         ...(replyContext
           ? {
               replyToMessageId: replyContext.replyToMessageId,
@@ -7186,8 +7243,18 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       }
     }
 
+    let outgoingMessageDto: AnyObject | null = null;
+    if (savedMessageResult.rows.length > 0) {
+      const row: any = savedMessageResult.rows[0];
+      outgoingMessageDto = {
+        ...row,
+        message_contract: contractFromDbRow(row),
+      };
+    }
+
     res.status(201).json({
       response: messageResponse,
+      ...(outgoingMessageDto ? { message: outgoingMessageDto } : {}),
     });
   } catch (error: any) {
     console.error('Error sending message:', error);

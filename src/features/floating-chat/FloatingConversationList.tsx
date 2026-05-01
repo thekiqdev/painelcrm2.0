@@ -12,7 +12,12 @@ import { Badge } from '@/components/ui/badge';
 import { chatService, type ChatConversation } from '@/services/chat';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { cn } from '@/lib/utils';
-import { useFloatingChat } from './FloatingChatProvider';
+import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
+import {
+  applyConversationDragPreview,
+  conversationDragPreviewFromChatConversation,
+} from '@/lib/conversationDragPreview';
+import { useFloatingChat } from './floatingChatContext';
 import { FLOATING_LIST_WIDTH_PX } from './constants';
 
 type QuickFilter = 'all' | 'mine' | 'unread';
@@ -92,6 +97,7 @@ export function FloatingConversationList({ className }: { className?: string }) 
           variant="ghost"
           size="sm"
           className="h-8 gap-1 text-xs"
+          draggable={false}
           onClick={() => navigate('/chat')}
         >
           <ExternalLink className="h-3.5 w-3.5" />
@@ -120,6 +126,7 @@ export function FloatingConversationList({ className }: { className?: string }) 
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar…"
+            draggable={false}
             className="h-8 border-neutral-200 bg-white pl-8 text-sm dark:border-slate-700 dark:bg-slate-950"
           />
         </div>
@@ -145,7 +152,22 @@ export function FloatingConversationList({ className }: { className?: string }) 
                   <li key={c.id}>
                     <button
                       type="button"
-                      className="flex w-full items-start gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-neutral-100 dark:hover:bg-slate-800"
+                      draggable
+                      className="flex w-full cursor-grab items-start gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-neutral-100 active:cursor-grabbing dark:hover:bg-slate-800"
+                      title="Arrastar para o Kanban"
+                      onDragStart={(e) => {
+                        beginConversationDragSession(e.dataTransfer, {
+                          type: 'conversation',
+                          conversationId: c.id,
+                          hasClient: Boolean(c.client_id),
+                          hasLead: Boolean(c.leadId),
+                        });
+                        applyConversationDragPreview(
+                          e,
+                          conversationDragPreviewFromChatConversation(c, c.id),
+                        );
+                      }}
+                      onDragEnd={() => endConversationDragSession()}
                       onClick={() => openOrFocusConversation(c.id)}
                     >
                       <Avatar className="h-9 w-9 shrink-0 border border-border/50">

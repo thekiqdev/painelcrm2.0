@@ -9,6 +9,11 @@ import {
   pickerConversationLabel,
   pickerConversationPhoneLine,
 } from '@/utils/chatKanbanCardDisplay';
+import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
+import {
+  applyConversationDragPreview,
+  conversationDragPreviewFromChatConversation,
+} from '@/lib/conversationDragPreview';
 
 type Props = {
   search: string;
@@ -68,9 +73,24 @@ export function ChatKanbanConversationPicker({
                   <li key={c.id}>
                     <button
                       type="button"
+                      draggable
+                      title="Arrastar para uma coluna do quadro"
+                      onDragStart={(e) => {
+                        beginConversationDragSession(e.dataTransfer, {
+                          type: 'conversation',
+                          conversationId: c.id,
+                          hasClient: Boolean(c.client_id),
+                          hasLead: Boolean(c.leadId),
+                        });
+                        applyConversationDragPreview(
+                          e,
+                          conversationDragPreviewFromChatConversation(c, c.id),
+                        );
+                      }}
+                      onDragEnd={() => endConversationDragSession()}
                       onClick={() => onSelect(c.id)}
                       className={cn(
-                        'w-full text-left rounded-md px-3 py-2.5 text-sm transition-colors border border-transparent',
+                        'w-full text-left rounded-md px-3 py-2.5 text-sm transition-colors border border-transparent cursor-grab active:cursor-grabbing',
                         active
                           ? 'bg-primary/10 border-primary/25 ring-1 ring-primary/20'
                           : 'hover:bg-muted/70',

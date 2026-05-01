@@ -64,6 +64,8 @@ import {
   navigateBackFromClientProfile,
 } from "@/utils/clientProfileNavigation";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useFloatingChat } from "@/features/floating-chat";
+import { useChatOutboundQueue } from "@/hooks/useChatOutboundQueue";
 import { useForm } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -201,6 +203,7 @@ const ClientProfile = () => {
   const handleProfileBack = useCallback(() => {
     navigateBackFromClientProfile(navigate, location);
   }, [navigate, location]);
+  const { openChatForClient } = useFloatingChat();
   const [client, setClient] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notes, setNotes] = useState<StickyNoteData[]>([]);
@@ -232,6 +235,8 @@ const ClientProfile = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
+  const newMessageRef = useRef("");
+  const isSubmittingCurrentMessageRef = useRef(false);
   const { session } = useAuth();
   const { canDeleteRecord, canView, canCreate, canEdit } = useModulePermissions();
   const isMobile = useIsMobile();
@@ -833,53 +838,48 @@ const ClientProfile = () => {
     }
   }, [id]);
 
-  const handleSendMessage = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!conversationId || !newMessage.trim()) {
-      if (!conversationId) {
-        toast.error("Nenhuma conversa encontrada para este cliente");
-      }
-      return;
-    }
-
-    const text = newMessage.trim();
-    const optimisticId = `optimistic-${crypto.randomUUID()}`;
-    pendingOutgoingOptimisticQueueRef.current.push(optimisticId);
-    setNewMessage("");
-    const optimistic: ChatMessage = {
-      id: optimisticId,
-      conversation_id: conversationId,
-      direction: "outgoing",
-      body: text,
-      status: "queued",
-      sentAt: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
-    setClientMessages((prev) =>
-      [...prev, optimistic].sort((a, b) => {
+  const applyClientMessages = useCallback((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
+    setClientMessages((prev) => {
+      const next = updater(prev);
+      return [...next].sort((a, b) => {
         const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
         const dateB = b.sentAt ? new Date(b.sentAt).getTime() : 0;
         return dateA - dateB;
-      })
-    );
-
-    try {
-      await chatService.sendMessage(conversationId, text);
-      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
-        (id) => id !== optimisticId
-      );
-      await loadClientMessages();
-    } catch (error) {
-      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
-        (id) => id !== optimisticId
-      );
-      setClientMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-      setNewMessage(text);
-      console.error('Erro ao enviar mensagem:', error);
-      toast.error('Não foi possível enviar a mensagem', {
-        description: error instanceof Error ? error.message : undefined,
       });
+    });
+  }, []);
+
+  const afterOutboundItemDone = useCallback(() => {
+    void loadClientMessages();
+  }, [loadClientMessages]);
+
+  const { enqueueText, retryFailed } = useChatOutboundQueue({
+    conversationId,
+    applyMessages: applyClientMessages,
+    pendingWsFifoRef: pendingOutgoingOptimisticQueueRef,
+    afterItemDone: afterOutboundItemDone,
+  });
+
+  useEffect(() => {
+    newMessageRef.current = newMessage;
+  }, [newMessage]);
+
+  const handleSendMessage = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!conversationId) {
+      toast.error("Nenhuma conversa encontrada para este cliente");
+      return;
     }
+    if (isSubmittingCurrentMessageRef.current) return;
+    const text = newMessageRef.current.trim();
+    if (!text) return;
+    isSubmittingCurrentMessageRef.current = true;
+    newMessageRef.current = "";
+    setNewMessage("");
+    enqueueText(text, null);
+    queueMicrotask(() => {
+      isSubmittingCurrentMessageRef.current = false;
+    });
   };
 
   // Scroll para o final das mensagens
@@ -935,13 +935,37 @@ const ClientProfile = () => {
         setClientMessages((prev) => {
           const queue = pendingOutgoingOptimisticQueueRef.current;
           let base = prev;
-          if (queue.length > 0 && normalizedData.direction === "outgoing") {
-            const pendingId = queue.shift();
-            if (pendingId) {
+          if (normalizedData.direction === "outgoing") {
+            const meta = normalizedData.metadata as Record<string, unknown> | null | undefined;
+            const cid =
+              normalizedData.client_message_id ??
+              (meta && typeof meta.client_message_id === "string" ? meta.client_message_id : null);
+            if (typeof cid === "string" && cid.length > 0) {
+              const opt = prev.find(
+                (m) =>
+                  m.direction === "outgoing" &&
+                  typeof m.id === "string" &&
+                  m.id.startsWith("optimistic-") &&
+                  (m.client_message_id === cid ||
+                    (m.metadata &&
+                      typeof m.metadata === "object" &&
+                      (m.metadata as Record<string, unknown>).client_message_id === cid)),
+              );
+              if (opt) {
+                pendingOutgoingOptimisticQueueRef.current = queue.filter((id) => id !== opt.id);
+                base = prev.filter((m) => m.id !== opt.id);
+              }
+            } else if (queue.length > 0) {
+              const pendingId = queue[0];
+              pendingOutgoingOptimisticQueueRef.current = queue.slice(1);
               base = prev.filter((m) => m.id !== pendingId);
             }
           }
-          if (base.some((m) => m.id === normalizedData.id)) {
+          if (normalizedData.id && base.some((m) => m.id === normalizedData.id)) {
+            return base;
+          }
+          const ext = normalizedData.external_message_id;
+          if (ext && base.some((m) => m.external_message_id === ext)) {
             return base;
           }
           return [...base, normalizedData].sort((a, b) => {
@@ -968,7 +992,9 @@ const ClientProfile = () => {
           (m) =>
             (normalizedData.id && m.id === normalizedData.id) ||
             (!!normalizedData.external_message_id &&
-              m.external_message_id === normalizedData.external_message_id)
+              m.external_message_id === normalizedData.external_message_id) ||
+            (!!normalizedData.client_message_id &&
+              m.client_message_id === normalizedData.client_message_id),
         );
         if (idx < 0) return prev;
         const next = [...prev];
@@ -1178,6 +1204,15 @@ const ClientProfile = () => {
                 </CardHeader>
                 <CardContent className="space-y-3 max-md:space-y-2.5 md:space-y-4">
                   <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="md:hidden"
+                      onClick={() => void openChatForClient(client.id)}
+                    >
+                      <MessageSquare className="mr-2 h-4 w-4" />
+                      Conversa WhatsApp
+                    </Button>
                     <Button
                       variant="default"
                       size="sm"
@@ -2084,10 +2119,21 @@ const ClientProfile = () => {
                                       ) : 'Data não disponível'}
                                     </span>
                                     {message.direction === 'outgoing' ? (
-                                      <MessageStatusIndicator
-                                        status={message.status}
-                                        className="h-3 w-3"
-                                      />
+                                      <>
+                                        <MessageStatusIndicator
+                                          status={message.status}
+                                          className="h-3 w-3"
+                                        />
+                                        {message.status === "failed" ? (
+                                          <button
+                                            type="button"
+                                            className="ml-1 text-[10px] font-semibold underline underline-offset-2"
+                                            onClick={() => retryFailed(message)}
+                                          >
+                                            Reenviar
+                                          </button>
+                                        ) : null}
+                                      </>
                                     ) : null}
                                   </span>
                                 </div>
@@ -2106,7 +2152,11 @@ const ClientProfile = () => {
                         <Input 
                           placeholder="Digite uma mensagem..."
                           value={newMessage}
-                          onChange={(event) => setNewMessage(event.target.value)}
+                          onChange={(event) => {
+                            const v = event.target.value;
+                            newMessageRef.current = v;
+                            setNewMessage(v);
+                          }}
                           className="min-h-10 bg-background"
                         />
                         <Button 
@@ -2360,7 +2410,7 @@ const ClientProfile = () => {
                   <div>
                     <CardTitle>Agenda e compromissos</CardTitle>
                     <CardDescription>Compromissos deste cliente no módulo Agenda do Painel</CardDescription>
-                  </div>
+        </div>
                   {canCreate("agenda") ? (
                     <Button size="sm" className="shrink-0" asChild>
                       <Link

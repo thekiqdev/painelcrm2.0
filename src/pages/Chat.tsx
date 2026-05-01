@@ -104,6 +104,12 @@ import {
   matchesOperationalFilter,
 } from '@/lib/chatSlaUi';
 import { replaceChatInboxAvatarCache } from '@/lib/chatNotificationAvatarCache';
+import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
+import { emitKanbanConversationUnread } from '@/lib/kanbanConversationUnreadBridge';
+import {
+  applyConversationDragPreview,
+  conversationDragPreviewFromChatConversation,
+} from '@/lib/conversationDragPreview';
 import { buildChatInboxTemplateContext } from '@/utils/chatInboxTemplateContext';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
@@ -155,6 +161,7 @@ import {
 import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
+import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
 import { teamsService, type Team } from '@/services/teams';
 import { formatPhoneBrDigits } from '@/lib/brazilInputMasks';
@@ -379,6 +386,7 @@ const Chat = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
+  const newMessageRef = useRef('');
   const [whatsappModelPickerOpen, setWhatsappModelPickerOpen] = useState(false);
   const [meetNowConfirmOpen, setMeetNowConfirmOpen] = useState(false);
   const [meetNowSubmitting, setMeetNowSubmitting] = useState(false);
@@ -437,8 +445,6 @@ const Chat = () => {
   const [syncingConversations, setSyncingConversations] = useState(false);
   const [syncingMessages, setSyncingMessages] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
-  /** Envio de texto em curso (API + reload silencioso) — evita duplo envio e permite logs/diagnosticar mobile. */
-  const [textSendInFlight, setTextSendInFlight] = useState(false);
   const [currentLead, setCurrentLead] = useState<any | null>(null);
   const [currentClient, setCurrentClient] = useState<any | null>(null);
   const [loadingLead, setLoadingLead] = useState(false);
@@ -529,7 +535,7 @@ const Chat = () => {
   /** Logs temporários (dev + mobile + thread) — diagnosticar composer. Remover quando estável. */
   useEffect(() => {
     if (!import.meta.env.DEV || !isMobile || !routeConversationId) return;
-    const busy = sendingMessage || textSendInFlight;
+    const busy = sendingMessage;
     console.log('[mobile-composer]', {
       isSending: busy,
       disabled: busy,
@@ -538,7 +544,7 @@ const Chat = () => {
       composerMounted: Boolean(composerTextareaRef.current),
       keyboardInset,
     });
-  }, [isMobile, routeConversationId, sendingMessage, textSendInFlight, keyboardInset]);
+  }, [isMobile, routeConversationId, sendingMessage, keyboardInset]);
 
   useEffect(() => {
     setContactProfileOpen(false);
@@ -724,6 +730,24 @@ const Chat = () => {
     },
     [],
   );
+
+  const afterOutboundSendDone = useCallback(() => {
+    const ids = enabledInstanceIdsRef.current;
+    if (ids.size > 0) {
+      void loadConversations(Array.from(ids));
+    }
+  }, [loadConversations]);
+
+  const { enqueueText, retryFailed } = useChatOutboundQueue({
+    conversationId: selectedConversationId,
+    applyMessages: setMessages,
+    pendingWsFifoRef: pendingOutgoingOptimisticQueueRef,
+    afterItemDone: afterOutboundSendDone,
+  });
+
+  useEffect(() => {
+    newMessageRef.current = newMessage;
+  }, [newMessage]);
 
   // Atualizar refs quando valores mudarem
   useEffect(() => {
@@ -1187,9 +1211,29 @@ const Chat = () => {
         setMessages((prev) => {
           const queue = pendingOutgoingOptimisticQueueRef.current;
           let base = prev;
-          if (queue.length > 0 && normalizedMessage.direction === 'outgoing') {
-            const pendingId = queue.shift();
-            if (pendingId) {
+          if (normalizedMessage.direction === 'outgoing') {
+            const meta = normalizedMessage.metadata as Record<string, unknown> | null | undefined;
+            const cid =
+              normalizedMessage.client_message_id ??
+              (meta && typeof meta.client_message_id === 'string' ? meta.client_message_id : null);
+            if (typeof cid === 'string' && cid.length > 0) {
+              const opt = prev.find(
+                (m) =>
+                  m.direction === 'outgoing' &&
+                  typeof m.id === 'string' &&
+                  m.id.startsWith('optimistic-') &&
+                  (m.client_message_id === cid ||
+                    (m.metadata &&
+                      typeof m.metadata === 'object' &&
+                      (m.metadata as Record<string, unknown>).client_message_id === cid)),
+              );
+              if (opt) {
+                pendingOutgoingOptimisticQueueRef.current = queue.filter((id) => id !== opt.id);
+                base = prev.filter((m) => m.id !== opt.id);
+              }
+            } else if (queue.length > 0) {
+              const pendingId = queue[0];
+              pendingOutgoingOptimisticQueueRef.current = queue.slice(1);
               base = prev.filter((m) => m.id !== pendingId);
             }
           }
@@ -2108,6 +2152,7 @@ const Chat = () => {
 
     const conversation = conversations.find((item) => item.id === conversationId);
     if (conversation && (conversation.unreadCount ?? 0) > 0) {
+      emitKanbanConversationUnread(conversationId, 0);
       void chatService
         .markConversationRead(conversationId)
         .then(() => {
@@ -2426,82 +2471,34 @@ const Chat = () => {
 
   const handleSendMessage = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedConversationId || !newMessage.trim()) {
-      return;
-    }
-    if (textSendInFlight) {
-      return;
-    }
+    if (!selectedConversationId) return;
+    const text = newMessageRef.current.trim();
+    if (!text) return;
 
-    const text = newMessage.trim();
-    const replySnap = replyingTo;
-    const replyId = replySnap?.messageId;
-    const optimisticId = `optimistic-${crypto.randomUUID()}`;
-    pendingOutgoingOptimisticQueueRef.current.push(optimisticId);
+    newMessageRef.current = '';
     setNewMessage('');
+    const replySnap = replyingTo;
     setReplyingTo(null);
-    const optimistic: ChatMessage = {
-      id: optimisticId,
-      conversation_id: selectedConversationId,
-      direction: 'outgoing',
-      body: text,
-      status: 'queued',
-      sentAt: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-      ...(replyId && replySnap
-        ? {
-            reply_to_message_id: replyId,
-            reply_preview: replySnap.preview,
-            reply_sender_name: replySnap.senderName,
-          }
-        : {}),
-    };
-    setMessages((prev) => [...prev, optimistic]);
 
-    setTextSendInFlight(true);
-    try {
-      await chatService.sendMessage(selectedConversationId, text, {
-        ...(replyId ? { replyToMessageId: replyId } : {}),
-      });
-      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
-        (id) => id !== optimisticId
-      );
-      await loadMessages(selectedConversationId, { silent: true });
-      if (enabledInstanceIds.size > 0) {
-        loadConversations(Array.from(enabledInstanceIds));
-      }
-      // Removido toast de sucesso para evitar notificação a cada envio
-    } catch (error) {
-      pendingOutgoingOptimisticQueueRef.current = pendingOutgoingOptimisticQueueRef.current.filter(
-        (id) => id !== optimisticId
-      );
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-      setNewMessage(text);
-      if (replySnap) setReplyingTo(replySnap);
-      console.error('Erro ao enviar mensagem:', error);
-      toast.error('Não foi possível enviar a mensagem', {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    } finally {
-      setTextSendInFlight(false);
-      if (isMobile && routeConversationId) {
+    enqueueText(text, replySnap);
+
+    if (isMobile && routeConversationId) {
+      requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            const ta = composerTextareaRef.current;
-            ta?.focus({ preventScroll: true });
-            if (import.meta.env.DEV) {
-              console.log('[mobile-composer]', {
-                isSending: false,
-                disabled: false,
-                hasText: Boolean(ta?.value?.trim()),
-                activeElement: typeof document !== 'undefined' ? document.activeElement?.tagName : undefined,
-                composerMounted: Boolean(ta),
-                phase: 'after-send-focus',
-              });
-            }
-          });
+          const ta = composerTextareaRef.current;
+          ta?.focus({ preventScroll: true });
+          if (import.meta.env.DEV) {
+            console.log('[mobile-composer]', {
+              isSending: false,
+              disabled: false,
+              hasText: Boolean(ta?.value?.trim()),
+              activeElement: typeof document !== 'undefined' ? document.activeElement?.tagName : undefined,
+              composerMounted: Boolean(ta),
+              phase: 'after-send-focus',
+            });
+          }
         });
-      }
+      });
     }
   };
 
@@ -2754,6 +2751,7 @@ const Chat = () => {
   const handleMarkConversationRead = async () => {
     if (!selectedConversationId) return;
     try {
+      emitKanbanConversationUnread(selectedConversationId, 0);
       await chatService.markConversationRead(selectedConversationId, true);
       toast.success('Conversa marcada como lida');
       if (enabledInstanceIds.size > 0) {
@@ -3552,16 +3550,39 @@ const Chat = () => {
       Boolean(identity.phoneLine) && identity.displayName.trim() !== identity.phoneLine.trim();
 
     return (
-      <button
-      key={conversation.id}
-        type="button"
+      <div
+        key={conversation.id}
+        role="button"
+        tabIndex={0}
+        draggable
+        title="Arrastar para o Kanban (solte numa coluna do quadro)"
+        onDragStart={(e) => {
+          beginConversationDragSession(e.dataTransfer, {
+            type: 'conversation',
+            conversationId: conversation.id,
+            hasClient: Boolean(conversation.client_id),
+            hasLead: Boolean(conversation.leadId),
+          });
+          applyConversationDragPreview(
+            e,
+            conversationDragPreviewFromChatConversation(conversation, conversation.id),
+          );
+        }}
+        onDragEnd={() => endConversationDragSession()}
         onClick={() => {
           chatCrmListReturnPathRef.current = null;
           handleSelectConversation(conversation.id);
         }}
+        onKeyDown={(ke) => {
+          if (ke.key === 'Enter' || ke.key === ' ') {
+            ke.preventDefault();
+            chatCrmListReturnPathRef.current = null;
+            handleSelectConversation(conversation.id);
+          }
+        }}
         className={cn(
           'my-0.5 box-border w-full max-w-full min-w-0 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors active:bg-muted/40 md:min-h-0 md:px-2 md:py-1.5',
-          'touch-manipulation',
+          'touch-manipulation cursor-grab active:cursor-grabbing',
           isActive
             ? 'bg-primary/10 shadow-none ring-1 ring-primary/25 dark:bg-primary/15 dark:ring-primary/35'
             : 'bg-background/50 hover:border-border/40 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
@@ -3639,7 +3660,7 @@ const Chat = () => {
           </div>
         </div>
         </div>
-      </button>
+      </div>
   );
   };
 
@@ -4519,10 +4540,21 @@ const Chat = () => {
                                       >
                                         <span>{formatHour(message.sentAt)}</span>
                                         {message.direction === 'outgoing' ? (
-                                          <MessageStatusIndicator
-                                            status={message.status}
-                                            className="h-3 w-3"
-                                          />
+                                          <>
+                                            <MessageStatusIndicator
+                                              status={message.status}
+                                              className="h-3 w-3"
+                                            />
+                                            {message.status === 'failed' ? (
+                                              <button
+                                                type="button"
+                                                className="ml-1 text-[10px] font-semibold underline underline-offset-2"
+                                                onClick={() => retryFailed(message)}
+                                              >
+                                                Reenviar
+                                              </button>
+                                            ) : null}
+                                          </>
                                         ) : null}
                                       </span>
                                 </div>
@@ -4699,7 +4731,7 @@ const Chat = () => {
                                   type="button"
                                   variant="outline"
                                   size="icon"
-                                  disabled={sendingMessage || textSendInFlight}
+                                  disabled={sendingMessage}
                                   className="pointer-events-auto h-9 w-9 shrink-0 md:h-9 md:w-9"
                                   title="Ações rápidas"
                                   aria-label="Ações rápidas"
@@ -4713,7 +4745,7 @@ const Chat = () => {
                                 className="z-[80] w-56"
                               >
                                 <DropdownMenuItem
-                                  disabled={sendingMessage || textSendInFlight}
+                                  disabled={sendingMessage}
                                   onSelect={(ev) => {
                                     ev.preventDefault();
                                     imageFileInputRef.current?.click();
@@ -4723,7 +4755,7 @@ const Chat = () => {
                                   Enviar imagem
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  disabled={sendingMessage || textSendInFlight}
+                                  disabled={sendingMessage}
                                   onSelect={(ev) => {
                                     ev.preventDefault();
                                     documentFileInputRef.current?.click();
@@ -4733,7 +4765,7 @@ const Chat = () => {
                                   Enviar documento
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  disabled={sendingMessage || textSendInFlight || !selectedConversationId}
+                                  disabled={sendingMessage || !selectedConversationId}
                                   onSelect={(ev) => {
                                     ev.preventDefault();
                                     setWhatsappModelPickerOpen(true);
@@ -4747,7 +4779,7 @@ const Chat = () => {
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
                                       disabled={
-                                        sendingMessage || textSendInFlight || meetNowSubmitting || !selectedConversationId
+                                        sendingMessage || meetNowSubmitting || !selectedConversationId
                                       }
                                       onSelect={(ev) => {
                                         ev.preventDefault();
@@ -4759,7 +4791,7 @@ const Chat = () => {
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       disabled={
-                                        sendingMessage || textSendInFlight || meetNowSubmitting || !selectedConversationId
+                                        sendingMessage || meetNowSubmitting || !selectedConversationId
                                       }
                                       onSelect={(ev) => {
                                         ev.preventDefault();
@@ -4780,7 +4812,7 @@ const Chat = () => {
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       disabled={
-                                        sendingMessage || textSendInFlight || scheduleLaterBusy || !selectedConversationId
+                                        sendingMessage || scheduleLaterBusy || !selectedConversationId
                                       }
                                       onSelect={(ev) => {
                                         ev.preventDefault();
@@ -4799,12 +4831,16 @@ const Chat = () => {
                               rows={1}
                               placeholder="Digite uma mensagem"
                               value={newMessage}
-                              aria-busy={sendingMessage || textSendInFlight}
-                            onChange={(event) => setNewMessage(event.target.value)}
+                              aria-busy={sendingMessage}
+                            onChange={(event) => {
+                              const v = event.target.value;
+                              newMessageRef.current = v;
+                              setNewMessage(v);
+                            }}
                               onKeyDown={(e) => {
-                                if (!isMobile) return;
                                 if (e.key !== 'Enter' || e.shiftKey) return;
                                 e.preventDefault();
+                                if (!newMessageRef.current.trim()) return;
                                 void handleSendMessage(e as unknown as React.FormEvent<HTMLFormElement>);
                               }}
                               enterKeyHint="send"
@@ -4815,7 +4851,7 @@ const Chat = () => {
                             <Button 
                               type="submit" 
                               size="icon"
-                            disabled={!newMessage.trim() || textSendInFlight || sendingMessage}
+                            disabled={!newMessage.trim() || sendingMessage}
                             className="h-9 w-9 shrink-0 md:h-9 md:w-9"
                             >
                               <Send className="h-4 w-4 md:h-4 md:w-4" />

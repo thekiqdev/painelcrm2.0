@@ -164,6 +164,14 @@ const patchCardSchema = z.object({
   move_confirmed: z.boolean().optional(),
 });
 
+const attachConversationSchema = z.object({
+  board_id: z.string().uuid(),
+  column_id: z.string().uuid(),
+  conversation_id: z.string().uuid(),
+  move_reason: z.string().max(2000).optional(),
+  move_confirmed: z.boolean().optional(),
+});
+
 /** Mesma regra de partilha que getConversations com inboxScope = tenant. */
 export async function conversationVisibleToTenantUser(
   conversationId: string,
@@ -1276,6 +1284,86 @@ export async function createCard(req: AuthRequest, res: Response): Promise<void>
     }
     console.error('[chatKanban] createCard', e);
     res.status(500).json({ error: e?.message || 'Erro ao criar card' });
+  }
+}
+
+/**
+ * Anexa conversa ao quadro: cria cartão se ainda não existir neste board; caso contrário move para a coluna (idempotente por board+conversation).
+ */
+export async function attachConversation(req: AuthRequest, res: Response): Promise<void> {
+  const prevParams = { ...req.params };
+  const prevBody = req.body;
+  const restoreReq = () => {
+    (req as AuthRequest & { params: typeof prevParams }).params = prevParams;
+    (req as AuthRequest & { body: unknown }).body = prevBody;
+  };
+  try {
+    const tenantId = requireTenantId(req, res);
+    if (!tenantId) return;
+    const userId = ensureUserIdForInsert(req);
+    const bodyParsed = attachConversationSchema.parse(req.body || {});
+    const { board_id, column_id, conversation_id, move_reason, move_confirmed } = bodyParsed;
+
+    if (!(await requireVisibleKanbanBoard(req, res, tenantId, board_id))) return;
+    const column = await loadColumn(tenantId, column_id);
+    if (!column || column.board_id !== board_id) {
+      res.status(400).json({ error: 'Coluna inválida ou não pertence a este board' });
+      return;
+    }
+    const visible = await conversationVisibleToTenantUser(conversation_id, userId);
+    if (!visible) {
+      res.status(403).json({ error: 'Conversa não encontrada ou sem acesso para esta empresa' });
+      return;
+    }
+
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id FROM chat_kanban_cards
+       WHERE tenant_id = $1 AND board_id = $2 AND conversation_id = $3 AND archived_at IS NULL
+       LIMIT 1`,
+      [tenantId, board_id, conversation_id],
+    );
+    const existingId = existing.rows[0]?.id ?? null;
+
+    if (existingId) {
+      const position = await nextCardPosition(column_id);
+      (req as AuthRequest & { params: Record<string, string> }).params = {
+        ...prevParams,
+        cardId: existingId,
+      };
+      (req as AuthRequest & { body: Record<string, unknown> }).body = {
+        column_id,
+        position,
+        ...(typeof move_reason === 'string' && move_reason.trim() ? { move_reason: move_reason.trim() } : {}),
+        ...(move_confirmed === true ? { move_confirmed: true } : {}),
+      };
+      await patchCard(req, res);
+      return;
+    }
+
+    (req as AuthRequest & { params: Record<string, string> }).params = {
+      ...prevParams,
+      boardId: board_id,
+    };
+    (req as AuthRequest & { body: Record<string, unknown> }).body = {
+      conversation_id,
+      column_id,
+    };
+    await createCard(req, res);
+  } catch (e: any) {
+    if (e instanceof z.ZodError) {
+      if (!res.headersSent) {
+        res.status(400).json({ error: e.errors.map((x) => x.message).join('; ') });
+      }
+      return;
+    }
+    if (e?.message === 'Tenant required' || e?.message === 'Authentication required') {
+      if (!res.headersSent) res.status(403).json({ error: 'Autenticação ou empresa obrigatória' });
+      return;
+    }
+    console.error('[chatKanban] attachConversation', e);
+    if (!res.headersSent) res.status(500).json({ error: e?.message || 'Erro ao anexar conversa' });
+  } finally {
+    restoreReq();
   }
 }
 

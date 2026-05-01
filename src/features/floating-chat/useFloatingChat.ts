@@ -1,1 +1,1 @@
-export { useFloatingChat, useFloatingChatOptional } from './FloatingChatProvider';
+export { useFloatingChat, useFloatingChatOptional } from './floatingChatContext';

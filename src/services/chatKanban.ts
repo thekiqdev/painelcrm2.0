@@ -1,6 +1,8 @@
 import { apiClient } from '@/integrations/api/client';
 
 const BASE = '/api/chat/kanban';
+/** Alias do contrato pedido (também registado em `/api/chat/kanban/attach-conversation`). */
+const ATTACH_CONVERSATION_PATH = '/api/kanban/attach-conversation';
 
 export type ChatKanbanBoardVisibilityMode = 'tenant_all' | 'restricted';
 
@@ -214,5 +216,28 @@ export const chatKanbanService = {
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao atualizar card');
     return res.data as ChatKanbanBoardCard;
+  },
+
+  /**
+   * Cria cartão no quadro ou move o existente (uma conversa por board).
+   * Erros com `code` KANBAN_MOVE_* devem ser tratados na UI (motivo / confirmação).
+   */
+  async attachConversation(payload: {
+    board_id: string;
+    column_id: string;
+    conversation_id: string;
+    move_reason?: string;
+    move_confirmed?: boolean;
+  }): Promise<ChatKanbanBoardCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }> {
+    const res = await apiClient.post<
+      ChatKanbanBoardCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }
+    >(ATTACH_CONVERSATION_PATH, payload);
+    if (res.error) {
+      const err = new Error(res.error) as Error & { code?: string };
+      if (res.code) err.code = res.code;
+      throw err;
+    }
+    if (!res.data) throw new Error('Falha ao anexar conversa ao quadro');
+    return res.data;
   },
 };

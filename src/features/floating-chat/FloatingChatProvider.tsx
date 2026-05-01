@@ -1,19 +1,15 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { chatService } from '@/services/chat';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
+import { emitKanbanConversationUnread } from '@/lib/kanbanConversationUnreadBridge';
+import { resolveConversationIdForCrmRecord } from '@/lib/resolveChatConversationForCrm';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { toast } from '@/components/ui/sonner';
 import { FLOATING_CHAT_MAX_EXPANDED } from './constants';
+import { MobileConversationOverlay } from './MobileConversationOverlay';
 import { isFloatingChatEscapeBlocked } from './floatingChatEscapeGuard';
 import {
   loadFloatingChatPersisted,
@@ -42,6 +38,11 @@ type FloatingChatContextValue = {
   setComposerDraft: (conversationId: string, text: string) => void;
   instanceIds: string[];
   inboxScope: 'tenant' | 'owner';
+  /** Desktop: janela flutuante; mobile (< md): overlay full-screen sem mudar de rota. */
+  openConversationInContext: (conversationId: string) => void;
+  openChatForClient: (clientId: string) => Promise<void>;
+  openChatForLead: (leadId: string) => Promise<void>;
+  closeMobileConversationOverlay: () => void;
 };
 
 const FloatingChatContext = createContext<FloatingChatContextValue | null>(null);
@@ -52,24 +53,22 @@ function countExpanded(panels: FloatingChatPanel[]): number {
 
 const PERSIST_DEBOUNCE_MS = 160;
 
-async function filterExistingConversationIds(ids: string[]): Promise<Set<string>> {
-  const valid = new Set<string>();
+/** Mantém ID se a conversa existe ou se o erro não for 404 (evita limpar tudo após F5 com API ainda indisponível). */
+async function resolvePersistedConversationIdsToKeep(ids: string[]): Promise<Set<string>> {
+  const keep = new Set<string>();
   await Promise.all(
     ids.map(async (id) => {
-      try {
-        await chatService.getConversationProfile(id);
-        valid.add(id);
-      } catch {
-        /* conversa inexistente ou sem acesso */
-      }
+      const probe = await chatService.probeFloatingChatConversationPersist(id);
+      if (probe === 'valid' || probe === 'uncertain') keep.add(id);
     }),
   );
-  return valid;
+  return keep;
 }
 
 export function FloatingChatProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
   const persistEnabledRef = useRef(false);
   const persistTimerRef = useRef<number | null>(null);
   const latestPersistRef = useRef({
@@ -83,6 +82,10 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const [pulseUntil, setPulseUntil] = useState<Record<string, number>>({});
   const [composerDrafts, setComposerDraftsState] = useState<Record<string, string>>({});
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
+  const [mobileOverlayConversationId, setMobileOverlayConversationId] = useState<string | null>(null);
+  const mobileOverlayConversationIdRef = useRef<string | null>(null);
+  const mobileOverlayPushedRef = useRef(false);
+  const closingMobileViaHistoryRef = useRef(false);
 
   const panelsRef = useRef(panels);
   const activeWindowIdRef = useRef(activeWindowId);
@@ -149,6 +152,25 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     };
   }, [listOpen, panels, activeWindowId]);
 
+  /** F5 / fecho de aba: o debounce de 160ms pode não disparar — grava estado atual de imediato. */
+  useEffect(() => {
+    const flush = () => {
+      if (!persistEnabledRef.current) return;
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+      const { listOpen: lo, panels: ps, activeWindowId: aw } = latestPersistRef.current;
+      saveFloatingChatPersisted(panelsToPersistedState(ps, aw, lo));
+    };
+    window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
       if (!persistEnabledRef.current) return;
@@ -186,6 +208,10 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       const active = activeWindowIdRef.current;
 
       if (!panel) {
+        if (mobileOverlayConversationIdRef.current === cid) {
+          void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', cid] });
+          void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-meta', cid] });
+        }
         emitChatNavUnreadRefresh();
         void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
         return;
@@ -215,6 +241,25 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   }, [queryClient]);
 
   useEffect(() => {
+    mobileOverlayConversationIdRef.current = mobileOverlayConversationId;
+  }, [mobileOverlayConversationId]);
+
+  useEffect(() => {
+    const onPop = () => {
+      if (closingMobileViaHistoryRef.current) {
+        closingMobileViaHistoryRef.current = false;
+        mobileOverlayPushedRef.current = false;
+        return;
+      }
+      mobileOverlayConversationIdRef.current = null;
+      mobileOverlayPushedRef.current = false;
+      setMobileOverlayConversationId(null);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  useEffect(() => {
     const t = window.setInterval(() => {
       const now = Date.now();
       setPulseUntil((prev) => {
@@ -232,34 +277,49 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     return () => window.clearInterval(t);
   }, []);
 
-  /** Validar IDs restaurados (não depende da lista de conversas já carregada). */
+  /**
+   * Remover só conversas confirmadas como inexistentes (404).
+   * Não correr enquanto o auth ainda carrega — evita pedidos sem sessão estável e “limpezas” em falso.
+   */
   useEffect(() => {
-    if (!user?.id) return;
+    if (authLoading || !user?.id) return;
     let cancelled = false;
     const t = window.setTimeout(() => {
       const current = panelsRef.current;
       const ids = [...new Set(current.map((p) => p.conversationId))];
       if (ids.length === 0) return;
       void (async () => {
-        const valid = await filterExistingConversationIds(ids);
+        const keep = await resolvePersistedConversationIdsToKeep(ids);
         if (cancelled) return;
         setPanels((prev) => {
-          const next = prev.filter((p) => valid.has(p.conversationId));
+          const next = prev.filter((p) => keep.has(p.conversationId));
           return next.length === prev.length ? prev : next;
         });
-        setActiveWindowId((prev) => (prev && valid.has(prev) ? prev : null));
+        setActiveWindowId((prev) => (prev && keep.has(prev) ? prev : null));
       })();
     }, 0);
     return () => {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [user?.id]);
+  }, [user?.id, authLoading]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       if (isFloatingChatEscapeBlocked()) return;
+
+      if (mobileOverlayConversationIdRef.current) {
+        event.preventDefault();
+        mobileOverlayConversationIdRef.current = null;
+        setMobileOverlayConversationId(null);
+        if (mobileOverlayPushedRef.current) {
+          mobileOverlayPushedRef.current = false;
+          closingMobileViaHistoryRef.current = true;
+          window.history.back();
+        }
+        return;
+      }
 
       const aw = activeWindowIdRef.current;
       const list = panelsRef.current;
@@ -301,6 +361,16 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     });
   }, []);
 
+  const closeMobileConversationOverlay = useCallback(() => {
+    mobileOverlayConversationIdRef.current = null;
+    setMobileOverlayConversationId(null);
+    if (mobileOverlayPushedRef.current) {
+      mobileOverlayPushedRef.current = false;
+      closingMobileViaHistoryRef.current = true;
+      window.history.back();
+    }
+  }, []);
+
   const openOrFocusConversation = useCallback(
     (conversationId: string) => {
       setActiveWindowId(conversationId);
@@ -335,6 +405,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       });
       setListOpen(false);
       clearPulseFor(conversationId);
+      emitKanbanConversationUnread(conversationId, 0);
       void chatService.markConversationRead(conversationId).then(() => {
         emitChatNavUnreadRefresh();
         void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
@@ -342,6 +413,72 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     },
     [clearPulseFor, queryClient],
   );
+
+  const openConversationInContext = useCallback(
+    (conversationId: string) => {
+      if (isMobile) {
+        mobileOverlayConversationIdRef.current = conversationId;
+        setMobileOverlayConversationId(conversationId);
+        if (!mobileOverlayPushedRef.current) {
+          mobileOverlayPushedRef.current = true;
+          window.history.pushState({ painelcrmMobileChat: true }, '', window.location.href);
+        }
+        clearPulseFor(conversationId);
+        emitKanbanConversationUnread(conversationId, 0);
+        void chatService.markConversationRead(conversationId).then(() => {
+          emitChatNavUnreadRefresh();
+          void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+        });
+      } else {
+        openOrFocusConversation(conversationId);
+      }
+    },
+    [isMobile, clearPulseFor, queryClient, openOrFocusConversation],
+  );
+
+  const openChatForClient = useCallback(
+    async (clientId: string) => {
+      const cid = await resolveConversationIdForCrmRecord({
+        clientId,
+        instanceIds,
+        inboxScope,
+      });
+      if (!cid) {
+        toast.info('Nenhuma conversa WhatsApp encontrada para este cliente.');
+        return;
+      }
+      openConversationInContext(cid);
+    },
+    [instanceIds, inboxScope, openConversationInContext],
+  );
+
+  const openChatForLead = useCallback(
+    async (leadId: string) => {
+      const cid = await resolveConversationIdForCrmRecord({
+        leadId,
+        instanceIds,
+        inboxScope,
+      });
+      if (!cid) {
+        toast.info('Nenhuma conversa WhatsApp encontrada para este lead.');
+        return;
+      }
+      openConversationInContext(cid);
+    },
+    [instanceIds, inboxScope, openConversationInContext],
+  );
+
+  useEffect(() => {
+    const onOpenFromHost = (ev: Event) => {
+      const d = (ev as CustomEvent<{ conversationId?: string }>).detail;
+      const id = d?.conversationId;
+      if (typeof id === 'string' && id.length > 0) {
+        openConversationInContext(id);
+      }
+    };
+    window.addEventListener('painelcrm:floating-chat-open', onOpenFromHost);
+    return () => window.removeEventListener('painelcrm:floating-chat-open', onOpenFromHost);
+  }, [openConversationInContext]);
 
   const minimizePanel = useCallback((conversationId: string) => {
     setPanels((prev) =>
@@ -373,6 +510,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
         }
         return next;
       });
+      emitKanbanConversationUnread(conversationId, 0);
       void chatService.markConversationRead(conversationId).then(() => {
         emitChatNavUnreadRefresh();
         void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
@@ -409,6 +547,10 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       setComposerDraft,
       instanceIds,
       inboxScope,
+      openConversationInContext,
+      openChatForClient,
+      openChatForLead,
+      closeMobileConversationOverlay,
     }),
     [
       listOpen,
@@ -425,20 +567,22 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       setComposerDraft,
       instanceIds,
       inboxScope,
+      openConversationInContext,
+      openChatForClient,
+      openChatForLead,
+      closeMobileConversationOverlay,
     ],
   );
 
-  return <FloatingChatContext.Provider value={value}>{children}</FloatingChatContext.Provider>;
-}
-
-export function useFloatingChat(): FloatingChatContextValue {
-  const ctx = useContext(FloatingChatContext);
-  if (!ctx) {
-    throw new Error('useFloatingChat must be used within FloatingChatProvider');
-  }
-  return ctx;
-}
-
-export function useFloatingChatOptional(): FloatingChatContextValue | null {
-  return useContext(FloatingChatContext);
+  return (
+    <FloatingChatContext.Provider value={value}>
+      {children}
+      {mobileOverlayConversationId ? (
+        <MobileConversationOverlay
+          conversationId={mobileOverlayConversationId}
+          onClose={closeMobileConversationOverlay}
+        />
+      ) : null}
+    </FloatingChatContext.Provider>
+  );
 }

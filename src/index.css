@@ -161,6 +161,25 @@
     animation: floating-chat-minimized-pulse 1.1s ease-out 2;
   }
 
+  /** Kanban: destaque breve ao receber mensagem (combina com badge de não lidas). */
+  @keyframes kanban-card-unread-attn {
+    0%,
+    100% {
+      box-shadow:
+        0 1px 2px 0 rgb(0 0 0 / 0.05),
+        0 0 0 0 rgb(59 130 246 / 0);
+    }
+    35% {
+      box-shadow:
+        0 1px 2px 0 rgb(0 0 0 / 0.06),
+        0 0 0 2px rgb(59 130 246 / 0.28);
+    }
+  }
+
+  .animate-kanban-card-unread-attn {
+    animation: kanban-card-unread-attn 3.2s ease-out 1;
+  }
+
   .line-clamp-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;

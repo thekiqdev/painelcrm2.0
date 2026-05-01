@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { ExternalLink, Minus, Send, X } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Send } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,18 +13,13 @@ import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator
 import { chatService, type ChatConversation, type ChatMessage } from '@/services/chat';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
+import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
-import { FLOATING_WINDOW_WIDTH_PX, FLOATING_Z_WINDOWS } from './constants';
 import { floatingAttendanceLabel } from './attendanceUi';
 import { Badge } from '@/components/ui/badge';
-import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
-import {
-  applyConversationDragPreview,
-  conversationDragPreviewFromChatConversation,
-} from '@/lib/conversationDragPreview';
 
-const FLOATING_Z_WINDOW_ACTIVE = 49;
+const OVERLAY_Z = 160;
 
 function formatHour(d: string | Date | undefined): string {
   if (!d) return '';
@@ -34,31 +30,18 @@ function formatHour(d: string | Date | undefined): string {
   }
 }
 
-export function FloatingConversationWindow({
-  conversationId,
-  rightPx,
-  isActive,
-  onFocusWindow,
-}: {
+type Props = {
   conversationId: string;
-  /** Distância da borda direita (px), do layout engine. */
-  rightPx: number;
-  isActive: boolean;
-  onFocusWindow: () => void;
-}) {
+  onClose: () => void;
+};
+
+export function MobileConversationOverlay({ conversationId, onClose }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const floatingDraftRef = useRef('');
+  const draftRef = useRef('');
   const pendingWsFifoRef = useRef<string[]>([]);
-  const {
-    minimizePanel,
-    closePanel,
-    composerDrafts,
-    setComposerDraft,
-    instanceIds,
-    inboxScope,
-  } = useFloatingChat();
+  const { composerDrafts, setComposerDraft, instanceIds, inboxScope } = useFloatingChat();
 
   const messagesQueryKey = useMemo(
     () => ['floating-chat', 'messages', conversationId] as const,
@@ -72,7 +55,7 @@ export function FloatingConversationWindow({
     [queryClient, messagesQueryKey],
   );
 
-  const afterFloatingSend = useCallback(() => {
+  const afterSend = useCallback(() => {
     void queryClient.invalidateQueries({
       queryKey: ['floating-chat', 'conversation-meta', conversationId],
     });
@@ -83,7 +66,7 @@ export function FloatingConversationWindow({
     conversationId,
     applyMessages,
     pendingWsFifoRef,
-    afterItemDone: afterFloatingSend,
+    afterItemDone: afterSend,
   });
 
   const { data: conversation } = useQuery({
@@ -135,9 +118,7 @@ export function FloatingConversationWindow({
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
   const identity = useMemo(
@@ -145,75 +126,49 @@ export function FloatingConversationWindow({
     [conversation, conversationId],
   );
 
+  const avatarSrc = chatAvatarUrlForImgSrc(identity.avatarUrl);
   const draft = composerDrafts[conversationId] ?? '';
 
   useEffect(() => {
-    floatingDraftRef.current = draft;
+    draftRef.current = draft;
   }, [draft]);
 
-  const submitFloating = useCallback(() => {
-    const t = floatingDraftRef.current.trim();
+  const submit = useCallback(() => {
+    const t = draftRef.current.trim();
     if (!t) return;
-    floatingDraftRef.current = '';
+    draftRef.current = '';
     setComposerDraft(conversationId, '');
     enqueueText(t, null);
   }, [conversationId, setComposerDraft, enqueueText]);
 
-  const rightCss = `calc(${rightPx}px + env(safe-area-inset-right, 0px))`;
+  const root = typeof document !== 'undefined' ? document.body : null;
+  if (!root) return null;
 
-  return (
+  return createPortal(
     <div
       role="dialog"
+      aria-modal="true"
       aria-label={`Chat: ${identity.displayName}`}
-      className={cn(
-        'floating-chat-window fixed flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-lg animate-in zoom-in-95 duration-200 dark:border-slate-800 dark:bg-slate-950',
-      )}
+      className="fixed inset-0 flex flex-col bg-background md:hidden"
       style={{
-        zIndex: isActive ? FLOATING_Z_WINDOW_ACTIVE : FLOATING_Z_WINDOWS,
-        width: FLOATING_WINDOW_WIDTH_PX,
-        height: 'min(460px, calc(100dvh - 120px))',
-        maxHeight: 'calc(100dvh - 120px)',
-        bottom: 'calc(var(--floating-chat-bottom) + env(safe-area-inset-bottom, 0px))',
-        right: rightCss,
-      }}
-      onMouseDown={(e) => {
-        if ((e.target as HTMLElement).closest('[data-floating-chat-skip-focus-mousedown]')) return;
-        onFocusWindow();
+        zIndex: OVERLAY_Z,
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
       }}
     >
-      <div
-        data-floating-chat-skip-focus-mousedown
-        className="floating-chat-window-header flex shrink-0 cursor-grab items-center gap-1.5 border-b border-neutral-200 bg-neutral-50 px-2 py-1.5 active:cursor-grabbing dark:border-slate-800 dark:bg-slate-900"
-        draggable
-        title="Arrastar conversa para o Kanban"
-        onDragStart={(e) => {
-          if (!conversation) {
-            return;
-          }
-          beginConversationDragSession(e.dataTransfer, {
-            type: 'conversation',
-            conversationId,
-            hasClient: Boolean(conversation.client_id),
-            hasLead: Boolean(conversation.leadId),
-          });
-          applyConversationDragPreview(
-            e,
-            conversationDragPreviewFromChatConversation(conversation, conversationId),
-          );
-        }}
-        onDragEnd={() => endConversationDragSession()}
-      >
-        <Avatar className="h-7 w-7 shrink-0 border border-border/50" draggable={false}>
-          {identity.avatarUrl ? (
-            <AvatarImage src={identity.avatarUrl} alt="" className="object-cover" />
-          ) : null}
-          <AvatarFallback className="bg-primary/15 text-[10px] font-medium text-primary">
-            {identity.initials}
+      <header className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-2 pr-1">
+        <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Voltar" onClick={onClose}>
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <Avatar className="h-9 w-9 shrink-0 border border-border/60">
+          {avatarSrc ? <AvatarImage src={avatarSrc} alt="" className="object-cover" /> : null}
+          <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
+            {identity.initials.slice(0, 2).toUpperCase()}
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1">
-            <p className="truncate text-[13px] font-semibold leading-tight">{identity.displayName}</p>
+            <p className="truncate text-sm font-semibold leading-tight">{identity.displayName}</p>
             {(() => {
               const att = floatingAttendanceLabel(conversation?.attendance_status);
               return att ? (
@@ -222,83 +177,43 @@ export function FloatingConversationWindow({
                 </Badge>
               ) : null;
             })()}
-            {(conversation?.unreadCount ?? 0) > 0 ? (
-              <Badge variant="secondary" className="h-4 shrink-0 px-1 py-0 text-[9px] tabular-nums">
-                {(conversation?.unreadCount ?? 0) > 99 ? '99+' : conversation?.unreadCount}
-              </Badge>
-            ) : null}
           </div>
           {identity.phoneLine ? (
-            <p className="truncate text-[10px] text-muted-foreground">{identity.phoneLine}</p>
+            <p className="truncate text-[11px] tabular-nums text-muted-foreground">{identity.phoneLine}</p>
           ) : null}
         </div>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 shrink-0"
-          draggable={false}
-          title="Abrir na central"
-          onClick={() => navigate(`/chat?conversationId=${encodeURIComponent(conversationId)}`)}
+          className="shrink-0"
+          title="Abrir no Chat"
+          aria-label="Abrir no Chat"
+          onClick={() => {
+            onClose();
+            navigate(`/chat/${encodeURIComponent(conversationId)}`);
+          }}
         >
-          <ExternalLink className="h-3.5 w-3.5" />
+          <ExternalLink className="h-4 w-4" />
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0"
-          draggable={false}
-          title="Minimizar"
-          onClick={() => minimizePanel(conversationId)}
-        >
-          <Minus className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0"
-          draggable={false}
-          title="Fechar"
-          onClick={() => closePanel(conversationId)}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      </header>
+
       <div
         ref={scrollRef}
-        draggable
-        title="Arrastar conversa para o Kanban"
-        onDragStart={(e) => {
-          beginConversationDragSession(e.dataTransfer, {
-            type: 'conversation',
-            conversationId,
-            hasClient: Boolean(conversation?.client_id),
-            hasLead: Boolean(conversation?.leadId),
-          });
-          applyConversationDragPreview(
-            e,
-            conversationDragPreviewFromChatConversation(conversation ?? null, conversationId),
-          );
-        }}
-        onDragEnd={() => endConversationDragSession()}
         className={cn(
-          'floating-chat-window-message-history min-h-0 flex-1 cursor-grab overflow-y-auto overscroll-contain bg-neutral-50 active:cursor-grabbing dark:bg-slate-900',
-          '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+          'min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/30 px-2 py-2',
           'touch-pan-y [&_img]:max-h-[min(200px,38dvh)] [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-md [&_img]:object-contain',
         )}
       >
-        <div className="space-y-1.5 px-2 py-1.5">
+        <div className="space-y-1.5 pb-2">
           {isLoading ? (
-            <p className="py-8 text-center text-xs text-muted-foreground">Carregando mensagens…</p>
+            <p className="py-10 text-center text-xs text-muted-foreground">Carregando mensagens…</p>
           ) : messages.length === 0 ? (
-            <p className="py-8 text-center text-xs text-muted-foreground">Sem mensagens.</p>
+            <p className="py-10 text-center text-xs text-muted-foreground">Sem mensagens.</p>
           ) : (
             messages.map((message) => (
               <div
                 key={message.id}
-                draggable={false}
                 className={cn(
                   'flex w-full min-w-0',
                   message.direction === 'outgoing' ? 'justify-end' : 'justify-start',
@@ -306,16 +221,16 @@ export function FloatingConversationWindow({
               >
                 <div
                   className={cn(
-                    'w-fit max-w-[min(100%,17.5rem)] shrink-0 rounded-2xl px-2 py-1 text-[13px] leading-snug shadow-sm',
+                    'w-fit max-w-[min(100%,20rem)] shrink-0 rounded-2xl px-2.5 py-1.5 text-[15px] leading-snug shadow-sm',
                     message.direction === 'outgoing'
                       ? 'bg-primary text-primary-foreground'
-                      : 'border border-neutral-200 bg-white text-foreground dark:border-slate-700 dark:bg-slate-800',
+                      : 'border border-border bg-card text-foreground',
                   )}
                 >
                   <ChatBubbleContent message={message} />
                   <span
                     className={cn(
-                      'mt-0.5 flex items-center gap-1 text-[9px]',
+                      'mt-1 flex items-center gap-1 text-[10px]',
                       message.direction === 'outgoing' ? 'text-primary-foreground/75' : 'text-muted-foreground',
                     )}
                   >
@@ -326,7 +241,7 @@ export function FloatingConversationWindow({
                         {message.status === 'failed' ? (
                           <button
                             type="button"
-                            className="ml-0.5 text-[9px] font-semibold underline underline-offset-2"
+                            className="ml-0.5 text-[10px] font-semibold underline underline-offset-2"
                             onClick={() => retryFailed(message)}
                           >
                             Reenviar
@@ -341,41 +256,41 @@ export function FloatingConversationWindow({
           )}
         </div>
       </div>
-      <div className="floating-chat-window-composer shrink-0 border-t border-neutral-200 bg-white px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950">
-        <div className="flex items-end gap-1.5">
+
+      <div className="shrink-0 border-t border-border bg-background px-2 py-2">
+        <div className="flex items-end gap-2">
           <Textarea
-            draggable={false}
             value={draft}
             onChange={(e) => {
               const v = e.target.value;
-              floatingDraftRef.current = v;
+              draftRef.current = v;
               setComposerDraft(conversationId, v);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                if (!floatingDraftRef.current.trim()) return;
-                submitFloating();
+                if (!draftRef.current.trim()) return;
+                submit();
               }
             }}
             placeholder="Mensagem…"
             rows={2}
-            className="min-h-[44px] flex-1 resize-none border-neutral-200 bg-white text-sm dark:border-slate-700 dark:bg-slate-950"
+            className="min-h-[48px] flex-1 resize-none text-base"
           />
           <Button
             type="button"
             size="icon"
-            className="h-9 w-9 shrink-0 rounded-xl"
+            className="h-11 w-11 shrink-0 rounded-xl"
             title="Enviar"
             aria-label="Enviar"
-            draggable={false}
             disabled={!draft.trim()}
-            onClick={() => submitFloating()}
+            onClick={() => submit()}
           >
             <Send className="h-4 w-4" />
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    root,
   );
 }

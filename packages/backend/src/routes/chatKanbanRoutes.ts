@@ -15,6 +15,7 @@ import {
   createCard,
   patchCard,
   deleteCard,
+  attachConversation,
 } from '../controllers/chatKanbanController.js';
 
 const router = Router();
@@ -37,6 +38,7 @@ router.delete('/columns/:columnId', deleteColumn);
 
 router.get('/boards/:boardId/cards', listCards);
 router.post('/boards/:boardId/cards', createCard);
+router.post('/attach-conversation', attachConversation);
 router.patch('/cards/:cardId', patchCard);
 router.delete('/cards/:cardId', deleteCard);
 
