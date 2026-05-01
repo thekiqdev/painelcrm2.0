@@ -703,6 +703,31 @@ const Chat = () => {
     scheduleOperationsPanelRefresh,
   ]);
 
+  /** Ordenação da lista lateral — mesma regra que nos handlers realtime. */
+  const sortConversationsByRecent = useCallback((list: ChatConversation[]) => {
+    return [...list].sort((a, b) => {
+      const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      return dateB - dateA;
+    });
+  }, []);
+
+  /** Atualiza uma linha sem GET na lista inteira (tempo real / envio). */
+  const bumpConversationListRow = useCallback(
+    (conversationId: string, patch: Partial<ChatConversation>) => {
+      const now = new Date().toISOString();
+      setConversations((prev) => {
+        const idx = prev.findIndex((c) => c.id === conversationId);
+        if (idx < 0) return prev;
+        const row = { ...prev[idx], ...patch, updated_at: patch.updated_at ?? now };
+        const next = [...prev];
+        next[idx] = row;
+        return sortConversationsByRecent(next);
+      });
+    },
+    [sortConversationsByRecent],
+  );
+
   const loadMessages = useCallback(
     async (conversationId: string, opts?: { silent?: boolean }) => {
       const silent = opts?.silent === true;
@@ -731,12 +756,10 @@ const Chat = () => {
     [],
   );
 
+  /** Não recarregar a lista após cada texto — o Socket já emite `new_message` / `conversation.updated`. */
   const afterOutboundSendDone = useCallback(() => {
-    const ids = enabledInstanceIdsRef.current;
-    if (ids.size > 0) {
-      void loadConversations(Array.from(ids));
-    }
-  }, [loadConversations]);
+    scheduleOperationsPanelRefresh();
+  }, [scheduleOperationsPanelRefresh]);
 
   const { enqueueText, retryFailed } = useChatOutboundQueue({
     conversationId: selectedConversationId,
@@ -2156,9 +2179,9 @@ const Chat = () => {
       void chatService
         .markConversationRead(conversationId)
         .then(() => {
-          if (enabledInstanceIdsRef.current.size > 0) {
-            loadConversations(Array.from(enabledInstanceIdsRef.current));
-          }
+          setConversations((prev) =>
+            prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)),
+          );
         })
         .catch((error) => {
           console.error('Erro ao marcar conversa como lida:', error);
@@ -2615,9 +2638,11 @@ const Chat = () => {
         caption: caption || undefined,
       });
       await loadMessages(selectedConversationId, { silent: true });
-      if (enabledInstanceIds.size > 0) {
-        loadConversations(Array.from(enabledInstanceIds));
-      }
+      bumpConversationListRow(selectedConversationId, {
+        lastMessagePreview: caption.trim() ? caption.trim().slice(0, 200) : '[Imagem]',
+        lastMessageAt: new Date().toISOString(),
+      });
+      scheduleOperationsPanelRefresh();
     } catch (error) {
       setNewMessage(caption);
       console.error('Erro ao enviar imagem:', error);
@@ -2657,9 +2682,11 @@ const Chat = () => {
         caption: caption || undefined,
       });
       await loadMessages(selectedConversationId, { silent: true });
-      if (enabledInstanceIds.size > 0) {
-        loadConversations(Array.from(enabledInstanceIds));
-      }
+      bumpConversationListRow(selectedConversationId, {
+        lastMessagePreview: caption.trim() ? caption.trim().slice(0, 200) : '[Documento]',
+        lastMessageAt: new Date().toISOString(),
+      });
+      scheduleOperationsPanelRefresh();
     } catch (error) {
       setNewMessage(caption);
       console.error('Erro ao enviar documento:', error);
@@ -2754,9 +2781,9 @@ const Chat = () => {
       emitKanbanConversationUnread(selectedConversationId, 0);
       await chatService.markConversationRead(selectedConversationId, true);
       toast.success('Conversa marcada como lida');
-      if (enabledInstanceIds.size > 0) {
-        loadConversations(Array.from(enabledInstanceIds));
-      }
+      setConversations((prev) =>
+        prev.map((c) => (c.id === selectedConversationId ? { ...c, unreadCount: 0 } : c)),
+      );
     } catch (error) {
       console.error('Erro ao marcar conversa como lida:', error);
       toast.error('Não foi possível marcar como lida', {
@@ -2976,10 +3003,11 @@ const Chat = () => {
             queueMicrotask(() => scrollMessagesToBottom());
             setTimeout(() => scrollMessagesToBottom(), 50);
           } else {
-            // Se não é a conversa selecionada, atualizar a lista de conversas
-            if (enabledInstanceIds.size > 0) {
-              loadConversations(Array.from(enabledInstanceIds));
-            }
+            bumpConversationListRow(result.conversationId, {
+              lastMessagePreview: '[Notificação]',
+              lastMessageAt: new Date().toISOString(),
+            });
+            scheduleOperationsPanelRefresh();
           }
         } catch (error) {
           console.error('Erro ao sincronizar mensagens após enviar notificação:', error);
@@ -4994,9 +5022,7 @@ const Chat = () => {
           if (selectedConversationId) {
             void loadMessages(selectedConversationId, { silent: true });
           }
-          if (enabledInstanceIds.size > 0) {
-            loadConversations(Array.from(enabledInstanceIds));
-          }
+          scheduleOperationsPanelRefresh();
         }}
       />
 
