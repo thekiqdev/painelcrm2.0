@@ -1,4 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
+import { getDevApiBaseUrl } from '@/lib/devBackendOrigin';
 
 export const REALTIME_EVENTS = {
   messageCreated: 'message.created',
@@ -18,7 +19,17 @@ let socket: Socket | null = null;
 let currentToken: string | null = null;
 
 function getSocketUrl(): string {
-  if (import.meta.env.DEV) return import.meta.env.VITE_API_URL || 'http://localhost:3001';
+  if (import.meta.env.DEV) {
+    const base = getDevApiBaseUrl();
+    if (base !== '') {
+      try {
+        return new URL(base).origin;
+      } catch {
+        /* fallback */
+      }
+    }
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
+  }
   return window.location.origin;
 }
 

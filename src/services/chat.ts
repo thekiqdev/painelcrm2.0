@@ -1,4 +1,4 @@
-import { apiClient } from '@/integrations/api/client';
+import { apiClient, getApiUrl } from '@/integrations/api/client';
 import type { CommunicationProvider } from '@/types/communication';
 import { DEFAULT_COMMUNICATION_PROVIDER } from '@/types/communication';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
@@ -365,8 +365,8 @@ function coerceMediaUrl(u: unknown): string | null {
     const raw = u.trim();
     if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
     if (raw.startsWith('/media/')) {
-      const base = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
-      return `${base}${raw}`;
+      const base = getApiUrl().replace(/\/$/, '');
+      return base ? `${base}${raw}` : raw;
     }
     return raw;
   }

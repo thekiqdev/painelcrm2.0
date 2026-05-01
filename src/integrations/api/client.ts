@@ -1,11 +1,13 @@
+import { getDevApiBaseUrl } from '@/lib/devBackendOrigin';
+
 // Em produção (HTTPS), usar URLs relativas para evitar Mixed Content
 // O Nginx faz proxy de /api para o backend
-// Em desenvolvimento, usar VITE_API_URL ou localhost
+// Em desenvolvimento: ver `getDevApiBaseUrl` (proxy Vite ou VITE_API_URL explícito)
 export const getApiUrl = () => {
-  // Em desenvolvimento, sempre usar VITE_API_URL ou localhost:3001
   if (import.meta.env.DEV) {
-    const envUrl = import.meta.env.VITE_API_URL;
-    return envUrl || 'http://localhost:3001';
+    const dev = getDevApiBaseUrl();
+    if (dev !== '') return dev;
+    return '';
   }
   
   // Em produção (navegador)

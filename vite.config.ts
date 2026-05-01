@@ -7,12 +7,25 @@ import { componentTagger } from "lovable-tagger";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const devPort = parseInt(env.VITE_DEV_PORT || "8080", 10);
+  /** Destino real do backend em dev (não usar VITE_API_URL aqui — pode coincidir com a porta do Vite). */
+  const apiProxyTarget = (env.VITE_API_PROXY_TARGET || "http://127.0.0.1:3001").replace(/\/$/, "");
 
   return {
   server: {
     host: "::",
     // Porta do frontend em dev; use VITE_DEV_PORT no .env para evitar conflito com outro projeto (ex.: 8081)
     port: devPort,
+    proxy: {
+      "/api": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+      },
+      "/socket.io": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
   plugins: [
     react(),
