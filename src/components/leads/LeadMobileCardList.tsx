@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { resolveProfileAvatarUrl } from '@/utils/chatIdentityDisplay';
 import { formatDateOnlyPtBr } from '@/utils/formatCalendarDate';
-import { chatOpenQueryWithReturn } from '@/lib/chatListNavigation';
+import { useFloatingChat } from '@/features/floating-chat';
 
 export type LeadRow = Record<string, unknown> & {
   id: string;
