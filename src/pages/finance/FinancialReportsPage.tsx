@@ -31,6 +31,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 function formatBrl(n: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
@@ -1027,7 +1028,7 @@ const FinancialReportsPage = () => {
                           {c.limit != null ? formatBrl(c.limit) : "—"}
                         </TableCell>
                         <TableCell className="tabular-nums text-sm">
-                          {c.next_due ? c.next_due.slice(0, 10).split("-").reverse().join("/") : "—"}
+                          {c.next_due ? formatDateOnlyPtBr(c.next_due) : "—"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {c.next_expected != null ? formatBrl(c.next_expected) : "—"}

@@ -6,6 +6,7 @@ import {
   getBoardSettings,
   createBoard,
   patchBoard,
+  deleteBoard,
   listColumns,
   createColumn,
   patchColumn,
@@ -28,6 +29,7 @@ router.post('/boards', createBoard);
 router.get('/boards/:boardId', getBoard);
 router.get('/boards/:boardId/settings', getBoardSettings);
 router.patch('/boards/:boardId', patchBoard);
+router.delete('/boards/:boardId', deleteBoard);
 
 router.get('/boards/:boardId/columns', listColumns);
 router.post('/boards/:boardId/columns', createColumn);

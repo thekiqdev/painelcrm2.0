@@ -24,6 +24,7 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { Plus, Landmark } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 const TYPE_LABEL: Record<FinanceAccountType, string> = {
   bank: "Banco",
@@ -190,7 +191,7 @@ const FinanceAccountsPage = () => {
                     {formatBrl(a.current_balance_cents ?? a.opening_balance_cents)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Saldo inicial em {a.opening_balance_date}: {formatBrl(a.opening_balance_cents)}
+                    Saldo inicial em {formatDateOnlyPtBr(a.opening_balance_date)}: {formatBrl(a.opening_balance_cents)}
                   </p>
                 </CardContent>
               </Card>

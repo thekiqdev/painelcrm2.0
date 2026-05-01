@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/sonner";
 import { Plus, RefreshCw } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 const PERIOD_LABEL: Record<string, string> = {
   weekly: "Semanal",
@@ -344,7 +345,7 @@ const FinancialRecurringExpensesPage = () => {
                     const rec = recurringById.get(o.recurring_expense_id);
                     return (
                       <TableRow key={o.id}>
-                        <TableCell className="whitespace-nowrap">{o.due_date}</TableCell>
+                        <TableCell className="whitespace-nowrap">{formatDateOnlyPtBr(o.due_date)}</TableCell>
                         <TableCell>{rec?.description ?? "—"}</TableCell>
                         <TableCell className="tabular-nums">{formatBrlCents(o.amount_cents)}</TableCell>
                         <TableCell>

@@ -58,6 +58,7 @@ import { UnifiedPayableList } from "@/components/finance/UnifiedPayableList";
 import { compareYmd, groupPayableQueue, sumCents, todayYmdLocal } from "@/components/finance/accountsPayableGrouping";
 import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
 import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 function formatBrlCents(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -201,7 +202,9 @@ function PayableDesktopRows(props: {
     <>
       {items.map((it) => (
         <TableRow key={`${it.source}-${it.id}`}>
-          <TableCell className="whitespace-nowrap text-muted-foreground">{paymentYmdForPayableItem(it)}</TableCell>
+          <TableCell className="whitespace-nowrap text-muted-foreground">
+            {formatDateOnlyPtBr(paymentYmdForPayableItem(it))}
+          </TableCell>
           <TableCell className="font-medium max-w-[200px] truncate">{it.description}</TableCell>
           <TableCell className="text-muted-foreground text-sm">{it.category_name ?? "—"}</TableCell>
           <TableCell className="text-right tabular-nums">{formatBrlCents(it.amount_cents)}</TableCell>
@@ -266,8 +269,8 @@ function PayableMobileCards(props: {
               <p className="font-medium leading-snug text-sm md:text-base line-clamp-2">{it.description}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5 md:text-xs">
                 {it.operational_status === "paid"
-                  ? `Pago em ${paymentYmdForPayableItem(it)}`
-                  : `Venc. ${it.due_date}`}
+                  ? `Pago em ${formatDateOnlyPtBr(paymentYmdForPayableItem(it))}`
+                  : `Venc. ${formatDateOnlyPtBr(it.due_date)}`}
               </p>
             </div>
             <p className="text-sm font-semibold tabular-nums shrink-0 md:text-base">{formatBrlCents(it.amount_cents)}</p>
@@ -1461,7 +1464,7 @@ const FinancialAccountsPayablePage = () => {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Vencimento</p>
-                  <p>{detailItem.due_date}</p>
+                  <p>{formatDateOnlyPtBr(detailItem.due_date)}</p>
                 </div>
               </div>
               <div>
@@ -1500,7 +1503,7 @@ const FinancialAccountsPayablePage = () => {
               ) : detailItem.operational_status === "paid" && detailItem.source === "expense_transaction" ? (
                 <div>
                   <p className="text-xs text-muted-foreground">Data contabilística</p>
-                  <p>{detailItem.due_date}</p>
+                  <p>{formatDateOnlyPtBr(detailItem.due_date)}</p>
                 </div>
               ) : null}
               <div>

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
@@ -50,6 +50,8 @@ import {
   COMMERCIAL_TABLE_DESKTOP_WRAP,
 } from "@/lib/commercialListUi";
 import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { prepareLeadsFromCsv, type LeadCsvProfile } from "@/utils/importLeadsCsv";
 
 // Schemas for form validation
 const leadFormSchema = z.object({
@@ -101,6 +103,16 @@ const Leads = () => {
   const { user } = useAuth();
   const { canCreate } = useModulePermissions();
   const canCreateProposals = canCreate("proposals");
+  const canImportLeads = canCreate("leads");
+
+  const leadsCsvInputRef = useRef<HTMLInputElement>(null);
+  const [leadsCsvImportRunning, setLeadsCsvImportRunning] = useState(false);
+  const [leadsCsvImportDialogOpen, setLeadsCsvImportDialogOpen] = useState(false);
+  const [leadsCsvImportSummary, setLeadsCsvImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+    warnings: string[];
+  } | null>(null);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -532,6 +544,82 @@ const Leads = () => {
     setIsProposalSheetOpen(true);
   };
 
+  const handleLeadsCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !canImportLeads) return;
+
+    setLeadsCsvImportRunning(true);
+    try {
+      const text = await file.text();
+      const profilesRes = await apiClient.get<LeadCsvProfile[]>("/api/user-profiles");
+      if (profilesRes.error) throw new Error(profilesRes.error);
+      const profiles = profilesRes.data ?? [];
+
+      const { prepared, skipped } = prepareLeadsFromCsv(text, profiles);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      const warnings: string[] = [];
+      let created = 0;
+      const BATCH = 4;
+
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              if (row.warn) warnings.push(`Linha ${row.lineNumber}: ${row.warn}`);
+              const p = row.payload;
+              const leadData: Record<string, unknown> = {
+                name: p.name,
+                source: p.source || "Importação CSV",
+              };
+              if (p.email) leadData.email = p.email;
+              if (p.phone) leadData.phone = p.phone;
+              if (p.company) leadData.company = p.company;
+              if (p.status) leadData.status = p.status;
+              if (p.notes) leadData.notes = p.notes;
+              if (p.profile_id) leadData.profile_id = p.profile_id;
+
+              const response = await apiClient.post("/api/leads", leadData);
+              if (response.error) throw new Error(response.error);
+              created++;
+            } catch (err) {
+              failed.push({
+                line: row.lineNumber,
+                message: err instanceof Error ? err.message : "Erro ao criar lead",
+              });
+            }
+          }),
+        );
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["leads"] });
+      setLeadsCsvImportSummary({ created, failed, warnings });
+
+      if (failed.length > 0 || warnings.length > 0 || created === 0) {
+        setLeadsCsvImportDialogOpen(true);
+      }
+
+      if (created > 0 && failed.length === 0) {
+        toast.success(`${created} lead${created === 1 ? "" : "s"} importado${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} criado(s); há falhas ou avisos — ver relatório.`);
+      } else if (skipped.length > 0 || failed.length > 0) {
+        toast.error("Nenhum lead criado ou arquivo inválido.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o CSV.");
+    } finally {
+      setLeadsCsvImportRunning(false);
+    }
+  };
+
   const handleProposalCreatedFromLead = (_created: ProposalCreateSuccessPayload, mode: "sent" | "draft") => {
     toast.success(mode === "draft" ? "Rascunho salvo." : "Proposta criada.");
     setIsProposalSheetOpen(false);
@@ -544,10 +632,22 @@ const Leads = () => {
 
   return (
     <CommercialListingPageShell>
+      <input
+        ref={leadsCsvInputRef}
+        type="file"
+        accept=".csv,text/csv,.txt"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleLeadsCsvChange}
+      />
       <LeadHeader
         searchTerm={searchTerm}
         onSearchChange={(e) => setSearchTerm(e.target.value)}
         onAddClick={() => setIsAddDialogOpen(true)}
+        canImport={canImportLeads}
+        importRunning={leadsCsvImportRunning}
+        onImportClick={() => leadsCsvInputRef.current?.click()}
       />
 
       <div className={COMMERCIAL_SUMMARY_GRID_6}>
@@ -834,6 +934,50 @@ const Leads = () => {
             >
               <Trash2 className="h-4 w-4 mr-2" />
               Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={leadsCsvImportDialogOpen} onOpenChange={setLeadsCsvImportDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importação de leads (CSV)</DialogTitle>
+            <DialogDescription>Resumo do ficheiro enviado.</DialogDescription>
+          </DialogHeader>
+          {leadsCsvImportSummary ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">{leadsCsvImportSummary.created}</span> lead(s) criado(s).
+              </p>
+              {leadsCsvImportSummary.warnings.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Avisos</p>
+                  <ScrollArea className="mt-1 h-[220px] rounded-md border p-3 sm:h-[260px]">
+                    <ul className="list-inside list-disc space-y-1 pr-3 text-xs text-muted-foreground">
+                      {leadsCsvImportSummary.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </ScrollArea>
+                </div>
+              ) : null}
+              {leadsCsvImportSummary.failed.length > 0 ? (
+                <ScrollArea className="h-[200px] rounded-md border p-3">
+                  <ul className="space-y-1.5 text-xs">
+                    {leadsCsvImportSummary.failed.map((f, i) => (
+                      <li key={`${f.line}-${i}`}>
+                        Linha {f.line}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setLeadsCsvImportDialogOpen(false)}>
+              Fechar
             </Button>
           </DialogFooter>
         </DialogContent>

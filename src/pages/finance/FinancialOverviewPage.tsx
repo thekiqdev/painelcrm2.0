@@ -16,6 +16,7 @@ import { TrendingDown, TrendingUp, Wallet, CalendarClock, Target } from "lucide-
 import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 function formatBrl(n: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
@@ -354,7 +355,7 @@ const FinancialOverviewPage = () => {
                 .map((o) => (
                   <li key={o.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="font-medium tabular-nums">{o.due_date}</p>
+                      <p className="font-medium tabular-nums">{formatDateOnlyPtBr(o.due_date)}</p>
                       <p className="text-sm text-muted-foreground">
                         {formatBrl(o.amount_cents / 100)} · {o.status === "planned" ? "Planejada" : "Em aberto"}
                       </p>

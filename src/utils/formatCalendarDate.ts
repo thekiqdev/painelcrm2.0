@@ -20,6 +20,7 @@ export function parseApiDateOnlyToLocalDate(raw: string | null | undefined): Dat
   return dt;
 }
 
+/** Exibição padrão Brasil (dd/MM/yyyy) para datas «só dia» da API (YYYY-MM-DD). Usar no UI em vez de ISO cru. */
 export function formatDateOnlyPtBr(raw: string | null | undefined): string {
   const dt = parseApiDateOnlyToLocalDate(raw);
   if (!dt) return "—";

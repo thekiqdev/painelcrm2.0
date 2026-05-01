@@ -149,6 +149,11 @@ export const chatKanbanService = {
     return res.data as ChatKanbanBoard;
   },
 
+  async deleteBoard(boardId: string): Promise<void> {
+    const res = await apiClient.delete(`${BASE}/boards/${boardId}`);
+    if (res.error) throw new Error(res.error);
+  },
+
   async listColumns(boardId: string): Promise<ChatKanbanColumn[]> {
     const res = await apiClient.get<ChatKanbanColumn[]>(`${BASE}/boards/${boardId}/columns`);
     if (res.error) throw new Error(res.error);

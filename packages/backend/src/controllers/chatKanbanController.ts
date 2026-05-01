@@ -50,11 +50,7 @@ import {
 } from '../services/proposalPublicLinkCrmStore.js';
 import type { KanbanAutoCreatedProposalPayload } from '../services/kanbanColumnAutoProposalService.js';
 import { runKanbanAutoCreateProposalInTransaction } from '../services/kanbanColumnAutoProposalService.js';
-import {
-  extractUazapiChatImageUrl,
-  mergeAvatarUrlForPersistence,
-  resolveFinalConversationAvatarUrl,
-} from '../utils/uazapiChatIdentity.js';
+import { resolveConversationAvatarUrlForDisplay } from '../utils/uazapiChatIdentity.js';
 
 /** Modelo oficial (`proposal_templates`) ou legado (`proposals` em draft). */
 async function assertValidKanbanProposalColumnRefs(
@@ -346,17 +342,9 @@ async function kanbanConversationAvatarResolutionFragments(tenantParamIndex: num
   return { joins, resolverSelect };
 }
 
-/** Alinha com `conversationRowForClientApi`: cache/catálogo/CRM antes de CDN/meta. */
+/** Mesma prioridade que a lista do Chat (`normalizeConversation` / avatar para `<img>`). */
 function kanbanResolveConvAvatarUrl(row: Record<string, unknown>): string | null {
-  const layered = resolveFinalConversationAvatarUrl(row);
-  if (layered) return layered;
-  const fromCol =
-    typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null;
-  const meta = row.conv_metadata;
-  const fromMeta = extractUazapiChatImageUrl(
-    meta && typeof meta === 'object' && !Array.isArray(meta) ? (meta as Record<string, unknown>) : null,
-  );
-  return mergeAvatarUrlForPersistence(fromCol, fromMeta);
+  return resolveConversationAvatarUrlForDisplay(row);
 }
 
 function finalizeKanbanEnrichedCardRow(row: Record<string, unknown>): Record<string, unknown> {
@@ -834,6 +822,47 @@ export async function patchBoard(req: AuthRequest, res: Response): Promise<void>
     }
     console.error('[chatKanban] patchBoard', e);
     res.status(500).json({ error: e?.message || 'Erro' });
+  }
+}
+
+/** Elimina o quadro e respetivos dados (colunas, cartões, ACL em cascata). */
+export async function deleteBoard(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = requireTenantId(req, res);
+    if (!tenantId) return;
+    const userId = req.userId!;
+    const { boardId } = req.params;
+    const existing = await loadBoard(tenantId, boardId);
+    if (!existing) {
+      res.status(404).json({ error: 'Board não encontrado' });
+      return;
+    }
+    const accessRow = boardAccessFromRow(existing as Record<string, unknown>);
+    if (!(await userCanManageKanbanBoard(userId, accessRow))) {
+      res.status(403).json({
+        error: 'Apenas o criador do quadro ou administrador da empresa pode eliminar o quadro.',
+      });
+      return;
+    }
+    const rowActive = (existing as Record<string, unknown>).is_active;
+    if (rowActive !== false) {
+      res.status(400).json({
+        error: 'Desative o quadro (Quadro ativo = desligado) antes de o eliminar.',
+      });
+      return;
+    }
+    const r = await pool.query(`DELETE FROM chat_kanban_boards WHERE id = $1 AND tenant_id = $2 RETURNING id`, [
+      boardId,
+      tenantId,
+    ]);
+    if (r.rowCount === 0) {
+      res.status(404).json({ error: 'Board não encontrado' });
+      return;
+    }
+    res.status(204).send();
+  } catch (e: any) {
+    console.error('[chatKanban] deleteBoard', e);
+    res.status(500).json({ error: e?.message || 'Erro ao eliminar quadro' });
   }
 }
 

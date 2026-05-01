@@ -11,7 +11,7 @@ import {
   shortOperatorName,
 } from '@/utils/chatKanbanCardDisplay';
 import { parseKanbanProposalsDisplay } from '@/utils/kanbanColumnRulesUi';
-import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import { chatAvatarUrlForImgSrc, pickConversationAvatarRawForDisplay } from '@/lib/chatAvatarUrl';
 import { cn } from '@/lib/utils';
 
 function kanbanLabelsFromMetadata(meta: unknown): string[] {
@@ -55,7 +55,15 @@ export function ChatKanbanCard({
   const acc = Number(card.proposal_accepted_total ?? 0);
   const hasCrm = Boolean(card.conv_client_id || card.conv_lead_id);
   const showProposalRow = hasCrm && (pp.show_pending || pp.show_accepted);
-  const convAvatar = chatAvatarUrlForImgSrc(card.conv_avatar_url);
+  const metaObj =
+    card.conv_metadata && typeof card.conv_metadata === 'object' && !Array.isArray(card.conv_metadata)
+      ? (card.conv_metadata as Record<string, unknown>)
+      : null;
+  /** Mesma prioridade que a lista do Chat (`normalizeConversation`). API envia `conv_avatar_url`; fallback usa metadados. */
+  const avatarRaw =
+    card.conv_avatar_url?.trim() ||
+    pickConversationAvatarRawForDisplay(card as unknown as Record<string, unknown>, metaObj ?? {});
+  const convAvatar = chatAvatarUrlForImgSrc(avatarRaw);
 
   return (
     <button

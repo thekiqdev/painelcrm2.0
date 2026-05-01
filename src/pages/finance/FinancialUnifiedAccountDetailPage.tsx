@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import {
   financialService,
@@ -10,7 +10,14 @@ import {
 } from "@/services/financial";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -23,8 +30,11 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/sonner";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Plus, Upload } from "lucide-react";
 import { FinancialAccountSettingsButton } from "@/components/finance/FinancialAccountSettingsButton";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { preparePaymentsFromCsv } from "@/utils/importPaymentsCsv";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 const TYPE_LABEL: Record<string, string> = {
   bank: "Banco",
@@ -80,6 +90,13 @@ const FinancialUnifiedAccountDetailPage = () => {
   const [transferAmount, setTransferAmount] = useState("");
   const [transferDate, setTransferDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [transferDesc, setTransferDesc] = useState("");
+  const paymentsImportInputRef = useRef<HTMLInputElement>(null);
+  const [paymentsImportRunning, setPaymentsImportRunning] = useState(false);
+  const [paymentsImportDialogOpen, setPaymentsImportDialogOpen] = useState(false);
+  const [paymentsImportSummary, setPaymentsImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+  } | null>(null);
 
   const applyPreset = useCallback((preset: string) => {
     const now = new Date();
@@ -171,6 +188,91 @@ const FinancialUnifiedAccountDetailPage = () => {
     setTransferDate(new Date().toISOString().slice(0, 10));
     setTransferDesc("");
     setTransferOpen(true);
+  };
+
+  const handlePaymentsCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !accountId) return;
+
+    setPaymentsImportRunning(true);
+    try {
+      const text = await file.text();
+      const { prepared, skipped } = preparePaymentsFromCsv(text);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      let created = 0;
+      const BATCH = 4;
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              await financialService.createTransaction({
+                account_id: accountId,
+                type: "income",
+                amount_cents: row.amount_cents,
+                description: row.description,
+                reference_name: row.reference_name,
+                transaction_date: row.transaction_date,
+                status: "completed",
+              });
+              created++;
+            } catch (err) {
+              failed.push({
+                line: row.lineNumber,
+                message: err instanceof Error ? err.message : "Erro ao criar movimento",
+              });
+            }
+          }),
+        );
+      }
+
+      /** O extrato filtra por período; CSV costuma ter vários meses fora do «mês actual».
+       *  Sem alargar `from`/`to`, os movimentos criados ficam fora do intervalo e não aparecem. */
+      let periodExpanded = false;
+      if (created > 0 && prepared.length > 0) {
+        const sorted = prepared.map((p) => p.transaction_date).sort();
+        const minD = sorted[0]!;
+        const maxD = sorted[sorted.length - 1]!;
+        let nextFrom = from;
+        let nextTo = to;
+        if (minD < from) nextFrom = minD;
+        if (maxD > to) nextTo = maxD;
+        if (nextFrom !== from || nextTo !== to) {
+          periodExpanded = true;
+          setPeriodPreset("custom");
+          setFrom(nextFrom);
+          setTo(nextTo);
+          toast.info("Período do extrato alargado para incluir as datas do ficheiro.");
+        }
+      }
+
+      if (created > 0 && !periodExpanded) {
+        await load();
+      }
+      setPaymentsImportSummary({ created, failed });
+      const showReportDialog = failed.length > 0 || created === 0;
+      if (showReportDialog) setPaymentsImportDialogOpen(true);
+
+      if (created > 0 && failed.length === 0) {
+        toast.success(`${created} pagamento${created === 1 ? "" : "s"} importado${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} importado(s); ${failed.length} linha(s) com falha ou aviso.`);
+      } else if (failed.length > 0 || skipped.length > 0) {
+        toast.error("Nenhum movimento criado ou arquivo com problemas. Veja o relatório.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+        setPaymentsImportDialogOpen(true);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o CSV.");
+    } finally {
+      setPaymentsImportRunning(false);
+    }
   };
 
   const handleTransfer = async () => {
@@ -282,10 +384,19 @@ const FinancialUnifiedAccountDetailPage = () => {
               </span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Saldo inicial {account.initial_balance_date}: {formatBrlCents(account.initial_balance_cents)}
+              Saldo inicial {formatDateOnlyPtBr(account.initial_balance_date)}: {formatBrlCents(account.initial_balance_cents)}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <input
+              ref={paymentsImportInputRef}
+              type="file"
+              accept=".csv,text/csv,.txt"
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden
+              onChange={handlePaymentsCsvChange}
+            />
             <Button type="button" variant="outline" onClick={() => openCreate("income")}>
               <Plus className="h-4 w-4 mr-1" />
               Nova entrada
@@ -296,6 +407,16 @@ const FinancialUnifiedAccountDetailPage = () => {
             </Button>
             <Button type="button" variant="outline" onClick={openTransfer}>
               Transferir
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={paymentsImportRunning}
+              onClick={() => paymentsImportInputRef.current?.click()}
+              className="gap-1.5"
+            >
+              <Upload className="h-4 w-4 shrink-0" aria-hidden />
+              Importar
             </Button>
           </div>
         </div>
@@ -396,7 +517,7 @@ const FinancialUnifiedAccountDetailPage = () => {
                   const cat = categories.find((c) => c.id === t.category_id);
                   return (
                     <TableRow key={t.id}>
-                      <TableCell className="whitespace-nowrap">{t.transaction_date}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDateOnlyPtBr(t.transaction_date)}</TableCell>
                       <TableCell>
                         {t.transaction_kind === "transfer"
                           ? t.transfer_direction === "in"
@@ -490,6 +611,49 @@ const FinancialUnifiedAccountDetailPage = () => {
             </Button>
             <Button onClick={handleCreate} disabled={saving}>
               Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={paymentsImportDialogOpen} onOpenChange={setPaymentsImportDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Importação de pagamentos (CSV)</DialogTitle>
+            <DialogDescription>Resumo do envio do arquivo para esta conta.</DialogDescription>
+          </DialogHeader>
+          {paymentsImportSummary ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{paymentsImportSummary.created}</span> entrada(s)
+                registada(s).
+                {paymentsImportSummary.failed.length > 0 ? (
+                  <>
+                    {" "}
+                    <span className="font-medium text-destructive">{paymentsImportSummary.failed.length}</span> aviso(s)
+                    ou falha(s).
+                  </>
+                ) : null}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Os valores são lançados como entradas concluídas. Se não aparecerem no extrato, alargue o período
+                (filtro acima).
+              </p>
+              {paymentsImportSummary.failed.length > 0 ? (
+                <ScrollArea className="h-[220px] rounded-md border p-3">
+                  <ul className="space-y-1.5 text-xs">
+                    {paymentsImportSummary.failed.map((f, i) => (
+                      <li key={`${f.line}-${i}`}>
+                        Linha {f.line}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setPaymentsImportDialogOpen(false)}>
+              Fechar
             </Button>
           </DialogFooter>
         </DialogContent>

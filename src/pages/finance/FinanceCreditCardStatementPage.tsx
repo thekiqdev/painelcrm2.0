@@ -21,6 +21,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/sonner";
 import { ArrowLeft } from "lucide-react";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 function formatBrlCents(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -145,13 +146,13 @@ const FinanceCreditCardStatementPage = () => {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Fechamento</CardDescription>
-            <CardTitle className="text-base tabular-nums">{statement.closing_date.slice(0, 10).split("-").reverse().join("/")}</CardTitle>
+            <CardTitle className="text-base tabular-nums">{formatDateOnlyPtBr(statement.closing_date)}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Vencimento</CardDescription>
-            <CardTitle className="text-base tabular-nums">{statement.due_date.slice(0, 10).split("-").reverse().join("/")}</CardTitle>
+            <CardTitle className="text-base tabular-nums">{formatDateOnlyPtBr(statement.due_date)}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -212,10 +213,12 @@ const FinanceCreditCardStatementPage = () => {
                 <TableRow key={i.id}>
                   <TableCell>{i.description}</TableCell>
                   <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
-                    {(i as { purchase_date?: string }).purchase_date ?? "—"}
+                    {(i as { purchase_date?: string }).purchase_date
+                      ? formatDateOnlyPtBr((i as { purchase_date?: string }).purchase_date)
+                      : "—"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatBrlCents(i.amount_cents)}</TableCell>
-                  <TableCell className="whitespace-nowrap">{i.due_date.slice(0, 10).split("-").reverse().join("/")}</TableCell>
+                  <TableCell className="whitespace-nowrap">{formatDateOnlyPtBr(i.due_date)}</TableCell>
                   <TableCell>{instStatusPt(i.status)}</TableCell>
                 </TableRow>
               ))}

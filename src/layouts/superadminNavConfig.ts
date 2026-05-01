@@ -22,6 +22,7 @@ import {
   MessageSquare,
   Globe,
   Shield,
+  Mail,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -160,6 +161,11 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "Notificações da plataforma",
         to: "/superadmin/platform-notifications",
         icon: Building2,
+      },
+      {
+        label: "SMTP",
+        to: "/superadmin/smtp",
+        icon: Mail,
       },
     ],
   },

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { contractsService } from "@/services/contracts";
+import { clientsService } from "@/services/clients";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { toast } from "@/components/ui/sonner";
@@ -59,12 +60,23 @@ import {
   XCircle,
   Calendar as CalendarIcon,
   Filter,
+  Upload,
 } from "lucide-react";
 import type { Contract, ContractStatus, ContractFilters } from "@/types/contracts";
 import { getContractDocumentHtml } from "@/utils/contractDocument";
 import { canDeleteContractStatus } from "@/utils/contractStatusUi";
 import { applyUrlPatch } from "@/lib/listFiltersUrl";
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { prepareContractsFromCsv } from "@/utils/importContractsCsv";
 
 const CONTRACT_STATUS_URL = new Set<ContractStatus | "all">([
   "all",
@@ -133,6 +145,15 @@ const Contracts = () => {
     () => parseSortFromSearchParams(searchParams).sortDirection,
   );
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const contractsCsvInputRef = useRef<HTMLInputElement>(null);
+  const [contractsCsvImportRunning, setContractsCsvImportRunning] = useState(false);
+  const [contractsCsvImportDialogOpen, setContractsCsvImportDialogOpen] = useState(false);
+  const [contractsCsvImportSummary, setContractsCsvImportSummary] = useState<{
+    created: number;
+    activated: number;
+    failed: { line: number; message: string }[];
+    warnings: string[];
+  } | null>(null);
 
   const loadContracts = useCallback(async () => {
     if (!user) return;
@@ -318,6 +339,84 @@ const Contracts = () => {
     }
   };
 
+  const handleContractsCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !canCreateContractShortcut) return;
+
+    setContractsCsvImportRunning(true);
+    try {
+      const text = await file.text();
+      const clients = await clientsService.getClients();
+      const { prepared, skipped } = prepareContractsFromCsv(text, clients);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      const warnings: string[] = [];
+      let created = 0;
+      let activated = 0;
+      const BATCH = 3;
+
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              if (row.warn) warnings.push(`Linha ${row.lineNumber}: ${row.warn}`);
+              const result = await contractsService.createContract(row.createPayload);
+              created++;
+              const id = result?.id;
+              if (row.activateAfterCreate && id) {
+                try {
+                  await contractsService.updateContract(id, { status: "ACTIVE" });
+                  activated++;
+                } catch (errAct) {
+                  failed.push({
+                    line: row.lineNumber,
+                    message:
+                      errAct instanceof Error
+                        ? `Criado, mas falhou ao ativar: ${errAct.message}`
+                        : "Criado, mas falhou ao marcar como ativo.",
+                  });
+                }
+              }
+            } catch (err) {
+              failed.push({
+                line: row.lineNumber,
+                message: err instanceof Error ? err.message : "Erro ao criar contrato",
+              });
+            }
+          }),
+        );
+      }
+
+      await loadContracts();
+      setContractsCsvImportSummary({ created, activated, failed, warnings });
+      if (failed.length > 0 || warnings.length > 0 || created === 0) {
+        setContractsCsvImportDialogOpen(true);
+      }
+
+      if (created > 0 && failed.length === 0) {
+        toast.success(
+          `${created} contrato(s) importado(s)` +
+            (activated > 0 ? ` (${activated} como ativo).` : "."),
+        );
+      } else if (created > 0) {
+        toast.warning(`${created} criado(s); algumas linhas falharam — ver relatório.`);
+      } else if (skipped.length > 0 || failed.length > 0) {
+        toast.error("Nenhum contrato criado ou arquivo inválido.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o CSV.");
+    } finally {
+      setContractsCsvImportRunning(false);
+    }
+  };
+
   const filtersDirty =
     filters.status !== "all" ||
     filters.startDate != null ||
@@ -326,6 +425,15 @@ const Contracts = () => {
 
   return (
     <div className="space-y-6">
+      <input
+        ref={contractsCsvInputRef}
+        type="file"
+        accept=".csv,text/csv,.txt"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleContractsCsvChange}
+      />
       <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
         <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto rounded-t-2xl pb-[max(1.25rem,env(safe-area-inset-bottom))] md:hidden">
           <SheetHeader className="text-left">
@@ -449,6 +557,21 @@ const Contracts = () => {
               onClick: () => navigate("/contracts/templates"),
             },
           ]}
+          secondarySlot={
+            canCreateContractShortcut ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground"
+                disabled={contractsCsvImportRunning}
+                aria-label="Importar contratos (CSV)"
+                onClick={() => contractsCsvInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" aria-hidden />
+              </Button>
+            ) : null
+          }
           primaryAction={{
             label: "Novo contrato",
             icon: <Plus className="h-4 w-4" aria-hidden />,
@@ -465,6 +588,18 @@ const Contracts = () => {
             <FileText className="mr-2 h-4 w-4" />
             Modelos
           </Button>
+          {canCreateContractShortcut ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={contractsCsvImportRunning}
+              onClick={() => contractsCsvInputRef.current?.click()}
+              className="gap-2"
+            >
+              <Upload className="h-4 w-4 shrink-0" aria-hidden />
+              Importar
+            </Button>
+          ) : null}
           <Button disabled={!canCreateContractShortcut} onClick={() => navigate("/contracts/new")}>
             <Plus className="mr-2 h-4 w-4" />
             Novo Contrato
@@ -917,6 +1052,56 @@ const Contracts = () => {
           ))
         )}
       </div>
+
+      <Dialog open={contractsCsvImportDialogOpen} onOpenChange={setContractsCsvImportDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Importação de contratos (CSV)</DialogTitle>
+            <DialogDescription>Resumo do ficheiro enviado.</DialogDescription>
+          </DialogHeader>
+          {contractsCsvImportSummary ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">{contractsCsvImportSummary.created}</span> contrato(s)
+                criado(s).
+                {contractsCsvImportSummary.activated > 0 ? (
+                  <>
+                    {" "}
+                    <span className="font-medium text-foreground">{contractsCsvImportSummary.activated}</span> marcado(s)
+                    como <strong>Ativo</strong> (coluna Assinatura = assinado).
+                  </>
+                ) : null}
+              </p>
+              {contractsCsvImportSummary.warnings.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Avisos</p>
+                  <ul className="mt-1 list-inside list-disc text-xs text-muted-foreground">
+                    {contractsCsvImportSummary.warnings.map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {contractsCsvImportSummary.failed.length > 0 ? (
+                <ScrollArea className="h-[200px] rounded-md border p-3">
+                  <ul className="space-y-1.5 text-xs">
+                    {contractsCsvImportSummary.failed.map((f, i) => (
+                      <li key={`${f.line}-${i}`}>
+                        Linha {f.line}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setContractsCsvImportDialogOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

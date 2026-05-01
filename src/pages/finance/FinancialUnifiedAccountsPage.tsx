@@ -37,6 +37,7 @@ import { ArrowLeftRight, Filter, Landmark, Plus } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -721,7 +722,7 @@ const FinancialUnifiedAccountsPage = () => {
                       </span>
                     </div>
                     <p className="pt-1 border-t border-border/60">
-                      Saldo inicial em {a.initial_balance_date}: {formatBrl(a.initial_balance_cents / 100)}
+                      Saldo inicial em {formatDateOnlyPtBr(a.initial_balance_date)}: {formatBrl(a.initial_balance_cents / 100)}
                     </p>
                   </CardContent>
                 </Card>

@@ -28,6 +28,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/sonner";
 import { Plus, TrendingDown, TrendingUp } from "lucide-react";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { cn } from "@/lib/utils";
 import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
 import { useFinanceBottomBarVisibility } from "@/contexts/FinanceMobileChromeContext";
@@ -235,7 +236,7 @@ const FinancialUnifiedTransactionsPage = () => {
                 <TableBody>
                   {rows.map((r) => (
                     <TableRow key={r.id}>
-                      <TableCell className="whitespace-nowrap text-muted-foreground">{r.transaction_date}</TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateOnlyPtBr(r.transaction_date)}</TableCell>
                       <TableCell>
                         <span
                           className={cn(

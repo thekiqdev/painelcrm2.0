@@ -125,6 +125,7 @@ const SuperAdminAnnouncementSendDetail = lazy(() => import("./pages/superadmin/S
 const SuperAdminAnnouncementGroups = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementGroups"));
 const SuperAdminLegalPages = lazy(() => import("./pages/superadmin/SuperAdminLegalPages"));
 const SuperAdminHubPage = lazy(() => import("./pages/superadmin/SuperAdminHubPage"));
+const SuperAdminSmtpSettings = lazy(() => import("./pages/superadmin/SuperAdminSmtpSettings"));
 const PublicPrivacyPolicyPage = lazy(() =>
   import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
 );
@@ -842,6 +843,7 @@ const App = () => (
                 />
                 <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
                 <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
+                <Route path="smtp" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSmtpSettings /></Suspense>} />
                 <Route path="platform-billings" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformBillings /></Suspense>} />
                 <Route path="announcements/groups" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementGroups /></Suspense>} />
                 <Route path="announcements/sends/:sendId" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSendDetail /></Suspense>} />

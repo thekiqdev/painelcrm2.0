@@ -20,6 +20,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Plus, MoreVertical } from "lucide-react";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 const taskFormSchema = z.object({
   title: z.string().min(3, { message: "Título é obrigatório" }),
@@ -146,7 +147,10 @@ const LeadTasksTab: React.FC<LeadTasksTabProps> = ({
                         <p className="text-sm text-muted-foreground">{task.description}</p>
                         {task.due_date && (
                           <p className="text-xs mt-1">
-                            Vencimento: {new Date(task.due_date).toLocaleDateString()}
+                            Vencimento:{" "}
+                            {typeof task.due_date === "string"
+                              ? formatDateOnlyPtBr(task.due_date)
+                              : new Date(task.due_date as string | number | Date).toLocaleDateString("pt-BR")}
                           </p>
                         )}
                       </div>

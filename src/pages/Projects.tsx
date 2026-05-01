@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical, ChevronDown, ChevronUp, Upload } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -42,9 +42,25 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { clientsService } from "@/services/clients";
+import { prepareProjectsFromCsv } from "@/utils/importProjectsCsv";
+import {
+  prepareTasksFromProjectTasksCsv,
+  prepareTasksFromProjectTasksXlsx,
+} from "@/utils/importProjectTasksXlsx";
 
 // Padrão de página única para toda a funcionalidade de projetos
-const MODULE_PROJECTS = 'projects';
+const MODULE_PROJECTS = "projects";
+const MODULE_TASKS = "tasks";
 
 const PROJECTS_QUERY_KEY = ["projects"] as const;
 
@@ -71,6 +87,23 @@ const Projects = () => {
   const [hideCompletedTasks, setHideCompletedTasks] = useState(false);
   const [teamFilterSheetOpen, setTeamFilterSheetOpen] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
+  const projectsCsvInputRef = useRef<HTMLInputElement>(null);
+  const [projectsCsvImportRunning, setProjectsCsvImportRunning] = useState(false);
+  const [projectsCsvImportDialogOpen, setProjectsCsvImportDialogOpen] = useState(false);
+  const [projectsCsvImportSummary, setProjectsCsvImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+    warnings: string[];
+  } | null>(null);
+  const tasksXlsxInputRef = useRef<HTMLInputElement>(null);
+  const tasksImportListIdRef = useRef<string | null>(null);
+  const [tasksXlsxImportRunning, setTasksXlsxImportRunning] = useState(false);
+  const [tasksXlsxImportDialogOpen, setTasksXlsxImportDialogOpen] = useState(false);
+  const [tasksXlsxImportSummary, setTasksXlsxImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+    warnings: string[];
+  } | null>(null);
 
   // Estados de diálogos
   const [newTaskDialogOpen, setNewTaskDialogOpen] = useState(false);
@@ -131,6 +164,203 @@ const Projects = () => {
       [...PROJECTS_QUERY_KEY, teamFilter],
       (prev) => (typeof updater === "function" ? updater(prev ?? []) : updater)
     );
+  };
+
+  const canImportProjectsCsv = canCreateProject(MODULE_PROJECTS);
+  const canImportProjectTasksXlsx = canCreateProject(MODULE_TASKS);
+
+  const handleProjectsCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !canImportProjectsCsv) return;
+
+    setProjectsCsvImportRunning(true);
+    try {
+      const text = await file.text();
+      const [clients, memberRows] = await Promise.all([
+        clientsService.getClients(),
+        membersService.getMembers(),
+      ]);
+
+      const { prepared, skipped } = prepareProjectsFromCsv(text, memberRows, clients);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      const warnings: string[] = [];
+      let created = 0;
+      const BATCH = 4;
+
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              for (const w of row.warnings) warnings.push(w);
+              const p = row.payload;
+              await projectsService.createProject({
+                name: p.name,
+                status: p.status,
+                project_type: p.project_type,
+                due_date: p.due_date,
+                start_date: p.start_date,
+                end_date: p.end_date,
+                tags: p.tags,
+                client_id: p.client_id,
+                responsible_ids: p.responsible_ids,
+                description: p.description,
+                kanban_stage: null,
+              });
+              created++;
+            } catch (err) {
+              failed.push({
+                line: row.lineNumber,
+                message: err instanceof Error ? err.message : "Erro ao criar projeto",
+              });
+            }
+          }),
+        );
+      }
+
+      await queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      setProjectsCsvImportSummary({ created, failed, warnings });
+
+      if (failed.length > 0 || warnings.length > 0 || created === 0) {
+        setProjectsCsvImportDialogOpen(true);
+      }
+
+      if (created > 0 && failed.length === 0 && warnings.length === 0) {
+        toast.success(`${created} projeto${created === 1 ? "" : "s"} importado${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} criado(s); há falhas ou avisos — ver relatório.`);
+      } else if (skipped.length > 0 || failed.length > 0) {
+        toast.error("Nenhum projeto criado ou arquivo inválido.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o CSV.");
+    } finally {
+      setProjectsCsvImportRunning(false);
+    }
+  };
+
+  const refreshProjectBoardLists = async (projectId: string) => {
+    const apiLists = await projectsService.getProjectLists(projectId);
+    const listsWithTasks = await Promise.all(
+      apiLists.map(async (apiList) => {
+        const apiTasks = await projectsService.getProjectTasks(apiList.id);
+        const tasks: Task[] = apiTasks.map((apiTask: ApiProjectTask) => ({
+          id: apiTask.id,
+          title: apiTask.title,
+          description: apiTask.description || "",
+          status: apiTask.status as TaskStatus,
+          priority: apiTask.priority as Task["priority"],
+          dueDate: apiTask.due_date || undefined,
+          assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
+          tags: apiTask.tags || [],
+          customFields: apiTask.custom_fields ?? {},
+          checklist: (apiTask.checklist || []).map(
+            (
+              item: { id?: string; text?: string; title?: string; completed?: boolean },
+              index: number,
+            ) => ({
+              id: item.id || `checklist-${index}`,
+              text: item.text || item.title || "",
+              completed: item.completed || false,
+            }),
+          ),
+        }));
+        return {
+          id: apiList.id,
+          name: apiList.name,
+          tasks,
+          order: apiList.order_position,
+        };
+      }),
+    );
+    setProjects((pall) =>
+      pall.map((p) => (p.id === projectId ? { ...p, lists: listsWithTasks } : p)),
+    );
+    setSelectedProject((prev) => {
+      if (!prev || prev.id !== projectId) return prev;
+      return { ...prev, lists: listsWithTasks };
+    });
+  };
+
+  const handleTasksXlsxChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const listId = tasksImportListIdRef.current;
+    tasksImportListIdRef.current = null;
+    if (!file || !listId || !selectedProject || !canImportProjectTasksXlsx) return;
+
+    setTasksXlsxImportRunning(true);
+    try {
+      const memberRows = await membersService.getMembers();
+      const lower = file.name.toLowerCase();
+      const isCsv = lower.endsWith(".csv") || lower.endsWith(".txt");
+      const { prepared, skipped } = isCsv
+        ? prepareTasksFromProjectTasksCsv(await file.text(), memberRows)
+        : prepareTasksFromProjectTasksXlsx(await file.arrayBuffer(), memberRows);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      const warnings: string[] = [];
+      let created = 0;
+      const BATCH = 4;
+
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              for (const w of row.warnings) warnings.push(w);
+              const p = row.payload;
+              await projectsService.createProjectTask(listId, {
+                title: p.title,
+                status: p.status,
+                priority: p.priority,
+                due_date: p.due_date,
+                start_date: p.start_date,
+                assignee_id: p.assignee_id,
+                tags: p.tags,
+              });
+              created++;
+            } catch (err) {
+              failed.push({
+                line: row.lineNumber,
+                message: err instanceof Error ? err.message : "Erro ao criar tarefa",
+              });
+            }
+          }),
+        );
+      }
+
+      await refreshProjectBoardLists(selectedProject.id);
+      setTasksXlsxImportSummary({ created, failed, warnings });
+
+      if (failed.length > 0 || warnings.length > 0 || created === 0) {
+        setTasksXlsxImportDialogOpen(true);
+      }
+
+      if (created > 0 && failed.length === 0 && warnings.length === 0) {
+        toast.success(`${created} tarefa${created === 1 ? "" : "s"} importada${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} criada(s); há falhas ou avisos — ver relatório.`);
+      } else if (skipped.length > 0 || failed.length > 0) {
+        toast.error("Nenhuma tarefa criada ou arquivo inválido.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o arquivo.");
+    } finally {
+      setTasksXlsxImportRunning(false);
+    }
   };
 
   // Deep state: sincronizar painel da tarefa com URL (restaura ao navegar/atualizar)
@@ -1435,6 +1665,15 @@ const Projects = () => {
                         setEditListDialogOpen(true);
                       }}
                       onDeleteList={deleteList}
+                      importTasksDisabled={tasksXlsxImportRunning}
+                      onImportTasks={
+                        canImportProjectTasksXlsx
+                          ? (listId) => {
+                              tasksImportListIdRef.current = listId;
+                              tasksXlsxInputRef.current?.click();
+                            }
+                          : undefined
+                      }
                       onAddList={() => setNewListDialogOpen(true)}
                       onMoveTask={moveTask}
                     />
@@ -1502,6 +1741,24 @@ const Projects = () => {
 
   return (
     <div>
+      <input
+        ref={projectsCsvInputRef}
+        type="file"
+        accept=".csv,text/csv,.txt"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleProjectsCsvChange}
+      />
+      <input
+        ref={tasksXlsxInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleTasksXlsxChange}
+      />
       {viewMode === "list" ? (
         <>
           <Sheet open={teamFilterSheetOpen} onOpenChange={setTeamFilterSheetOpen}>
@@ -1543,6 +1800,16 @@ const Projects = () => {
             <MobilePageHeader
               title="Projetos"
               secondaryActions={[
+                ...(canImportProjectsCsv
+                  ? [
+                      {
+                        icon: <Upload className="h-4 w-4" aria-hidden />,
+                        ariaLabel: "Importar projetos (CSV)",
+                        onClick: () => projectsCsvInputRef.current?.click(),
+                        disabled: projectsCsvImportRunning,
+                      },
+                    ]
+                  : []),
                 {
                   icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
                   ariaLabel: "Vista em grade",
@@ -1612,6 +1879,17 @@ const Projects = () => {
                 Kanban
               </Button>
             </div>
+            {canImportProjectsCsv && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={projectsCsvImportRunning}
+                onClick={() => projectsCsvInputRef.current?.click()}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Importar (CSV)
+              </Button>
+            )}
             {canCreateProject(MODULE_PROJECTS) && (
               <Button asChild>
                 <Link to="/projects/new">
@@ -1796,6 +2074,98 @@ const Projects = () => {
           />
         </>
       )}
+
+      <Dialog open={projectsCsvImportDialogOpen} onOpenChange={setProjectsCsvImportDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importação de projetos (CSV)</DialogTitle>
+            <DialogDescription>Resumo do ficheiro enviado.</DialogDescription>
+          </DialogHeader>
+          {projectsCsvImportSummary ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">{projectsCsvImportSummary.created}</span>{" "}
+                projeto(s) criado(s).
+              </p>
+              {projectsCsvImportSummary.warnings.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Avisos</p>
+                  <ScrollArea className="mt-1 h-[220px] rounded-md border p-3 sm:h-[260px]">
+                    <ul className="list-inside list-disc space-y-1 pr-3 text-xs text-muted-foreground">
+                      {projectsCsvImportSummary.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </ScrollArea>
+                </div>
+              ) : null}
+              {projectsCsvImportSummary.failed.length > 0 ? (
+                <ScrollArea className="h-[200px] rounded-md border p-3">
+                  <ul className="space-y-1.5 text-xs">
+                    {projectsCsvImportSummary.failed.map((f, i) => (
+                      <li key={`${f.line}-${i}`}>
+                        Linha {f.line}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setProjectsCsvImportDialogOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tasksXlsxImportDialogOpen} onOpenChange={setTasksXlsxImportDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importação de tarefas (Excel ou CSV)</DialogTitle>
+            <DialogDescription>
+              As tarefas foram adicionadas à etapa em que escolheu importar.
+            </DialogDescription>
+          </DialogHeader>
+          {tasksXlsxImportSummary ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">{tasksXlsxImportSummary.created}</span>{" "}
+                tarefa(s) criada(s).
+              </p>
+              {tasksXlsxImportSummary.warnings.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Avisos</p>
+                  <ScrollArea className="mt-1 h-[220px] rounded-md border p-3 sm:h-[260px]">
+                    <ul className="list-inside list-disc space-y-1 pr-3 text-xs text-muted-foreground">
+                      {tasksXlsxImportSummary.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </ScrollArea>
+                </div>
+              ) : null}
+              {tasksXlsxImportSummary.failed.length > 0 ? (
+                <ScrollArea className="h-[200px] rounded-md border p-3">
+                  <ul className="space-y-1.5 text-xs">
+                    {tasksXlsxImportSummary.failed.map((f, i) => (
+                      <li key={`${f.line}-${i}`}>
+                        Linha {f.line}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setTasksXlsxImportDialogOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -703,6 +703,9 @@ const ChatKanbanPage = () => {
           void loadBoards();
           if (selectedBoardId) void loadBoardDetail(selectedBoardId);
         }}
+        onDeleted={() => {
+          void loadBoards();
+        }}
       />
 
       <ChatKanbanColumnSettingsSheet

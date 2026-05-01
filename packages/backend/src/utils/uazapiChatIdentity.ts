@@ -88,6 +88,41 @@ export function resolveFinalConversationAvatarUrl(row: Record<string, unknown>):
 }
 
 /**
+ * URL única para UI (lista de conversas, Kanban): iguala `normalizeConversation` / `pickConversationAvatarRawForDisplay`
+ * no cliente — prioriza cópias estáveis; se só existir CDN WhatsApp ou foto só em metadados, devolve na mesma para o
+ * browser usar `/api/chat/avatar-proxy` (`chatAvatarUrlForImgSrc`).
+ */
+export function resolveConversationAvatarUrlForDisplay(row: Record<string, unknown>): string | null {
+  const layered = resolveFinalConversationAvatarUrl(row);
+  if (layered) return layered;
+
+  const metaRaw = row.conv_metadata ?? row.metadata;
+  const metaObj =
+    metaRaw && typeof metaRaw === 'object' && !Array.isArray(metaRaw)
+      ? (metaRaw as Record<string, unknown>)
+      : null;
+
+  const fromCol =
+    typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null;
+  const fromMeta = extractUazapiChatImageUrl(metaObj);
+  const merged = mergeAvatarUrlForPersistence(fromCol, fromMeta);
+  if (merged) return merged;
+
+  if (fromCol) return fromCol;
+  if (fromMeta) return fromMeta;
+
+  const pickAny = (u: unknown): string | null =>
+    typeof u === 'string' && u.trim() ? u.trim() : null;
+
+  return (
+    pickAny(row.client_whatsapp_avatar_url) ||
+    pickAny(row.lead_whatsapp_avatar_url) ||
+    pickAny(row.communication_avatar_url) ||
+    null
+  );
+}
+
+/**
  * Regra de persistência: só substitui avatar quando o incoming é URL não vazia;
  * nunca gravar null por cima de valor já salvo (sync/webhook sem foto).
  * Nunca substituir URL já cacheada em catálogo por URL efémera da CDN WhatsApp.

@@ -1,7 +1,7 @@
 
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal, Edit, Trash2, Plus, Check, ClipboardList, Calendar, User, ChevronDown, ChevronUp } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, Plus, Check, ClipboardList, Calendar, User, ChevronDown, ChevronUp, Upload } from "lucide-react";
 import { ProjectList, Task, Project } from "./types";
 import { TaskCard } from "./TaskCard";
 import { UnifiedTaskCard, TaskSummaryPopover } from "@/components/tasks";
@@ -29,6 +29,9 @@ interface BoardViewProps {
   onAddTask: (listId: string) => void;
   onEditList: (list: ProjectList) => void;
   onDeleteList: (listId: string) => void;
+  onImportTasks?: (listId: string) => void;
+  /** Desativa «Importar» durante upload (ex.: importação em curso). */
+  importTasksDisabled?: boolean;
   onAddList: () => void;
   // For Kanban-style project view
   projects?: Project[];
@@ -51,6 +54,8 @@ export function BoardView({
   onAddTask,
   onEditList,
   onDeleteList,
+  onImportTasks,
+  importTasksDisabled = false,
   onAddList,
   // Project view props
   projects,
@@ -306,6 +311,15 @@ export function BoardView({
                         <Edit className="h-3.5 w-3.5 mr-2" />
                         Editar
                       </DropdownMenuItem>
+                      {!isProjectView && onImportTasks ? (
+                        <DropdownMenuItem
+                          disabled={importTasksDisabled}
+                          onClick={() => onImportTasks(list.id)}
+                        >
+                          <Upload className="h-3.5 w-3.5 mr-2" />
+                          Importar
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem 
                         className="text-destructive"

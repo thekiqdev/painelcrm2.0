@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useMemo } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams, useLocation, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,7 @@ import {
   CalendarSync,
   FileSignature,
   Pencil,
+  Upload,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { clientsService } from "@/services/clients";
@@ -106,6 +107,8 @@ import {
   consumeClientsListScrollPosition,
   saveClientsListScrollPosition,
 } from "@/lib/clientsListRestore";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { prepareClientsFromCsv } from "@/utils/importClientsCsv";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -174,6 +177,13 @@ const Clients = () => {
   const [clientGroups, setClientGroups] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get("q") ?? "");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const csvImportInputRef = useRef<HTMLInputElement>(null);
+  const [csvImportDialogOpen, setCsvImportDialogOpen] = useState(false);
+  const [csvImportRunning, setCsvImportRunning] = useState(false);
+  const [csvImportSummary, setCsvImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+  } | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedClient, setSelectedClient] = useState<any>(null);
@@ -661,6 +671,66 @@ const Clients = () => {
     } catch (error: any) {
       console.error("Erro ao adicionar cliente:", error);
       toast.error(`Erro ao adicionar cliente: ${error.message}`);
+    }
+  };
+
+  const handleCsvFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !canCreate(MODULE_CLIENTS)) return;
+
+    setCsvImportRunning(true);
+    try {
+      const text = await file.text();
+      const { prepared, skipped } = prepareClientsFromCsv(text, clientGroups);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      let created = 0;
+      const BATCH = 4;
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async ({ lineNumber, payload }) => {
+            const result = await addClient(payload);
+            if (!result.success) {
+              const err = result.error as Error | undefined;
+              failed.push({
+                line: lineNumber,
+                message:
+                  typeof err?.message === "string"
+                    ? err.message
+                    : String(err ?? "Erro ao criar cliente"),
+              });
+            } else {
+              created++;
+            }
+          }),
+        );
+      }
+
+      await queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
+
+      setCsvImportSummary({ created, failed });
+      const showReportDialog = failed.length > 0 || created === 0;
+      if (showReportDialog) setCsvImportDialogOpen(true);
+
+      if (created > 0 && failed.length === 0) {
+        toast.success(`${created} cliente${created === 1 ? "" : "s"} importado${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} importado(s); ${failed.length} linha(s) com falha ou aviso.`);
+      } else if (failed.length > 0 || skipped.length > 0) {
+        toast.error("Nenhum cliente criado ou arquivo com problemas. Veja o relatório.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+        setCsvImportDialogOpen(true);
+      }
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o arquivo CSV.");
+    } finally {
+      setCsvImportRunning(false);
     }
   };
 
@@ -1215,8 +1285,32 @@ const Clients = () => {
               }
             : undefined
         }
+        mobileSecondarySlot={
+          canCreate(MODULE_CLIENTS) ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={csvImportRunning}
+              className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground"
+              aria-label="Importar clientes (CSV)"
+              onClick={() => csvImportInputRef.current?.click()}
+            >
+              <Upload className="h-4 w-4" aria-hidden />
+            </Button>
+          ) : undefined
+        }
         belowTitle={
           <>
+            <input
+              ref={csvImportInputRef}
+              type="file"
+              accept=".csv,text/csv,.txt"
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden
+              onChange={handleCsvFileChange}
+            />
             <MobileClientsSearchSheet
               open={mobileSearchOpen}
               onOpenChange={setMobileSearchOpen}
@@ -1295,7 +1389,7 @@ const Clients = () => {
                   </div>
                 </SheetContent>
               </Sheet>
-            <div className="hidden md:flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-2">
+            <div className="hidden min-w-0 md:flex md:flex-row md:flex-nowrap md:items-stretch md:gap-2">
               <div className="relative min-w-0 flex-1">
                 <Search
                   className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
@@ -1311,6 +1405,17 @@ const Clients = () => {
             />
           </div>
           {canCreate(MODULE_CLIENTS) && (
+            <>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 shrink-0 touch-manipulation gap-2 px-3"
+            disabled={csvImportRunning}
+            onClick={() => csvImportInputRef.current?.click()}
+          >
+            <Upload className="h-4 w-4 shrink-0" aria-hidden />
+            Importar
+          </Button>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
                     <Button type="button" className="h-10 shrink-0 touch-manipulation sm:px-4">
@@ -1435,8 +1540,47 @@ const Clients = () => {
               </form>
             </DialogContent>
           </Dialog>
+            </>
           )}
             </div>
+            <Dialog open={csvImportDialogOpen} onOpenChange={setCsvImportDialogOpen}>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Importação CSV</DialogTitle>
+                  <DialogDescription>Resumo do envio do arquivo.</DialogDescription>
+                </DialogHeader>
+                {csvImportSummary ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">{csvImportSummary.created}</span> cliente(s) criado(s).
+                      {csvImportSummary.failed.length > 0 ? (
+                        <>
+                          {" "}
+                          <span className="font-medium text-destructive">{csvImportSummary.failed.length}</span> aviso(s) ou
+                          falha(s).
+                        </>
+                      ) : null}
+                    </p>
+                    {csvImportSummary.failed.length > 0 ? (
+                      <ScrollArea className="h-[220px] rounded-md border p-3">
+                        <ul className="space-y-1.5 text-xs">
+                          {csvImportSummary.failed.map((f, i) => (
+                            <li key={`${f.line}-${i}`}>
+                              Linha {f.line}: {f.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </ScrollArea>
+                    ) : null}
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <Button type="button" onClick={() => setCsvImportDialogOpen(false)}>
+                    Fechar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </>
         }
       />

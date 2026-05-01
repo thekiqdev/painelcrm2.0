@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { CreditCard, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FinanceMobileBottomBar, financeMobilePageBottomPad } from "@/components/finance/FinanceMobileBottomBar";
@@ -191,7 +192,7 @@ const FinanceCreditCardsPage = () => {
                   <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs">
                     <div className="text-muted-foreground">Próxima fatura</div>
                     <div className="font-medium tabular-nums">
-                      Vence {c.next_statement_due_date.slice(0, 10).split("-").reverse().join("/")}
+                      Vence {formatDateOnlyPtBr(c.next_statement_due_date)}
                       {c.next_statement_expected_cents != null && (
                         <> · {formatBrlCents(c.next_statement_expected_cents)}</>
                       )}

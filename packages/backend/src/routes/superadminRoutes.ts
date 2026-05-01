@@ -17,6 +17,7 @@ import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsSe
 import superadminAnnouncementRoutes from './superadminAnnouncementRoutes.js';
 import * as superadminLegalPagesController from '../controllers/superadminLegalPagesController.js';
 import * as superadminWhatsappAvatarBackfillController from '../controllers/superadminWhatsappAvatarBackfillController.js';
+import * as smtpSuperadminSettingsController from '../controllers/smtpSuperadminSettingsController.js';
 
 const router = Router();
 
@@ -144,6 +145,11 @@ router.post('/platform-whatsapp/instances/:id/connect', superadminPlatformWhatsA
 router.get('/platform-whatsapp/instances/:id/status', superadminPlatformWhatsAppController.getInstanceStatus);
 router.patch('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.patchInstance);
 router.delete('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.deleteSuperadminPlatformWhatsAppInstance);
+
+/** Configuração SMTP (persistência em superadmin_settings; sem envio transacional automático). */
+router.get('/smtp-settings', smtpSuperadminSettingsController.getSmtpSuperadminSettingsHandler);
+router.put('/smtp-settings', smtpSuperadminSettingsController.putSmtpSuperadminSettingsHandler);
+router.post('/smtp-settings/test', smtpSuperadminSettingsController.postSmtpSuperadminTestEmailHandler);
 
 router.put('/legal/:page/draft', superadminLegalPagesController.putSuperadminLegalDraft);
 router.post('/legal/:page/publish', superadminLegalPagesController.postSuperadminLegalPublish);

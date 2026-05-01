@@ -11,6 +11,7 @@ import {
   type PayableQueueBucket,
   sumCents,
 } from "@/components/finance/accountsPayableGrouping";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 
 const BUCKET_META: Record<
   PayableQueueBucket,
@@ -107,7 +108,7 @@ export function UnifiedPayableList(props: {
                   <TableBody>
                     {items.map((it) => (
                       <TableRow key={`${it.source}-${it.id}`} className={cn(meta.rowAccent)}>
-                        <TableCell className="whitespace-nowrap text-muted-foreground">{it.due_date}</TableCell>
+                        <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateOnlyPtBr(it.due_date)}</TableCell>
                         <TableCell className="font-medium max-w-[220px] truncate">{it.description}</TableCell>
                         <TableCell className="text-muted-foreground text-sm">{it.category_name ?? "—"}</TableCell>
                         <TableCell className="text-right tabular-nums font-medium">{formatBrlCents(it.amount_cents)}</TableCell>
@@ -191,7 +192,7 @@ export function UnifiedPayableList(props: {
                   <div className="flex justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold leading-snug">{it.description}</p>
-                      <p className="mt-1 text-xs text-muted-foreground tabular-nums">Venc. {it.due_date}</p>
+                      <p className="mt-1 text-xs text-muted-foreground tabular-nums">Venc. {formatDateOnlyPtBr(it.due_date)}</p>
                     </div>
                     <p className="text-lg font-bold tabular-nums shrink-0 text-foreground">{formatBrlCents(it.amount_cents)}</p>
                   </div>

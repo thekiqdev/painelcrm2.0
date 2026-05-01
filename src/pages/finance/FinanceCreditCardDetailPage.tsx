@@ -25,6 +25,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "@/components/ui/sonner";
 import { ArrowLeft, Plus, Receipt } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import {
   FinanceMobileBottomBar,
   financeMobilePageBottomPad,
@@ -245,7 +246,7 @@ const FinanceCreditCardDetailPage = () => {
               <CardTitle className="text-lg">
                 {statementLabel(nextOpenStatement.statement_month)} · {formatBrlCents(nextOpenStatement.expected_amount_cents)}
               </CardTitle>
-              <CardDescription>Vence {nextOpenStatement.due_date.slice(0, 10).split("-").reverse().join("/")}</CardDescription>
+              <CardDescription>Vence {formatDateOnlyPtBr(nextOpenStatement.due_date)}</CardDescription>
             </CardHeader>
             <CardContent>
               <Button size="sm" variant="outline" asChild>
@@ -269,7 +270,7 @@ const FinanceCreditCardDetailPage = () => {
               {upcomingStatements.map((s) => (
                 <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2 last:border-0">
                   <span>
-                    {statementLabel(s.statement_month)} — vence {s.due_date.slice(0, 10).split("-").reverse().join("/")}
+                    {statementLabel(s.statement_month)} — vence {formatDateOnlyPtBr(s.due_date)}
                   </span>
                   <span className="tabular-nums font-medium">{formatBrlCents(s.expected_amount_cents)}</span>
                   <Button size="sm" variant="ghost" asChild>
@@ -299,7 +300,7 @@ const FinanceCreditCardDetailPage = () => {
             <TableBody>
               {purchases.slice(0, 30).map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="whitespace-nowrap">{p.purchase_date}</TableCell>
+                  <TableCell className="whitespace-nowrap">{formatDateOnlyPtBr(p.purchase_date)}</TableCell>
                   <TableCell>{p.description}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {p.amount_mode === "installment" ? "Cada parcela" : "Total"}

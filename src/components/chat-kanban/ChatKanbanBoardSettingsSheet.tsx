@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import { toast } from '@/components/ui/sonner';
 import {
   Sheet,
@@ -9,7 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -26,6 +26,16 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { cn } from '@/lib/utils';
 import { apiClient } from '@/integrations/api/client';
 import {
   chatKanbanService,
@@ -42,9 +52,11 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   boardId: string | null;
   onSaved?: () => void;
+  /** Chamado após eliminar o quadro (ex.: refrescar listagem). */
+  onDeleted?: () => void;
 };
 
-export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSaved }: Props) {
+export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSaved, onDeleted }: Props) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
@@ -57,6 +69,8 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
   const [teamIds, setTeamIds] = useState<Set<string>>(() => new Set());
   const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
   const [teams, setTeams] = useState<TeamRow[]>([]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingBoard, setDeletingBoard] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!boardId) return;
@@ -150,6 +164,23 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
     }
   };
 
+  const handleDeleteBoard = async () => {
+    if (!boardId) return;
+    setDeletingBoard(true);
+    try {
+      await chatKanbanService.patchBoard(boardId, { is_active: false });
+      await chatKanbanService.deleteBoard(boardId);
+      toast.success('Quadro eliminado');
+      setDeleteDialogOpen(false);
+      onOpenChange(false);
+      onDeleted?.();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao eliminar o quadro');
+    } finally {
+      setDeletingBoard(false);
+    }
+  };
+
   const linkedFunnelName =
     funnelId !== 'none' ? funnels.find((f) => f.id === funnelId)?.name ?? '—' : 'Nenhum';
 
@@ -204,6 +235,62 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
                   </div>
                   <Switch id="kb-active" checked={isActive} onCheckedChange={setIsActive} disabled={saving} />
                 </div>
+
+                {!isActive ? (
+                  <>
+                    <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Eliminar este quadro?</AlertDialogTitle>
+                          <AlertDialogDescription className="space-y-2">
+                            <span className="block">
+                              Esta ação não pode ser desfeita. Todas as colunas e cartões deste Kanban serão
+                              removidos. As conversas em WhatsApp não são apagadas.
+                            </span>
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel type="button" disabled={deletingBoard}>
+                            Cancelar
+                          </AlertDialogCancel>
+                          <button
+                            type="button"
+                            className={cn(buttonVariants({ variant: 'destructive' }))}
+                            disabled={deletingBoard}
+                            onClick={() => void handleDeleteBoard()}
+                          >
+                            {deletingBoard ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              'Eliminar permanentemente'
+                            )}
+                          </button>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+
+                    <div className="rounded-lg border border-destructive/35 bg-destructive/[0.06] p-4 space-y-3">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-destructive">Excluir quadro</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Com <strong>Quadro ativo</strong> desligado, pode eliminar este Kanban definitivamente (confirme
+                          na janela seguinte).
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="gap-2"
+                        disabled={saving || deletingBoard}
+                        onClick={() => setDeleteDialogOpen(true)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Excluir quadro permanentemente
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
               </TabsContent>
               <TabsContent value="funil" className="space-y-4 py-4">
                 <p className="text-sm text-muted-foreground">
