@@ -1,4 +1,5 @@
 import { pool } from '../utils/db.js';
+import { isUsablePersistedAvatar } from '../utils/uazapiChatIdentity.js';
 
 export type ChatNotificationDisplayContext = {
   contactLabel: string;
@@ -29,8 +30,10 @@ export function mergeConversationFieldsIntoNotificationData(
   if (!ctx) return base;
   if (ctx.clientId) base.client_id = ctx.clientId;
   if (ctx.leadId) base.lead_id = ctx.leadId;
-  if (ctx.crmWhatsappAvatarUrl) base.whatsapp_avatar_url = ctx.crmWhatsappAvatarUrl;
-  if (ctx.avatarUrl) {
+  if (ctx.crmWhatsappAvatarUrl && isUsablePersistedAvatar(ctx.crmWhatsappAvatarUrl)) {
+    base.whatsapp_avatar_url = ctx.crmWhatsappAvatarUrl;
+  }
+  if (ctx.avatarUrl && isUsablePersistedAvatar(ctx.avatarUrl)) {
     base.avatarUrl = ctx.avatarUrl;
     base.contact_avatar_url = ctx.avatarUrl;
   }
@@ -57,6 +60,7 @@ function metaPick(meta: unknown, keys: string[]): string | null {
  * Mesma ordem que `resolveConversationIdentity` em `src/utils/chatIdentityDisplay.ts`.
  */
 export function resolveChatAvatarUrlFromConversationRow(row: {
+  avatar_cached_url?: unknown;
   avatar_url?: unknown;
   metadata?: unknown;
   client_id?: unknown;
@@ -64,28 +68,37 @@ export function resolveChatAvatarUrlFromConversationRow(row: {
   communication_avatar_url?: unknown;
   client_whatsapp_avatar_url?: unknown;
   lead_whatsapp_avatar_url?: unknown;
+  client_whatsapp_avatar_cached_url?: unknown;
+  lead_whatsapp_avatar_cached_url?: unknown;
 }): string | null {
-  const fromConv = trimUrl(row.avatar_url);
-  const fromComm = trimUrl(row.communication_avatar_url);
+  const pickUsable = (u: string | null): string | null =>
+    u && isUsablePersistedAvatar(u) ? u : null;
+
+  const fromConvCached = pickUsable(trimUrl(row.avatar_cached_url));
+  if (fromConvCached) return fromConvCached;
+  const fromConv = pickUsable(trimUrl(row.avatar_url));
+  if (fromConv) return fromConv;
+  const fromComm = pickUsable(trimUrl(row.communication_avatar_url));
+  if (fromComm) return fromComm;
   const hasClient = row.client_id != null && String(row.client_id).trim() !== '';
   const hasLead = row.lead_id != null && String(row.lead_id).trim() !== '';
   const fromCrmWa = hasClient
-    ? trimUrl(row.client_whatsapp_avatar_url)
+    ? pickUsable(trimUrl(row.client_whatsapp_avatar_cached_url)) ||
+      pickUsable(trimUrl(row.client_whatsapp_avatar_url))
     : hasLead
-      ? trimUrl(row.lead_whatsapp_avatar_url)
+      ? pickUsable(trimUrl(row.lead_whatsapp_avatar_cached_url)) ||
+        pickUsable(trimUrl(row.lead_whatsapp_avatar_url))
       : null;
+  if (fromCrmWa) return fromCrmWa;
   const meta = row.metadata;
-  const fromMetaProfile = metaPick(meta, ['profile_picture_url', 'profilePictureUrl', 'profilePicture']);
-  const fromMetaWaImage = metaPick(meta, ['whatsapp_profile_photo', 'image', 'imagePreview', 'image_preview']);
-
-  return (
-    fromConv ||
-    fromComm ||
-    fromCrmWa ||
-    fromMetaProfile ||
-    fromMetaWaImage ||
-    null
+  const fromMetaProfile = pickUsable(metaPick(meta, ['profile_picture_url', 'profilePictureUrl', 'profilePicture']));
+  if (fromMetaProfile) return fromMetaProfile;
+  const fromMetaWaImage = pickUsable(
+    metaPick(meta, ['whatsapp_profile_photo', 'image', 'imagePreview', 'image_preview']),
   );
+  if (fromMetaWaImage) return fromMetaWaImage;
+
+  return null;
 }
 
 /** Rótulo seguro para cópias de notificação (evita IDs e @lid cru). */
@@ -99,12 +112,15 @@ export async function loadChatNotificationDisplayContext(
     phone_number: string | null;
     last_message_preview: string | null;
     avatar_url: string | null;
+    avatar_cached_url: string | null;
     metadata: unknown;
     client_id: string | null;
     lead_id: string | null;
     communication_avatar_url: string | null;
     client_whatsapp_avatar_url: string | null;
     lead_whatsapp_avatar_url: string | null;
+    client_whatsapp_avatar_cached_url: string | null;
+    lead_whatsapp_avatar_cached_url: string | null;
   }>(
     `SELECT
        c.display_name,
@@ -113,12 +129,15 @@ export async function loadChatNotificationDisplayContext(
        c.phone_number,
        c.last_message_preview,
        c.avatar_url,
+       c.avatar_cached_url,
        c.metadata,
        c.client_id,
        c.lead_id,
        cc.profile_avatar_url AS communication_avatar_url,
        cl.whatsapp_avatar_url AS client_whatsapp_avatar_url,
-       l.whatsapp_avatar_url AS lead_whatsapp_avatar_url
+       l.whatsapp_avatar_url AS lead_whatsapp_avatar_url,
+       cl.whatsapp_avatar_cached_url AS client_whatsapp_avatar_cached_url,
+       l.whatsapp_avatar_cached_url AS lead_whatsapp_avatar_cached_url
      FROM chat_conversations c
      LEFT JOIN communication_contacts cc ON cc.id = c.communication_contact_id
      LEFT JOIN clients cl ON cl.id = c.client_id
@@ -153,9 +172,9 @@ export async function loadChatNotificationDisplayContext(
   const hasClient = row.client_id != null && String(row.client_id).trim() !== '';
   const hasLead = row.lead_id != null && String(row.lead_id).trim() !== '';
   const crmWhatsappAvatarUrl = hasClient
-    ? trimUrl(row.client_whatsapp_avatar_url)
+    ? trimUrl(row.client_whatsapp_avatar_cached_url) || trimUrl(row.client_whatsapp_avatar_url)
     : hasLead
-      ? trimUrl(row.lead_whatsapp_avatar_url)
+      ? trimUrl(row.lead_whatsapp_avatar_cached_url) || trimUrl(row.lead_whatsapp_avatar_url)
       : null;
 
   return {

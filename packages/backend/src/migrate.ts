@@ -299,6 +299,8 @@ const order = [
   '195_notification_chat_contact_avatar_backfill.sql',
   /** Chat: client_message_id + índice único (idempotência outbound) */
   '196_chat_messages_client_message_id.sql',
+  /** Chat: colunas de cache local de avatar WhatsApp (catálogo + metadados CDN) */
+  '197_whatsapp_avatar_local_cache.sql',
   'create-admin-user.sql',
 ];
 

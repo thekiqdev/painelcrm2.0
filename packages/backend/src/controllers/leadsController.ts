@@ -25,6 +25,35 @@ async function hasLeadWhatsappAvatarUrlColumn(): Promise<boolean> {
   return hasLeadWhatsappAvatarUrlColumnPromise;
 }
 
+let hasLeadWhatsappAvatarCachedUrlColumnPromise: Promise<boolean> | null = null;
+async function hasLeadWhatsappAvatarCachedUrlColumn(): Promise<boolean> {
+  if (!hasLeadWhatsappAvatarCachedUrlColumnPromise) {
+    hasLeadWhatsappAvatarCachedUrlColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'leads'
+           AND column_name = 'whatsapp_avatar_cached_url'`
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
+  }
+  return hasLeadWhatsappAvatarCachedUrlColumnPromise;
+}
+
+async function leadWhatsappAvatarSelectExpr(): Promise<string> {
+  const hasUrl = await hasLeadWhatsappAvatarUrlColumn();
+  const hasCached = await hasLeadWhatsappAvatarCachedUrlColumn();
+  if (hasUrl && hasCached) {
+    return 'COALESCE(l.whatsapp_avatar_cached_url, l.whatsapp_avatar_url, wa.wa_url)';
+  }
+  if (hasUrl) {
+    return 'COALESCE(l.whatsapp_avatar_url, wa.wa_url)';
+  }
+  return 'wa.wa_url';
+}
+
 function firstQueryString(value: unknown): string | undefined {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) {
@@ -60,8 +89,7 @@ export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
     const { profileId, onlyConverted } = req.query;
     const onlyConv = onlyConverted === 'true' || onlyConverted === '1';
 
-    const hasWaAvatar = await hasLeadWhatsappAvatarUrlColumn();
-    const waAvatarExpr = hasWaAvatar ? 'COALESCE(l.whatsapp_avatar_url, wa.wa_url)' : 'wa.wa_url';
+    const waAvatarExpr = await leadWhatsappAvatarSelectExpr();
 
     let query = `
       SELECT l.*, ${waAvatarExpr} AS whatsapp_avatar_url
@@ -156,8 +184,7 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
     const userId = req.userId!;
     const { id } = req.params;
 
-    const hasWaAvatar = await hasLeadWhatsappAvatarUrlColumn();
-    const waAvatarExpr = hasWaAvatar ? 'COALESCE(l.whatsapp_avatar_url, wa.wa_url)' : 'wa.wa_url';
+    const waAvatarExpr = await leadWhatsappAvatarSelectExpr();
 
     const result = await pool.query(
       `SELECT l.*, ${waAvatarExpr} AS whatsapp_avatar_url

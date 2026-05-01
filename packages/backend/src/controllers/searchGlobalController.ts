@@ -33,6 +33,52 @@ function parseTypes(raw: unknown): GlobalSearchTypes[] {
   return out.length ? out : DEFAULT_TYPES;
 }
 
+type AvatarColFlags = { hasUrl: boolean; hasCached: boolean };
+
+let globalSearchClientColsPromise: Promise<AvatarColFlags> | null = null;
+async function getGlobalSearchClientAvatarCols(): Promise<AvatarColFlags> {
+  if (!globalSearchClientColsPromise) {
+    globalSearchClientColsPromise = pool
+      .query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'clients'
+           AND column_name IN ('whatsapp_avatar_url','whatsapp_avatar_cached_url')`,
+      )
+      .then((r) => {
+        const s = new Set(r.rows.map((x) => x.column_name));
+        return { hasUrl: s.has('whatsapp_avatar_url'), hasCached: s.has('whatsapp_avatar_cached_url') };
+      });
+  }
+  return globalSearchClientColsPromise;
+}
+
+let globalSearchLeadColsPromise: Promise<AvatarColFlags> | null = null;
+async function getGlobalSearchLeadAvatarCols(): Promise<AvatarColFlags> {
+  if (!globalSearchLeadColsPromise) {
+    globalSearchLeadColsPromise = pool
+      .query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'leads'
+           AND column_name IN ('whatsapp_avatar_url','whatsapp_avatar_cached_url')`,
+      )
+      .then((r) => {
+        const s = new Set(r.rows.map((x) => x.column_name));
+        return { hasUrl: s.has('whatsapp_avatar_url'), hasCached: s.has('whatsapp_avatar_cached_url') };
+      });
+  }
+  return globalSearchLeadColsPromise;
+}
+
+function globalSearchWhatsappAvatarExpr(prefix: 'c' | 'l', cols: AvatarColFlags): string {
+  if (cols.hasUrl && cols.hasCached) {
+    return `COALESCE(${prefix}.whatsapp_avatar_cached_url, ${prefix}.whatsapp_avatar_url, wa.wa_url)`;
+  }
+  if (cols.hasUrl) {
+    return `COALESCE(${prefix}.whatsapp_avatar_url, wa.wa_url)`;
+  }
+  return 'wa.wa_url';
+}
+
 /**
  * GET /api/search/global?q=...&types=clients,leads,...
  * Resposta agrupada para busca inteligente no desktop (PainelCRM).
@@ -70,6 +116,13 @@ export const searchGlobalGrouped = async (req: Request, res: Response) => {
     const searchTerm = `%${q.trim()}%`;
     const typeFilter = parseTypes(typesQuery);
 
+    const [clientAvatarCols, leadAvatarCols] = await Promise.all([
+      getGlobalSearchClientAvatarCols(),
+      getGlobalSearchLeadAvatarCols(),
+    ]);
+    const clientWaExpr = globalSearchWhatsappAvatarExpr('c', clientAvatarCols);
+    const leadWaExpr = globalSearchWhatsappAvatarExpr('l', leadAvatarCols);
+
     const clientsP =
       typeFilter.includes('clients')
         ? pool.query(
@@ -81,7 +134,7 @@ export const searchGlobalGrouped = async (req: Request, res: Response) => {
                     c.status,
                     'client' AS kind,
                     CONCAT('/clients/', c.id) AS href,
-                    wa.wa_url AS whatsapp_avatar_url
+                    ${clientWaExpr} AS whatsapp_avatar_url
              FROM clients c
              INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
              LEFT JOIN LATERAL (
@@ -115,7 +168,7 @@ export const searchGlobalGrouped = async (req: Request, res: Response) => {
                     l.status,
                     'lead' AS kind,
                     '/leads' AS href,
-                    wa.wa_url AS whatsapp_avatar_url
+                    ${leadWaExpr} AS whatsapp_avatar_url
              FROM leads l
              INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
              LEFT JOIN LATERAL (

@@ -2,10 +2,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import type { Request } from 'express';
-import {
-  buildCatalogMediaRawSignedPublicUrl,
-  resolveCatalogMediaPublicOrigin,
-} from '../utils/catalogMediaPublicSignedUrl.js';
+import { buildCatalogMediaRawSignedRelativeUrl } from '../utils/catalogMediaPublicSignedUrl.js';
 
 export const CATALOG_MEDIA_ALLOWED_TYPES = new Set([
   'image/jpeg',
@@ -25,7 +22,8 @@ export type CatalogMediaScope =
   | 'store_banner'
   | 'tenant_logo_light'
   | 'tenant_logo_dark'
-  | 'user_avatar';
+  | 'user_avatar'
+  | 'whatsapp_avatar';
 
 /**
  * Raiz física dos arquivos (volume persistente no EasyPanel).
@@ -84,13 +82,11 @@ export function assertAllowedImageUpload(contentType: string, byteSize: number):
 }
 
 /**
- * URL absoluta salva no banco e usada na vitrine.
- * Usa GET /api/public/catalog-media/raw?k=&s= (path sem .png) para contornar nginx que mapeia *.png para ficheiros estáticos.
- * CATALOG_MEDIA_PUBLIC_BASE_URL (sem barra final) força origem; senão usa o Host da requisição (trust proxy).
+ * URL pública assinada só com path + query (sem host), para gravar na BD / devolver à API.
+ * O cliente resolve o origin (mesmo host em prod; `getApiUrl()` em dev).
  */
-export function buildCatalogMediaPublicUrl(req: Request, relativeKey: string): string {
-  const origin = resolveCatalogMediaPublicOrigin(req);
-  return buildCatalogMediaRawSignedPublicUrl(origin, relativeKey);
+export function buildCatalogMediaPublicUrl(_req: Request, relativeKey: string): string {
+  return buildCatalogMediaRawSignedRelativeUrl(relativeKey);
 }
 
 export async function saveCatalogMediaBuffer(relativeKey: string, buffer: Buffer): Promise<string> {
@@ -113,6 +109,7 @@ const KNOWN_SCOPES: CatalogMediaScope[] = [
   'tenant_logo_light',
   'tenant_logo_dark',
   'user_avatar',
+  'whatsapp_avatar',
 ];
 
 /** Valida estrutura tenants/{tid}/users/{uid}/{scope}/... */

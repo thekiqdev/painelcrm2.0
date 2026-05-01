@@ -61,6 +61,11 @@ import {
 import { chatAvatarDebugLog, isChatAvatarDebugEnabled } from '../utils/chatAvatarDebug.js';
 import { logChatAvatarSyncResult } from '../utils/chatAvatarSyncResultLog.js';
 import {
+  resolveConversationAvatarWithCache,
+  ensureConversationAvatarCachedAndReplicateToCrm,
+} from '../services/whatsappAvatarCacheService.js';
+import { persistConversationAvatarToCrm as persistConversationAvatarOnCrm } from '../services/conversationAvatarPersistence.js';
+import {
   computeCanonicalIdentityFromChatPayload,
   incomingChatPayloadHasEmptyProfileImages,
   mergeCanonicalIdentityForUpsert,
@@ -376,82 +381,6 @@ async function hasLeadIdColumn(): Promise<boolean> {
     })();
   }
   return hasLeadIdColumnPromise;
-}
-
-let hasClientWhatsappAvatarColumnPromise: Promise<boolean> | null = null;
-async function hasClientWhatsappAvatarColumn(): Promise<boolean> {
-  if (!hasClientWhatsappAvatarColumnPromise) {
-    hasClientWhatsappAvatarColumnPromise = (async () => {
-      const r = await pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = 'clients'
-           AND column_name = 'whatsapp_avatar_url'`
-      );
-      return (r.rows[0]?.c ?? '0') === '1';
-    })();
-  }
-  return hasClientWhatsappAvatarColumnPromise;
-}
-
-let hasLeadWhatsappAvatarColumnPromise: Promise<boolean> | null = null;
-async function hasLeadWhatsappAvatarColumn(): Promise<boolean> {
-  if (!hasLeadWhatsappAvatarColumnPromise) {
-    hasLeadWhatsappAvatarColumnPromise = (async () => {
-      const r = await pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = 'leads'
-           AND column_name = 'whatsapp_avatar_url'`
-      );
-      return (r.rows[0]?.c ?? '0') === '1';
-    })();
-  }
-  return hasLeadWhatsappAvatarColumnPromise;
-}
-
-async function persistConversationAvatarOnCrm(
-  userId: string,
-  clientId: string | null,
-  leadId: string | null,
-  avatarUrl: string | null
-): Promise<void> {
-  const nextAvatar = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
-  if (!nextAvatar) return;
-
-  if (clientId && (await hasClientWhatsappAvatarColumn())) {
-    await pool.query(
-      `UPDATE clients
-       SET whatsapp_avatar_url = $1,
-           updated_at = now()
-       WHERE id = $2
-         AND user_id = $3
-         AND (
-           whatsapp_avatar_url IS NULL
-           OR btrim(whatsapp_avatar_url) = ''
-           OR whatsapp_avatar_url IS DISTINCT FROM $1
-         )`,
-      [nextAvatar, clientId, userId]
-    );
-  }
-
-  if (leadId && (await hasLeadWhatsappAvatarColumn())) {
-    await pool.query(
-      `UPDATE leads
-       SET whatsapp_avatar_url = $1,
-           updated_at = now()
-       WHERE id = $2
-         AND user_id = $3
-         AND (
-           whatsapp_avatar_url IS NULL
-           OR btrim(whatsapp_avatar_url) = ''
-           OR whatsapp_avatar_url IS DISTINCT FROM $1
-         )`,
-      [nextAvatar, leadId, userId]
-    );
-  }
 }
 
 type LinkSource = 'auto' | 'manual' | 'system';
@@ -1017,6 +946,7 @@ async function upsertConversation(
            metadata,
            contact_name, profile_name, phone_number,
            display_name, avatar_url,
+           avatar_cached_url, avatar_source_url,
            canonical_chat_id, canonical_phone,
            identity_source, identity_strength, identity_state,
            history_sync_status, last_history_sync_reason,
@@ -1139,6 +1069,14 @@ async function upsertConversation(
         ),
       }
     );
+    const avatarPatch = await resolveConversationAvatarWithCache({
+      tenantId,
+      userId: instance.user_id,
+      mergedAvatarUrl: fc.avatar_url,
+      existingAvatarUrl: snap.avatar_url,
+      existingCachedUrl: (current as { avatar_cached_url?: string | null }).avatar_cached_url ?? null,
+      existingSourceUrl: (current as { avatar_source_url?: string | null }).avatar_source_url ?? null,
+    });
     logUazChat('info', {
       event_type: 'conversation_upsert',
       phase: 'canonical_identity_merge',
@@ -1187,16 +1125,20 @@ async function upsertConversation(
           canonical_phone = $14,
           display_name = $15,
           avatar_url = $16,
-          identity_source = $17,
-          identity_strength = $18,
-          identity_state = $19,
-          history_sync_status = $20,
-          last_history_sync_reason = $21,
+          avatar_cached_url = COALESCE($17::text, avatar_cached_url),
+          avatar_source_url = COALESCE($18::text, avatar_source_url),
+          avatar_cached_at = COALESCE($19::timestamptz, avatar_cached_at),
+          avatar_cache_status = COALESCE($20::text, avatar_cache_status),
+          identity_source = $21,
+          identity_strength = $22,
+          identity_state = $23,
+          history_sync_status = $24,
+          last_history_sync_reason = $25,
           provider = 'whatsapp_uazapi',
-          provider_conversation_id = COALESCE(provider_conversation_id, $22),
-          communication_contact_id = COALESCE($23::uuid, communication_contact_id),
+          provider_conversation_id = COALESCE(provider_conversation_id, $26),
+          communication_contact_id = COALESCE($27::uuid, communication_contact_id),
           updated_at = now()
-        WHERE id = $24
+        WHERE id = $28
         RETURNING *
         `,
         [
@@ -1215,7 +1157,11 @@ async function upsertConversation(
           fc.canonical_chat_id,
           fc.canonical_phone,
           fc.display_name,
-          fc.avatar_url,
+          avatarPatch.avatar_url,
+          avatarPatch.avatar_cached_url,
+          avatarPatch.avatar_source_url,
+          avatarPatch.avatar_cached_at,
+          avatarPatch.avatar_cache_status,
           fc.identity_source,
           fc.identity_strength,
           fc.identity_state,
@@ -1252,16 +1198,20 @@ async function upsertConversation(
           canonical_phone = $13,
           display_name = $14,
           avatar_url = $15,
-          identity_source = $16,
-          identity_strength = $17,
-          identity_state = $18,
-          history_sync_status = $19,
-          last_history_sync_reason = $20,
+          avatar_cached_url = COALESCE($16::text, avatar_cached_url),
+          avatar_source_url = COALESCE($17::text, avatar_source_url),
+          avatar_cached_at = COALESCE($18::timestamptz, avatar_cached_at),
+          avatar_cache_status = COALESCE($19::text, avatar_cache_status),
+          identity_source = $20,
+          identity_strength = $21,
+          identity_state = $22,
+          history_sync_status = $23,
+          last_history_sync_reason = $24,
           provider = 'whatsapp_uazapi',
-          provider_conversation_id = COALESCE(provider_conversation_id, $21),
-          communication_contact_id = COALESCE($22::uuid, communication_contact_id),
+          provider_conversation_id = COALESCE(provider_conversation_id, $25),
+          communication_contact_id = COALESCE($26::uuid, communication_contact_id),
           updated_at = now()
-        WHERE id = $23
+        WHERE id = $27
         RETURNING *
         `,
         [
@@ -1279,7 +1229,11 @@ async function upsertConversation(
           fc.canonical_chat_id,
           fc.canonical_phone,
           fc.display_name,
-          fc.avatar_url,
+          avatarPatch.avatar_url,
+          avatarPatch.avatar_cached_url,
+          avatarPatch.avatar_source_url,
+          avatarPatch.avatar_cached_at,
+          avatarPatch.avatar_cache_status,
           fc.identity_source,
           fc.identity_strength,
           fc.identity_state,
@@ -1379,6 +1333,15 @@ async function upsertConversation(
       merge_decision: 'insert_incoming_only',
     });
 
+    const avatarInsertPatch = await resolveConversationAvatarWithCache({
+      tenantId,
+      userId: instance.user_id,
+      mergedAvatarUrl: fcInsert.avatar_url,
+      existingAvatarUrl: null,
+      existingCachedUrl: null,
+      existingSourceUrl: null,
+    });
+
     if (leadColumnAvailable) {
       result = await pool.query(
         `
@@ -1388,11 +1351,12 @@ async function upsertConversation(
           last_message_preview, last_message_at, unread_count, metadata,
           client_id, lead_id, phone_key,
           canonical_chat_id, canonical_phone, display_name, avatar_url,
+          avatar_cached_url, avatar_source_url, avatar_cached_at, avatar_cache_status,
           identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
           provider, provider_conversation_id, communication_contact_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23, $24, 'whatsapp_uazapi', $25, $26)
+          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'whatsapp_uazapi', $29, $30)
         RETURNING *
         `,
         [
@@ -1414,7 +1378,11 @@ async function upsertConversation(
           fcInsert.canonical_chat_id,
           fcInsert.canonical_phone,
           fcInsert.display_name,
-          fcInsert.avatar_url,
+          avatarInsertPatch.avatar_url,
+          avatarInsertPatch.avatar_cached_url,
+          avatarInsertPatch.avatar_source_url,
+          avatarInsertPatch.avatar_cached_at,
+          avatarInsertPatch.avatar_cache_status,
           fcInsert.identity_source,
           fcInsert.identity_strength,
           fcInsert.identity_state,
@@ -1433,11 +1401,12 @@ async function upsertConversation(
           last_message_preview, last_message_at, unread_count, metadata,
           client_id, phone_key,
           canonical_chat_id, canonical_phone, display_name, avatar_url,
+          avatar_cached_url, avatar_source_url, avatar_cached_at, avatar_cache_status,
           identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
           provider, provider_conversation_id, communication_contact_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14,
-          $15, $16, $17, $18, $19, $20, $21, $22, $23, 'whatsapp_uazapi', $24, $25)
+          $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 'whatsapp_uazapi', $28, $29)
         RETURNING *
         `,
         [
@@ -1458,7 +1427,11 @@ async function upsertConversation(
           fcInsert.canonical_chat_id,
           fcInsert.canonical_phone,
           fcInsert.display_name,
-          fcInsert.avatar_url,
+          avatarInsertPatch.avatar_url,
+          avatarInsertPatch.avatar_cached_url,
+          avatarInsertPatch.avatar_source_url,
+          avatarInsertPatch.avatar_cached_at,
+          avatarInsertPatch.avatar_cache_status,
           fcInsert.identity_source,
           fcInsert.identity_strength,
           fcInsert.identity_state,
@@ -1533,6 +1506,16 @@ async function upsertConversation(
               (upserted.profile_name as string | null) ??
               null),
           profileAvatarUrl: ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null,
+          avatarCachedUrl: ((upserted as Record<string, unknown>).avatar_cached_url as string | null) ?? null,
+          avatarSourceUrl: ((upserted as Record<string, unknown>).avatar_source_url as string | null) ?? null,
+          avatarCachedAt: (() => {
+            const v = (upserted as Record<string, unknown>).avatar_cached_at;
+            if (v == null) return null;
+            if (v instanceof Date) return v;
+            if (typeof v === 'string') return v;
+            return null;
+          })(),
+          avatarCacheStatus: ((upserted as Record<string, unknown>).avatar_cache_status as string | null) ?? null,
           linkedClientId: (upserted.client_id as string | null) ?? null,
           linkedLeadId: ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
           rawProfile:
@@ -1551,7 +1534,13 @@ async function upsertConversation(
       instance.user_id,
       (upserted.client_id as string | null) ?? null,
       ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
-      ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null
+      ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null,
+      {
+        cachedUrl: ((upserted as Record<string, unknown>).avatar_cached_url as string | null) ?? null,
+        sourceUrl: ((upserted as Record<string, unknown>).avatar_source_url as string | null) ?? null,
+        cachedAt: (upserted as Record<string, unknown>).avatar_cached_at as Date | null ?? null,
+        status: ((upserted as Record<string, unknown>).avatar_cache_status as string | null) ?? null,
+      },
     );
   return upserted;
   } catch (error: any) {
@@ -4895,6 +4884,14 @@ export async function getConversations(req: AuthRequest, res: Response) {
     let paramIndex = 2;
     const leadColumnAvailable = await hasLeadIdColumn();
     const leadSelect = leadColumnAvailable ? 'c.lead_id' : 'NULL::uuid as lead_id';
+    const leadJoinSql = leadColumnAvailable
+      ? 'LEFT JOIN leads l ON l.id = c.lead_id AND l.user_id = c.user_id'
+      : '';
+    const leadAvatarSelect = leadColumnAvailable
+      ? `l.whatsapp_avatar_url AS lead_whatsapp_avatar_url,
+        l.whatsapp_avatar_cached_url AS lead_whatsapp_avatar_cached_url,`
+      : `NULL::text AS lead_whatsapp_avatar_url,
+        NULL::text AS lead_whatsapp_avatar_cached_url,`;
     const attendanceCols = await hasAttendanceColumns();
     const teamCols = attendanceCols && (await hasAssignedTeamColumn());
     const slaPhase5Cols = await hasChatPhase5SlaColumns();
@@ -4960,8 +4957,14 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.display_name,
         c.canonical_phone,
         c.avatar_url,
+        c.avatar_cached_url,
+        c.avatar_source_url,
+        cl.whatsapp_avatar_url AS client_whatsapp_avatar_url,
+        cl.whatsapp_avatar_cached_url AS client_whatsapp_avatar_cached_url,
+        ${leadAvatarSelect}
         cc_ext.display_name AS communication_display_name,
         cc_ext.profile_avatar_url AS communication_avatar_url,
+        cc_ext.communication_avatar_cached_url,
         c.identity_state,
         c.history_sync_status,
         c.last_history_sync_reason,
@@ -4999,8 +5002,10 @@ export async function getConversations(req: AuthRequest, res: Response) {
         END as lead_status
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN clients cl ON cl.id = c.client_id AND cl.user_id = c.user_id
+      ${leadJoinSql}
       LEFT JOIN LATERAL (
-        SELECT cc.display_name, cc.profile_avatar_url
+        SELECT cc.display_name, cc.profile_avatar_url, cc.avatar_cached_url AS communication_avatar_cached_url
         FROM communication_contacts cc
         WHERE cc.provider = COALESCE(NULLIF(btrim(c.provider), ''), 'whatsapp_uazapi')
           AND cc.tenant_id = (SELECT tenant_id FROM users WHERE id = $1 LIMIT 1)
@@ -5159,15 +5164,10 @@ export async function getConversations(req: AuthRequest, res: Response) {
               ? r.canonical_phone
               : null,
       });
-      const avatarUrl =
-        (typeof r.avatar_url === 'string' && r.avatar_url.trim()) ? r.avatar_url :
-        (typeof r.communication_avatar_url === 'string' && r.communication_avatar_url.trim()) ? r.communication_avatar_url :
-        r.avatar_url;
 
       return conversationRowForClientApi({
         ...r,
         display_name: displayName,
-        avatar_url: avatarUrl,
       });
     });
 
@@ -5802,11 +5802,20 @@ export async function linkConversation(req: AuthRequest, res: Response) {
       );
     }
 
-    const updated = await pool.query(
-      `SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`,
-      [conversationId]
-    );
-    const updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+    let updatedRow: Record<string, unknown> | undefined;
+    {
+      const updated = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
+      updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+    }
+    if (updatedRow && tenantId) {
+      await ensureConversationAvatarCachedAndReplicateToCrm({
+        conversationId,
+        userId,
+        tenantId,
+      });
+      const refreshed = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
+      updatedRow = refreshed.rows[0] as Record<string, unknown> | undefined;
+    }
     if (updatedRow) {
       await upsertCommunicationContactFromProvider({
         tenantId,
@@ -5893,8 +5902,20 @@ export async function unlinkConversation(req: AuthRequest, res: Response) {
         tenantId,
       ]
     );
-    const updated = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
-    const updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+    let updatedRow: Record<string, unknown> | undefined;
+    {
+      const updated = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
+      updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
+    }
+    if (updatedRow && tenantId) {
+      await ensureConversationAvatarCachedAndReplicateToCrm({
+        conversationId,
+        userId,
+        tenantId,
+      });
+      const refreshed = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
+      updatedRow = refreshed.rows[0] as Record<string, unknown> | undefined;
+    }
     if (updatedRow) {
       await upsertCommunicationContactFromProvider({
         tenantId,

@@ -18,6 +18,7 @@
     "billing:worker": "tsx src/scripts/runRecurringWorker.ts",
     "billing:reconciliation": "tsx src/scripts/runReconciliation.ts",
     "billing:subscription-cycles-reconcile": "tsx src/scripts/runSubscriptionCyclesReconciliation.ts",
+    "avatar-cache:backfill": "tsx src/scripts/runWhatsappAvatarCacheBackfill.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -55,12 +55,23 @@ export function buildCatalogMediaRawSignedPublicUrl(origin: string, relativeKey:
 }
 
 /**
+ * URL assinada só com path + query (sem host). Preferir gravar na BD para não fixar localhost/porta errados.
+ * O browser ou `getApiUrl()` em dev prefixam o origin correto.
+ */
+export function buildCatalogMediaRawSignedRelativeUrl(relativeKey: string): string {
+  const { k, s } = signCatalogMediaPublicQuery(relativeKey);
+  const qs = new URLSearchParams({ k, s }).toString();
+  return `${CATALOG_MEDIA_PUBLIC_RAW_PATH}?${qs}`;
+}
+
+/**
  * Extrai a chave relativa (ex.: tenants/.../file.png) de URLs antigas gravadas na BD.
  */
 export function extractCatalogMediaRelativeKeyFromStoredUrl(stored: string): string | null {
   const t = stored.trim();
   if (!t) return null;
   try {
+    /** Aceita URL relativa `/api/public/catalog-media/raw?...` gravada na BD. */
     const u = new URL(t, 'https://placeholder.local');
     const p = u.pathname;
     const legacyMedia = '/media/catalog/';

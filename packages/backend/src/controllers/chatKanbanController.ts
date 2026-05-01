@@ -276,8 +276,30 @@ async function loadCard(tenantId: string, cardId: string) {
   return r.rows[0] ?? null;
 }
 
+let hasConversationAvatarCachedUrlColumnPromise: Promise<boolean> | null = null;
+async function hasConversationAvatarCachedUrlColumn(): Promise<boolean> {
+  if (!hasConversationAvatarCachedUrlColumnPromise) {
+    hasConversationAvatarCachedUrlColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'chat_conversations'
+           AND column_name = 'avatar_cached_url'`,
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
+  }
+  return hasConversationAvatarCachedUrlColumnPromise;
+}
+
+async function kanbanConversationAvatarSqlExpr(): Promise<string> {
+  return (await hasConversationAvatarCachedUrlColumn())
+    ? 'COALESCE(c.avatar_cached_url, c.avatar_url)'
+    : 'c.avatar_url';
+}
+
 /** Mesma projeção que `listCards`, para um cartão (resposta de PATCH com dados de conversa atualizados). */
 async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
+  const avatarExpr = await kanbanConversationAvatarSqlExpr();
   const q = `
  SELECT
         kc.id,
@@ -302,7 +324,7 @@ async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
         COALESCE(c.unread_count, 0)::int AS conv_unread_count,
         c.client_id AS conv_client_id,
         c.lead_id AS conv_lead_id,
-        c.avatar_url AS conv_avatar_url,
+        ${avatarExpr} AS conv_avatar_url,
         c.attendance_status AS conv_attendance_status,
         c.assigned_to_user_id AS conv_assigned_to_user_id,
         c.assigned_team_id AS conv_assigned_team_id,
@@ -1105,6 +1127,7 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
     if (!(await requireVisibleKanbanBoard(req, res, tenantId, boardId))) return;
     const includeArchived = String(req.query.includeArchived || '') === 'true' || String(req.query.includeArchived || '') === '1';
     const archivedClause = includeArchived ? '' : 'AND kc.archived_at IS NULL';
+    const avatarExpr = await kanbanConversationAvatarSqlExpr();
     const q = `
       SELECT
         kc.id,
@@ -1129,7 +1152,7 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
         COALESCE(c.unread_count, 0)::int AS conv_unread_count,
         c.client_id AS conv_client_id,
         c.lead_id AS conv_lead_id,
-        c.avatar_url AS conv_avatar_url,
+        ${avatarExpr} AS conv_avatar_url,
         c.attendance_status AS conv_attendance_status,
         c.assigned_to_user_id AS conv_assigned_to_user_id,
         c.assigned_team_id AS conv_assigned_team_id,

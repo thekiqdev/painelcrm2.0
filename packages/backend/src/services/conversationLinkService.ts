@@ -1,5 +1,6 @@
 import { pool } from '../utils/db.js';
 import { createClientTimelineEvent } from './clientTimelineEventsService.js';
+import { ensureConversationAvatarCachedAndReplicateToCrm } from './whatsappAvatarCacheService.js';
 
 export interface LeadToClientMigrationContext {
   actorUserId: string;
@@ -83,4 +84,10 @@ export async function migrateConversationLeadToClient(params: {
       },
     });
   }
+
+  await ensureConversationAvatarCachedAndReplicateToCrm({
+    conversationId: params.conversationId,
+    userId: params.userId,
+    tenantId,
+  });
 }

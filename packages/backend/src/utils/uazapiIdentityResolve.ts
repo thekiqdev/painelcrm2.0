@@ -10,7 +10,11 @@ import {
   isStrongChatDisplayName,
   isWeakChatDisplayName,
 } from './chatIdentityQuality.js';
-import { extractUazapiChatImageUrl, mergeAvatarUrlForPersistence } from './uazapiChatIdentity.js';
+import {
+  extractUazapiChatImageUrl,
+  mergeAvatarUrlForPersistence,
+  resolveFinalConversationAvatarUrl,
+} from './uazapiChatIdentity.js';
 
 export type WhatsAppJidClass = 'group' | 'lid' | 's_whatsapp' | 'c_us' | 'other';
 
@@ -293,13 +297,15 @@ export function conversationRowForClientApi(row: Record<string, unknown>): Recor
   const fromCol =
     typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null;
   const fromMeta = extractUazapiChatImageUrl(baseMeta);
-  const av = mergeAvatarUrlForPersistence(fromCol, fromMeta);
+  const layered = resolveFinalConversationAvatarUrl(row);
+  const av = layered ?? mergeAvatarUrlForPersistence(fromCol, fromMeta);
   if (av) {
     baseMeta.whatsapp_profile_photo = av;
   }
   return {
     ...row,
-    avatar_url: av ?? row.avatar_url ?? null,
+    avatar_url: av ?? null,
+    final_avatar_url: av ?? null,
     contact_name: display ?? row.contact_name ?? null,
     metadata: Object.keys(baseMeta).length > 0 ? baseMeta : row.metadata ?? null,
   };

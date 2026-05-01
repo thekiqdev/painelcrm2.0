@@ -1,6 +1,27 @@
 import { getApiUrl } from '@/integrations/api/client';
 import { chatAvatarDebugLog } from '@/lib/chatAvatarDebug';
 
+const CATALOG_MEDIA_RAW_SEGMENT = '/api/public/catalog-media/raw';
+
+/**
+ * Normaliza qualquer referência a catalog-media/raw (path relativo ou URL absoluta com host/port errados)
+ * para um único path `/api/public/catalog-media/raw?...` antes de prefixar a API em dev.
+ */
+function catalogMediaRawPathFromStored(url: string): string | null {
+  const t = url.trim();
+  if (!t) return null;
+  if (t.startsWith(CATALOG_MEDIA_RAW_SEGMENT)) return t;
+  try {
+    const u = new URL(t);
+    if (u.pathname.includes(CATALOG_MEDIA_RAW_SEGMENT)) {
+      return `${u.pathname}${u.search}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function hostnameHint(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase();
@@ -41,6 +62,18 @@ export function chatAvatarUrlForImgSrc(url: string | null | undefined): string |
   if (url == null || typeof url !== 'string') return null;
   const t = url.trim();
   if (!t) return null;
+
+  const catalogRel = catalogMediaRawPathFromStored(t);
+  if (catalogRel) {
+    const base = getApiUrl();
+    const out = base ? `${base.replace(/\/$/, '')}${catalogRel}` : catalogRel;
+    chatAvatarDebugLog('chatAvatarUrlForImgSrc', {
+      outcome: 'catalog_media_relative',
+      prefix: catalogRel.length > 96 ? `${catalogRel.slice(0, 96)}…` : catalogRel,
+    });
+    return out;
+  }
+
   try {
     const host = new URL(t).hostname.toLowerCase();
     if (isWhatsappProviderAvatarHost(host)) {

@@ -124,6 +124,7 @@ const SuperAdminAnnouncementSends = lazy(() => import("./pages/superadmin/SuperA
 const SuperAdminAnnouncementSendDetail = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSendDetail"));
 const SuperAdminAnnouncementGroups = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementGroups"));
 const SuperAdminLegalPages = lazy(() => import("./pages/superadmin/SuperAdminLegalPages"));
+const SuperAdminHubPage = lazy(() => import("./pages/superadmin/SuperAdminHubPage"));
 const PublicPrivacyPolicyPage = lazy(() =>
   import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
 );
@@ -803,6 +804,11 @@ const App = () => (
             <Route path="/superadmin" element={<AuthGuard requireAuth={true} redirectTo="/"><SuperAdminGuard /></AuthGuard>}>
               <Route element={<SuperAdminLayout />}>
                 <Route index element={<Suspense fallback={<LoadingFallback />}><SuperAdminDashboard /></Suspense>} />
+                <Route path="comercial" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="financeiro" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="comunicacao" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="plataforma" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="seguranca" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
                 <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />
                 <Route path="clients" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClients /></Suspense>} />

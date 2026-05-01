@@ -16,6 +16,7 @@ import * as superadminPlatformBillingsController from '../controllers/superadmin
 import { checkAndNotifyTrialEnding } from '../services/superadminNotificationsService.js';
 import superadminAnnouncementRoutes from './superadminAnnouncementRoutes.js';
 import * as superadminLegalPagesController from '../controllers/superadminLegalPagesController.js';
+import * as superadminWhatsappAvatarBackfillController from '../controllers/superadminWhatsappAvatarBackfillController.js';
 
 const router = Router();
 
@@ -87,6 +88,12 @@ router.get('/notifications-engine/deliveries', superadminNotificationsEngineCont
 router.get('/notification-templates', superadminCrmNotificationTemplatesController.listCrmNotificationSystemTemplates);
 router.patch('/notification-templates', superadminCrmNotificationTemplatesController.patchCrmNotificationSystemTemplate);
 router.post('/notification-templates/preview', superadminCrmNotificationTemplatesController.postCrmNotificationTemplatePreview);
+
+/** Backfill seguro: cache de avatars CDN → catálogo (lote pequeno por chamada). */
+router.post(
+  '/chat/avatar-cache-backfill',
+  superadminWhatsappAvatarBackfillController.postWhatsappAvatarCacheBackfill,
+);
 
 // Motor de Notificações da PLATAFORMA (domínio separado do tenant)
 router.get(
