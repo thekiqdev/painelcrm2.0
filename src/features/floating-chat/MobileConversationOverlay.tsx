@@ -12,10 +12,9 @@ import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { chatService, type ChatConversation, type ChatMessage } from '@/services/chat';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
-import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
-import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
+import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
 import { floatingAttendanceLabel } from './attendanceUi';
 import { Badge } from '@/components/ui/badge';
 
@@ -71,14 +70,22 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
 
   const { data: conversation } = useQuery({
     queryKey: ['floating-chat', 'conversation-meta', conversationId, instanceIds.join(','), inboxScope],
-    enabled: instanceIds.length > 0,
     queryFn: async (): Promise<ChatConversation | null> => {
       for (const instanceId of instanceIds) {
-        const rows = await chatService.getConversations({ instanceId, inboxScope });
-        const hit = rows.find((r) => r.id === conversationId);
-        if (hit) return hit;
+        try {
+          const rows = await chatService.getConversations({ instanceId, inboxScope });
+          const hit = rows.find((r) => r.id === conversationId);
+          if (hit) return hit;
+        } catch {
+          /* ignora instância */
+        }
       }
-      return null;
+      try {
+        const rows = await chatService.getConversations({ inboxScope });
+        return rows.find((r) => r.id === conversationId) ?? null;
+      } catch {
+        return null;
+      }
     },
     staleTime: 20_000,
   });
@@ -121,12 +128,7 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
-  const identity = useMemo(
-    () => resolveConversationIdentity(conversation ?? ({ id: conversationId } as ChatConversation), null, null),
-    [conversation, conversationId],
-  );
-
-  const avatarSrc = chatAvatarUrlForImgSrc(identity.avatarUrl);
+  const identity = useFloatingConversationIdentity(conversationId, conversation);
   const draft = composerDrafts[conversationId] ?? '';
 
   useEffect(() => {
@@ -161,7 +163,9 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <Avatar className="h-9 w-9 shrink-0 border border-border/60">
-          {avatarSrc ? <AvatarImage src={avatarSrc} alt="" className="object-cover" /> : null}
+          {identity.avatarUrl ? (
+            <AvatarImage src={identity.avatarUrl} alt="" className="object-cover" />
+          ) : null}
           <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
             {identity.initials.slice(0, 2).toUpperCase()}
           </AvatarFallback>
