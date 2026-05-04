@@ -166,7 +166,15 @@ const Pricing = () => {
           </p>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div
+          className={`grid gap-6 ${
+            plans.length === 1
+              ? "mx-auto max-w-md grid-cols-1"
+              : plans.length === 2
+                ? "mx-auto max-w-4xl grid-cols-1 sm:grid-cols-2"
+                : "md:grid-cols-2 lg:grid-cols-3"
+          }`}
+        >
           {plans.map((plan) => {
             const isCustom = plan.plan_type === "custom";
             const idx = intervalIndex[plan.id] ?? 0;

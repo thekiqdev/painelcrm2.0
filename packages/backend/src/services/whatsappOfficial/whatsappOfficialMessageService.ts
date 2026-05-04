@@ -1,4 +1,5 @@
 import { pool } from '../../utils/db.js';
+import { normalizeBrazilWhatsappPhone } from '../../utils/phone/normalizeBrazilPhone.js';
 import { sendTextMessage as graphSendText } from './whatsappOfficialClient.js';
 import { getAccountCredentials } from './whatsappOfficialConfigService.js';
 
@@ -19,14 +20,25 @@ export async function sendOfficialTextAndPersist(params: {
   const cred = await getAccountCredentials(params.accountId);
   if (!cred) return { ok: false, error: 'Conta não encontrada' };
 
-  const send = await graphSendText(cred.phoneNumberId, cred.accessToken, params.toPhoneDigits, params.text);
+  const normalized = normalizeBrazilWhatsappPhone(params.toPhoneDigits);
+  if (!normalized.ok || !normalized.phone) {
+    return {
+      ok: false,
+      error:
+        normalized.reason === 'empty'
+          ? 'Informe um telefone válido.'
+          : 'Telefone inválido. Use número brasileiro com DDD (ex.: 11999999999).',
+    };
+  }
+
+  const send = await graphSendText(cred.phoneNumberId, cred.accessToken, normalized.phone, params.text);
   if (!send.ok) {
     return { ok: false, error: send.error };
   }
   const wamid = send.messages?.[0]?.id;
 
-  const extId = externalChatIdFromDigits(params.toPhoneDigits);
-  const phoneDigits = params.toPhoneDigits.replace(/\D/g, '');
+  const extId = externalChatIdFromDigits(normalized.phone);
+  const phoneDigits = normalized.phone.replace(/\D/g, '');
 
   const client = await pool.connect();
   try {

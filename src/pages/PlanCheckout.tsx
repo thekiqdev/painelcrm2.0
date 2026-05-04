@@ -220,6 +220,21 @@ interface PublicPlanRow {
   interval_prices?: IntervalPrice[];
 }
 
+function mapPublicPlanRowToCheckout(p: PublicPlanRow): PlanCheckoutPlan {
+  return {
+    id: p.id,
+    name: p.name,
+    plan_type: p.plan_type,
+    price_cents: p.price_cents,
+    interval_prices: p.interval_prices,
+    description: p.description,
+    benefits: p.benefits,
+    is_free: p.is_free,
+    free_access_days: p.free_access_days,
+    trial_days: p.trial_days ?? 0,
+  };
+}
+
 interface CheckoutContextResponse {
   company_name: string;
   email: string;
@@ -912,6 +927,33 @@ export default function PlanCheckout() {
     }
   }, [step, plansLoading, plansCatalog.length, isResumeMode]);
 
+  /**
+   * Um único plano no catálogo: pré-seleciona no passo 1 (ex. «Começar grátis» → /checkout sem state).
+   * Não pula a etapa Plano — diferente de `applyPlanFromLanding` quando vem `state.plan` da vitrine.
+   */
+  useEffect(() => {
+    if (isResumeMode) return;
+    if (state?.plan) return;
+    if (state?.focusBillingId?.trim() || isSeatAddonMode || seatAddonBillingIdQuery?.trim()) return;
+    if (plansLoading || plansCatalog.length !== 1) return;
+    if (step !== 1) return;
+    const only = plansCatalog[0];
+    if (plan?.id === only.id) return;
+    setPlan(mapPublicPlanRowToCheckout(only));
+    setBillingInterval('monthly');
+    setUsersCount(1);
+  }, [
+    isResumeMode,
+    state?.plan,
+    state?.focusBillingId,
+    isSeatAddonMode,
+    seatAddonBillingIdQuery,
+    plansLoading,
+    plansCatalog,
+    step,
+    plan?.id,
+  ]);
+
   useEffect(() => {
     const billingId = result?.billing_id;
     if (!billingId) return;
@@ -1463,19 +1505,7 @@ export default function PlanCheckout() {
     const planCount = plansCatalog.length;
 
     const selectPlanFromRow = (p: PublicPlanRow) => {
-      const mapped: PlanCheckoutPlan = {
-        id: p.id,
-        name: p.name,
-        plan_type: p.plan_type,
-        price_cents: p.price_cents,
-        interval_prices: p.interval_prices,
-        description: p.description,
-        benefits: p.benefits,
-        is_free: p.is_free,
-        free_access_days: p.free_access_days,
-        trial_days: p.trial_days ?? 0,
-      };
-      setPlan(mapped);
+      setPlan(mapPublicPlanRowToCheckout(p));
       setBillingInterval('monthly');
       setUsersCount(1);
     };
@@ -2539,7 +2569,7 @@ export default function PlanCheckout() {
                     ? `Checkout — ${plan.name}`
                     : 'Checkout — escolha seu plano'}
             </h1>
-            {step === 1 && !plan && !isResumeMode && (
+            {step === 1 && !isResumeMode && (
               <p className="text-sm text-muted-foreground mt-1">Contratação em etapas: plano, dados e pagamento.</p>
             )}
           </div>

@@ -1,4 +1,5 @@
 import { pool } from '../../utils/db.js';
+import { normalizeBrazilWhatsappPhone } from '../../utils/phone/normalizeBrazilPhone.js';
 import { sendTemplateMessage } from './whatsappOfficialClient.js';
 import { getAccountCredentials } from './whatsappOfficialConfigService.js';
 import {
@@ -119,13 +120,29 @@ export async function runWhatsappOfficialCampaignWorkerTick(): Promise<void> {
       `SELECT recipient_phone FROM whatsapp_official_campaign_recipients WHERE id = $1::uuid`,
       [row.id]
     );
-    const toPhone = recPhone.rows[0]?.recipient_phone || '';
+    const toPhoneRaw = recPhone.rows[0]?.recipient_phone || '';
+    const normPhone = normalizeBrazilWhatsappPhone(toPhoneRaw);
+    if (!normPhone.ok || !normPhone.phone) {
+      await pool.query(
+        `UPDATE whatsapp_official_campaign_recipients SET
+           status = 'failed',
+           error_message = $2,
+           failed_at = NOW(),
+           next_retry_at = NULL
+         WHERE id = $1::uuid`,
+        [row.id, 'Telefone inválido (normalização BR)']
+      );
+      await refreshCampaignAggregates(row.campaign_id);
+      await maybeCompleteCampaign(row.campaign_id);
+      continue;
+    }
+
     const components = mergeTemplateComponentsForPayload(ctx, payload);
 
     const r = await sendTemplateMessage(
       cred.phoneNumberId,
       cred.accessToken,
-      toPhone,
+      normPhone.phone,
       ctx.templateName,
       ctx.language,
       components

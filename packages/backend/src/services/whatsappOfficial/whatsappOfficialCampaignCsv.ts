@@ -3,6 +3,8 @@
  * Delimitador: vírgula ou ponto e vírgula (detectado na primeira linha).
  */
 
+import { normalizeBrazilWhatsappPhone } from '../../utils/phone/normalizeBrazilPhone.js';
+
 export type CsvCampaignRow = {
   name: string;
   phone_raw: string;
@@ -112,15 +114,8 @@ export function parseCampaignCsv(text: string): {
   return { rows, errors };
 }
 
-/** Dígitos E.164 sem + (ex.: 5511999999999). Default BR (+55) se 10–11 dígitos locais. */
+/** Dígitos internacionais BR sem `+` (ex.: 5511999999999) para Meta Cloud API. */
 export function normalizePhoneE164Digits(input: string): string | null {
-  let d = input.replace(/\D/g, '');
-  if (d.length < 10) return null;
-  if (d.startsWith('55') && d.length >= 12) return d;
-  if (d.length >= 10 && d.length <= 11) {
-    if (d.startsWith('0')) d = d.replace(/^0+/, '');
-    return `55${d}`;
-  }
-  if (d.length >= 12) return d;
-  return null;
+  const r = normalizeBrazilWhatsappPhone(input);
+  return r.ok ? r.phone ?? null : null;
 }

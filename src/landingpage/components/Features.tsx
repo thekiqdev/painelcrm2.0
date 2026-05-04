@@ -4,7 +4,7 @@ import {
   MessageCircle, Smartphone, LayoutTemplate,
   Receipt, TrendingDown, BarChart3,
   LayoutDashboard, Settings, UserCog,
-  Package, CalendarDays, Cloud, Kanban, Landmark, Bell,
+  Package, CalendarDays, Cloud, Kanban, Landmark, Bell, Wallet,
 } from "lucide-react";
 
 const categories = [
@@ -42,6 +42,7 @@ const categories = [
     title: "Financeiro",
     items: [
       { icon: Receipt, name: "Faturas", desc: "Emissão e controle de faturas." },
+      { icon: Wallet, name: "Contas a pagar", desc: "Fornecedores, vencimentos e despesas recorrentes." },
       { icon: TrendingDown, name: "Despesas", desc: "Registro e controle financeiro." },
       { icon: BarChart3, name: "Relatórios", desc: "Indicadores de desempenho." },
       { icon: Landmark, name: "Cobrança online", desc: "Gateways, boletos e links de pagamento." },
