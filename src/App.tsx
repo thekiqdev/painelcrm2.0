@@ -123,6 +123,13 @@ const SuperAdminAnnouncementSend = lazy(() => import("./pages/superadmin/SuperAd
 const SuperAdminAnnouncementSends = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSends"));
 const SuperAdminAnnouncementSendDetail = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementSendDetail"));
 const SuperAdminAnnouncementGroups = lazy(() => import("./pages/superadmin/SuperAdminAnnouncementGroups"));
+const SuperAdminLeads = lazy(() => import("./pages/superadmin/SuperAdminLeads"));
+const SuperAdminLeadGroups = lazy(() => import("./pages/superadmin/SuperAdminLeadGroups"));
+const ConnectionsPage = lazy(() => import("./pages/superadmin/connections/ConnectionsPage"));
+const WhatsappOfficialConnectionPage = lazy(() => import("./pages/superadmin/connections/WhatsappOfficialConnectionPage"));
+const WhatsappOfficialModelosPage = lazy(() => import("./pages/superadmin/connections/WhatsappOfficialModelosPage"));
+const UazapiConnectionPage = lazy(() => import("./pages/superadmin/connections/UazapiConnectionPage"));
+const WhatsappOfficialChatFull = lazy(() => import("./pages/superadmin/connections/WhatsappOfficialChatFull"));
 const SuperAdminLegalPages = lazy(() => import("./pages/superadmin/SuperAdminLegalPages"));
 const SuperAdminHubPage = lazy(() => import("./pages/superadmin/SuperAdminHubPage"));
 const SuperAdminSmtpSettings = lazy(() => import("./pages/superadmin/SuperAdminSmtpSettings"));
@@ -808,6 +815,11 @@ const App = () => (
                 <Route path="comercial" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="financeiro" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="comunicacao" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="conexoes" element={<Suspense fallback={<LoadingFallback />}><ConnectionsPage /></Suspense>} />
+                <Route path="conexoes/whatsapp-oficial" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialConnectionPage /></Suspense>} />
+                <Route path="conexoes/whatsapp-oficial/modelos" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialModelosPage /></Suspense>} />
+                <Route path="conexoes/whatsapp-oficial/chat" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialChatFull /></Suspense>} />
+                <Route path="conexoes/uazapi" element={<Suspense fallback={<LoadingFallback />}><UazapiConnectionPage /></Suspense>} />
                 <Route path="plataforma" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="seguranca" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
@@ -852,6 +864,9 @@ const App = () => (
                 <Route path="announcements/:id/edit" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementEditor /></Suspense>} />
                 <Route path="announcements/:id/send" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSend /></Suspense>} />
                 <Route path="announcements" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncements /></Suspense>} />
+                <Route path="leads/groups" element={<Suspense fallback={<LoadingFallback />}><SuperAdminLeadGroups /></Suspense>} />
+                <Route path="leads" element={<Suspense fallback={<LoadingFallback />}><SuperAdminLeads /></Suspense>} />
+                <Route path="whatsapp-oficial" element={<Navigate to="/superadmin/conexoes/whatsapp-oficial" replace />} />
                 <Route
                   path="configuracoes/legal"
                   element={

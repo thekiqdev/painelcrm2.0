@@ -1,6 +1,7 @@
-import { ArrowRight, Play } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { HeroInteractiveMockup } from "./hero-mockup/HeroInteractiveMockup";
 
 const Hero = () => {
   return (
@@ -9,50 +10,63 @@ const Hero = () => {
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 h-[500px] w-[800px] rounded-full bg-primary/5 blur-[120px]" />
 
       <div className="container relative mx-auto px-4 lg:px-8">
-        <div className="flex flex-col items-center pt-20 pb-12 text-center lg:pt-28 lg:pb-16">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-4 py-1.5 text-xs text-muted-foreground animate-fade-up">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-            Plataforma CRM completa para PMEs
-          </div>
-
-          <h1 className="max-w-4xl font-display text-4xl font-extrabold leading-tight tracking-tight text-foreground sm:text-5xl lg:text-6xl animate-fade-up" style={{ animationDelay: "0.1s" }}>
-            Do lead ao contrato, em uma{" "}
-            <span className="text-gradient">única plataforma</span>
-          </h1>
-
-          <p className="mt-6 max-w-2xl text-lg text-muted-foreground animate-fade-up" style={{ animationDelay: "0.2s" }}>
-            CRM, funil de vendas, projetos, WhatsApp e faturamento. Tudo integrado para sua equipe vender mais e operar com clareza.
-          </p>
-
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-4 animate-fade-up" style={{ animationDelay: "0.3s" }}>
-            <Button size="lg" className="gap-2 px-8 text-base font-semibold" asChild>
-              <Link to="/checkout">
-                Começar grátis
-                <ArrowRight size={18} />
-              </Link>
-            </Button>
-            <Button variant="outline" size="lg" className="gap-2 px-8 text-base font-semibold" asChild>
-              <Link to="/login">
-                <Play size={16} />
-                Ver demonstração
-              </Link>
-            </Button>
-          </div>
-
-          <p className="mt-8 text-sm text-muted-foreground animate-fade-up" style={{ animationDelay: "0.4s" }}>
-            Usado por <span className="font-semibold text-foreground">+500 empresas</span> · Agências, consultorias e equipes comerciais
-          </p>
-
-          <div className="relative mt-12 w-full max-w-5xl animate-fade-up" style={{ animationDelay: "0.5s" }}>
-            <div className="rounded-xl border border-border/60 bg-card p-1.5 glow-primary">
-              <div
-                className="w-full rounded-lg aspect-video bg-muted/50 flex items-center justify-center text-muted-foreground"
-                aria-hidden
-              >
-                <span className="text-sm">Dashboard integrado</span>
-              </div>
+        <div className="grid items-center gap-10 pb-16 pt-12 lg:grid-cols-11 lg:gap-12 lg:pb-20 lg:pt-20">
+          <div className="text-center lg:col-span-5 lg:text-left">
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-4 py-1.5 text-xs text-muted-foreground animate-fade-up">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+              Plataforma CRM completa para PMEs
             </div>
-            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent" />
+
+            <h1
+              className="font-display text-3xl font-extrabold leading-tight tracking-tight text-foreground sm:text-4xl lg:text-[2.35rem] xl:text-5xl animate-fade-up"
+              style={{ animationDelay: "0.1s" }}
+            >
+              Transforme conversas em vendas e{" "}
+              <span className="text-gradient">
+                gerencie toda sua{" "}
+                <span className="font-black tracking-tight text-[1.14em] sm:text-[1.12em] xl:text-[1.1em]">
+                  empresa
+                </span>
+              </span>
+            </h1>
+
+            <p
+              className="mt-5 max-w-xl text-base text-muted-foreground sm:text-lg lg:mx-0 lg:max-w-none animate-fade-up"
+              style={{ animationDelay: "0.15s" }}
+            >
+              Atenda seus clientes pelo WhatsApp, organize oportunidades no Kanban e automatize etapas comerciais
+              dentro do PainelCRM.
+            </p>
+
+            <div
+              className="mt-8 flex flex-wrap items-center justify-center gap-4 lg:justify-start animate-fade-up"
+              style={{ animationDelay: "0.25s" }}
+            >
+              <Button size="lg" className="gap-2 px-8 text-base font-semibold" asChild>
+                <Link to="/checkout">
+                  Começar agora
+                  <ArrowRight size={18} />
+                </Link>
+              </Button>
+            </div>
+
+            <p
+              className="mt-8 text-sm text-muted-foreground animate-fade-up lg:mt-10"
+              style={{ animationDelay: "0.35s" }}
+            >
+              Usado por <span className="font-semibold text-foreground">+500 empresas</span> · Agências, consultorias e
+              equipes comerciais
+            </p>
+          </div>
+
+          <div
+            className="relative mx-auto w-full max-w-xl animate-fade-up lg:col-span-6 lg:mx-0 lg:max-w-none"
+            style={{ animationDelay: "0.2s" }}
+          >
+            <div className="pointer-events-none absolute -inset-4 rounded-3xl bg-gradient-to-br from-primary/10 via-transparent to-violet-500/10 blur-2xl" />
+            <div className="relative rounded-2xl border border-border/40 bg-card/30 p-2 shadow-xl backdrop-blur-sm sm:p-3">
+              <HeroInteractiveMockup />
+            </div>
           </div>
         </div>
       </div>

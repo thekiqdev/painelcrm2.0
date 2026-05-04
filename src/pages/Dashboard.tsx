@@ -20,6 +20,7 @@ import { ResponsiveContainer, BarChart, Bar, CartesianGrid, Legend, Tooltip, XAx
 import { dashboardService, type DashboardOverviewResponse } from "@/services/dashboard";
 import { toast } from "@/components/ui/sonner";
 import { DashboardActivationBlock } from "@/components/dashboard/DashboardActivationBlock";
+import { DashboardTrialBanner } from "@/components/dashboard/DashboardTrialBanner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFeatureFlag } from "@/hooks/useFeatureFlag";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
@@ -208,16 +209,25 @@ const Dashboard = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
+      {trialActive && trialEndsAt ? (
+        <div className="order-1 md:order-2">
+          <DashboardTrialBanner endsAt={trialEndsAt} />
+        </div>
+      ) : null}
+      <DashboardActivationBlock className="order-2 md:order-3" />
       {quickActionsForPanel.length > 0 ? (
-        <DashboardQuickActionsPanel
-          ctx={quickActionCtx}
-          prefs={prefs}
-          setPrefs={setPrefs}
-          resetPrefs={reset}
-        />
+        <div className="order-3 md:order-1">
+          <DashboardQuickActionsPanel
+            ctx={quickActionCtx}
+            prefs={prefs}
+            setPrefs={setPrefs}
+            resetPrefs={reset}
+          />
+        </div>
       ) : null}
 
+      <div className="order-4 flex flex-col gap-6 md:hidden">
       {overview && show(hasDashboard, "dashboard") ? (
         <section className="space-y-3 md:hidden">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -670,22 +680,9 @@ const Dashboard = () => {
           </div>
         </section>
       ) : null}
+      </div>
 
-      {trialActive && (
-        <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
-          <p className="font-medium">Período de avaliação ativo</p>
-          <p className="mt-1 text-muted-foreground dark:text-amber-200/90">
-            Acesso de trial até{' '}
-            <strong>{trialEndsAt!.toLocaleDateString('pt-BR')}</strong>. Após essa data será necessário concluir o
-            pagamento para continuar usando o sistema.{' '}
-            <Link to="/meu-plano" className="underline font-medium text-foreground">
-              Plano e pagamento
-            </Link>
-          </p>
-        </div>
-      )}
-      <DashboardActivationBlock />
-
+      <div className="order-5 flex flex-col gap-6 md:order-4">
       <div className="hidden gap-3 md:flex md:flex-row md:items-center md:justify-between">
         <h1 className="text-2xl font-bold">Dashboard Executivo</h1>
         <div className="flex gap-2">
@@ -1291,6 +1288,7 @@ const Dashboard = () => {
             </div>
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   );

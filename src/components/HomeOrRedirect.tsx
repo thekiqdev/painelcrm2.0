@@ -1,5 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import { Suspense, lazy, useEffect, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { getPostAuthHomePath } from "@/utils/superAdminRedirect";
 
 const LandingPage = lazy(() => import("../landingpage").then((m) => ({ default: m.LandingPage })));
 
@@ -25,33 +28,44 @@ function isStandalonePWA(): boolean {
 }
 
 /**
- * Na rota "/": no navegador mostra a home (landing); no app instalado (PWA) redireciona para /login.
+ * Na rota "/":
+ * - Desktop (navegador, não PWA): landing para visitantes.
+ * - Mobile (mesmo breakpoint que o shell, max-width 767px) ou PWA: se já autenticado, vai direto para o app (dashboard, superadmin ou register/steps).
+ * - PWA sem sessão: /login (comportamento anterior).
  */
 export default function HomeOrRedirect() {
   const navigate = useNavigate();
-  const [isPWA, setIsPWA] = useState<boolean | null>(null);
+  const { user, loading } = useAuth();
+  const isMobile = useIsMobile();
+  const [isPWA] = useState(() => isStandalonePWA());
 
   useEffect(() => {
-    setIsPWA(isStandalonePWA());
-  }, []);
-
-  useEffect(() => {
-    if (isPWA === true) {
+    if (loading) return;
+    const loggedIn = Boolean(user);
+    if (loggedIn && (isMobile || isPWA)) {
+      navigate(getPostAuthHomePath(user), { replace: true });
+      return;
+    }
+    if (isPWA && !loggedIn) {
       navigate("/login", { replace: true });
     }
-  }, [isPWA, navigate]);
+  }, [loading, user, isMobile, isPWA, navigate]);
 
-  if (isPWA === true) {
+  if (loading) {
     return <LoadingFallback />;
   }
 
-  if (isPWA === false) {
-    return (
-      <Suspense fallback={<LoadingFallback />}>
-        <LandingPage />
-      </Suspense>
-    );
+  const loggedIn = Boolean(user);
+  if (loggedIn && (isMobile || isPWA)) {
+    return <LoadingFallback />;
+  }
+  if (isPWA && !loggedIn) {
+    return <LoadingFallback />;
   }
 
-  return <LoadingFallback />;
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <LandingPage />
+    </Suspense>
+  );
 }

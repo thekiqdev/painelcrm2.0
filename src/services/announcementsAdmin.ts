@@ -42,7 +42,8 @@ export type AnnouncementGroup = {
 export type AnnouncementSendListRow = {
   id: string;
   announcement_id: string;
-  group_id: string;
+  group_id: string | null;
+  superadmin_lead_group_id?: string | null;
   status: string;
   delay_seconds: number;
   scheduled_start_at: string | null;
@@ -51,6 +52,8 @@ export type AnnouncementSendListRow = {
   created_at: string;
   announcement_title: string;
   group_name: string;
+  /** tenant_group = empresas SaaS; lead_group = contactos importados no Super Admin */
+  audience?: 'tenant_group' | 'lead_group';
 };
 
 export const announcementsAdminService = {
@@ -87,7 +90,15 @@ export const announcementsAdminService = {
     const r = await apiClient.delete(`${base}/${id}`);
     if (r.error) throw new Error(r.error);
   },
-  async send(id: string, body: { group_id: string; delay_seconds?: number; scheduled_start_at?: string | null }): Promise<{ send_id: string }> {
+  async send(
+    id: string,
+    body: {
+      group_id?: string;
+      superadmin_lead_group_id?: string;
+      delay_seconds?: number;
+      scheduled_start_at?: string | null;
+    },
+  ): Promise<{ send_id: string }> {
     const r = await apiClient.post<{ send_id: string; recipients: number }>(`${base}/${id}/send`, body);
     if (r.error) throw new Error(r.error);
     if (!r.data?.send_id) throw new Error('Resposta inválida');
@@ -102,7 +113,9 @@ export const announcementsAdminService = {
     send: AnnouncementSendListRow;
     recipients: Array<{
       id: string;
-      tenant_id: string;
+      tenant_id: string | null;
+      superadmin_lead_id: string | null;
+      lead_name: string | null;
       phone: string | null;
       status: string;
       attempt_count: number;
@@ -118,7 +131,9 @@ export const announcementsAdminService = {
       send: AnnouncementSendListRow;
       recipients: Array<{
         id: string;
-        tenant_id: string;
+        tenant_id: string | null;
+        superadmin_lead_id: string | null;
+        lead_name: string | null;
         phone: string | null;
         status: string;
         attempt_count: number;

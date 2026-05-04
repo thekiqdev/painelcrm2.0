@@ -11,6 +11,8 @@ export function communicationProviderBadgeLabel(
   switch (p) {
     case 'whatsapp_uazapi':
       return 'WhatsApp';
+    case 'whatsapp_official':
+      return 'WhatsApp Oficial';
     case 'instagram':
       return 'Instagram';
     case 'facebook_messenger':

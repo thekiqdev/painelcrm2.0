@@ -301,6 +301,13 @@ const order = [
   '196_chat_messages_client_message_id.sql',
   /** Chat: colunas de cache local de avatar WhatsApp (catálogo + metadados CDN) */
   '197_whatsapp_avatar_local_cache.sql',
+  /** Super Admin: leads/grupos (import CSV) + disparos de anúncio por grupo de leads */
+  '198_superadmin_marketing_leads.sql',
+  /** WhatsApp Business Platform (Meta Cloud API) — provider whatsapp_official */
+  '199_whatsapp_official_meta_cloud.sql',
+  '200_whatsapp_official_campaigns_phase3.sql',
+  '201_system_feature_flags.sql',
+  '202_whatsapp_official_templates_meta_columns.sql',
   'create-admin-user.sql',
 ];
 

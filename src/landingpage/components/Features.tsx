@@ -4,6 +4,7 @@ import {
   MessageCircle, Smartphone, LayoutTemplate,
   Receipt, TrendingDown, BarChart3,
   LayoutDashboard, Settings, UserCog,
+  Package, CalendarDays, Cloud, Kanban, Landmark, Bell,
 } from "lucide-react";
 
 const categories = [
@@ -15,6 +16,7 @@ const categories = [
       { icon: GitBranch, name: "Funil de vendas", desc: "Múltiplos funis e etapas configuráveis." },
       { icon: FileText, name: "Propostas", desc: "Criação e envio de propostas profissionais." },
       { icon: FileSignature, name: "Contratos", desc: "Gestão do ciclo completo de contratos." },
+      { icon: Package, name: "Loja e produtos", desc: "Catálogo, vitrine pública e pedidos." },
     ],
   },
   {
@@ -23,6 +25,7 @@ const categories = [
       { icon: FolderKanban, name: "Projetos", desc: "Etapas, entregas e acompanhamento." },
       { icon: CheckSquare, name: "Tarefas", desc: "Prazos, lembretes e atribuições." },
       { icon: Headphones, name: "Tickets", desc: "Atendimento e suporte integrados." },
+      { icon: CalendarDays, name: "Agenda", desc: "Compromissos, lembretes e confirmações." },
     ],
   },
   {
@@ -31,6 +34,8 @@ const categories = [
       { icon: MessageCircle, name: "Chat / WhatsApp", desc: "Conversas integradas ao CRM." },
       { icon: Smartphone, name: "WhatsApp API", desc: "Conecte múltiplas instâncias." },
       { icon: LayoutTemplate, name: "Templates", desc: "Modelos para e-mail e WhatsApp." },
+      { icon: Cloud, name: "WhatsApp Cloud (Meta)", desc: "API oficial, templates e campanhas." },
+      { icon: Kanban, name: "Kanban de chat", desc: "Organize atendimentos em colunas." },
     ],
   },
   {
@@ -39,6 +44,7 @@ const categories = [
       { icon: Receipt, name: "Faturas", desc: "Emissão e controle de faturas." },
       { icon: TrendingDown, name: "Despesas", desc: "Registro e controle financeiro." },
       { icon: BarChart3, name: "Relatórios", desc: "Indicadores de desempenho." },
+      { icon: Landmark, name: "Cobrança online", desc: "Gateways, boletos e links de pagamento." },
     ],
   },
 ];
@@ -47,6 +53,7 @@ const extras = [
   { icon: LayoutDashboard, name: "Dashboard", desc: "Visão geral e KPIs." },
   { icon: Settings, name: "Configurações", desc: "Preferências, logo e idioma." },
   { icon: UserCog, name: "Perfis", desc: "Permissões por usuário." },
+  { icon: Bell, name: "Notificações", desc: "Alertas em tempo real no painel." },
 ];
 
 const Features = () => {

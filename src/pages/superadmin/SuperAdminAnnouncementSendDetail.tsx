@@ -8,7 +8,9 @@ import { toast } from '@/hooks/use-toast';
 
 type Recipient = {
   id: string;
-  tenant_id: string;
+  tenant_id: string | null;
+  superadmin_lead_id: string | null;
+  lead_name: string | null;
   phone: string | null;
   status: string;
   attempt_count: number;
@@ -45,6 +47,8 @@ export default function SuperAdminAnnouncementSendDetail() {
   if (loading) return <p className="text-sm text-muted-foreground">A carregar…</p>;
   if (!send) return <p className="text-sm text-muted-foreground">Não encontrado.</p>;
 
+  const isLeadAudience = send.audience === 'lead_group';
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -52,6 +56,7 @@ export default function SuperAdminAnnouncementSendDetail() {
           <h1 className="text-2xl font-bold tracking-tight">Envio</h1>
           <p className="text-sm text-muted-foreground">
             {send.announcement_title} · {send.group_name}
+            {isLeadAudience ? ' · leads' : ' · tenants'}
           </p>
         </div>
         <Button variant="outline" asChild>
@@ -72,7 +77,7 @@ export default function SuperAdminAnnouncementSendDetail() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Tenant</TableHead>
+                  <TableHead>{isLeadAudience ? 'Lead' : 'Tenant'}</TableHead>
                   <TableHead>Telefone</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Agendado</TableHead>
@@ -83,7 +88,15 @@ export default function SuperAdminAnnouncementSendDetail() {
               <TableBody>
                 {recipients.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="font-mono text-xs">{r.tenant_id}</TableCell>
+                    <TableCell className="text-sm max-w-[220px]">
+                      {isLeadAudience ? (
+                        <span className="truncate block" title={r.lead_name ?? r.superadmin_lead_id ?? ''}>
+                          {r.lead_name ?? r.superadmin_lead_id ?? '—'}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-xs truncate block">{r.tenant_id ?? '—'}</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm">{r.phone ?? '—'}</TableCell>
                     <TableCell>{r.status}</TableCell>
                     <TableCell className="text-xs whitespace-nowrap">{new Date(r.scheduled_at).toLocaleString('pt-BR')}</TableCell>

@@ -2015,49 +2015,68 @@ export default function PlanCheckout() {
         <span>{formatPrice(amountCents)}</span>
       </div>
       {showTrialOnSummary && plan && (
-        <p className="text-sm text-muted-foreground rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
-          Período de avaliação de <strong>{effectiveCheckoutTrialDays(plan)} dias</strong> sem cobrança agora. Quando o
-          período terminar, você poderá concluir o pagamento pelo painel.
-        </p>
-      )}
-      <div className="flex flex-wrap gap-2 justify-end">
-        <Button variant="outline" onClick={handleBack}>
-          Voltar
-        </Button>
-        {showTrialOnSummary && (
-          <Button type="button" onClick={() => void handleStartTrial()} disabled={loading}>
+        <div className="rounded-2xl border-2 border-primary/45 bg-gradient-to-b from-primary/[0.14] via-primary/[0.06] to-transparent p-4 shadow-[0_10px_50px_-15px_hsl(var(--primary)/0.45)] sm:p-5">
+          <p className="mb-4 text-center text-sm leading-relaxed text-muted-foreground">
+            Período de avaliação de{' '}
+            <strong className="text-foreground">{effectiveCheckoutTrialDays(plan)} dias</strong> sem cobrança agora.
+            Quando o período terminar, você poderá concluir o pagamento pelo painel.
+          </p>
+          <Button
+            type="button"
+            size="lg"
+            disabled={loading}
+            onClick={() => void handleStartTrial()}
+            className={cn(
+              'h-14 w-full text-base font-bold shadow-xl transition-all sm:h-16 sm:text-lg',
+              'bg-gradient-to-r from-primary to-[hsl(220_88%_48%)] text-primary-foreground hover:opacity-[0.96]',
+              'hover:shadow-2xl hover:shadow-primary/25 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+            )}
+          >
             {loading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Abrindo trial…
               </>
             ) : (
-              `Iniciar ${effectiveCheckoutTrialDays(plan)} dias grátis (sem cobrança agora)`
+              <>
+                <Gift className="mr-2 h-5 w-5 shrink-0 sm:h-6 sm:w-6" />
+                Testar {effectiveCheckoutTrialDays(plan)} dias grátis
+              </>
             )}
           </Button>
-        )}
-        {showTrialOnSummary ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              blockAutoHydrateRef.current = false;
-              setStep(4);
-            }}
-          >
-            Pagar agora (opcional)
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            onClick={() => {
-              blockAutoHydrateRef.current = false;
-              setStep(4);
-            }}
-          >
-            Ir para pagamento
-          </Button>
-        )}
+          <p className="mt-3 text-center text-xs text-muted-foreground">Sem cobrança neste passo · você escolhe quando pagar</p>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2 justify-between sm:justify-end">
+        <Button variant="outline" onClick={handleBack}>
+          Voltar
+        </Button>
+        <div className="flex flex-wrap gap-2">
+          {showTrialOnSummary ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => {
+                blockAutoHydrateRef.current = false;
+                setStep(4);
+              }}
+            >
+              Pagar agora (opcional)
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={() => {
+                blockAutoHydrateRef.current = false;
+                setStep(4);
+              }}
+            >
+              Ir para pagamento
+            </Button>
+          )}
+        </div>
       </div>
     </div>
     );

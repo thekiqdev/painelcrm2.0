@@ -15,6 +15,10 @@ import {
   Scale,
   UserCog,
   ScrollText,
+  UsersRound,
+  MessageCircle,
+  Link2,
+  RadioTower,
 } from "lucide-react";
 
 export type SuperAdminHubCardDef = {
@@ -86,6 +90,32 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
     ],
   },
   {
+    path: "/superadmin/conexoes",
+    title: "Conexões",
+    description:
+      "WhatsApp Cloud API (Meta) e UazAPI — credenciais, estado da ligação e chat operacional no mesmo inbox do CRM.",
+    cards: [
+      {
+        to: "/superadmin/conexoes",
+        title: "Visão geral",
+        description: "Interruptores globais, estado e atalhos para cada canal.",
+        icon: Link2,
+      },
+      {
+        to: "/superadmin/conexoes/whatsapp-oficial",
+        title: "WhatsApp oficial (Meta)",
+        description: "Cloud API, templates, campanhas e inbox verificado.",
+        icon: MessageCircle,
+      },
+      {
+        to: "/superadmin/conexoes/uazapi",
+        title: "WhatsApp (UazAPI)",
+        description: "Instâncias da plataforma e número para notificações automáticas.",
+        icon: RadioTower,
+      },
+    ],
+  },
+  {
     path: "/superadmin/comunicacao",
     title: "Comunicação",
     description:
@@ -102,6 +132,12 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
         title: "Anúncios aos clientes",
         description: "Comunicados WhatsApp e página de atualizações.",
         icon: Megaphone,
+      },
+      {
+        to: "/superadmin/leads",
+        title: "Leads da plataforma",
+        description: "Importar planilhas (leads/clientes), grupos e disparos por WhatsApp.",
+        icon: UsersRound,
       },
       {
         to: "/superadmin/notifications-engine",

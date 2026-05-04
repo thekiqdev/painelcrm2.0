@@ -246,8 +246,17 @@ class ApiClient {
 
       if (!response.ok) {
         const body = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
+        const rawErr = body.error;
+        const errorMessage =
+          typeof rawErr === 'string'
+            ? rawErr
+            : rawErr !== undefined && rawErr !== null
+              ? JSON.stringify(rawErr)
+              : typeof body.message === 'string'
+                ? body.message
+                : 'Request failed';
         return {
-          error: (body.error as string) || (body.message as string) || 'Request failed',
+          error: errorMessage,
           code: typeof body.code === 'string' ? body.code : undefined,
           hint: typeof body.hint === 'string' ? body.hint : undefined,
           field: typeof body.field === 'string' ? body.field : undefined,

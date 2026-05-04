@@ -53,6 +53,7 @@ export default function SuperAdminAnnouncementSends() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Anúncio</TableHead>
+                    <TableHead>Tipo</TableHead>
                     <TableHead>Grupo</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead>Delay</TableHead>
@@ -64,6 +65,9 @@ export default function SuperAdminAnnouncementSends() {
                   {rows.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="font-medium max-w-[200px] truncate">{r.announcement_title}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                        {r.audience === 'lead_group' ? 'Leads' : 'Tenants'}
+                      </TableCell>
                       <TableCell>{r.group_name}</TableCell>
                       <TableCell>{r.status}</TableCell>
                       <TableCell>{r.delay_seconds}s</TableCell>

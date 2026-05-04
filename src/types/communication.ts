@@ -4,6 +4,7 @@
 
 export type CommunicationProvider =
   | 'whatsapp_uazapi'
+  | 'whatsapp_official'
   | 'instagram'
   | 'facebook_messenger'
   | 'webchat'

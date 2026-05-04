@@ -18,6 +18,9 @@ import superadminAnnouncementRoutes from './superadminAnnouncementRoutes.js';
 import * as superadminLegalPagesController from '../controllers/superadminLegalPagesController.js';
 import * as superadminWhatsappAvatarBackfillController from '../controllers/superadminWhatsappAvatarBackfillController.js';
 import * as smtpSuperadminSettingsController from '../controllers/smtpSuperadminSettingsController.js';
+import * as superadminLeadsController from '../controllers/superadminLeadsController.js';
+import superadminWhatsappOfficialRoutes from './superadminWhatsappOfficialRoutes.js';
+import connectionsRoutes from './connectionsRoutes.js';
 
 const router = Router();
 
@@ -156,5 +159,24 @@ router.post('/legal/:page/publish', superadminLegalPagesController.postSuperadmi
 router.get('/legal/:page', superadminLegalPagesController.getSuperadminLegalPage);
 
 router.use('/announcements', superadminAnnouncementRoutes);
+
+router.use('/connections', connectionsRoutes);
+
+router.use('/whatsapp-official', superadminWhatsappOfficialRoutes);
+
+router.get('/lead-groups/for-announcements', superadminLeadsController.listSuperadminLeadGroupsForAnnouncements);
+router.get('/lead-groups', superadminLeadsController.listSuperadminLeadGroups);
+router.post('/lead-groups', superadminLeadsController.createSuperadminLeadGroup);
+router.patch('/lead-groups/:id', superadminLeadsController.patchSuperadminLeadGroup);
+router.get('/lead-groups/:id/members', superadminLeadsController.getSuperadminLeadGroupMembers);
+router.put('/lead-groups/:id/members', superadminLeadsController.putSuperadminLeadGroupMembers);
+
+router.get('/leads/picker', superadminLeadsController.listSuperadminLeadsPicker);
+router.post('/leads/import-leads', superadminLeadsController.importSuperadminLeadsCsv);
+router.post('/leads/import-clients', superadminLeadsController.importSuperadminClientsCsv);
+router.get('/leads', superadminLeadsController.listSuperadminLeads);
+router.post('/leads', superadminLeadsController.createSuperadminLead);
+router.patch('/leads/:id', superadminLeadsController.patchSuperadminLead);
+router.delete('/leads/:id', superadminLeadsController.deleteSuperadminLead);
 
 export default router;

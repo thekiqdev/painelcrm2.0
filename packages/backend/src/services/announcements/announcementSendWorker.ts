@@ -69,7 +69,8 @@ export async function processAnnouncementSendRecipientsOnce(pool: Pool): Promise
     const rowQ = await client.query<{
       recipient_id: string;
       send_id: string;
-      tenant_id: string;
+      tenant_id: string | null;
+      superadmin_lead_id: string | null;
       phone: string | null;
       attempt_count: number;
       whatsapp_message: string;
@@ -78,6 +79,7 @@ export async function processAnnouncementSendRecipientsOnce(pool: Pool): Promise
          r.id::text AS recipient_id,
          r.send_id::text AS send_id,
          r.tenant_id::text AS tenant_id,
+         r.superadmin_lead_id::text AS superadmin_lead_id,
          r.phone,
          r.attempt_count,
          a.whatsapp_message

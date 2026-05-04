@@ -19,9 +19,6 @@ const CtaSection = () => {
               <ArrowRight size={18} />
             </Link>
           </Button>
-          <Button variant="outline" size="lg" className="px-8 text-base font-semibold" asChild>
-            <Link to="/login">Agendar demonstração</Link>
-          </Button>
         </div>
       </div>
     </section>

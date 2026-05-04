@@ -59,7 +59,9 @@ export type ChatAttendanceStatus =
 export interface ChatConversation {
   id: string;
   user_id: string;
-  instance_id: string;
+  /** Ausente nas conversas WhatsApp Cloud API (Meta). */
+  instance_id?: string | null;
+  whatsapp_official_account_id?: string | null;
   /** Canal lógico (Chat Engine multicanal). */
   provider?: CommunicationProvider | string | null;
   instance_name?: string;
@@ -297,7 +299,8 @@ export function normalizeConversation(raw: any): ChatConversation {
   return {
     id: raw.id,
     user_id: raw.user_id,
-    instance_id: raw.instance_id,
+    instance_id: raw.instance_id ?? null,
+    whatsapp_official_account_id: raw.whatsapp_official_account_id ?? null,
     provider: (raw.provider as CommunicationProvider | undefined) ?? DEFAULT_COMMUNICATION_PROVIDER,
     instance_name: raw.instance_name,
     client_id: raw.client_id ?? null,
@@ -696,6 +699,10 @@ export const chatService = {
 
   async getConversations(filters?: {
     instanceId?: string;
+    /** Apenas linhas `whatsapp_official` (Super Admin / tenant com flag). */
+    includeWhatsAppOfficial?: boolean;
+    /** Filtro de origem: todas | só UazAPI | só Meta Cloud API. */
+    channelOrigin?: 'all' | 'uazapi' | 'official';
     search?: string;
     startDate?: string;
     endDate?: string;
@@ -706,6 +713,10 @@ export const chatService = {
   }) {
     const params = new URLSearchParams();
     if (filters?.instanceId) params.append('instanceId', filters.instanceId);
+    if (filters?.includeWhatsAppOfficial) params.append('includeWhatsAppOfficial', '1');
+    if (filters?.channelOrigin && filters.channelOrigin !== 'all') {
+      params.append('channelOrigin', filters.channelOrigin);
+    }
     if (filters?.search) params.append('search', filters.search);
     if (filters?.startDate) params.append('startDate', filters.startDate);
     if (filters?.endDate) params.append('endDate', filters.endDate);

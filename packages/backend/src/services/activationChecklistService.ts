@@ -21,6 +21,15 @@ export interface ActivationMissionPublic {
   isCompleted: boolean;
 }
 
+export interface ActivationMissionApplicableRow {
+  id: ActivationMissionId;
+  title: string;
+  description: string;
+  actionLabel: string;
+  actionHref: string;
+  completed: boolean;
+}
+
 export interface ActivationChecklistResponse {
   dismissed: boolean;
   applicableTotal: number;
@@ -28,6 +37,8 @@ export interface ActivationChecklistResponse {
   progressPercent: number;
   /** Somente missões aplicáveis ainda pendentes (lista principal). */
   pendingMissions: Omit<ActivationMissionPublic, 'isApplicable' | 'isCompleted'>[];
+  /** Todas as missões aplicáveis com estado de conclusão (UI gamificada / mobile). */
+  applicableMissions: ActivationMissionApplicableRow[];
 }
 
 const MISSION_DEFS: Omit<ActivationMissionPublic, 'isApplicable' | 'isCompleted'>[] = [
@@ -160,6 +171,7 @@ export async function buildActivationChecklist(
       completedCount: 0,
       progressPercent: 100,
       pendingMissions: [],
+      applicableMissions: [],
     };
   }
 
@@ -223,12 +235,24 @@ export async function buildActivationChecklist(
       actionHref,
     }));
 
+  const applicableMissions: ActivationMissionApplicableRow[] = applicable.map(
+    ({ id, title, description, actionLabel, actionHref, isCompleted }) => ({
+      id,
+      title,
+      description,
+      actionLabel,
+      actionHref,
+      completed: isCompleted,
+    }),
+  );
+
   return {
     dismissed: false,
     applicableTotal,
     completedCount,
     progressPercent,
     pendingMissions,
+    applicableMissions,
   };
 }
 

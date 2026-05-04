@@ -51,6 +51,17 @@ export function FloatingConversationList({ className }: { className?: string }) 
         });
         merged.push(...rows);
       }
+      try {
+        const officialRows = await chatService.getConversations({
+          includeWhatsAppOfficial: true,
+          inboxScope,
+          attendanceFilter: quick === 'mine' ? 'mine' : undefined,
+          channelOrigin: 'official',
+        });
+        merged.push(...officialRows);
+      } catch {
+        /* ignore */
+      }
       const byId = new Map<string, ChatConversation>();
       for (const c of merged) {
         const prev = byId.get(c.id);

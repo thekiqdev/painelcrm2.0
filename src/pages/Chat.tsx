@@ -412,6 +412,20 @@ const Chat = () => {
     unread: 0,
   });
   const [operationalPanelFilter, setOperationalPanelFilter] = useState<OperationalPanelFilter>('');
+  /** Lista no painel: todas as origens | só UazAPI | só WhatsApp Cloud API (Meta). */
+  const [chatChannelOrigin, setChatChannelOrigin] = useState<'all' | 'uazapi' | 'official'>('all');
+  const channelQueryAppliedRef = useRef(false);
+  useEffect(() => {
+    if (channelQueryAppliedRef.current) return;
+    const ch = searchParams.get('channel');
+    if (ch === 'official') {
+      setChatChannelOrigin('official');
+      channelQueryAppliedRef.current = true;
+    } else if (ch === 'uazapi') {
+      setChatChannelOrigin('uazapi');
+      channelQueryAppliedRef.current = true;
+    }
+  }, [searchParams]);
   const [slaUiContext, setSlaUiContext] = useState<SlaContextForUi | null>(null);
   const [operationsRefreshTick, setOperationsRefreshTick] = useState(0);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
@@ -618,36 +632,73 @@ const Chat = () => {
       const effectiveInboxScope =
         user?.tenant_id && chatInboxScope === 'tenant' ? 'tenant' : 'owner';
       const attendanceFilterParam = chatAttendanceFilter || undefined;
+      const origin = chatChannelOrigin;
 
       const chatListDiag =
         import.meta.env.DEV || import.meta.env.VITE_CHAT_LIST_DIAG === '1';
 
-      // Carregar conversas de todas as instâncias habilitadas
-      for (const instanceId of ids) {
+      const baseListFilters: {
+        inboxScope: 'owner' | 'tenant';
+        attendanceFilter?: typeof attendanceFilterParam;
+        channelOrigin?: 'uazapi' | 'official';
+      } = {
+        inboxScope: effectiveInboxScope,
+        attendanceFilter: attendanceFilterParam,
+      };
+      if (origin !== 'all') {
+        baseListFilters.channelOrigin = origin;
+      }
+
+      if (origin === 'official') {
         try {
-          if (chatListDiag) {
-            console.log('[ChatListDiag] frontend request', {
-              instanceId,
-              inboxScope: effectiveInboxScope,
-              attendanceFilter: attendanceFilterParam ?? '(none)',
-              activeTab,
-              searchTerm: searchTerm.trim() || '(empty)',
-            });
-          }
           const data = await chatService.getConversations({
-            instanceId,
-            inboxScope: effectiveInboxScope,
-            attendanceFilter: attendanceFilterParam,
+            ...baseListFilters,
+            includeWhatsAppOfficial: true,
+            channelOrigin: 'official',
           });
-          if (chatListDiag) {
-            console.log('[ChatListDiag] frontend raw response count', {
-              instanceId,
-              count: data.length,
-            });
-          }
           allConversations.push(...data);
         } catch (error) {
-          console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
+          console.error('Erro ao carregar conversas WhatsApp Oficial:', error);
+        }
+      } else {
+        for (const instanceId of ids) {
+          try {
+            if (chatListDiag) {
+              console.log('[ChatListDiag] frontend request', {
+                instanceId,
+                inboxScope: effectiveInboxScope,
+                attendanceFilter: attendanceFilterParam ?? '(none)',
+                channelOrigin: origin,
+                activeTab,
+                searchTerm: searchTerm.trim() || '(empty)',
+              });
+            }
+            const data = await chatService.getConversations({
+              instanceId,
+              ...baseListFilters,
+            });
+            if (chatListDiag) {
+              console.log('[ChatListDiag] frontend raw response count', {
+                instanceId,
+                count: data.length,
+              });
+            }
+            allConversations.push(...data);
+          } catch (error) {
+            console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
+          }
+        }
+
+        if (origin === 'all') {
+          try {
+            const officialOnly = await chatService.getConversations({
+              ...baseListFilters,
+              includeWhatsAppOfficial: true,
+            });
+            allConversations.push(...officialOnly);
+          } catch (error) {
+            console.error('Erro ao carregar conversas WhatsApp Oficial:', error);
+          }
         }
       }
 
@@ -701,6 +752,7 @@ const Chat = () => {
     activeTab,
     searchTerm,
     scheduleOperationsPanelRefresh,
+    chatChannelOrigin,
   ]);
 
   /** Ordenação da lista lateral — mesma regra que nos handlers realtime. */
@@ -1559,7 +1611,8 @@ const Chat = () => {
   }, [instances, loadingInstances, enabledInstanceIds]);
 
   useEffect(() => {
-    if (enabledInstanceIds.size === 0) {
+    const origin = chatChannelOrigin;
+    if (enabledInstanceIds.size === 0 && origin !== 'official') {
       setConversations([]);
       if (!pendingConversationRestoreRef.current) {
         setSelectedConversationId(null);
@@ -1575,10 +1628,15 @@ const Chat = () => {
       setSelectedConversationId(null);
     }
     setMessages([]);
-    // Carregar conversas de todas as instâncias habilitadas
-    // Nota: Não usamos polling automático pois os webhooks atualizam em tempo real
     loadConversations(Array.from(enabledInstanceIds));
-  }, [enabledInstanceIds, loadConversations, isMobile, routeConversationId, navigate]);
+  }, [
+    enabledInstanceIds,
+    chatChannelOrigin,
+    loadConversations,
+    isMobile,
+    routeConversationId,
+    navigate,
+  ]);
 
   useEffect(() => {
     if (pendingConversationRestoreRef.current) {
@@ -3740,7 +3798,11 @@ const Chat = () => {
                 <PopoverTrigger asChild>
                   <Button
                     type="button"
-                            variant={filtersPopoverOpen ? 'secondary' : 'outline'}
+                            variant={
+                              filtersPopoverOpen || chatChannelOrigin !== 'all'
+                                ? 'secondary'
+                                : 'outline'
+                            }
                             size="icon"
                             className="h-9 w-9 shrink-0 rounded-lg md:h-8 md:w-8"
                             aria-label="WhatsApp e filtros da lista"
@@ -3976,7 +4038,27 @@ const Chat = () => {
                         </Select>
                       </div>
                     ) : null}
-                            </div>
+                    <div className="border-t border-border pt-3">
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Origem da lista
+                      </p>
+                      <Select
+                        value={chatChannelOrigin}
+                        onValueChange={(v) =>
+                          setChatChannelOrigin(v as 'all' | 'uazapi' | 'official')
+                        }
+                      >
+                        <SelectTrigger className="h-9 w-full text-xs">
+                          <SelectValue placeholder="Origem" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todas (UazAPI + Oficial)</SelectItem>
+                          <SelectItem value="uazapi">UazAPI</SelectItem>
+                          <SelectItem value="official">WhatsApp Oficial (Meta)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                   </div>
                 </PopoverContent>
               </Popover>
@@ -4060,7 +4142,7 @@ const Chat = () => {
                             <p className="mt-1 text-xs">Aguarde um momento.</p>
                           </div>
                         </div>
-                      ) : enabledInstanceIds.size === 0 ? (
+                      ) : enabledInstanceIds.size === 0 && chatChannelOrigin !== 'official' ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
                           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                             <ListFilter className="h-7 w-7 text-muted-foreground" aria-hidden />
@@ -4264,6 +4346,14 @@ const Chat = () => {
                                 <h3 className="truncate text-sm font-semibold leading-tight md:text-[15px] md:leading-snug">
                                 {selectedIdentity?.displayName ?? '—'}
                               </h3>
+                                {shouldShowCommunicationChannelBadge(selectedConversation.provider) ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="h-5 shrink-0 border-muted-foreground/20 px-1.5 text-[10px] font-normal text-muted-foreground"
+                                  >
+                                    {communicationProviderBadgeLabel(selectedConversation.provider)}
+                                  </Badge>
+                                ) : null}
                                 {selectedConversation.client_id && (
                                   <Badge variant="default" className="hidden h-5 shrink-0 px-1.5 text-[10px] md:inline-flex">
                                     Cliente

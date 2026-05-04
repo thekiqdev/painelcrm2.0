@@ -23,6 +23,8 @@ import {
   Globe,
   Shield,
   Mail,
+  Link2,
+  RadioTower,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -124,6 +126,28 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "Relatórios",
         to: "/superadmin/reports",
         icon: BarChart3,
+      },
+    ],
+  },
+  {
+    id: "conexoes",
+    label: "Conexões",
+    items: [
+      {
+        label: "Central de conexões",
+        to: "/superadmin/conexoes",
+        icon: Link2,
+        end: true,
+      },
+      {
+        label: "WhatsApp oficial (Meta)",
+        to: "/superadmin/conexoes/whatsapp-oficial",
+        icon: MessageSquare,
+      },
+      {
+        label: "WhatsApp (UazAPI)",
+        to: "/superadmin/conexoes/uazapi",
+        icon: RadioTower,
       },
     ],
   },

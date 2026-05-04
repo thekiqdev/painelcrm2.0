@@ -111,6 +111,13 @@ import {
 } from '../services/communication/realtimePayloads.js';
 import { emitToTenant } from '../services/realtimeService.js';
 import { canChatAction } from '../services/chatAccess.js';
+import {
+  isWhatsappOfficialSuperadminEnabled,
+  isWhatsappOfficialTenantEnabled,
+} from '../config/whatsappOfficialEnv.js';
+import { canAccessWhatsappOfficialOperationalChat } from '../utils/whatsappOfficialOperationalAccess.js';
+import { getAccountCredentials } from '../services/whatsappOfficial/whatsappOfficialConfigService.js';
+import { sendTextMessage as graphOfficialSendText } from '../services/whatsappOfficial/whatsappOfficialClient.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -829,6 +836,34 @@ async function resolveTenantIdForUser(userId: string): Promise<string | null> {
     [userId]
   );
   return r.rows[0]?.tenant_id ?? null;
+}
+
+async function assertWhatsappOfficialConversationSendAllowed(
+  req: AuthRequest,
+  accountId: string
+): Promise<boolean> {
+  const superadminOfficialEnabled =
+    Boolean(req.user?.is_super_admin) && isWhatsappOfficialSuperadminEnabled();
+  const tenantOfficialEnabled = isWhatsappOfficialTenantEnabled();
+  if (!canAccessWhatsappOfficialOperationalChat(req)) return false;
+  const r = await pool.query(
+    `
+    SELECT 1 FROM whatsapp_official_accounts wa
+    WHERE wa.id = $1::uuid
+      AND (
+        ($2::boolean AND wa.owner_scope = 'superadmin'
+          AND (wa.inbox_user_id IS NULL OR wa.inbox_user_id = $3::uuid))
+        OR
+        ($4::boolean AND wa.tenant_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM users u WHERE u.id = $3::uuid
+            AND u.tenant_id IS NOT NULL AND wa.tenant_id = u.tenant_id
+        ))
+      )
+    LIMIT 1
+    `,
+    [accountId, superadminOfficialEnabled, req.userId!, tenantOfficialEnabled]
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 function deriveProviderContactIdFromConversation(row: Record<string, unknown>): string | null {
@@ -1579,6 +1614,8 @@ async function saveMessage(
     replyMessageType?: string | null;
     /** Idempotência / fila no cliente (coluna dedicada + metadata). */
     clientMessageId?: string | null;
+    /** Provider para `chat_messages.provider` (padrão UazAPI). */
+    messageProvider?: 'whatsapp_uazapi' | 'whatsapp_official';
   }
 ): Promise<{ rowId: string | null; inserted: boolean }> {
   const saveId = randomUUID().substring(0, 8);
@@ -1623,6 +1660,7 @@ async function saveMessage(
     typeof payload.clientMessageId === 'string' && payload.clientMessageId.length > 0
       ? payload.clientMessageId
       : null;
+  const messageProviderRow = payload.messageProvider ?? 'whatsapp_uazapi';
 
   try {
     let messageResult: {
@@ -1638,7 +1676,7 @@ async function saveMessage(
       reply_to_message_id, reply_to_external_message_id, reply_preview, reply_sender_name, reply_message_type,
       client_message_id
     )
-    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, 'whatsapp_uazapi',
+    VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $15,
       $9, $10, $11, $12, $13, $14)
     ON CONFLICT (conversation_id, external_message_id)
     DO UPDATE SET
@@ -1676,6 +1714,7 @@ async function saveMessage(
           replySenderName,
           replyMessageType,
           clientMessageIdForRow,
+          messageProviderRow,
         ]
       );
     } catch (insErr: any) {
@@ -4871,14 +4910,64 @@ export async function getConversations(req: AuthRequest, res: Response) {
     const attendanceFilter = typeof req.query.attendanceFilter === 'string' ? req.query.attendanceFilter : '';
     const diagDeep = String(req.query.diag || '') === '1';
     const logChatList = diagDeep || process.env.CHAT_LIST_LOG === '1';
+    const includeWhatsAppOfficial =
+      String(req.query.includeWhatsAppOfficial || '') === '1' ||
+      String(req.query.includeWhatsAppOfficial || '') === 'true';
+    const channelOriginRaw =
+      typeof req.query.channelOrigin === 'string' ? req.query.channelOrigin.trim().toLowerCase() : '';
+    const channelOrigin =
+      channelOriginRaw === 'uazapi' || channelOriginRaw === 'official' ? channelOriginRaw : 'all';
 
-    if (instanceId && typeof instanceId === 'string' && instanceId.trim()) {
+    if (includeWhatsAppOfficial && !canAccessWhatsappOfficialOperationalChat(req)) {
+      res.json([]);
+      return;
+    }
+
+    if (includeWhatsAppOfficial && channelOrigin === 'uazapi') {
+      res.json([]);
+      return;
+    }
+
+    if (
+      instanceId &&
+      typeof instanceId === 'string' &&
+      instanceId.trim() &&
+      !includeWhatsAppOfficial
+    ) {
       const instOk = await fetchInstanceForOperate(userId, instanceId.trim());
       if (!instOk) {
         res.status(404).json({ error: 'Instância não encontrada ou sem acesso' });
         return;
       }
     }
+
+    const superadminOfficialEnabled =
+      Boolean(req.user?.is_super_admin) && isWhatsappOfficialSuperadminEnabled();
+    const tenantOfficialEnabled = isWhatsappOfficialTenantEnabled();
+    const officialVisibilitySql = `
+    AND (
+      c.instance_id IS NOT NULL
+      OR (
+        c.whatsapp_official_account_id IS NOT NULL
+        AND (
+          (${superadminOfficialEnabled ? 'true' : 'false'}) AND EXISTS (
+            SELECT 1 FROM whatsapp_official_accounts wa_vis
+            WHERE wa_vis.id = c.whatsapp_official_account_id
+              AND wa_vis.owner_scope = 'superadmin'
+              AND (wa_vis.inbox_user_id IS NULL OR wa_vis.inbox_user_id = $1::uuid)
+          )
+          OR
+          (${tenantOfficialEnabled ? 'true' : 'false'}) AND EXISTS (
+            SELECT 1 FROM whatsapp_official_accounts wa_vis
+            INNER JOIN users u_me ON u_me.id = $1::uuid
+            WHERE wa_vis.id = c.whatsapp_official_account_id
+              AND wa_vis.tenant_id IS NOT NULL
+              AND u_me.tenant_id IS NOT NULL
+              AND wa_vis.tenant_id = u_me.tenant_id
+          )
+        )
+      )
+    )`;
 
     const params: any[] = [userId];
     let paramIndex = 2;
@@ -4975,6 +5064,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.metadata,
         c.created_at,
         c.updated_at,
+        c.whatsapp_official_account_id,
         ${
           slaPhase5Cols
             ? `c.first_response_at,
@@ -4985,7 +5075,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         }c.client_id,
         ${attendanceSelectAndJoins.select}
         ${leadSelect},
-        i.name as instance_name,
+        COALESCE(i.name, wa.display_phone_number, wa.verified_name, 'WhatsApp Oficial') as instance_name,
         CASE
           WHEN c.client_id IS NOT NULL THEN 'client_linked'
           WHEN ${leadColumnAvailable ? 'c.lead_id IS NOT NULL' : 'false'} THEN 'lead_linked'
@@ -5001,13 +5091,17 @@ export async function getConversations(req: AuthRequest, res: Response) {
           ELSE NULL
         END as lead_status
       FROM chat_conversations c
-      INNER JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN whatsapp_official_accounts wa ON wa.id = c.whatsapp_official_account_id
       LEFT JOIN clients cl ON cl.id = c.client_id AND cl.user_id = c.user_id
       ${leadJoinSql}
       LEFT JOIN LATERAL (
         SELECT cc.display_name, cc.profile_avatar_url, cc.avatar_cached_url AS communication_avatar_cached_url
         FROM communication_contacts cc
-        WHERE cc.provider = COALESCE(NULLIF(btrim(c.provider), ''), 'whatsapp_uazapi')
+        WHERE cc.provider = CASE
+          WHEN NULLIF(btrim(c.provider), '') = 'whatsapp_official' THEN 'whatsapp_official'
+          ELSE COALESCE(NULLIF(btrim(c.provider), ''), 'whatsapp_uazapi')
+        END
           AND cc.tenant_id = (SELECT tenant_id FROM users WHERE id = $1 LIMIT 1)
           AND (
             (c.canonical_chat_id IS NOT NULL AND btrim(c.canonical_chat_id) <> '' AND cc.provider_contact_id = c.canonical_chat_id)
@@ -5019,10 +5113,21 @@ export async function getConversations(req: AuthRequest, res: Response) {
         LIMIT 1
       ) cc_ext ON true${attendanceSelectAndJoins.joins}
       WHERE ${whereOwnerOrTenant}
+      ${officialVisibilitySql}
     `;
 
-    if (instanceId) {
-      params.push(instanceId);
+    if (includeWhatsAppOfficial) {
+      query += ` AND c.whatsapp_official_account_id IS NOT NULL`;
+    }
+
+    if (!includeWhatsAppOfficial && channelOrigin === 'uazapi') {
+      query += ` AND c.instance_id IS NOT NULL AND c.whatsapp_official_account_id IS NULL`;
+    } else if (!includeWhatsAppOfficial && channelOrigin === 'official') {
+      query += ` AND c.whatsapp_official_account_id IS NOT NULL`;
+    }
+
+    if (instanceId && typeof instanceId === 'string' && instanceId.trim() && !includeWhatsAppOfficial) {
+      params.push(instanceId.trim());
       query += ` AND c.instance_id = $${params.length}`;
       paramIndex++;
     }
@@ -6806,7 +6911,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       `
         SELECT c.*, i.instance_token, i.external_instance_name
         FROM chat_conversations c
-        INNER JOIN chat_instances i ON i.id = c.instance_id
+        LEFT JOIN chat_instances i ON i.id = c.instance_id
         WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}
       `,
       [data.conversationId, userId]
@@ -6819,8 +6924,25 @@ export async function sendMessage(req: AuthRequest, res: Response) {
 
     const conversation = conversationResult.rows[0];
 
+    const isOfficial =
+      String((conversation as { provider?: string }).provider || '') === 'whatsapp_official' ||
+      Boolean((conversation as { whatsapp_official_account_id?: string }).whatsapp_official_account_id);
+
+    if (isOfficial) {
+      const accId = String(
+        (conversation as { whatsapp_official_account_id?: string }).whatsapp_official_account_id || ''
+      ).trim();
+      if (!accId || !(await assertWhatsappOfficialConversationSendAllowed(req, accId))) {
+        res.status(403).json({ error: 'Sem permissão para enviar pelo WhatsApp Oficial' });
+        return;
+      }
+    } else if (!(conversation as { instance_token?: string }).instance_token) {
+      res.status(400).json({ error: 'Instância não disponível para esta conversa' });
+      return;
+    }
+
     let replyContext: ReplySnapshotPayload | null = null;
-    if (data.replyToMessageId) {
+    if (!isOfficial && data.replyToMessageId) {
       const rc = await loadReplyContextForSend({
         userId,
         conversationId: data.conversationId,
@@ -6873,6 +6995,12 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     const provisionalExternalId = `local:${randomUUID()}`;
 
     if (msgType === 'image' || msgType === 'document') {
+      if (isOfficial) {
+        res.status(400).json({
+          error: 'Envio de mídia pelo WhatsApp Oficial ainda não está disponível neste chat.',
+        });
+        return;
+      }
       const caption = (data.caption ?? '').trim();
       const sourceFile: string | null =
         data.fileUrl ||
@@ -7022,81 +7150,194 @@ export async function sendMessage(req: AuthRequest, res: Response) {
     } else {
       const text = (data.text ?? '').trim();
 
-      // 1) Persistência local imediata (estado inicial)
-      {
-        const saveResult = await saveMessage(conversation.id, 'outgoing', {
-        externalMessageId: provisionalExternalId,
-        body: text,
-        media: [],
-        messageKind: 'text',
-        status: 'queued',
-        sentAt: new Date(),
-        clientMessageId: data.clientMessageId ?? null,
-        metadata: {
-          source: 'send/text',
-          track_id: localTrackId,
-          provisional: true,
-          ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
-        },
-        ...(replyContext
-          ? {
-              replyToMessageId: replyContext.replyToMessageId,
-              replyToExternalMessageId: replyContext.replyToExternalMessageId,
-              replyPreview: replyContext.replyPreview,
-              replySenderName: replyContext.replySenderName,
-              replyMessageType: replyContext.replyMessageType,
-            }
-          : {}),
-      });
-        savedRowId = saveResult.rowId;
-      }
-      queuedMessageRowId = savedRowId;
-
-      messageResponse = (await uazapiService.sendTextMessage(conversation.instance_token, {
-        number: numberTo,
-        text,
-        ...(replyContext?.uazReplyId ? { replyid: replyContext.uazReplyId } : {}),
-        readchat: data.readChat,
-        readmessages: data.readMessages,
-        delay: data.delay,
-        track_source: 'painelcrm',
-        track_id: localTrackId,
-      })) as AnyObject;
-
-      const extId = extractUazOutgoingMessageId(messageResponse);
-
-      if (savedRowId) {
-        const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
-        await pool.query(
-          `
-          UPDATE chat_messages
-          SET
-            external_message_id = COALESCE($1, external_message_id),
-            status = $2,
-            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-            sent_at = COALESCE(sent_at, $4::timestamptz)
-          WHERE id = $5
-          `,
-          [
-            extId,
-            nextStatus,
-            JSON.stringify({ ...messageResponse, track_id: localTrackId }),
-            new Date(),
-            savedRowId,
-          ]
+      if (isOfficial) {
+        const accountId = String(
+          (conversation as { whatsapp_official_account_id?: string }).whatsapp_official_account_id || ''
+        ).trim();
+        const cred = await getAccountCredentials(accountId);
+        if (!cred) {
+          res.status(400).json({ error: 'Conta WhatsApp Oficial não encontrada ou indisponível' });
+          return;
+        }
+        const rawDigits = toUazRecipientNumber(
+          (conversation as { canonical_phone?: string }).canonical_phone || conversation.phone_number,
+          conversation.external_chat_id
         );
+        const digits = rawDigits.replace(/\D/g, '');
+        if (!digits || digits.length < 8) {
+          res.status(400).json({ error: 'Telefone do destinatário inválido para este canal' });
+          return;
+        }
+
+        {
+          const saveResult = await saveMessage(conversation.id, 'outgoing', {
+            externalMessageId: provisionalExternalId,
+            body: text,
+            media: [],
+            messageKind: 'text',
+            status: 'queued',
+            sentAt: new Date(),
+            clientMessageId: data.clientMessageId ?? null,
+            messageProvider: 'whatsapp_official',
+            metadata: {
+              source: 'send/text/whatsapp_official',
+              track_id: localTrackId,
+              provisional: true,
+              ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
+            },
+          });
+          savedRowId = saveResult.rowId;
+        }
+        queuedMessageRowId = savedRowId;
+
+        const sendResult = await graphOfficialSendText(
+          cred.phoneNumberId,
+          cred.accessToken,
+          digits,
+          text
+        );
+
+        if (!sendResult.ok) {
+          if (savedRowId) {
+            await pool.query(
+              `
+              UPDATE chat_messages
+              SET status = 'failed',
+                  metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+              WHERE id = $2
+              `,
+              [
+                JSON.stringify({
+                  send_error: sendResult.error || 'Meta send failed',
+                  source: 'whatsapp_official',
+                }),
+                savedRowId,
+              ]
+            );
+          }
+          res.status(502).json({
+            error: sendResult.error || 'Falha ao enviar pela Meta Cloud API',
+          });
+          return;
+        }
+
+        const wamid = sendResult.messages?.[0]?.id;
+        messageResponse = {
+          source: 'whatsapp_official',
+          wamid,
+          raw: sendResult.raw,
+        } as AnyObject;
+
+        const extId = wamid ?? null;
+        if (savedRowId) {
+          const nextStatus = pickBestOutgoingStatus('queued', 'sent') ?? 'sent';
+          await pool.query(
+            `
+            UPDATE chat_messages
+            SET
+              external_message_id = COALESCE($1, external_message_id),
+              status = $2,
+              metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+              sent_at = COALESCE(sent_at, $4::timestamptz)
+            WHERE id = $5
+            `,
+            [
+              extId,
+              nextStatus,
+              JSON.stringify({
+                ...((sendResult.raw && typeof sendResult.raw === 'object'
+                  ? sendResult.raw
+                  : {}) as object),
+                source: 'whatsapp_official',
+                track_id: localTrackId,
+              }),
+              new Date(),
+              savedRowId,
+            ]
+          );
+        }
+      } else {
+        // 1) Persistência local imediata (estado inicial)
+        {
+          const saveResult = await saveMessage(conversation.id, 'outgoing', {
+            externalMessageId: provisionalExternalId,
+            body: text,
+            media: [],
+            messageKind: 'text',
+            status: 'queued',
+            sentAt: new Date(),
+            clientMessageId: data.clientMessageId ?? null,
+            metadata: {
+              source: 'send/text',
+              track_id: localTrackId,
+              provisional: true,
+              ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
+            },
+            ...(replyContext
+              ? {
+                  replyToMessageId: replyContext.replyToMessageId,
+                  replyToExternalMessageId: replyContext.replyToExternalMessageId,
+                  replyPreview: replyContext.replyPreview,
+                  replySenderName: replyContext.replySenderName,
+                  replyMessageType: replyContext.replyMessageType,
+                }
+              : {}),
+          });
+          savedRowId = saveResult.rowId;
+        }
+        queuedMessageRowId = savedRowId;
+
+        messageResponse = (await uazapiService.sendTextMessage(
+          (conversation as { instance_token: string }).instance_token,
+          {
+            number: numberTo,
+            text,
+            ...(replyContext?.uazReplyId ? { replyid: replyContext.uazReplyId } : {}),
+            readchat: data.readChat,
+            readmessages: data.readMessages,
+            delay: data.delay,
+            track_source: 'painelcrm',
+            track_id: localTrackId,
+          }
+        )) as AnyObject;
+
+        const extId = extractUazOutgoingMessageId(messageResponse);
+
+        if (savedRowId) {
+          const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
+          await pool.query(
+            `
+            UPDATE chat_messages
+            SET
+              external_message_id = COALESCE($1, external_message_id),
+              status = $2,
+              metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+              sent_at = COALESCE(sent_at, $4::timestamptz)
+            WHERE id = $5
+            `,
+            [
+              extId,
+              nextStatus,
+              JSON.stringify({ ...messageResponse, track_id: localTrackId }),
+              new Date(),
+              savedRowId,
+            ]
+          );
+        }
       }
     }
 
-    try {
-      const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
-      if (instRow) {
-        void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
-          (idErr: any) => console.warn('[SendMessage] identity refresh failed:', idErr?.message)
-        );
+    if (!isOfficial) {
+      try {
+        const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
+        if (instRow) {
+          void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
+            (idErr: any) => console.warn('[SendMessage] identity refresh failed:', idErr?.message)
+          );
+        }
+      } catch {
+        /* não bloquear envio */
       }
-    } catch {
-      /* não bloquear envio */
     }
 
     // Pequeno delay para garantir que a atualização da conversa foi commitada no banco
@@ -7133,7 +7374,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             c.phone_key,
             c.assigned_to_user_id,
             c.assigned_team_id,
-            i.name as instance_name,
+            COALESCE(i.name, wa.display_phone_number, wa.verified_name, 'WhatsApp Oficial') as instance_name,
             CASE
               WHEN c.client_id IS NOT NULL THEN 'client_linked'
               WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN 'lead_linked'
@@ -7149,7 +7390,8 @@ export async function sendMessage(req: AuthRequest, res: Response) {
               ELSE NULL
             END as lead_status
           FROM chat_conversations c
-          INNER JOIN chat_instances i ON i.id = c.instance_id
+          LEFT JOIN chat_instances i ON i.id = c.instance_id
+          LEFT JOIN whatsapp_official_accounts wa ON wa.id = c.whatsapp_official_account_id
           WHERE c.id = $1
         `,
         [data.conversationId]

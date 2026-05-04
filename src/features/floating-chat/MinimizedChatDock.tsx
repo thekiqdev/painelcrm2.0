@@ -71,6 +71,18 @@ export function MinimizedChatDock({
           if (hit) out[p.conversationId] = hit;
         }
       }
+      const stillMissing = minimized.filter((p) => !out[p.conversationId]);
+      if (stillMissing.length > 0) {
+        try {
+          const broad = await chatService.getConversations({ inboxScope });
+          for (const p of stillMissing) {
+            const hit = broad.find((r) => r.id === p.conversationId);
+            if (hit) out[p.conversationId] = hit;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
       return out;
     },
     staleTime: 20_000,

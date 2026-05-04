@@ -3,6 +3,7 @@ import type { AuthRequest } from '../middleware/auth.js';
 import { pool, withBillingWorkerRlsBypass } from '../utils/db.js';
 import { z } from 'zod';
 import { notifyEligibleUsersForPublishedAnnouncement } from '../services/announcements/announcementPublishedNotifications.js';
+import { normalizeLeadPhoneForSend } from '../services/superadmin/superadminLeadCsvImport.js';
 
 const announcementType = z.enum(['whatsapp_only', 'whatsapp_and_updates_page']);
 const categoryEnum = z.enum(['novidade', 'melhoria', 'correcao', 'aviso']);
@@ -27,11 +28,16 @@ const createAnnouncementSchema = z.object({
 
 const patchAnnouncementSchema = createAnnouncementSchema.partial();
 
-const sendSchema = z.object({
-  group_id: z.string().uuid(),
-  delay_seconds: z.number().int().min(0).max(3600).optional().default(5),
-  scheduled_start_at: z.string().optional().nullable(),
-});
+const sendSchema = z
+  .object({
+    group_id: z.string().uuid().optional(),
+    superadmin_lead_group_id: z.string().uuid().optional(),
+    delay_seconds: z.number().int().min(0).max(3600).optional().default(5),
+    scheduled_start_at: z.string().optional().nullable(),
+  })
+  .refine((b) => Boolean(b.group_id) !== Boolean(b.superadmin_lead_group_id), {
+    message: 'Informe exatamente um: group_id (tenants) ou superadmin_lead_group_id (leads).',
+  });
 
 async function resolvePhonesForTenants(tenantIds: string[]): Promise<Map<string, string | null>> {
   const m = new Map<string, string | null>();
@@ -304,26 +310,55 @@ export async function postAnnouncementSend(req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const grp = await pool.query(
-      `SELECT 1 FROM announcement_groups WHERE id = $1::uuid AND is_active = true LIMIT 1`,
-      [body.group_id]
-    );
-    if (grp.rows.length === 0) {
-      res.status(400).json({ error: 'Grupo inválido ou inativo' });
-      return;
+    const useLeadGroup = Boolean(body.superadmin_lead_group_id);
+    let tenantIds: string[] = [];
+    let leadRows: { lead_id: string; phone: string | null }[] = [];
+
+    if (useLeadGroup) {
+      const gid = body.superadmin_lead_group_id!;
+      const grp = await pool.query(
+        `SELECT 1 FROM superadmin_lead_groups WHERE id = $1::uuid AND is_active = true LIMIT 1`,
+        [gid]
+      );
+      if (grp.rows.length === 0) {
+        res.status(400).json({ error: 'Grupo de leads inválido ou inativo' });
+        return;
+      }
+      const lr = await pool.query<{ lead_id: string; phone: string | null }>(
+        `SELECT l.id::text AS lead_id, l.phone
+         FROM superadmin_lead_group_members m
+         INNER JOIN superadmin_leads l ON l.id = m.lead_id
+         WHERE m.group_id = $1::uuid
+         ORDER BY l.id`,
+        [gid]
+      );
+      leadRows = lr.rows;
+      if (leadRows.length === 0) {
+        res.status(400).json({ error: 'Grupo de leads sem membros' });
+        return;
+      }
+    } else {
+      const grp = await pool.query(
+        `SELECT 1 FROM announcement_groups WHERE id = $1::uuid AND is_active = true LIMIT 1`,
+        [body.group_id!]
+      );
+      if (grp.rows.length === 0) {
+        res.status(400).json({ error: 'Grupo inválido ou inativo' });
+        return;
+      }
+
+      const tenantsR = await pool.query<{ tenant_id: string }>(
+        `SELECT DISTINCT tenant_id::text FROM announcement_group_members WHERE group_id = $1::uuid`,
+        [body.group_id!]
+      );
+      tenantIds = tenantsR.rows.map((x) => x.tenant_id);
+      if (tenantIds.length === 0) {
+        res.status(400).json({ error: 'Grupo sem clientes' });
+        return;
+      }
     }
 
-    const tenantsR = await pool.query<{ tenant_id: string }>(
-      `SELECT DISTINCT tenant_id::text FROM announcement_group_members WHERE group_id = $1::uuid`,
-      [body.group_id]
-    );
-    const tenantIds = tenantsR.rows.map((x) => x.tenant_id);
-    if (tenantIds.length === 0) {
-      res.status(400).json({ error: 'Grupo sem clientes' });
-      return;
-    }
-
-    const phones = await resolvePhonesForTenants(tenantIds);
+    const phones = useLeadGroup ? null : await resolvePhonesForTenants(tenantIds);
     const base =
       body.scheduled_start_at != null && body.scheduled_start_at !== ''
         ? new Date(body.scheduled_start_at)
@@ -342,13 +377,14 @@ export async function postAnnouncementSend(req: AuthRequest, res: Response): Pro
       await client.query('BEGIN');
       const ins = await client.query<{ id: string }>(
         `INSERT INTO announcement_sends (
-           announcement_id, group_id, status, delay_seconds, scheduled_start_at, created_by, started_at
+           announcement_id, group_id, superadmin_lead_group_id, status, delay_seconds, scheduled_start_at, created_by, started_at
          ) VALUES (
-           $1::uuid, $2::uuid, $3, $4, $5, $6, CASE WHEN $7 THEN NOW() ELSE NULL END
+           $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, CASE WHEN $8 THEN NOW() ELSE NULL END
          ) RETURNING id::text`,
         [
           id,
-          body.group_id,
+          useLeadGroup ? null : body.group_id,
+          useLeadGroup ? body.superadmin_lead_group_id : null,
           sendStarted ? 'processing' : 'pending',
           body.delay_seconds,
           body.scheduled_start_at ? base.toISOString() : null,
@@ -358,18 +394,33 @@ export async function postAnnouncementSend(req: AuthRequest, res: Response): Pro
       );
       sendId = ins.rows[0]!.id;
 
-      tenantIds.sort();
       let i = 0;
-      for (const tid of tenantIds) {
-        const scheduledAt = new Date(base.getTime() + i * delayMs);
-        const phone = phones.get(tid) ?? null;
-        await client.query(
-          `INSERT INTO announcement_send_recipients (
-             send_id, tenant_id, phone, status, scheduled_at
-           ) VALUES ($1::uuid, $2::uuid, $3, 'pending', $4)`,
-          [sendId, tid, phone, scheduledAt.toISOString()]
-        );
-        i += 1;
+      if (useLeadGroup) {
+        const sorted = [...leadRows].sort((a, b) => a.lead_id.localeCompare(b.lead_id));
+        for (const row of sorted) {
+          const scheduledAt = new Date(base.getTime() + i * delayMs);
+          const phone = normalizeLeadPhoneForSend(row.phone);
+          await client.query(
+            `INSERT INTO announcement_send_recipients (
+               send_id, tenant_id, superadmin_lead_id, phone, status, scheduled_at
+             ) VALUES ($1::uuid, NULL, $2::uuid, $3, 'pending', $4)`,
+            [sendId, row.lead_id, phone, scheduledAt.toISOString()]
+          );
+          i += 1;
+        }
+      } else {
+        tenantIds.sort();
+        for (const tid of tenantIds) {
+          const scheduledAt = new Date(base.getTime() + i * delayMs);
+          const phone = phones!.get(tid) ?? null;
+          await client.query(
+            `INSERT INTO announcement_send_recipients (
+               send_id, tenant_id, superadmin_lead_id, phone, status, scheduled_at
+             ) VALUES ($1::uuid, $2::uuid, NULL, $3, 'pending', $4)`,
+            [sendId, tid, phone, scheduledAt.toISOString()]
+          );
+          i += 1;
+        }
       }
       await client.query('COMMIT');
     } catch (e) {
@@ -379,7 +430,10 @@ export async function postAnnouncementSend(req: AuthRequest, res: Response): Pro
       client.release();
     }
 
-    res.status(201).json({ send_id: sendId, recipients: tenantIds.length });
+    res.status(201).json({
+      send_id: sendId,
+      recipients: useLeadGroup ? leadRows.length : tenantIds.length,
+    });
   } catch (e) {
     if (e instanceof z.ZodError) {
       res.status(400).json({ error: e.flatten() });
@@ -397,6 +451,7 @@ export async function listAnnouncementSends(_req: AuthRequest, res: Response): P
          s.id::text,
          s.announcement_id::text,
          s.group_id::text,
+         s.superadmin_lead_group_id::text,
          s.status,
          s.delay_seconds,
          s.scheduled_start_at::text,
@@ -404,10 +459,12 @@ export async function listAnnouncementSends(_req: AuthRequest, res: Response): P
          s.finished_at::text,
          s.created_at::text,
          a.title AS announcement_title,
-         g.name AS group_name
+         COALESCE(g.name, lg.name, '') AS group_name,
+         CASE WHEN s.superadmin_lead_group_id IS NOT NULL THEN 'lead_group' ELSE 'tenant_group' END AS audience
        FROM announcement_sends s
        INNER JOIN announcements a ON a.id = s.announcement_id
-       INNER JOIN announcement_groups g ON g.id = s.group_id
+       LEFT JOIN announcement_groups g ON g.id = s.group_id
+       LEFT JOIN superadmin_lead_groups lg ON lg.id = s.superadmin_lead_group_id
        ORDER BY s.created_at DESC
        LIMIT 200`
     );
@@ -430,6 +487,7 @@ export async function getAnnouncementSend(req: AuthRequest, res: Response): Prom
          s.id::text,
          s.announcement_id::text,
          s.group_id::text,
+         s.superadmin_lead_group_id::text,
          s.status,
          s.delay_seconds,
          s.scheduled_start_at::text,
@@ -437,10 +495,12 @@ export async function getAnnouncementSend(req: AuthRequest, res: Response): Prom
          s.finished_at::text,
          s.created_at::text,
          a.title AS announcement_title,
-         g.name AS group_name
+         COALESCE(g.name, lg.name, '') AS group_name,
+         CASE WHEN s.superadmin_lead_group_id IS NOT NULL THEN 'lead_group' ELSE 'tenant_group' END AS audience
        FROM announcement_sends s
        INNER JOIN announcements a ON a.id = s.announcement_id
-       INNER JOIN announcement_groups g ON g.id = s.group_id
+       LEFT JOIN announcement_groups g ON g.id = s.group_id
+       LEFT JOIN superadmin_lead_groups lg ON lg.id = s.superadmin_lead_group_id
        WHERE s.id = $1::uuid
        LIMIT 1`,
       [sendId]
@@ -451,17 +511,20 @@ export async function getAnnouncementSend(req: AuthRequest, res: Response): Prom
     }
     const rec = await pool.query(
       `SELECT
-         id::text,
-         tenant_id::text,
-         phone,
-         status,
-         attempt_count,
-         error_message,
-         scheduled_at::text,
-         sent_at::text
-       FROM announcement_send_recipients
-       WHERE send_id = $1::uuid
-       ORDER BY scheduled_at ASC`,
+         r.id::text,
+         r.tenant_id::text,
+         r.superadmin_lead_id::text,
+         l.name AS lead_name,
+         r.phone,
+         r.status,
+         r.attempt_count,
+         r.error_message,
+         r.scheduled_at::text,
+         r.sent_at::text
+       FROM announcement_send_recipients r
+       LEFT JOIN superadmin_leads l ON l.id = r.superadmin_lead_id
+       WHERE r.send_id = $1::uuid
+       ORDER BY r.scheduled_at ASC`,
       [sendId]
     );
     res.json({ send: head.rows[0], recipients: rec.rows });

@@ -7,13 +7,19 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { announcementsAdminService } from '@/services/announcementsAdmin';
+import { superadminLeadsService, type SuperadminLeadGroupForAnnouncement } from '@/services/superadminLeads';
 import { toast } from '@/hooks/use-toast';
+
+type Audience = 'tenant' | 'lead';
 
 export default function SuperAdminAnnouncementSend() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [groups, setGroups] = useState<{ id: string; name: string; member_count: number }[]>([]);
-  const [groupId, setGroupId] = useState('');
+  const [tenantGroups, setTenantGroups] = useState<{ id: string; name: string; member_count: number }[]>([]);
+  const [leadGroups, setLeadGroups] = useState<SuperadminLeadGroupForAnnouncement[]>([]);
+  const [audience, setAudience] = useState<Audience>('tenant');
+  const [tenantGroupId, setTenantGroupId] = useState('');
+  const [leadGroupId, setLeadGroupId] = useState('');
   const [delay, setDelay] = useState('5');
   const [scheduled, setScheduled] = useState('');
   const [previewMsg, setPreviewMsg] = useState('');
@@ -28,29 +34,33 @@ export default function SuperAdminAnnouncementSend() {
   }, [id]);
 
   useEffect(() => {
-    announcementsAdminService
-      .listGroups()
-      .then((g) =>
-        setGroups(
-          g
-            .filter((x) => x.is_active)
-            .map((x) => ({ id: x.id, name: x.name, member_count: x.member_count })),
-        ),
-      )
+    Promise.all([announcementsAdminService.listGroups(), superadminLeadsService.listGroupsForAnnouncements()])
+      .then(([g, lg]) => {
+        setTenantGroups(
+          g.filter((x) => x.is_active).map((x) => ({ id: x.id, name: x.name, member_count: x.member_count })),
+        );
+        setLeadGroups(lg);
+      })
       .catch(() => {});
   }, []);
 
   const submit = async () => {
     if (!id) return;
-    if (!groupId) {
-      toast({ title: 'Escolha um grupo', variant: 'destructive' });
+    if (audience === 'tenant' && !tenantGroupId) {
+      toast({ title: 'Escolha um grupo de empresas', variant: 'destructive' });
+      return;
+    }
+    if (audience === 'lead' && !leadGroupId) {
+      toast({ title: 'Escolha um grupo de leads', variant: 'destructive' });
       return;
     }
     const delaySeconds = Math.max(0, parseInt(delay || '0', 10) || 0);
     try {
       setSending(true);
       const { send_id } = await announcementsAdminService.send(id, {
-        group_id: groupId,
+        ...(audience === 'tenant'
+          ? { group_id: tenantGroupId }
+          : { superadmin_lead_group_id: leadGroupId }),
         delay_seconds: delaySeconds,
         scheduled_start_at: scheduled.trim() ? new Date(scheduled).toISOString() : null,
       });
@@ -78,25 +88,67 @@ export default function SuperAdminAnnouncementSend() {
         <CardHeader>
           <CardTitle>Fila WhatsApp</CardTitle>
           <CardDescription>
-            Usa a instância WhatsApp da plataforma (Motor de notificações). Delay entre cada cliente.
+            Instância WhatsApp da plataforma. Escolha grupo de empresas (tenants) ou grupo de leads importados no Super
+            Admin.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>Grupo destino</Label>
-            <Select value={groupId} onValueChange={setGroupId}>
+            <Label>Destino</Label>
+            <Select value={audience} onValueChange={(v) => setAudience(v as Audience)}>
               <SelectTrigger>
-                <SelectValue placeholder="Selecionar" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {groups.map((g) => (
-                  <SelectItem key={g.id} value={g.id}>
-                    {g.name} ({g.member_count} tenants)
-                  </SelectItem>
-                ))}
+                <SelectItem value="tenant">Empresas (tenants)</SelectItem>
+                <SelectItem value="lead">Leads (plataforma)</SelectItem>
               </SelectContent>
             </Select>
           </div>
+
+          {audience === 'tenant' ? (
+            <div className="space-y-2">
+              <Label>Grupo de empresas</Label>
+              <Select value={tenantGroupId} onValueChange={setTenantGroupId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenantGroups.map((g) => (
+                    <SelectItem key={g.id} value={g.id}>
+                      {g.name} ({g.member_count} tenants)
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>Grupo de leads</Label>
+              {leadGroups.length === 0 ? (
+                <p className="text-sm text-muted-foreground rounded-md border border-dashed px-3 py-2">
+                  Nenhum grupo com membros. Importe leads em Super Admin → Leads e configure grupos.
+                </p>
+              ) : (
+                <Select value={leadGroupId} onValueChange={setLeadGroupId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecionar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leadGroups.map((g) => (
+                      <SelectItem key={g.id} value={g.id}>
+                        {g.name} ({g.reachable_count} com telefone válido)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Gira grupos em «Leads» → «Grupos». Linhas sem telefone válido ficam como ignoradas na fila.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="delay">Delay entre mensagens (segundos)</Label>
             <Input id="delay" inputMode="numeric" value={delay} onChange={(e) => setDelay(e.target.value)} />

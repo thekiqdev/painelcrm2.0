@@ -77,6 +77,7 @@ import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
 import crmSubscriptionsRoutes from './routes/crmSubscriptionsRoutes.js';
 import customerChargesRoutes from './routes/customerChargesRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import whatsappOfficialWebhookRoutes from './routes/whatsappOfficialWebhookRoutes.js';
 import storeCheckoutRoutes from './routes/storeCheckoutRoutes.js';
 import onboardingRoutes from './routes/onboardingRoutes.js';
 import tenantsRoutes from './routes/tenantsRoutes.js';
@@ -108,6 +109,12 @@ import { runChatSlaAutomationTick } from './services/chatSlaWorkerService.js';
 import { getChatAutomationWorkerPollMs } from './config/chatAutomationEnv.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
 import { getAllowedCorsOrigins } from './config/corsOrigins.js';
+import { runWhatsappOfficialCampaignWorkerTick } from './services/whatsappOfficial/whatsappOfficialCampaignQueueService.js';
+import {
+  isWhatsappOfficialCampaignWorkerEnabled,
+  getWhatsappOfficialCampaignWorkerPollMs,
+} from './config/whatsappOfficialCampaignEnv.js';
+import { refreshSystemFeatureFlagsFromPool } from './services/systemFeatureFlagsService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -138,6 +145,10 @@ app.use(cors({
   origin: corsOrigins.length > 0 ? corsOrigins : true, // Se não houver URLs, aceitar todas (apenas para debug)
   credentials: true,
 }));
+/** Webhook Meta WhatsApp Cloud API — corpo bruto para assinatura X-Hub-Signature-256 (antes do JSON global). */
+app.use('/api/webhooks/whatsapp-official', whatsappOfficialWebhookRoutes);
+app.use('/webhooks/whatsapp-official', whatsappOfficialWebhookRoutes);
+
 /** Base64 de imagem no JSON de POST /api/chat/messages excede o padrão do body-parser (100kb). */
 const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT || '25mb';
 app.use(express.json({ limit: jsonBodyLimit }));
@@ -438,15 +449,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-// Test database connection on startup
-pool.query('SELECT NOW()')
-  .then(() => {
-    console.log('✅ Connected to PostgreSQL database');
-  })
-  .catch((err) => {
-    console.error('❌ Failed to connect to PostgreSQL:', err.message);
-  });
-
 // Inicializar WebSocket
 initializeWebSocket(httpServer);
 
@@ -465,12 +467,30 @@ function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Start server - escutar em 0.0.0.0 para ser acessível em containers
-httpServer.listen(PORT, '0.0.0.0', () => {
+// Start server após DB + flags + cifra WhatsApp oficial
+void (async () => {
+  try {
+    await pool.query('SELECT 1');
+    console.log('✅ Connected to PostgreSQL database');
+    const { ensureWhatsappOfficialEncryptionMaterial } = await import(
+      './services/whatsappOfficial/whatsappOfficialEncryptionBootstrap.js'
+    );
+    await ensureWhatsappOfficialEncryptionMaterial(pool);
+    await refreshSystemFeatureFlagsFromPool(pool);
+    console.log('[boot] Flags globais (system_feature_flags) e cifra WhatsApp oficial carregadas.');
+  } catch (err) {
+    console.error('❌ Falha no arranque (PostgreSQL / flags / cifra):', err);
+  }
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Listening on 0.0.0.0:${PORT}`);
   console.log(`📡 WebSocket server initialized`);
+
+  setInterval(() => {
+    void refreshSystemFeatureFlagsFromPool(pool).catch(() => undefined);
+  }, 120_000);
   const kanbanPollMs = Math.max(5000, parseInt(process.env.KANBAN_SCHEDULED_MOVE_POLL_MS || '30000', 10));
   setInterval(() => {
     void processDueKanbanScheduledMovesBatch(25).catch((err) =>
@@ -552,7 +572,17 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   setInterval(() => {
     void runChatSlaAutomationTick().catch((err) => console.error('[chat-sla-automation] tick error', err));
   }, chatAutomationMs);
-});
+
+  if (isWhatsappOfficialCampaignWorkerEnabled()) {
+    const waCampPoll = getWhatsappOfficialCampaignWorkerPollMs();
+    setInterval(() => {
+      void runWhatsappOfficialCampaignWorkerTick().catch((err) =>
+        console.error('[wa-official-campaign-worker] tick error', err),
+      );
+    }, waCampPoll);
+  }
+  });
+})();
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {

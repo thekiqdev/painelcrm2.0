@@ -212,12 +212,23 @@ export interface ActivationMissionItem {
   actionHref: string;
 }
 
+export interface ActivationMissionApplicableRow {
+  id: string;
+  title: string;
+  description: string;
+  actionLabel: string;
+  actionHref: string;
+  completed: boolean;
+}
+
 export interface ActivationChecklistPayload {
   dismissed: boolean;
   applicableTotal: number;
   completedCount: number;
   progressPercent: number;
   pendingMissions: ActivationMissionItem[];
+  /** Todas as missões aplicáveis com estado (para UI completa). */
+  applicableMissions?: ActivationMissionApplicableRow[];
 }
 
 export const dashboardService = {
