@@ -451,6 +451,8 @@ export default function PlanCheckout() {
   const { signIn, user, loading: authLoading, setTokenAndUser, refreshUser } = useAuth();
   const state = location.state as CheckoutLocationState | null;
   const isResumeMode = checkoutResumeEnabled && searchParams.get('mode') === 'resume';
+  /** Tenant já existe (ex.: Meu plano → Renovar): pular cadastro e ir ao pagamento com plano/intervalo do state. */
+  const isRenewMode = searchParams.get('mode') === 'renew';
   const isSeatAddonMode = searchParams.get('mode') === 'seat_addon';
   const seatAddonBillingIdQuery = searchParams.get('billing_id');
 
@@ -494,8 +496,10 @@ export default function PlanCheckout() {
   const [resumePaymentOnly, setResumePaymentOnly] = useState(false);
   /** Retomada: documento já válido no contexto fica somente leitura até o usuário optar por alterar. */
   const [resumeBillingDocUnlocked, setResumeBillingDocUnlocked] = useState(false);
-  /** Em modo resume, começa true para não exibir passo 1 antes do checkout-context (evita flash + GET /api/plans). */
-  const [resumeContextLoading, setResumeContextLoading] = useState(() => isResumeMode);
+  /** Em modo resume/renew, começa true para não exibir passos iniciais antes do checkout-context. */
+  const [resumeContextLoading, setResumeContextLoading] = useState(
+    () => isResumeMode || isRenewMode
+  );
   /** Falha explícita em GET /api/me/tenant/checkout-context — não voltar silenciosamente ao fluxo normal. */
   const [resumeContextError, setResumeContextError] = useState<string | null>(null);
   const meuPlanoBillingFocusHandledRef = useRef(false);
@@ -560,9 +564,9 @@ export default function PlanCheckout() {
     setEnteredWithPlanFromContext(true);
   }, []);
 
-  /** Sair de `?mode=resume` reseta flags; ao entrar, reabre loading e limpa sessão antiga (evita misturar com fluxo normal). */
+  /** Sair de `?mode=resume|renew` reseta flags; ao entrar, reabre loading (resume limpa sessão antiga). */
   useEffect(() => {
-    if (!isResumeMode) {
+    if (!isResumeMode && !isRenewMode) {
       setResumePaymentOnly(false);
       setResumeBillingDocUnlocked(false);
       setResumeContextLoading(false);
@@ -571,8 +575,10 @@ export default function PlanCheckout() {
     }
     setResumeContextLoading(true);
     setResumeContextError(null);
-    persistCheckout(null);
-  }, [isResumeMode]);
+    if (isResumeMode) {
+      persistCheckout(null);
+    }
+  }, [isResumeMode, isRenewMode]);
 
   /**
    * Guard de isolamento do modo seat_addon:
@@ -657,6 +663,66 @@ export default function PlanCheckout() {
     };
   }, [isResumeMode, user?.id, authLoading, navigate]);
 
+  /**
+   * Renovação / upgrade a partir do hub (Meu plano): plano e intervalo vêm do `location.state`;
+   * empresa/CPF/WhatsApp do GET checkout-context. Vai direto ao passo de pagamento (como retomada trial).
+   */
+  useEffect(() => {
+    if (!isRenewMode) return;
+    if (authLoading) return;
+    if (!user?.id) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    const st = location.state as CheckoutLocationState | null;
+    if (!st?.plan?.id) {
+      toast.error('Volte a Meu plano para iniciar a renovação com o plano selecionado.');
+      navigate('/meu-plano', { replace: true });
+      return;
+    }
+    let cancelled = false;
+    setResumeContextError(null);
+    setResumeContextLoading(true);
+    void (async () => {
+      const res = await apiClient.get<CheckoutContextResponse>('/api/me/tenant/checkout-context?purpose=renew');
+      if (cancelled) return;
+      setResumeContextLoading(false);
+      if (res.error || !res.data) {
+        const msg = res.error || 'Não foi possível carregar os dados da conta.';
+        toast.error(msg);
+        setResumeContextError(msg);
+        return;
+      }
+      const d = res.data;
+      setPlan(st.plan);
+      setBillingInterval(st.billingInterval ?? 'monthly');
+      setUsersCount(Math.max(1, st.usersCount ?? 1));
+      setCompany({
+        company_name: d.company_name,
+        email: d.email,
+        phone: '',
+        responsible_name: d.responsible_name,
+      });
+      setAdminWhatsapp(d.whatsapp || '');
+      const cpfDigits = String(d.cpf_cnpj ?? '').replace(/\D/g, '');
+      setBillingCpf(cpfDigits ? formatCpfCnpjDigits(cpfDigits) : '');
+      setResumeBillingDocUnlocked(!cpfDigits || !isValidCpfOrCnpj(cpfDigits));
+      setResumePaymentOnly(true);
+      setEnteredWithPlanFromContext(true);
+      setResumeContextError(null);
+      setStep(4);
+      persistCheckout({
+        plan: st.plan,
+        billingInterval: st.billingInterval ?? 'monthly',
+        usersCount: Math.max(1, st.usersCount ?? 1),
+        wizard_step: 4,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isRenewMode, user?.id, authLoading, navigate, location.key]);
+
   const resolvedFocusBillingId = state?.focusBillingId?.trim() || seatAddonBillingIdQuery?.trim() || null;
 
   useEffect(() => {
@@ -667,7 +733,7 @@ export default function PlanCheckout() {
 
   /** Hub /meu-plano: cobrança pai (tenant_billing) — seat_addon pula Empresa/Admin e começa no resumo. */
   useEffect(() => {
-    if (isResumeMode || authLoading || !user?.id || !isCheckoutUpgrade) return;
+    if (isResumeMode || isRenewMode || authLoading || !user?.id || !isCheckoutUpgrade) return;
     const fid = resolvedFocusBillingId;
     if (!fid) return;
     if (meuPlanoBillingFocusHandledRef.current) return;
@@ -705,7 +771,7 @@ export default function PlanCheckout() {
         const ctxRes = await apiClient.get<CheckoutContextResponse>(
           seatLikeFlow
             ? '/api/me/tenant/checkout-context?purpose=seat_addon'
-            : '/api/me/tenant/checkout-context'
+            : '/api/me/tenant/checkout-context?purpose=renew'
         );
         if (cancelled) return;
         if (ctxRes.error || !ctxRes.data) {
@@ -786,6 +852,7 @@ export default function PlanCheckout() {
     };
   }, [
     isResumeMode,
+    isRenewMode,
     authLoading,
     user?.id,
     user?.tenant_id,
@@ -808,7 +875,7 @@ export default function PlanCheckout() {
     if (result) return;
     if (loading) return;
     if (authLoading) return;
-    if (isResumeMode && (resumeContextLoading || !resumePaymentOnly)) return;
+    if ((isResumeMode || isRenewMode) && (resumeContextLoading || !resumePaymentOnly)) return;
     if (skipNextPlanHydrateRef.current) {
       skipNextPlanHydrateRef.current = false;
       return;
@@ -844,6 +911,7 @@ export default function PlanCheckout() {
     authLoading,
     isCustom,
     isResumeMode,
+    isRenewMode,
     resumeContextLoading,
     resumePaymentOnly,
     seatAddonBillingContextActive,
@@ -862,7 +930,7 @@ export default function PlanCheckout() {
   }, [step, plan?.id, company.responsible_name, company.email, billingCpf, adminWhatsapp]);
 
   useEffect(() => {
-    if (isResumeMode) return;
+    if (isResumeMode || isRenewMode) return;
     /** Evita corrida com o efeito de focusBillingId / seat_addon (que pularia Empresa e admin). */
     if (state?.focusBillingId?.trim() || isSeatAddonMode || seatAddonBillingIdQuery?.trim()) return;
     if (state?.plan) {
@@ -884,10 +952,10 @@ export default function PlanCheckout() {
      * wizard_step antigos após "Começar" ou Link /checkout. Fluxos especiais hidratam pelos efeitos dedicados.
      */
     persistCheckout(null);
-  }, [state, applyPlanFromLanding, isResumeMode, isSeatAddonMode, seatAddonBillingIdQuery]);
+  }, [state, applyPlanFromLanding, isResumeMode, isRenewMode, isSeatAddonMode, seatAddonBillingIdQuery]);
 
   useEffect(() => {
-    if (isResumeMode && !resumePaymentOnly) return;
+    if ((isResumeMode || isRenewMode) && !resumePaymentOnly) return;
     if (plan) {
       const bid = seatAddonBillingIdQuery?.trim() || undefined;
       persistCheckout({
@@ -910,6 +978,7 @@ export default function PlanCheckout() {
     usersCount,
     step,
     isResumeMode,
+    isRenewMode,
     resumePaymentOnly,
     seatAddonFlowActive,
     seatAddonBillingIdQuery,
@@ -917,7 +986,7 @@ export default function PlanCheckout() {
   ]);
 
   useEffect(() => {
-    if (isResumeMode) return;
+    if (isResumeMode || isRenewMode) return;
     if (step === 1 && !plansLoading && plansCatalog.length === 0) {
       setPlansLoading(true);
       apiClient.get<PublicPlanRow[]>('/api/plans').then((res) => {
@@ -925,14 +994,14 @@ export default function PlanCheckout() {
         if (res.data && Array.isArray(res.data)) setPlansCatalog(res.data);
       });
     }
-  }, [step, plansLoading, plansCatalog.length, isResumeMode]);
+  }, [step, plansLoading, plansCatalog.length, isResumeMode, isRenewMode]);
 
   /**
    * Um único plano no catálogo: pré-seleciona no passo 1 (ex. «Começar grátis» → /checkout sem state).
    * Não pula a etapa Plano — diferente de `applyPlanFromLanding` quando vem `state.plan` da vitrine.
    */
   useEffect(() => {
-    if (isResumeMode) return;
+    if (isResumeMode || isRenewMode) return;
     if (state?.plan) return;
     if (state?.focusBillingId?.trim() || isSeatAddonMode || seatAddonBillingIdQuery?.trim()) return;
     if (plansLoading || plansCatalog.length !== 1) return;
@@ -944,6 +1013,7 @@ export default function PlanCheckout() {
     setUsersCount(1);
   }, [
     isResumeMode,
+    isRenewMode,
     state?.plan,
     state?.focusBillingId,
     isSeatAddonMode,
@@ -1122,6 +1192,7 @@ export default function PlanCheckout() {
     !isCheckoutUpgrade &&
     !resumePaymentOnly &&
     !isResumeMode &&
+    !isRenewMode &&
     !seatAddonBillingContextActive &&
     plan != null &&
     planHasCheckoutTrial(plan);
@@ -1167,7 +1238,7 @@ export default function PlanCheckout() {
 
   const handleBack = () => {
     if (step === 4 && resumePaymentOnly) {
-      navigate('/dashboard', { replace: true });
+      navigate(isRenewMode ? '/meu-plano' : '/dashboard', { replace: true });
       return;
     }
     if (seatAddonFlowActive && step === 4 && !paymentConfirmed) {
@@ -1480,11 +1551,11 @@ export default function PlanCheckout() {
       return SEAT_ADDON_STEP_DEFS;
     }
     return STEP_DEFS.filter((s) => {
-      if (isResumeMode && s.id < 4) return false;
+      if ((isResumeMode || (isRenewMode && resumePaymentOnly)) && s.id < 4) return false;
       if (s.id === 1 && skipPlanStep) return false;
       return true;
     });
-  }, [seatAddonBillingContextActive, isResumeMode, skipPlanStep]);
+  }, [seatAddonBillingContextActive, isResumeMode, isRenewMode, resumePaymentOnly, skipPlanStep]);
 
   const displayStepIndex = (s: number) => {
     if (seatAddonBillingContextActive) {
@@ -1492,7 +1563,7 @@ export default function PlanCheckout() {
       if (s === 4) return 1;
       return 0;
     }
-    if (isResumeMode || resumePaymentOnly) {
+    if (isResumeMode || isRenewMode || resumePaymentOnly) {
       if (s <= 3) return 0;
       return s - 1;
     }
@@ -2551,9 +2622,11 @@ export default function PlanCheckout() {
 
   /** Bloqueia passos 1–3 até sessão + checkout-context concluírem (evita disputa com fluxo normal). */
   const showResumeBlockingLoader =
-    isResumeMode &&
+    (isResumeMode || isRenewMode) &&
     !resumeContextError &&
     (authLoading || resumeContextLoading || !resumePaymentOnly);
+
+  const hubContextError = resumeContextError && (isResumeMode || isRenewMode);
 
   return (
     <LandingLayout>
@@ -2563,19 +2636,21 @@ export default function PlanCheckout() {
             <h1 className="text-2xl font-bold">
               {isResumeMode
                 ? 'Retomada — conclua o pagamento'
-                : seatAddonBillingContextActive
-                  ? 'Checkout — assentos adicionais'
-                  : plan
-                    ? `Checkout — ${plan.name}`
-                    : 'Checkout — escolha seu plano'}
+                : isRenewMode
+                  ? 'Renovação — conclua o pagamento'
+                  : seatAddonBillingContextActive
+                    ? 'Checkout — assentos adicionais'
+                    : plan
+                      ? `Checkout — ${plan.name}`
+                      : 'Checkout — escolha seu plano'}
             </h1>
-            {step === 1 && !isResumeMode && (
+            {step === 1 && !isResumeMode && !isRenewMode && (
               <p className="text-sm text-muted-foreground mt-1">Contratação em etapas: plano, dados e pagamento.</p>
             )}
           </div>
 
           <div className="mx-auto w-full max-w-5xl">
-            {!showResumeBlockingLoader && !(isResumeMode && resumeContextError) && (
+            {!showResumeBlockingLoader && !hubContextError && (
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-4">
               {visibleSteps.map((s, i) => {
                 const Icon = s.icon;
@@ -2604,14 +2679,16 @@ export default function PlanCheckout() {
                 <CardTitle className="text-lg">
                   {showResumeBlockingLoader
                     ? 'Preparando pagamento'
-                    : isResumeMode && resumeContextError
-                      ? 'Retomada indisponível'
+                    : hubContextError
+                      ? isRenewMode
+                        ? 'Renovação indisponível'
+                        : 'Retomada indisponível'
                       : currentStepTitle}
                 </CardTitle>
                 <CardDescription className="text-sm">
                   {showResumeBlockingLoader
                     ? 'Carregando dados da sua conta para gerar a cobrança.'
-                    : isResumeMode && resumeContextError
+                    : hubContextError
                       ? 'Tente novamente mais tarde ou use outro caminho no painel.'
                       : currentStepDesc}
                 </CardDescription>
@@ -2624,20 +2701,22 @@ export default function PlanCheckout() {
                       {authLoading ? 'Verificando sessão…' : 'Carregando dados da sua conta…'}
                     </p>
                   </div>
-                ) : isResumeMode && resumeContextError ? (
+                ) : hubContextError ? (
                   <div className="flex flex-col items-center justify-center gap-4 py-12 px-4 text-center">
                     <p className="text-sm text-destructive max-w-md">{resumeContextError}</p>
                     <p className="text-xs text-muted-foreground max-w-md">
-                      Não foi possível retomar o pagamento com os dados atuais. Volte ao hub comercial ou entre em
+                      Não foi possível continuar o pagamento com os dados atuais. Volte ao hub comercial ou entre em
                       contato com o suporte.
                     </p>
                     <div className="flex flex-wrap justify-center gap-2">
                       <Button type="button" variant="default" onClick={() => navigate('/meu-plano')}>
                         Voltar ao Meu plano
                       </Button>
-                      <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
-                        Ir ao painel
-                      </Button>
+                      {!isRenewMode ? (
+                        <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
+                          Ir ao painel
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 ) : (

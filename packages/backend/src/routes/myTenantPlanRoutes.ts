@@ -28,8 +28,9 @@ router.post(
 router.get('/commercial-billings', ...tenantAuthCommercialHub, myTenantPlanController.getMyTenantCommercialBillings);
 
 // Demais rotas: CRM comercial + período ativo
-// Assinatura recorrente (Billing Engine Fase 2)
-router.get('/subscription', ...tenantAuth, myTenantSubscriptionController.getMySubscription);
+// Leitura de assinatura / limites no hub (Meu plano com período vencido)
+router.get('/subscription', ...tenantAuthCommercialHub, myTenantSubscriptionController.getMySubscription);
+router.get('/limits', ...tenantAuthCommercialHub, myTenantPlanController.getMyTenantLimits);
 router.post('/subscription/cancel', ...tenantAuth, myTenantSubscriptionController.cancelMySubscription);
 router.patch('/subscription', ...tenantAuth, myTenantSubscriptionController.patchMySubscription);
 
@@ -46,7 +47,6 @@ router.put('/company', ...tenantAuthCrm, myTenantCompanyController.putMyTenantCo
 router.get('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.getMyTenantBillingPreferences);
 router.put('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.putMyTenantBillingPreferences);
 
-router.get('/limits', ...tenantAuth, myTenantPlanController.getMyTenantLimits);
 router.get('/roles', ...tenantAuth, myTenantPlanController.getMyTenantRoles);
 router.post('/roles', ...tenantAuth, myTenantPlanController.postMyTenantRole);
 router.get('/users', ...tenantAuth, myTenantPlanController.getMyTenantUsers);

@@ -51,6 +51,7 @@ export default function SuperAdminPagamentos() {
   const [payBoleto, setPayBoleto] = useState(true);
   const [payCard, setPayCard] = useState(true);
   const [defaultPaySlug, setDefaultPaySlug] = useState<GatewayPaySlug | null>(null);
+  const [asaasDisableCustomerNotifications, setAsaasDisableCustomerNotifications] = useState(true);
 
   const load = async () => {
     setLoading(true);
@@ -98,6 +99,11 @@ export default function SuperAdminPagamentos() {
     setDefaultPaySlug(config.default_payment_method ?? null);
   }, [config?.id, config?.enabled_payment_methods, config?.default_payment_method]);
 
+  useEffect(() => {
+    if (!config) return;
+    setAsaasDisableCustomerNotifications(config.options?.asaas_disable_customer_notifications !== false);
+  }, [config?.id, config?.options?.asaas_disable_customer_notifications]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.gateway_key.trim()) {
@@ -128,7 +134,10 @@ export default function SuperAdminPagamentos() {
     const res = await apiClient.put<{ id: string; gateway_key: string }>('/api/superadmin/payment-gateway', {
       gateway_key: form.gateway_key,
       credentials,
-      options: { env: form.env },
+      options: {
+        env: form.env,
+        ...(form.gateway_key === 'asaas' ? { asaas_disable_customer_notifications: asaasDisableCustomerNotifications } : {}),
+      },
       enabled_payment_methods: enabled,
       default_payment_method: defaultPaySlug,
     });
@@ -301,6 +310,24 @@ export default function SuperAdminPagamentos() {
                   </SelectContent>
                 </Select>
               </div>
+              {form.gateway_key === 'asaas' ? (
+                <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+                  <div className="min-w-0 space-y-1 pr-2">
+                    <Label htmlFor="superadmin-asaas-disable-notif">Desligar notificações Asaas</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Quando ativado, o PainelCRM envia notificationDisabled ao criar ou atualizar clientes no Asaas. Assim, o
+                      cliente não recebe notificações automáticas do Asaas, mantendo apenas as notificações configuradas no
+                      sistema.
+                    </p>
+                  </div>
+                  <Switch
+                    id="superadmin-asaas-disable-notif"
+                    checked={asaasDisableCustomerNotifications}
+                    onCheckedChange={setAsaasDisableCustomerNotifications}
+                    className="shrink-0"
+                  />
+                </div>
+              ) : null}
               <div className="grid gap-2">
                 <Label htmlFor="api_key">API Key</Label>
                 <Input

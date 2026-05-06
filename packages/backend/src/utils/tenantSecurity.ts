@@ -80,6 +80,9 @@ const TENANT_SCOPED_TABLES = [
   'financial_credit_card_statements',
   'appointments',
   'appointment_attendees',
+  'tenant_google_drive_integrations',
+  'client_google_drive_folders',
+  'client_google_drive_files',
 ] as const;
 
 /** Padrões que indicam filtro por tenant (query considerada segura se algum estiver presente). */

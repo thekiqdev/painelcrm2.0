@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -20,7 +21,7 @@ import { crmSubscriptionsService, type CrmSubscriptionListItem } from "@/service
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ArrowRight, CalendarSync, Eye, EyeOff, Filter, Plus } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarClock, CalendarSync, CheckCircle2, Eye, EyeOff, Filter, Plus, Wallet } from "lucide-react";
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +40,18 @@ function readStoredHideEnded(): boolean {
 
 function isSubscriptionEnded(row: CrmSubscriptionListItem): boolean {
   return row.status === "cancelled";
+}
+
+function isProblemStatus(status: string): boolean {
+  const s = (status || "").trim().toLowerCase();
+  return s === "overdue" || s === "failed" || s === "pending" || s === "waiting_payment" || s === "processing";
+}
+
+function parseYmdDate(value: string | null | undefined): Date | null {
+  if (!value || value.length < 10) return null;
+  const ymd = value.slice(0, 10);
+  const d = new Date(`${ymd}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function formatAmount(cents: number): string {
@@ -80,6 +93,45 @@ const SubscriptionsList = () => {
     if (!hideEnded) return rows;
     return rows.filter((r) => !isSubscriptionEnded(r));
   }, [rows, hideEnded]);
+
+  const summary = useMemo(() => {
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+
+    let activeCount = 0;
+    let endedCountLocal = 0;
+    let pendingOrFailedCount = 0;
+    let upcoming7DaysCount = 0;
+    let recurringRevenueCents = 0;
+
+    for (const row of rows) {
+      const ended = isSubscriptionEnded(row);
+      if (ended) {
+        endedCountLocal += 1;
+      } else {
+        activeCount += 1;
+        recurringRevenueCents += Number(row.amount_cents || 0);
+        const next = parseYmdDate(row.next_billing_date);
+        if (next && next >= start && next <= end) {
+          upcoming7DaysCount += 1;
+        }
+      }
+
+      if (isProblemStatus(row.status)) {
+        pendingOrFailedCount += 1;
+      }
+    }
+
+    return {
+      activeCount,
+      endedCount: endedCountLocal,
+      pendingOrFailedCount,
+      upcoming7DaysCount,
+      recurringRevenueCents,
+    };
+  }, [rows]);
 
   const endedCount = useMemo(() => rows.filter(isSubscriptionEnded).length, [rows]);
 
@@ -135,6 +187,68 @@ const SubscriptionsList = () => {
         <Button variant="outline" asChild className="shrink-0">
           <Link to="/customer-invoices/new">Nova fatura ou assinatura</Link>
         </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Card className="border-emerald-500/20 bg-gradient-to-br from-card to-emerald-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+              Assinaturas ativas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold tabular-nums">{summary.activeCount}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-violet-500/20 bg-gradient-to-br from-card to-violet-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <Wallet className="h-3.5 w-3.5 text-violet-600" />
+              Receita recorrente prevista
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold tabular-nums">{formatAmount(summary.recurringRevenueCents)}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-sky-500/20 bg-gradient-to-br from-card to-sky-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <CalendarClock className="h-3.5 w-3.5 text-sky-600" />
+              Próximas cobranças (7 dias)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold tabular-nums">{summary.upcoming7DaysCount}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/80 bg-gradient-to-br from-card to-muted/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <EyeOff className="h-3.5 w-3.5" />
+              Assinaturas encerradas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold tabular-nums">{summary.endedCount}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-amber-500/30 bg-gradient-to-br from-card to-amber-500/10 col-span-2 lg:col-span-1">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+              Em atraso / falha
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold tabular-nums">{summary.pendingOrFailedCount}</div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="rounded-xl border bg-card shadow-sm p-4 flex flex-wrap items-center gap-3">

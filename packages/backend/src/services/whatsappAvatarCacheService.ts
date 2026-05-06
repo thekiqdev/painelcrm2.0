@@ -17,6 +17,8 @@ import {
 } from '../utils/uazapiChatIdentity.js';
 import { pool } from '../utils/db.js';
 import { persistConversationAvatarToCrm } from './conversationAvatarPersistence.js';
+import { isMediaAvatarWhatsappEnabled } from './media/mediaConfig.js';
+import { cacheRemoteUrl } from './media/mediaService.js';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -53,6 +55,16 @@ function allowedHost(hostname: string): boolean {
   );
 }
 
+function whatsappCdnFetchHeaders(): Record<string, string> {
+  return {
+    Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    Referer: 'https://web.whatsapp.com/',
+  };
+}
+
 async function fetchImageFromWhatsAppCdn(
   sourceUrl: string,
 ): Promise<{ buf: Buffer; contentType: string } | null> {
@@ -64,13 +76,7 @@ async function fetchImageFromWhatsAppCdn(
   }
   if (u.protocol !== 'https:' || !allowedHost(u.hostname)) return null;
 
-  const fullHeaders: Record<string, string> = {
-    Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    Referer: 'https://web.whatsapp.com/',
-  };
+  const fullHeaders = whatsappCdnFetchHeaders();
 
   let res = await fetch(u.toString(), { method: 'GET', redirect: 'follow', headers: fullHeaders });
   if (!res.ok && (res.status === 403 || res.status === 401)) {
@@ -107,6 +113,39 @@ export async function cacheWhatsappAvatarToCatalog(params: {
   userId: string;
   sourceUrl: string;
 }): Promise<string | null> {
+  if (isMediaAvatarWhatsappEnabled()) {
+    let u: URL;
+    try {
+      u = new URL(params.sourceUrl);
+    } catch {
+      return null;
+    }
+    if (u.protocol !== 'https:' || !allowedHost(u.hostname)) return null;
+
+    const fullHeaders = whatsappCdnFetchHeaders();
+    const cached = await cacheRemoteUrl({
+      tenantId: String(params.tenantId ?? '').trim() || 'no-tenant',
+      ownerType: 'user',
+      ownerId: params.userId,
+      scope: 'whatsapp_avatar',
+      sourceUrl: params.sourceUrl,
+      metadata: { source: 'whatsapp_avatar_cache' },
+      writeAssetRecord: true,
+      fetchInit: { method: 'GET', redirect: 'follow', headers: fullHeaders },
+      fallbackFetchInit: {
+        method: 'GET',
+        redirect: 'follow',
+        headers: {
+          Accept: 'image/webp,image/apng,image/*,*/*;q=0.8',
+          'User-Agent': fullHeaders['User-Agent'],
+          Referer: 'https://web.whatsapp.com/',
+        },
+      },
+    });
+    if (cached.ok && cached.relativeUrl) return cached.relativeUrl;
+    return null;
+  }
+
   const fetched = await fetchImageFromWhatsAppCdn(params.sourceUrl);
   if (!fetched) return null;
   try {

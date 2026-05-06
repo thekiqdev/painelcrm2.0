@@ -1,4 +1,5 @@
 import { getDevApiBaseUrl } from '@/lib/devBackendOrigin';
+import { redirectIfPaymentRequiredFromApi } from '@/lib/commercialAccessPaths';
 
 // Em produção (HTTPS), usar URLs relativas para evitar Mixed Content
 // O Nginx faz proxy de /api para o backend
@@ -245,6 +246,9 @@ class ApiClient {
       }
 
       if (!response.ok) {
+        if (response.status === 402) {
+          redirectIfPaymentRequiredFromApi();
+        }
         const body = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
         const rawErr = body.error;
         const errorMessage =

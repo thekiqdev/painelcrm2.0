@@ -14,6 +14,14 @@ import {
   type CatalogMediaScope,
 } from '../services/catalogMediaUploadService.js';
 import { extractCatalogMediaRelativeKeyFromStoredUrl } from '../utils/catalogMediaPublicSignedUrl.js';
+import { isMediaSimpleUploadsServiceEnabled } from '../services/media/mediaConfig.js';
+import { deleteFile } from '../services/media/mediaLocalStorageAdapter.js';
+import {
+  isMediaSimpleUploadOwnedBy,
+  maybeUnlinkPreviousSimpleUpload,
+  parseMediaServiceSimpleStorageKey,
+  saveSimpleUploadFromBuffer,
+} from '../services/media/simpleUploadMediaService.js';
 
 const scopeSchema = z.enum([
   'product',
@@ -92,6 +100,41 @@ export async function postCatalogMediaUpload(req: AuthRequest, res: Response): P
     assertAllowedImageUpload(file.mimetype, file.size);
 
     const tenantId = getTenantIdOrNull(req.tenantId);
+
+    if (isMediaSimpleUploadsServiceEnabled()) {
+      const simpleScopes: CatalogMediaScope[] = [
+        'user_avatar',
+        'tenant_logo_light',
+        'tenant_logo_dark',
+        'store_logo',
+      ];
+      if (simpleScopes.includes(scope)) {
+        if ((scope === 'tenant_logo_light' || scope === 'tenant_logo_dark') && !tenantId) {
+          res.status(400).json({ error: 'Tenant obrigatório para logo da empresa.' });
+          return;
+        }
+        const tenantSegment = tenantId || 'no-tenant';
+        const saved = await saveSimpleUploadFromBuffer({
+          tenantSegment,
+          tenantUuid: tenantId,
+          userId,
+          catalogScope: scope as 'user_avatar' | 'tenant_logo_light' | 'tenant_logo_dark' | 'store_logo',
+          buffer: file.buffer,
+          mimeType: file.mimetype,
+          originalFilename: file.originalname,
+        });
+        await maybeUnlinkPreviousSimpleUpload({
+          previousRaw: req.body?.previous_key,
+          newKey: saved.storageKey,
+          tenantUuid: tenantId,
+          userId,
+          catalogScope: scope,
+        });
+        res.json({ publicUrl: saved.relativeUrl, key: saved.storageKey });
+        return;
+      }
+    }
+
     const relativeKey = buildCatalogMediaRelativeKey({
       tenantId,
       userId,
@@ -161,6 +204,27 @@ export async function postCatalogMediaDelete(req: AuthRequest, res: Response): P
     const userId = req.userId!;
     const { key } = deleteBodySchema.parse(req.body);
     const tenantId = getTenantIdOrNull(req.tenantId);
+    const tenantSegment = tenantId || 'no-tenant';
+
+    if (!key.includes('/users/')) {
+      const parsed = parseMediaServiceSimpleStorageKey(key);
+      if (parsed) {
+        if (!isMediaSimpleUploadOwnedBy(key, { tenantSegment, tenantUuid: tenantId, userId })) {
+          res.status(403).json({ error: 'Chave inválida ou sem permissão.' });
+          return;
+        }
+        if (parsed.scope === 'tenant_logo') {
+          await assertModulePermission(userId, 'settings', 'edit', undefined, req);
+        } else if (parsed.scope === 'user_avatar') {
+          /* chave validada por ownership */
+        } else if (parsed.scope === 'store_logo') {
+          await assertModulePermission(userId, 'products', 'edit', undefined, req);
+        }
+        await deleteFile(key);
+        res.json({ ok: true });
+        return;
+      }
+    }
 
     if (!isCatalogMediaKeyOwnedByTenantUser(key, tenantId, userId)) {
       res.status(403).json({ error: 'Chave inválida ou sem permissão.' });

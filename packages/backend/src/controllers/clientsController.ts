@@ -8,6 +8,12 @@ import {
   listClientTimelineEvents,
   type ClientTimelineEventName,
 } from '../services/clientTimelineEventsService.js';
+import { ensureClientGoogleDriveFolderStructure } from '../services/clientGoogleDriveFoldersService.js';
+import {
+  listClientGoogleDriveFiles,
+  uploadClientGoogleDriveFile,
+  CLIENT_GOOGLE_DRIVE_SOURCE_MODULE,
+} from '../services/clientGoogleDriveFilesService.js';
 
 const MODULE_CLIENTS = 'clients';
 
@@ -67,6 +73,18 @@ async function clientBelongsToTenant(clientId: string, tenantId: string | null):
     [tenantId, clientId]
   );
   return r.rows.length > 0;
+}
+
+async function clientOwnerForTenant(clientId: string, tenantId: string): Promise<string | null> {
+  const r = await pool.query<{ user_id: string }>(
+    `SELECT c.user_id
+     FROM clients c
+     INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
+     WHERE c.id = $1
+     LIMIT 1`,
+    [clientId, tenantId],
+  );
+  return r.rows[0]?.user_id ?? null;
 }
 
 /** Grupo existe e pertence ao tenant (via dono do grupo em users). */
@@ -302,6 +320,128 @@ export async function getClientTimeline(req: AuthRequest, res: Response): Promis
   } catch (error) {
     console.error('Error fetching client timeline:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function ensureClientGoogleDriveFolders(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'view', undefined, req);
+    const belongs = await clientBelongsToTenant(clientId, tenantId);
+    if (!belongs) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    const result = await ensureClientGoogleDriveFolderStructure(tenantId, clientId);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao preparar pastas no Google Drive';
+    if (code === 'drive_disabled' || code === 'drive_not_connected') {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] ensure google drive folders', error);
+    res.status(500).json({ error: msg });
+  }
+}
+
+export async function getClientGoogleDriveFiles(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'view', undefined, req);
+    const belongs = await clientBelongsToTenant(clientId, tenantId);
+    if (!belongs) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    const rows = await listClientGoogleDriveFiles(tenantId, clientId);
+    res.json(rows);
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('[clients] list google drive files', error);
+    res.status(500).json({ error: 'Erro ao listar arquivos do Google Drive' });
+  }
+}
+
+export async function uploadClientGoogleDriveFileHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const ownerId = await clientOwnerForTenant(clientId, tenantId);
+    if (!ownerId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    await assertModulePermission(
+      userId,
+      MODULE_CLIENTS,
+      'edit',
+      { ownerId, assigneeId: null },
+      req,
+    );
+    if (!req.file || !req.file.buffer) {
+      res.status(400).json({ error: 'Arquivo obrigatório (campo: file).' });
+      return;
+    }
+    const saved = await uploadClientGoogleDriveFile({
+      tenantId,
+      clientId,
+      createdByUserId: userId,
+      originalName: req.file.originalname || 'arquivo',
+      mimeType: req.file.mimetype || 'application/octet-stream',
+      fileBytes: req.file.buffer,
+    });
+    res.status(201).json({
+      id: saved.id,
+      client_id: saved.client_id,
+      source_module: CLIENT_GOOGLE_DRIVE_SOURCE_MODULE,
+      drive_file_id: saved.drive_file_id,
+      drive_folder_id: saved.drive_folder_id,
+      name: saved.name,
+      mime_type: saved.mime_type,
+      size_bytes: Number(saved.size_bytes),
+      web_view_link: saved.web_view_link,
+      web_content_link: saved.web_content_link,
+      created_at: saved.created_at,
+    });
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao enviar arquivo';
+    if (code === 'drive_disabled' || code === 'drive_not_connected' || code === 'folders_unavailable') {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] upload google drive file', error);
+    res.status(500).json({ error: msg });
   }
 }
 

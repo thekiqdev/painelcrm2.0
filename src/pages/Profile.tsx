@@ -37,7 +37,7 @@ import {
 } from '@/services/profile';
 import {
   deleteCatalogMediaFileByKey,
-  extractCatalogMediaRelativeKeyFromUrl,
+  extractCatalogOrMediaStorageKeyFromUrl,
   normalizeCatalogMediaUrlForBrowser,
   uploadCatalogImageFile,
 } from '@/services/catalogMediaUpload';
@@ -247,7 +247,7 @@ const Profile: React.FC = () => {
     if (!bizForm) return;
     const url = variant === 'light' ? bizForm.logo_light_url : bizForm.logo_dark_url;
     if (!url) return;
-    const key = extractCatalogMediaRelativeKeyFromUrl(url);
+    const key = extractCatalogOrMediaStorageKeyFromUrl(url);
     if (key) {
       try {
         await deleteCatalogMediaFileByKey(key);

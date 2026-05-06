@@ -1,9 +1,10 @@
 import React from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, QrCode, RefreshCw, Unplug, MessageSquare } from "lucide-react";
+import { Loader2, QrCode, RefreshCw, Unplug, MessageSquare, Shield, RotateCcw } from "lucide-react";
 import type { ChatInstance } from "@/services/chat";
 import {
   formatWhatsappDisplayPhone,
@@ -27,6 +28,18 @@ type Props = {
   onRefresh: () => void;
   onOpenQR: () => void;
   onDisconnect: () => void;
+  webhookStatus?: {
+    hasSecret: boolean;
+    needsReconfiguration: boolean;
+    lastSeenAt: string | null;
+    callbackUrlMasked: string | null;
+    statusLabel: "OK" | "Precisa reconfigurar" | "Secret ausente" | "Nunca recebeu webhook";
+  } | null;
+  webhookLoading?: boolean;
+  webhookActionLoading?: boolean;
+  onWebhookRefresh: () => void;
+  onWebhookReconfigure: () => void;
+  onWebhookRotateSecret: () => void;
 };
 
 export function WhatsAppInstanceDetailsSheet({
@@ -43,6 +56,12 @@ export function WhatsAppInstanceDetailsSheet({
   onRefresh,
   onOpenQR,
   onDisconnect,
+  webhookStatus,
+  webhookLoading = false,
+  webhookActionLoading = false,
+  onWebhookRefresh,
+  onWebhookReconfigure,
+  onWebhookRotateSecret,
 }: Props) {
   const profile = instance ? getWhatsAppInstanceProfileInfo(instance) : null;
   const title = profile?.name?.trim() || "WhatsApp";
@@ -104,6 +123,39 @@ export function WhatsAppInstanceDetailsSheet({
             </div>
 
             <Separator />
+
+            <div className="space-y-3 rounded-lg border border-border/70 bg-muted/10 p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Shield className="h-4 w-4" />
+                  Status do webhook
+                </div>
+                <Button size="sm" variant="outline" onClick={onWebhookRefresh} disabled={webhookLoading || webhookActionLoading}>
+                  {webhookLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                </Button>
+              </div>
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p>
+                  Status:{" "}
+                  <Badge variant={webhookStatus?.statusLabel === "OK" ? "default" : "secondary"} className="ml-1">
+                    {webhookStatus?.statusLabel ?? "—"}
+                  </Badge>
+                </p>
+                <p>Último webhook recebido: {webhookStatus?.lastSeenAt ? new Date(webhookStatus.lastSeenAt).toLocaleString("pt-BR") : "—"}</p>
+                <p>Secret configurado: {webhookStatus?.hasSecret ? "Sim" : "Não"}</p>
+                <p className="break-all">Callback atual: {webhookStatus?.callbackUrlMasked ?? "—"}</p>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Button type="button" variant="secondary" disabled={webhookActionLoading} onClick={onWebhookReconfigure}>
+                  {webhookActionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                  Reconfigurar webhook
+                </Button>
+                <Button type="button" variant="outline" disabled={webhookActionLoading} onClick={onWebhookRotateSecret}>
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Rotacionar secret
+                </Button>
+              </div>
+            </div>
 
             <Button
               type="button"

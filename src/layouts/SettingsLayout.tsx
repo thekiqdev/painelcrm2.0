@@ -23,6 +23,7 @@ export type SettingSection =
   | "messageTemplates"
   | "paymentGateway"
   | "googleCalendar"
+  | "googleDrive"
   | "agendaAvailability"
   | "chatAttendance"
   | "chatAutomation";
@@ -51,6 +52,7 @@ const SECTION_QUERY_VALUES: SettingSection[] = [
   "messageTemplates",
   "paymentGateway",
   "googleCalendar",
+  "googleDrive",
   "agendaAvailability",
   "chatAttendance",
   "chatAutomation",

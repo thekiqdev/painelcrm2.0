@@ -7,7 +7,7 @@ import { SettingsSectionProps } from './types';
 import { getMyTenantCompany, putMyTenantCompany } from '@/services/tenantCompany';
 import {
   deleteCatalogMediaFileByKey,
-  extractCatalogMediaRelativeKeyFromUrl,
+  extractCatalogOrMediaStorageKeyFromUrl,
   normalizeCatalogMediaUrlForBrowser,
   uploadCatalogImageFile,
 } from '@/services/catalogMediaUpload';
@@ -101,7 +101,7 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
     const setRemove = variant === 'light' ? setRemovingLight : setRemovingDark;
     setRemove(true);
     try {
-      const key = extractCatalogMediaRelativeKeyFromUrl(url);
+      const key = extractCatalogOrMediaStorageKeyFromUrl(url);
       if (key) {
         try {
           await deleteCatalogMediaFileByKey(key);

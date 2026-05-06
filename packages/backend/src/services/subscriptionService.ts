@@ -713,7 +713,7 @@ const COMMERCIAL_SAAS_BILLING_REASONS = new Set([
   'seat_addon',
 ]);
 
-const CHECKOUT_PRESENTABLE_BILLING_STATUSES = ['pending', 'waiting_payment', 'processing'] as const;
+const CHECKOUT_PRESENTABLE_BILLING_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'] as const;
 
 /**
  * Reapresenta no checkout uma linha específica de tenant_billing (cobrança pai), se reutilizável no gateway.
@@ -750,33 +750,58 @@ export async function getSaasBillingCheckoutPresentation(
     resolved = await resolveSaasPlanCheckoutPaymentIfEligible(billing, pm, gateway, gatewayKey);
     if (resolved) break;
   }
-  if (!resolved) return null;
 
-  const b = resolved.billing;
-  const u = resolved.paymentUrls;
+  const seatAddonSeats =
+    reason === 'seat_addon' ? seatAddonAdditionalSeatsFromGatewayMetadata(billing.gateway_metadata) : undefined;
+
+  if (resolved) {
+    const b = resolved.billing;
+    const u = resolved.paymentUrls;
+    let inline_pay_token: string | undefined;
+    try {
+      inline_pay_token = await ensureTenantBillingInlinePayToken(b.id);
+    } catch {
+      /* ignore */
+    }
+    return {
+      billing_id: b.id,
+      invoice_number: b.invoice_number,
+      amount_cents: b.amount_cents,
+      status: b.status,
+      tenant_id: tenantId,
+      payment_method: b.payment_method ?? undefined,
+      billing_reason: reason,
+      invoice_url: u?.invoiceUrl,
+      bank_slip_url: u?.bankSlipUrl,
+      bank_slip_digitable_line: u?.bankSlipDigitableLine,
+      pix_qr_code: u?.pixQrCode,
+      pix_copy_paste: u?.pixCopyPaste,
+      inline_pay_token,
+      ...(seatAddonSeats != null ? { seat_addon_additional_seats: seatAddonSeats } : {}),
+    };
+  }
+
+  /**
+   * Cobrança válida no hub mas sem payload local reutilizável (ex.: gateway ainda não sincronizou, ou só há
+   * referência após ação externa). Devolve shell para o cliente abrir a tela e chamar prepare-payment.
+   */
   let inline_pay_token: string | undefined;
   try {
-    inline_pay_token = await ensureTenantBillingInlinePayToken(b.id);
+    inline_pay_token = await ensureTenantBillingInlinePayToken(billing.id);
   } catch {
     /* ignore */
   }
-  const seatAddonSeats =
-    reason === 'seat_addon' ? seatAddonAdditionalSeatsFromGatewayMetadata(b.gateway_metadata) : undefined;
+  const pmOut = (billing.payment_method ?? 'PIX') as PaymentMethod;
   return {
-    billing_id: b.id,
-    invoice_number: b.invoice_number,
-    amount_cents: b.amount_cents,
-    status: b.status,
+    billing_id: billing.id,
+    invoice_number: billing.invoice_number,
+    amount_cents: billing.amount_cents,
+    status: billing.status,
     tenant_id: tenantId,
-    payment_method: b.payment_method ?? undefined,
+    payment_method: pmOut,
     billing_reason: reason,
-    invoice_url: u?.invoiceUrl,
-    bank_slip_url: u?.bankSlipUrl,
-    bank_slip_digitable_line: u?.bankSlipDigitableLine,
-    pix_qr_code: u?.pixQrCode,
-    pix_copy_paste: u?.pixCopyPaste,
-    inline_pay_token,
     ...(seatAddonSeats != null ? { seat_addon_additional_seats: seatAddonSeats } : {}),
+    inline_pay_token,
   };
 }
 

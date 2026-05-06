@@ -1,4 +1,5 @@
 import { extractCatalogMediaRelativeKeyFromStoredUrl } from './catalogMediaPublicSignedUrl.js';
+import { MEDIA_RAW_SIGNED_PATH } from '../services/media/mediaUrlSigner.js';
 
 /** URL hospedada no nosso catálogo (assinada) — estável; não substituir por CDN efémera. */
 export function isPersistentStoredAvatarUrl(url: string | null | undefined): boolean {
@@ -7,6 +8,8 @@ export function isPersistentStoredAvatarUrl(url: string | null | undefined): boo
   if (!t) return false;
   /** Catálogo local: path relativo ou absoluto antigo com qualquer host */
   if (t.includes('/api/public/catalog-media/raw')) return true;
+  /** MediaService (Fase 2+) — URL assinada relativa estável. */
+  if (t.includes(MEDIA_RAW_SIGNED_PATH)) return true;
   return extractCatalogMediaRelativeKeyFromStoredUrl(t) != null;
 }
 

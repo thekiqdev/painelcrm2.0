@@ -21,6 +21,11 @@ import * as smtpSuperadminSettingsController from '../controllers/smtpSuperadmin
 import * as superadminLeadsController from '../controllers/superadminLeadsController.js';
 import superadminWhatsappOfficialRoutes from './superadminWhatsappOfficialRoutes.js';
 import connectionsRoutes from './connectionsRoutes.js';
+import * as adminScriptsController from '../controllers/adminScriptsController.js';
+import {
+  listSuperadminRecentMediaAssets,
+  postSuperadminMediaTestSaveBuffer,
+} from '../services/media/mediaController.js';
 
 const router = Router();
 
@@ -178,5 +183,16 @@ router.get('/leads', superadminLeadsController.listSuperadminLeads);
 router.post('/leads', superadminLeadsController.createSuperadminLead);
 router.patch('/leads/:id', superadminLeadsController.patchSuperadminLead);
 router.delete('/leads/:id', superadminLeadsController.deleteSuperadminLead);
+
+/** Scripts de manutenção pré-aprovados (sem SQL livre). */
+router.get(
+  '/advanced/whatsapp-avatar-cache-worker/status',
+  adminScriptsController.getWhatsappAvatarCacheWorkerStatus,
+);
+router.get('/advanced/scripts', adminScriptsController.listAdminScripts);
+router.post('/advanced/scripts/:scriptKey/preview', adminScriptsController.previewAdminScript);
+router.post('/advanced/scripts/:scriptKey/execute', adminScriptsController.executeAdminScript);
+router.post('/advanced/media/test-save-buffer', postSuperadminMediaTestSaveBuffer);
+router.get('/advanced/media/assets', listSuperadminRecentMediaAssets);
 
 export default router;

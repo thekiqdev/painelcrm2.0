@@ -65,6 +65,7 @@ import meProfileRoutes from './routes/meProfileRoutes.js';
 import { authenticateToken, setCurrentTenant, setRequestDb } from './middleware/auth.js';
 import announcementsUpdatesRoutes from './routes/announcementsUpdatesRoutes.js';
 import googleCalendarIntegrationRoutes from './routes/googleCalendarIntegrationRoutes.js';
+import googleDriveIntegrationRoutes from './routes/googleDriveIntegrationRoutes.js';
 import asaasIntegrationRoutes from './routes/asaasIntegrationRoutes.js';
 import mercadoPagoIntegrationRoutes from './routes/mercadoPagoIntegrationRoutes.js';
 import * as mercadoPagoIntegrationController from './controllers/mercadoPagoIntegrationController.js';
@@ -77,11 +78,13 @@ import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
 import crmSubscriptionsRoutes from './routes/crmSubscriptionsRoutes.js';
 import customerChargesRoutes from './routes/customerChargesRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import mediaRoutes from './services/media/mediaRoutes.js';
 import whatsappOfficialWebhookRoutes from './routes/whatsappOfficialWebhookRoutes.js';
 import storeCheckoutRoutes from './routes/storeCheckoutRoutes.js';
 import onboardingRoutes from './routes/onboardingRoutes.js';
 import tenantsRoutes from './routes/tenantsRoutes.js';
 import { pool } from './utils/db.js';
+import { startWhatsappAvatarCacheWorkerInterval } from './services/whatsappAvatarCacheWorker.js';
 import { processDueKanbanScheduledMovesBatch } from './services/kanbanScheduledMoveService.js';
 import { processProposalWebhookDeliveriesBatch } from './services/proposalWebhookDeliveryService.js';
 import { processNotificationOutboundRetriesBatch } from './services/notificationsEngine/notificationOutboundRetryWorker.js';
@@ -108,6 +111,7 @@ import { runPendingConfirmationAutomationOnce } from './services/appointmentAuto
 import { runChatSlaAutomationTick } from './services/chatSlaWorkerService.js';
 import { getChatAutomationWorkerPollMs } from './config/chatAutomationEnv.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
+import { logGoogleDriveBootDiagnostics } from './config/googleDriveEnv.js';
 import { getAllowedCorsOrigins } from './config/corsOrigins.js';
 import { runWhatsappOfficialCampaignWorkerTick } from './services/whatsappOfficial/whatsappOfficialCampaignQueueService.js';
 import {
@@ -121,6 +125,7 @@ const rootEnv = path.resolve(__dirname, '../../../.env');
 dotenv.config({ path: rootEnv });
 dotenv.config();
 logGoogleCalendarBootDiagnostics();
+logGoogleDriveBootDiagnostics();
 
 const app = express();
 const httpServer = createServer(app);
@@ -408,6 +413,7 @@ app.use('/api/billing', billingRoutes);
 app.use('/api/customer-invoices', customerInvoicesRoutes);
 app.use('/api/crm-subscriptions', crmSubscriptionsRoutes);
 app.use('/api/customer-charges', customerChargesRoutes);
+app.use('/api/media', mediaRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.get(
   '/api/me/tenant/checkout-context',
@@ -420,6 +426,7 @@ app.use('/api/me/tenant', myTenantPlanRoutes);
 /** Perfil pessoal / negócio: GET|PUT /api/me/profile, avatar, senha por WhatsApp, business-profile */
 app.use('/api/me', meProfileRoutes);
 app.use('/api/integrations/google', googleCalendarIntegrationRoutes);
+app.use('/api/integrations/google-drive', googleDriveIntegrationRoutes);
 app.use('/api/integrations/asaas', asaasIntegrationRoutes);
 app.get('/api/integrations/mercado-pago/callback', mercadoPagoIntegrationController.getMercadoPagoOAuthCallback);
 /** Alias legado (notification_url antiga); mesmo handler que POST /api/integrations/mercado-pago/webhook */
@@ -581,6 +588,8 @@ void (async () => {
       );
     }, waCampPoll);
   }
+
+  startWhatsappAvatarCacheWorkerInterval();
   });
 })();
 

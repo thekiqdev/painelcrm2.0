@@ -15,7 +15,7 @@ import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { resolveOutgoingMediaPayload } from '../services/outgoingMediaPayloadResolver.js';
 import { buildWhatsappTemplateMediaPublicUrlFromStoragePath } from '../services/whatsappTemplateMediaStorageService.js';
-import { randomUUID, timingSafeEqual } from 'crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import * as notificationService from '../services/notifications.js';
 import { emitConversationUpdate, emitMessageUpdated, emitNewMessage } from '../services/websocketService.js';
 import {
@@ -177,7 +177,7 @@ const MAX_MEDIA_BASE64_CHARS = 14 * 1024 * 1024; // ~10MB binário em base64
 
 const sendMessageSchema = z
   .object({
-    conversationId: z.string().uuid(),
+  conversationId: z.string().uuid(),
     /** Idempotência / correlação no cliente (UUID v4). */
     clientMessageId: z.string().uuid().optional(),
     /** Responder mensagem existente (citado no WhatsApp via UazAPI `replyid`). */
@@ -191,9 +191,9 @@ const sendMessageSchema = z
     fileUrl: z.string().url().optional(),
     mimeType: z.string().optional(),
     fileName: z.string().max(255).optional(),
-    readChat: z.boolean().optional(),
-    readMessages: z.boolean().optional(),
-    delay: z.number().optional(),
+  readChat: z.boolean().optional(),
+  readMessages: z.boolean().optional(),
+  delay: z.number().optional(),
   })
   .superRefine((data, ctx) => {
     const t = data.type ?? 'text';
@@ -214,7 +214,7 @@ const sendMessageSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Arquivo muito grande' });
       }
     }
-  });
+});
 
 const linkConversationSchema = z.object({
   type: z.enum(['client', 'lead']),
@@ -521,8 +521,8 @@ function pickExternalChatJidForUaz(raw: any): string | null {
   if (idStr && idStr.includes('@')) return idStr;
   if (idStr && !isLikelyInternalUazChatId(idStr)) return idStr;
 
-  return null;
-}
+    return null;
+  }
 
 /** Chave estável para deduplicar linhas do /chat/find ao mesclar buscas (privado + grupo). */
 function chatFindRowDedupeKey(raw: any): string {
@@ -1641,10 +1641,10 @@ async function saveMessage(
 
   const saveVerbose = isChatSaveVerboseLogs();
   if (saveVerbose) {
-    console.log(`[SaveMessage ${saveId}] Starting save`, {
-      conversationId,
-      direction,
-      externalMessageId: payload.externalMessageId,
+  console.log(`[SaveMessage ${saveId}] Starting save`, {
+    conversationId,
+    direction,
+    externalMessageId: payload.externalMessageId,
       bodyPreview: (bodyForInsert ?? '').substring(0, 50),
       hasMedia: mediaArr.length > 0,
       kind: messageContract.kind,
@@ -1669,7 +1669,7 @@ async function saveMessage(
     };
     try {
       messageResult = await pool.query<{ id: string; created_at: string; inserted: boolean }>(
-        `
+    `
     INSERT INTO chat_messages (
       conversation_id, direction, external_message_id, body,
       media, status, sent_at, metadata, provider,
@@ -1699,14 +1699,14 @@ async function saveMessage(
       client_message_id = COALESCE(EXCLUDED.client_message_id, chat_messages.client_message_id)
       RETURNING id, created_at, (xmax = 0) AS inserted
   `,
-        [
-          conversationId,
-          direction,
-          payload.externalMessageId,
+    [
+      conversationId,
+      direction,
+      payload.externalMessageId,
           bodyForInsert,
           JSON.stringify(mediaArr.length > 0 ? mediaArr : []),
-          payload.status,
-          payload.sentAt,
+      payload.status,
+      payload.sentAt,
           JSON.stringify(metadataMerged),
           replyToMessageId,
           replyToExternalMessageId,
@@ -1844,7 +1844,7 @@ async function saveMessage(
         newMessageSentAt: effectiveSentAt,
         newMessagePreview: messagePreview?.substring(0, 50),
       });
-      }
+    }
     }
 
     if (inserted && direction === 'incoming') {
@@ -1914,9 +1914,9 @@ export async function createInstance(req: AuthRequest, res: Response) {
   const verboseCreate = isUazIntegrationVerboseLogs();
   try {
     if (verboseCreate) {
-      console.log('[CreateInstance] Starting instance creation...');
+    console.log('[CreateInstance] Starting instance creation...');
     }
-
+    
     if (!isUazapiAdminConfigured()) {
       console.error('[CreateInstance] UAZAPI_ADMIN_TOKEN ausente ou em branco no servidor');
       res.status(503).json({
@@ -1930,13 +1930,13 @@ export async function createInstance(req: AuthRequest, res: Response) {
     }
 
     const userId = req.userId!;
-
+    
     // Validar dados
     let data;
     try {
       data = instanceSchema.parse(req.body);
       if (verboseCreate) {
-        console.log('[CreateInstance] Validated data:', { name: data.name });
+      console.log('[CreateInstance] Validated data:', { name: data.name });
       }
     } catch (validationError: any) {
       console.error('[CreateInstance] Validation error:', validationError.errors);
@@ -1963,19 +1963,19 @@ export async function createInstance(req: AuthRequest, res: Response) {
     let remoteInstance: AnyObject;
     try {
       if (verboseCreate) {
-        console.log('[CreateInstance] Calling UazAPI createInstance...');
+      console.log('[CreateInstance] Calling UazAPI createInstance...');
       }
       remoteInstance = (await uazapiService.createInstance(
       data.name,
       data.metadata
     )) as AnyObject;
-
+      
       if (verboseCreate) {
-        console.log('[CreateInstance] UazAPI response received:', {
-          hasInstance: !!remoteInstance?.instance,
-          hasToken: !!(remoteInstance?.instance?.token || remoteInstance?.token),
-          keys: Object.keys(remoteInstance || {}),
-        });
+      console.log('[CreateInstance] UazAPI response received:', {
+        hasInstance: !!remoteInstance?.instance,
+        hasToken: !!(remoteInstance?.instance?.token || remoteInstance?.token),
+        keys: Object.keys(remoteInstance || {}),
+      });
       }
     } catch (uazapiError: any) {
       console.error('[CreateInstance] UazAPI error:', {
@@ -1999,13 +1999,13 @@ export async function createInstance(req: AuthRequest, res: Response) {
     const instanceStatus = instanceInfo?.status || 'disconnected';
     
     if (verboseCreate) {
-      console.log('[CreateInstance] Extracted info:', {
-        instanceToken: instanceToken ? '***' + instanceToken.slice(-4) : 'MISSING',
-        instanceName,
-        instanceStatus,
-      });
+    console.log('[CreateInstance] Extracted info:', {
+      instanceToken: instanceToken ? '***' + instanceToken.slice(-4) : 'MISSING',
+      instanceName,
+      instanceStatus,
+    });
     }
-
+    
     if (!instanceToken) {
       logUazChat('error', {
         event_type: 'create_instance_no_token',
@@ -2066,9 +2066,9 @@ export async function createInstance(req: AuthRequest, res: Response) {
     );
 
       if (verboseCreate) {
-        console.log('[CreateInstance] Instance saved to database:', {
-          id: inserted.rows[0]?.id,
-          name: inserted.rows[0]?.name,
+      console.log('[CreateInstance] Instance saved to database:', {
+        id: inserted.rows[0]?.id,
+        name: inserted.rows[0]?.name,
         });
       }
 
@@ -2210,11 +2210,8 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
   };
 
   try {
-    const resolvedUrl =
-      process.env.UAZAPI_WEBHOOK_URL ||
-      (process.env.PUBLIC_API_URL
-        ? `${process.env.PUBLIC_API_URL.replace(/\/$/, '')}/webhooks/uazapi`
-        : null);
+    const instanceSecret = await ensureInstanceWebhookSecret(instance);
+    const resolvedUrl = buildInstanceWebhookUrl(instance.id, instanceSecret);
 
     if (!resolvedUrl) {
       logUazChat('warn', {
@@ -2230,22 +2227,12 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       return;
     }
 
-    const secretTrim = process.env.UAZAPI_WEBHOOK_SECRET?.trim();
-    let webhookUrl = resolvedUrl;
-    if (secretTrim) {
-      try {
-        const u = new URL(resolvedUrl);
-        u.searchParams.set('secret', secretTrim);
-        webhookUrl = u.toString();
-      } catch {
-        const sep = resolvedUrl.includes('?') ? '&' : '?';
-        webhookUrl = `${resolvedUrl}${sep}secret=${encodeURIComponent(secretTrim)}`;
-      }
-    }
+    const secretTrim = instanceSecret.trim();
+    const webhookUrl = resolvedUrl;
 
     const existingWebhook = instance.metadata?.webhook;
     const tokenChanged = instance.metadata?.tokenChanged || false;
-
+    
     if (tokenChanged) {
       logUazChat('info', {
         ...baseLog,
@@ -2260,7 +2247,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       });
     } else if (
       existingWebhook?.url === resolvedUrl &&
-      !!existingWebhook?.webhookSecretInQuery === !!secretTrim &&
+      !!existingWebhook?.webhookSecretInQuery === true &&
       !existingWebhook?.needsReconfigure
     ) {
       logUazChat('info', {
@@ -2307,7 +2294,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     }
 
     const webhookResponse = await uazapiService.configureWebhook(instance.instance_token, webhookBody);
-
+    
     logUazChat('info', {
       ...baseLog,
       phase: 'uazapi_response',
@@ -2342,10 +2329,12 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
           webhook: {
             url: resolvedUrl,
             webhookSecretInQuery: !!secretTrim,
+            webhookSecretMask: maskSecretForLogs(secretTrim),
             events: defaultEvents,
             excludeMessages: defaultExcludeMessages,
             configuredAt: new Date().toISOString(),
             autoConfigured: true,
+            needsReconfigure: false,
             ...(uazDeliverySecrets.length
               ? {
                   uazDeliverySecrets,
@@ -2356,6 +2345,15 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         }),
         instance.id,
       ]
+    );
+    await pool.query(
+      `UPDATE chat_instances
+       SET webhook_secret_last_seen_at = now(),
+           webhook_needs_reconfiguration = false,
+           metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+           updated_at = now()
+       WHERE id = $2`,
+      [JSON.stringify({ webhook_url: resolvedUrl, webhook_secret: secretTrim }), instance.id]
     );
 
     logUazChat('info', {
@@ -4348,13 +4346,9 @@ export async function configureInstanceWebhook(req: AuthRequest, res: Response) 
     const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
-    // Resolver URL do webhook
-    const resolvedUrl =
-      payload.url ||
-      process.env.UAZAPI_WEBHOOK_URL ||
-      (process.env.PUBLIC_API_URL
-        ? `${process.env.PUBLIC_API_URL.replace(/\/$/, '')}/webhooks/uazapi`
-        : null);
+    const instanceSecret = await ensureInstanceWebhookSecret(instance);
+    // Resolver URL do webhook (sempre com instanceId + secret por instância)
+    const resolvedUrl = payload.url || buildInstanceWebhookUrl(instance.id, instanceSecret);
 
     if (!resolvedUrl) {
       console.error(`[Webhook Config ${configId}] Webhook URL not configured`);
@@ -4393,7 +4387,7 @@ export async function configureInstanceWebhook(req: AuthRequest, res: Response) 
     };
 
     // Adicionar secret se configurado
-    const secret = payload.secret || process.env.UAZAPI_WEBHOOK_SECRET;
+    const secret = instanceSecret;
     if (secret) {
       webhookBody.secret = secret;
     }
@@ -4432,20 +4426,28 @@ export async function configureInstanceWebhook(req: AuthRequest, res: Response) 
         addUrlTypesMessages: webhookBody.AddUrlTypesMessages,
         enabled: webhookBody.enabled,
         hasSecret: !!secret,
+        webhookSecretMask: maskSecretForLogs(secret),
+        webhookSecretSource: 'instance_column',
         configuredAt: new Date().toISOString(),
         configuredBy: userId,
         uazapiResponse: uazapiResponse,
       },
+      webhook_url: resolvedUrl,
+      webhook_secret: secret,
     };
 
     await pool.query(
       `
         UPDATE chat_instances
         SET metadata = metadata || $1::jsonb,
+            webhook_secret = $3,
+            webhook_secret_created_at = COALESCE(webhook_secret_created_at, now()),
+            webhook_secret_last_seen_at = now(),
+            webhook_needs_reconfiguration = false,
             updated_at = now()
         WHERE id = $2
       `,
-      [JSON.stringify(webhookMetadata), instance.id]
+      [JSON.stringify(webhookMetadata), instance.id, secret]
     );
 
     console.log(`[Webhook Config ${configId}] Webhook configuration saved to database`, {
@@ -4516,6 +4518,11 @@ export async function getInstanceWebhook(req: AuthRequest, res: Response) {
 
     res.json({
       instanceId: id,
+      webhookStatus: {
+        has_secret: isSecretStrongEnough(normalizeIncomingWebhookSecret((instance as any).webhook_secret) ?? null),
+        needs_reconfiguration: Boolean((instance as any).webhook_needs_reconfiguration),
+        last_seen_at: (instance as any).webhook_secret_last_seen_at ?? null,
+      },
       database: dbWebhook,
       uazapi: uazapiWebhook,
       synced: dbWebhook && uazapiWebhook ? 
@@ -4562,6 +4569,118 @@ export async function forceConfigureWebhook(req: AuthRequest, res: Response) {
   } catch (error: any) {
     console.error('Error forcing webhook configuration:', error);
     res.status(500).json({ error: error.message || 'Failed to force webhook configuration' });
+  }
+}
+
+export async function reconfigureInstanceWebhook(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+    const instance = await loadInstanceForManage(userId, id, res);
+    if (!instance) return;
+
+    const previousSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret) ?? null;
+    const tenantId = await resolveTenantIdForUser(userId);
+    await autoConfigureWebhook(instance);
+
+    const fresh = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [id]);
+    const row = fresh.rows[0];
+    const nextSecret = normalizeIncomingWebhookSecret((row as any)?.webhook_secret) ?? null;
+
+    res.json({
+      ok: true,
+      instanceId: id,
+      webhook_url: ((row as any)?.metadata as Record<string, unknown> | undefined)?.webhook_url ?? null,
+      webhook_needs_reconfiguration: Boolean((row as any)?.webhook_needs_reconfiguration),
+      secret_changed: Boolean(previousSecret && nextSecret && !webhookSecretsEqual(previousSecret, nextSecret)),
+      secret_mask: maskSecretForLogs(nextSecret),
+    });
+    logUazChat('info', {
+      event_type: 'webhook_reconfigure',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: id,
+      phase: 'completed',
+      detail: JSON.stringify({
+        secretChanged: Boolean(previousSecret && nextSecret && !webhookSecretsEqual(previousSecret, nextSecret)),
+      }),
+    });
+  } catch (error: any) {
+    console.error('Error reconfiguring webhook:', error);
+    res.status(500).json({ error: error.message || 'Failed to reconfigure webhook' });
+  }
+}
+
+export async function rotateInstanceWebhookSecret(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+    const instance = await loadInstanceForManage(userId, id, res);
+    if (!instance) return;
+
+    const previousSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret) ?? null;
+    const tenantId = await resolveTenantIdForUser(userId);
+    const nextSecret = generateWebhookSecret();
+    const callbackUrl = buildInstanceWebhookUrl(id, nextSecret);
+    if (!callbackUrl) {
+      res.status(400).json({ error: 'Webhook URL base não configurada (UAZAPI_WEBHOOK_URL/PUBLIC_API_URL)' });
+      return;
+    }
+
+    const webhookBody: Record<string, any> = {
+      enabled: true,
+      url: callbackUrl,
+      events: ['messages', 'messages_update', 'chats', 'connection', 'leads'],
+      excludeMessages: ['wasSentByApi'],
+      addUrlEvents: true,
+      AddUrlTypesMessages: true,
+      secret: nextSecret,
+    };
+    await uazapiService.configureWebhook(instance.instance_token, webhookBody);
+
+    await pool.query(
+      `UPDATE chat_instances
+       SET webhook_secret = $1,
+           webhook_secret_version = COALESCE(webhook_secret_version, 1) + 1,
+           webhook_secret_created_at = COALESCE(webhook_secret_created_at, now()),
+           webhook_secret_last_seen_at = now(),
+           webhook_needs_reconfiguration = false,
+           metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = now()
+       WHERE id = $3`,
+      [
+        nextSecret,
+        JSON.stringify({
+          webhook_secret: nextSecret,
+          webhook_url: callbackUrl,
+          webhook_previous_secret_mask: maskSecretForLogs(previousSecret),
+          webhook_rotated_at: new Date().toISOString(),
+        }),
+        id,
+      ]
+    );
+
+    res.json({
+      ok: true,
+      instanceId: id,
+      callbackUrl,
+      secret_mask: maskSecretForLogs(nextSecret),
+      previous_secret_mask: maskSecretForLogs(previousSecret),
+    });
+    logUazChat('info', {
+      event_type: 'webhook_rotate_secret',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: id,
+      phase: 'completed',
+      detail: JSON.stringify({
+        previousSecretMask: maskSecretForLogs(previousSecret),
+        nextSecretMask: maskSecretForLogs(nextSecret),
+      }),
+    });
+  } catch (error: any) {
+    console.error('Error rotating webhook secret:', error);
+    res.status(500).json({ error: error.message || 'Failed to rotate webhook secret' });
   }
 }
 
@@ -5422,7 +5541,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         raw.release();
       }
     }
-
+    
     console.log('[GetConversations] Query result', {
       userId,
       instanceId,
@@ -6009,7 +6128,7 @@ export async function unlinkConversation(req: AuthRequest, res: Response) {
     );
     let updatedRow: Record<string, unknown> | undefined;
     {
-      const updated = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
+    const updated = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1 LIMIT 1`, [conversationId]);
       updatedRow = updated.rows[0] as Record<string, unknown> | undefined;
     }
     if (updatedRow && tenantId) {
@@ -6142,7 +6261,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       ...row,
       message_contract: contractFromDbRow(row),
     }));
-
+    
     res.json({
       messages: rows,
       conversationId: firstConversationId,
@@ -7176,7 +7295,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             media: [],
             messageKind: 'text',
             status: 'queued',
-            sentAt: new Date(),
+      sentAt: new Date(),
             clientMessageId: data.clientMessageId ?? null,
             messageProvider: 'whatsapp_official',
             metadata: {
@@ -7332,11 +7451,11 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
         if (instRow) {
           void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
-            (idErr: any) => console.warn('[SendMessage] identity refresh failed:', idErr?.message)
-          );
-        }
-      } catch {
-        /* não bloquear envio */
+          (idErr: any) => console.warn('[SendMessage] identity refresh failed:', idErr?.message)
+        );
+      }
+    } catch {
+      /* não bloquear envio */
       }
     }
 
@@ -7454,7 +7573,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             userId,
             {
               id: row.id,
-              conversation_id: conversation.id,
+            conversation_id: conversation.id,
               direction: row.direction,
               body: row.body,
               sent_at: row.sent_at || new Date(),
@@ -8210,19 +8329,19 @@ function extractMessageData(payload: any): {
   isGroup: boolean;
 } {
   // Tentar diferentes formatos de payload
-  const data = payload.data || payload.message || payload;
+      const data = payload.data || payload.message || payload;
   const message = mergeMessageEnvelope(data);
 
   // Extrair chatId de múltiplas fontes (envelope já unificado em `message`)
-  const chatId =
+      const chatId =
     message.wa_chatid ||
-    message.chatid ||
-    message.chatId ||
-    message.chat?.id ||
-    message.key?.remoteJid ||
+        message.chatid ||
+        message.chatId ||
+        message.chat?.id ||
+        message.key?.remoteJid ||
     message.remoteJid ||
-    message.number ||
-    null;
+        message.number ||
+        null;
 
   // Determinar direção
   const direction: 'incoming' | 'outgoing' =
@@ -9025,7 +9144,103 @@ function normalizeIncomingWebhookSecret(raw: unknown): string | undefined {
   if (Array.isArray(raw) && typeof raw[0] === 'string') {
     return normalizeString(raw[0]);
   }
-  return undefined;
+      return undefined;
+}
+
+const WEBHOOK_SECRET_MIN_LENGTH = 32;
+
+function generateWebhookSecret(): string {
+  const candidate = randomBytes(32).toString('base64url');
+  return candidate.length >= WEBHOOK_SECRET_MIN_LENGTH ? candidate : `${candidate}${randomBytes(8).toString('hex')}`;
+}
+
+function isSecretStrongEnough(secret: string | null | undefined): boolean {
+  if (!secret || typeof secret !== 'string') return false;
+  return secret.trim().length >= WEBHOOK_SECRET_MIN_LENGTH;
+}
+
+function maskSecretForLogs(secret: string | null | undefined): string | null {
+  if (!secret || typeof secret !== 'string') return null;
+  const t = secret.trim();
+  if (!t) return null;
+  if (t.length <= 6) return '***';
+  return `${t.slice(0, 2)}***${t.slice(-2)}`;
+}
+
+function extractMetadataWebhookSecret(metadata: unknown): string | null {
+  const m =
+    metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : null;
+  const direct = normalizeIncomingWebhookSecret(m?.webhook_secret);
+  if (direct) return direct;
+  const webhook =
+    m?.webhook && typeof m.webhook === 'object' && !Array.isArray(m.webhook)
+      ? (m.webhook as Record<string, unknown>)
+      : null;
+  const nested = normalizeIncomingWebhookSecret(webhook?.webhook_secret ?? webhook?.secret);
+  return nested ?? null;
+}
+
+function extractInstanceIdCandidate(req: Request, payload: Record<string, any>): string | null {
+  const raw = req.query?.instanceId ?? req.query?.instance_id ?? payload.instanceId ?? payload.instance_id;
+  const id =
+    typeof raw === 'string'
+      ? raw
+      : Array.isArray(raw) && typeof raw[0] === 'string'
+        ? raw[0]
+        : null;
+  const t = id?.trim() || '';
+  return t || null;
+}
+
+function extractProviderInstanceIdCandidates(payload: Record<string, any>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (v: unknown) => {
+    if (typeof v !== 'string') return;
+    const t = v.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+  push(payload.instance);
+  push(payload.instanceName);
+  push(payload.data?.instance);
+  push(payload.data?.instanceName);
+  push(payload.instance_id);
+  push(payload.data?.instance_id);
+  return out;
+}
+
+async function ensureInstanceWebhookSecret(instance: ChatInstanceRow): Promise<string> {
+  const columnSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
+  if (columnSecret && isSecretStrongEnough(columnSecret)) return columnSecret;
+
+  const metadataSecret = extractMetadataWebhookSecret(instance.metadata);
+  const nextSecret = metadataSecret && isSecretStrongEnough(metadataSecret) ? metadataSecret : generateWebhookSecret();
+  await pool.query(
+    `UPDATE chat_instances
+     SET webhook_secret = $1,
+         webhook_secret_created_at = COALESCE(webhook_secret_created_at, now()),
+         webhook_secret_version = COALESCE(webhook_secret_version, 1),
+         metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+         updated_at = now()
+     WHERE id = $3`,
+    [nextSecret, JSON.stringify({ webhook_secret: nextSecret }), instance.id]
+  );
+  return nextSecret;
+}
+
+function buildInstanceWebhookUrl(instanceId: string, secret: string): string | null {
+  const base =
+    process.env.UAZAPI_WEBHOOK_URL ||
+    (process.env.PUBLIC_API_URL ? `${process.env.PUBLIC_API_URL.replace(/\/$/, '')}/api/webhooks/uazapi` : null);
+  if (!base) return null;
+  const u = new URL(base);
+  u.searchParams.set('instanceId', instanceId);
+  u.searchParams.set('secret', secret);
+  return u.toString();
 }
 
 function getConfiguredWebhookSecrets(): string[] {
@@ -9059,19 +9274,19 @@ function webhookSecretsEqual(a: string, b: string): boolean {
  * Extrai o identificador de instância no payload/header/query (mesma regra que o restante do handler).
  */
 function extractUazWebhookInstanceExternalKey(payload: Record<string, any>, req: Request): string | null {
-  const rawInstanceId =
-    payload.instance ||
-    payload.instanceName ||
-    payload.data?.instance ||
-    payload.data?.instanceName ||
-    req.query.instance ||
-    req.headers['x-uazapi-instance'];
-  const instanceName =
-    typeof rawInstanceId === 'string'
-      ? rawInstanceId
-      : Array.isArray(rawInstanceId) && typeof rawInstanceId[0] === 'string'
-        ? rawInstanceId[0]
-        : null;
+    const rawInstanceId =
+      payload.instance ||
+      payload.instanceName ||
+      payload.data?.instance ||
+      payload.data?.instanceName ||
+      req.query.instance ||
+      req.headers['x-uazapi-instance'];
+    const instanceName =
+      typeof rawInstanceId === 'string'
+        ? rawInstanceId
+        : Array.isArray(rawInstanceId) && typeof rawInstanceId[0] === 'string'
+          ? rawInstanceId[0]
+          : null;
   if (!instanceName || typeof instanceName !== 'string') return null;
   const externalKey = instanceName.trim();
   return externalKey || null;
@@ -9090,12 +9305,16 @@ function collectWebhookSecretCandidates(req: Request): string[] {
       : undefined;
   const raw: unknown[] = [
     req.query?.secret,
+    req.query?.webhookSecret,
+    req.query?.token,
     req.headers['x-uazapi-secret'],
     req.headers['x-webhook-secret'],
     req.headers['x-api-secret'],
     bearerSecret,
     req.body?.secret,
+    req.body?.webhookSecret,
     req.body?.data?.secret,
+    req.body?.data?.webhookSecret,
   ];
   const out: string[] = [];
   const seen = new Set<string>();
@@ -9264,147 +9483,134 @@ export async function handleWebhook(req: Request, res: Response) {
   const webhookVerbose = isUazIntegrationVerboseLogs();
 
   try {
-    // 1. Secret e endurecimento de produção (antes de logs com corpo/headers detalhados)
-    const isProduction = process.env.NODE_ENV === 'production';
-    const configuredSecrets = getConfiguredWebhookSecrets();
-    const hasConfiguredSecret = configuredSecrets.length > 0;
-    const allowNoSecretInProd =
-      process.env.UAZAPI_WEBHOOK_ALLOW_NO_SECRET === 'true' ||
-      process.env.UAZAPI_WEBHOOK_ALLOW_NO_SECRET === '1';
-
-    if (isProduction && !hasConfiguredSecret && !allowNoSecretInProd) {
-      logUazChat('error', {
-        event_type: 'webhook_rejected_no_secret',
-        phase: 'auth',
-        detail:
-          'NODE_ENV=production sem UAZAPI_WEBHOOK_SECRET. Defina o secret ou UAZAPI_WEBHOOK_ALLOW_NO_SECRET=true (transição).',
-      });
-      res.status(503).json({
-        error: 'Webhook misconfigured: UAZAPI_WEBHOOK_SECRET is required in production',
-        code: 'WEBHOOK_SECRET_REQUIRED',
-      });
-      return;
-    }
-
-    const secretCandidates = collectWebhookSecretCandidates(req);
+    // 1) Extrair payload/secret e resolver instância (preferência: query.instanceId)
     const payload: Record<string, any> =
       req.body && typeof req.body === 'object' && !Array.isArray(req.body)
         ? (req.body as Record<string, any>)
         : {};
-
+    const secretCandidates = collectWebhookSecretCandidates(req);
+    const configuredSecrets = getConfiguredWebhookSecrets();
+    const legacyEnvEnabled =
+      process.env.WEBHOOK_LEGACY_GLOBAL_SECRET_ENABLED === 'true' ||
+      process.env.WEBHOOK_LEGACY_GLOBAL_SECRET_ENABLED === '1';
+    const instanceSecretRequired =
+      process.env.WEBHOOK_INSTANCE_SECRET_REQUIRED !== 'false' &&
+      process.env.WEBHOOK_INSTANCE_SECRET_REQUIRED !== '0';
+    const requestedInstanceId = extractInstanceIdCandidate(req, payload);
     const externalKeyEarly = extractUazWebhookInstanceExternalKey(payload, req);
 
     let instanceRows: ChatInstanceRow[] = [];
-    let instanceMatchCount = 0;
-    if (externalKeyEarly) {
-      const ir = await pool.query<ChatInstanceRow>(
-        'SELECT * FROM chat_instances WHERE external_instance_name = $1',
-        [externalKeyEarly]
-      );
-      instanceMatchCount = ir.rowCount ?? 0;
-      instanceRows = ir.rows;
+    let resolutionReason = 'none';
+    if (requestedInstanceId) {
+      const r = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [requestedInstanceId]);
+      instanceRows = r.rows;
+      resolutionReason = 'instance_id';
+    }
+    if (instanceRows.length === 0 && externalKeyEarly) {
+      const r = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE external_instance_name = $1', [externalKeyEarly]);
+      instanceRows = r.rows;
+      resolutionReason = 'external_instance_name';
+    }
+    if (instanceRows.length === 0) {
+      const providerCandidates = extractProviderInstanceIdCandidates(payload);
+      if (providerCandidates.length > 0) {
+        const r = await pool.query<ChatInstanceRow>(
+          `SELECT * FROM chat_instances
+           WHERE external_instance_name = ANY($1::text[])
+              OR COALESCE(metadata->>'provider_instance_id','') = ANY($1::text[])
+              OR COALESCE(phone_key,'') = ANY($1::text[])`,
+          [providerCandidates]
+        );
+        instanceRows = r.rows;
+        resolutionReason = 'provider_payload';
+      }
     }
 
-    const instanceTokenForSecret =
-      instanceMatchCount === 1 ? instanceRows[0].instance_token : undefined;
-
-    const uazMetaSecrets =
-      instanceMatchCount === 1 ? collectMetadataWebhookSecretCandidates(instanceRows[0].metadata) : [];
-
-    // Uaz pode enviar em ?secret= um valor distinto do instance_token (ex. 25 chars vs UUID 36).
-    const secretMatchesEnv =
-      hasConfiguredSecret &&
-      secretCandidates.some((c) => configuredSecrets.some((cfg) => webhookSecretsEqual(c, cfg)));
-    const secretMatchesInstanceToken =
-      instanceMatchCount === 1 &&
-      !!instanceTokenForSecret &&
-      secretCandidatesMatchAnyVariantCaseRelaxed(
-        secretCandidates,
-        instanceTokenSecretVariants(instanceTokenForSecret)
-      );
-    const secretMatchesUazMetadata =
-      instanceMatchCount === 1 &&
-      uazMetaSecrets.length > 0 &&
-      secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, uazMetaSecrets);
-    const secretMatchesTrustedIp =
-      isUazWebhookTrustedProviderIp(req) && secretCandidates.length > 0 && instanceMatchCount === 1;
-
-    const secretOk =
-      secretMatchesEnv ||
-      secretMatchesInstanceToken ||
-      secretMatchesUazMetadata ||
-      secretMatchesTrustedIp;
-
-    if (isProduction && hasConfiguredSecret) {
-      if (secretCandidates.length === 0 || !secretOk) {
-        console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
-          webhookId,
-          ip: req.ip,
-          clientIpTrust: clientIpForWebhookTrust(req),
-          reason: secretCandidates.length === 0 ? 'missing_secret' : 'invalid_secret',
-          hasXUazapiSecret: !!req.headers['x-uazapi-secret'],
-          hasQuerySecret: !!normalizeIncomingWebhookSecret(req.query?.secret),
-          hasBodySecret: !!(
-            normalizeIncomingWebhookSecret(req.body?.secret) ||
-            normalizeIncomingWebhookSecret(req.body?.data?.secret)
-          ),
-          distinctCandidateLengths: secretCandidates.map((c) => c.length),
-          configuredSecretLens: configuredSecrets.map((s) => s.length),
-          secretMatchesEnv,
-          secretMatchesInstanceToken,
-          secretMatchesUazMetadata,
-          secretMatchesTrustedIp,
-          uazMetaSecretsCount: uazMetaSecrets.length,
-          trustIpsConfigured: parseUazWebhookTrustIps().length > 0,
-          instanceRowsForToken: instanceMatchCount,
-          instanceTokenLenForCompare: instanceTokenForSecret?.length ?? null,
-        });
-        res.status(401).json({ error: 'Invalid or missing webhook secret' });
-        return;
-      }
-      if (webhookVerbose) {
-        console.log(`[Webhook ${webhookId}] Secret validated successfully`, {
-          viaEnv: secretMatchesEnv,
-          viaInstanceToken: secretMatchesInstanceToken,
-          viaUazMetadata: secretMatchesUazMetadata,
-          viaTrustedIp: secretMatchesTrustedIp,
-        });
-      }
-    } else if (isProduction && !hasConfiguredSecret && allowNoSecretInProd) {
-      console.warn(`[Webhook ${webhookId}] UAZAPI_WEBHOOK_ALLOW_NO_SECRET active in production`, {
+    const instanceMatchCount = instanceRows.length;
+    if (instanceMatchCount === 0) {
+      console.warn(`[Webhook ${webhookId}] instance_resolution_failed`, {
         webhookId,
-        ip: req.ip,
-        message:
-          'Webhook aceito sem secret (flag explícita). Remova UAZAPI_WEBHOOK_ALLOW_NO_SECRET e defina UAZAPI_WEBHOOK_SECRET.',
+        reason: 'instance_not_found',
+        hasInstanceId: Boolean(requestedInstanceId),
+        hasExternalKey: Boolean(externalKeyEarly),
       });
-    } else if (hasConfiguredSecret && secretCandidates.length > 0) {
-      if (!secretOk) {
-        console.warn(`[Webhook ${webhookId}] Invalid secret`, {
-          ip: req.ip,
-          receivedSecretHeader: !!req.headers['x-uazapi-secret'],
-          receivedSecretBody: !!req.body?.secret,
-          receivedSecretQuery: !!req.query?.secret,
-        });
-        res.status(401).json({ error: 'Invalid webhook secret' });
-        return;
-      }
-      if (webhookVerbose) {
-        console.log(`[Webhook ${webhookId}] Secret validated successfully`, {
-          viaEnv: secretMatchesEnv,
-          viaInstanceToken: secretMatchesInstanceToken,
-          viaUazMetadata: secretMatchesUazMetadata,
-          viaTrustedIp: secretMatchesTrustedIp,
-        });
-      }
-    } else if (hasConfiguredSecret && secretCandidates.length === 0) {
-      if (webhookVerbose) {
-        console.log(`[Webhook ${webhookId}] Secret configured but not received, allowing webhook`, {
-          receivedSecretHeader: !!req.headers['x-uazapi-secret'],
-          receivedSecretBody: !!req.body?.secret,
-        });
-      }
-    } else if (webhookVerbose) {
-      console.log(`[Webhook ${webhookId}] No secret configured, skipping validation`);
+      res.status(404).json({ error: 'Instance not registered' });
+      return;
+    }
+    if (instanceMatchCount > 1) {
+      console.warn(`[Webhook ${webhookId}] ambiguous_instance_resolution`, {
+        webhookId,
+        reason: 'ambiguous_instance_resolution',
+        hasInstanceId: Boolean(requestedInstanceId),
+        resolutionReason,
+        matchCount: instanceMatchCount,
+      });
+      res.status(409).json({ error: 'Ambiguous instance resolution' });
+      return;
+    }
+    const instance = instanceRows[0];
+
+    const instanceColumnSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
+    const metadataSecret = extractMetadataWebhookSecret(instance.metadata);
+    const configuredSecretLengths = [
+      ...(instanceColumnSecret ? [instanceColumnSecret.length] : []),
+      ...(metadataSecret ? [metadataSecret.length] : []),
+      ...configuredSecrets.map((s) => s.length),
+    ];
+
+    const secretMatchesInstanceColumn =
+      !!instanceColumnSecret && secretCandidates.some((c) => webhookSecretsEqual(c, instanceColumnSecret));
+    const secretMatchesMetadata =
+      !!metadataSecret && secretCandidates.some((c) => webhookSecretsEqual(c, metadataSecret));
+    const secretMatchesLegacyEnv =
+      legacyEnvEnabled &&
+      configuredSecrets.length > 0 &&
+      secretCandidates.some((c) => configuredSecrets.some((cfg) => webhookSecretsEqual(c, cfg)));
+
+    let matchedSource: 'instance_column' | 'metadata' | 'legacy_env' | 'none' = 'none';
+    if (secretMatchesInstanceColumn) matchedSource = 'instance_column';
+    else if (secretMatchesMetadata) matchedSource = 'metadata';
+    else if (secretMatchesLegacyEnv) matchedSource = 'legacy_env';
+
+    const secretValid = matchedSource !== 'none';
+    if (!secretValid || secretCandidates.length === 0) {
+      console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
+        webhookId,
+        hasInstanceId: Boolean(requestedInstanceId),
+        instanceResolved: true,
+        instanceId: instance.id,
+        tenantId: await resolveTenantIdForUser(instance.user_id),
+        hasQuerySecret: Boolean(normalizeIncomingWebhookSecret(req.query?.secret) || normalizeIncomingWebhookSecret(req.query?.webhookSecret)),
+        hasHeaderSecret: Boolean(normalizeIncomingWebhookSecret(req.headers['x-uazapi-secret'])),
+        candidateSecretLengths: secretCandidates.map((c) => c.length),
+        configuredSecretLengths,
+        matchedSource: 'none',
+        reason: secretCandidates.length === 0 ? 'missing_secret' : 'invalid_secret',
+      });
+      res.status(401).json({ error: 'Invalid or missing webhook secret' });
+      return;
+    }
+    if (matchedSource === 'legacy_env' && !instanceSecretRequired) {
+      // emergência: apenas não bloqueia se feature-flag explicitamente relaxada
+    } else if (matchedSource === 'legacy_env' && instanceSecretRequired) {
+      // legado permitido apenas com instância resolvida (já resolvida acima)
+    }
+    await pool.query(
+      `UPDATE chat_instances
+       SET webhook_secret_last_seen_at = now(), updated_at = now()
+       WHERE id = $1`,
+      [instance.id]
+    );
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] secret_validated`, {
+        webhookId,
+        instanceId: instance.id,
+        matchedSource,
+        candidateSecretLengths: secretCandidates.map((c) => c.length),
+        configuredSecretLengths,
+        instanceColumnSecretMask: maskSecretForLogs(instanceColumnSecret),
+        metadataSecretMask: maskSecretForLogs(metadataSecret),
+      });
     }
 
     if (webhookVerbose) {
@@ -9434,17 +9640,7 @@ export async function handleWebhook(req: Request, res: Response) {
       return;
     }
 
-    if (!externalKeyEarly) {
-      console.warn(`[Webhook ${webhookId}] Missing instance identifier`, {
-        webhookId,
-        reason: 'missing_instance_identifier',
-        allPayloadKeys: Object.keys(payload),
-      });
-      res.status(400).json({ error: 'Missing instance identifier' });
-      return;
-    }
-
-    const externalKey = externalKeyEarly;
+    const externalKey = externalKeyEarly || instance.external_instance_name || requestedInstanceId || instance.id;
 
     if (webhookVerbose) {
       console.log(`[Webhook ${webhookId}] Instance identification`, {
@@ -9453,29 +9649,7 @@ export async function handleWebhook(req: Request, res: Response) {
       });
     }
 
-    if (instanceMatchCount === 0) {
-      console.warn(`[Webhook ${webhookId}] instance_resolution_failed`, {
-        webhookId,
-        instanceName: externalKey,
-        reason: 'instance_not_found',
-      });
-      res.status(404).json({ error: 'Instance not registered' });
-      return;
-    }
-
-    if (instanceMatchCount > 1) {
-      console.error(`[Webhook ${webhookId}] instance_resolution_failed`, {
-        webhookId,
-        instanceName: externalKey,
-        reason: 'duplicate_external_instance_name',
-        severity: 'critical',
-        matchCount: instanceMatchCount,
-      });
-      res.status(409).json({ error: 'Ambiguous instance configuration' });
-      return;
-    }
-
-    const instance = instanceRows[0];
+    
 
     // 3. Identificar tipo de evento
     const event = payload.event || req.query.event || payload.type || 'unknown';
@@ -9489,10 +9663,10 @@ export async function handleWebhook(req: Request, res: Response) {
     });
     if (webhookVerbose) {
       console.log(`[Webhook ${webhookId}] instance matched`, {
-        instanceName: externalKey,
-        instanceId: instance.id,
-        event,
-      });
+      instanceName: externalKey,
+      instanceId: instance.id,
+      event,
+    });
     }
 
     // 7. Responder rapidamente (antes de processar)

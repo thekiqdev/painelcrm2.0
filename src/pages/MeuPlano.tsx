@@ -43,6 +43,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Input } from '@/components/ui/input';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
+import { COMMERCIAL_402_REDIRECT_FLAG } from '@/lib/commercialAccessPaths';
 
 const checkoutResumeEnabled = import.meta.env.VITE_CHECKOUT_RESUME_V1 === 'true';
 
@@ -214,6 +215,7 @@ interface CommercialBillingHubRow {
 type CommercialMode =
   | 'trial_resume_required'
   | 'payment_pending'
+  | 'plan_period_expired'
   | 'trial_active'
   | 'active'
   | 'suspended_other'
@@ -251,6 +253,12 @@ function needsTrialResumeFlow(data: MyPlanResponse | null, requiresCheckoutResum
   return trialEndedUnpaid(data);
 }
 
+function isPlanBillingPeriodPast(data: MyPlanResponse): boolean {
+  if (!data.plan_period_end) return false;
+  const t = new Date(data.plan_period_end).getTime();
+  return !Number.isNaN(t) && t < Date.now();
+}
+
 function resolveCommercialMode(
   data: MyPlanResponse,
   requiresCheckoutResume: boolean
@@ -260,6 +268,9 @@ function resolveCommercialMode(
   }
   if (data.tenant_status === 'payment_pending') {
     return 'payment_pending';
+  }
+  if (isPlanBillingPeriodPast(data)) {
+    return 'plan_period_expired';
   }
   if (data.tenant_status === 'trial') {
     const end = data.trial_ends_at ? new Date(data.trial_ends_at).getTime() : NaN;
@@ -437,6 +448,14 @@ export default function MeuPlano() {
   const isMobile = useIsMobile();
   const canManage = authUser?.can_manage_plan === true;
 
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem(COMMERCIAL_402_REDIRECT_FLAG);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const inferredNextPaymentMethodLabel = useMemo(() => {
     if (myPlan?.pending_billing?.payment_method) {
       return paymentMethodOrDash(myPlan.pending_billing.payment_method);
@@ -600,7 +619,8 @@ export default function MeuPlano() {
     }
     const state = buildCheckoutState();
     if (!state) return;
-    navigate('/checkout', { state });
+    /** `mode=renew`: tenant já existe — checkout pula Empresa/Resumo e usa plano/intervalo do state + contexto da API. */
+    navigate('/checkout?mode=renew', { state });
   }, [navigate, buildCheckoutState, canManage]);
 
   /** Pagamento de cobrança interna SaaS (tenant_billing) — fluxo dedicado, fora do PlanCheckout. */
@@ -625,13 +645,14 @@ export default function MeuPlano() {
       goOpenSaasBillingPay(pendingId);
       return;
     }
-    if (checkoutResumeEnabled) {
+    if (checkoutResumeEnabled && requiresCheckoutResume) {
       goToCheckoutResume();
       return;
     }
     goToCheckoutWithPlan();
   }, [
     myPlan?.pending_billing?.billing_id,
+    requiresCheckoutResume,
     goOpenSaasBillingPay,
     goToCheckoutResume,
     goToCheckoutWithPlan,
@@ -781,8 +802,8 @@ export default function MeuPlano() {
             <p>
               Dúvidas? Entre em contato com quem gerencia a assinatura da sua empresa ou abra um chamado em suporte.
             </p>
-            <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
-              Voltar ao painel
+            <Button type="button" variant="outline" onClick={() => window.location.reload()}>
+              Atualizar página
             </Button>
           </CardContent>
         </Card>
@@ -876,8 +897,8 @@ export default function MeuPlano() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-muted-foreground">Não foi possível carregar o plano da sua conta.</p>
-            <Button type="button" variant="outline" className="mt-4" onClick={() => navigate('/dashboard')}>
-              Voltar ao painel
+            <Button type="button" variant="outline" className="mt-4" onClick={() => window.location.reload()}>
+              Tentar novamente
             </Button>
           </CardContent>
         </Card>
@@ -911,7 +932,8 @@ export default function MeuPlano() {
   const showPendingDetailCard =
     pendingBilling != null ||
     commercialMode === 'trial_resume_required' ||
-    commercialMode === 'payment_pending';
+    commercialMode === 'payment_pending' ||
+    commercialMode === 'plan_period_expired';
 
   const statusBadge = (() => {
     switch (commercialMode) {
@@ -921,6 +943,8 @@ export default function MeuPlano() {
         return { label: 'Pagamento necessário', className: 'bg-amber-500/15 text-amber-900 dark:text-amber-100' };
       case 'payment_pending':
         return { label: 'Pagamento pendente', className: 'bg-amber-500/15 text-amber-900 dark:text-amber-100' };
+      case 'plan_period_expired':
+        return { label: 'Período vencido', className: 'bg-amber-500/15 text-amber-900 dark:text-amber-100' };
       case 'active':
         return { label: 'Ativo', className: 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-200' };
       case 'suspended_other':
@@ -956,6 +980,17 @@ export default function MeuPlano() {
           title: 'Cobrança pendente',
           description: `${billingLead || 'Há cobrança aguardando pagamento ou confirmação. '}Abra a tela de pagamento para ver o link e finalizar a contratação.`,
           primaryLabel: 'Ver link de pagamento',
+          onPrimary: goToPaymentOrResume,
+          secondaryLabel: undefined,
+          onSecondary: undefined,
+        };
+      case 'plan_period_expired':
+        return {
+          icon: AlertCircle,
+          variant: 'border-amber-500/40 bg-amber-500/5' as const,
+          title: 'Período do plano expirado',
+          description: `${billingLead || 'O período contratado desta conta já encerrou. '}Renove ou conclua o pagamento em aberto para voltar a usar o CRM.`,
+          primaryLabel: pendingBilling ? 'Pagar agora' : 'Renovar plano',
           onPrimary: goToPaymentOrResume,
           secondaryLabel: undefined,
           onSecondary: undefined,
@@ -1171,27 +1206,49 @@ export default function MeuPlano() {
           )}
 
           {pendingBilling && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-              <p className="font-medium text-amber-950 dark:text-amber-100">Cobrança em aberto</p>
-              <p className="mt-1 text-sm text-amber-900/90 dark:text-amber-100">
-                Existe uma cobrança pendente para manter seu plano ativo.
+            <div className="rounded-xl border-2 border-amber-500/40 bg-amber-500/10 p-4 shadow-sm">
+              <p className="text-base font-semibold text-amber-950 dark:text-amber-100">Pagamento pendente</p>
+              <p className="mt-1 text-sm text-amber-900/95 dark:text-amber-100">
+                Existe uma fatura em aberto para reativar seu acesso.
               </p>
-              <p className="mt-1 text-sm text-amber-900/90 dark:text-amber-50">
-                {formatPrice(pendingBilling.amount_cents)} — {billingStatusLabelPt(pendingBilling.status)}.
-                {pendingBilling.due_date ? ` Vence em ${formatDate(pendingBilling.due_date)}.` : ''}
-              </p>
+              <ul className="mt-3 space-y-1 text-sm text-amber-950/95 dark:text-amber-50">
+                <li>
+                  <span className="text-amber-900/80 dark:text-amber-200/90">Valor: </span>
+                  <span className="font-medium tabular-nums">{formatPrice(pendingBilling.amount_cents)}</span>
+                </li>
+                {pendingBilling.due_date ? (
+                  <li>
+                    <span className="text-amber-900/80 dark:text-amber-200/90">Vencimento: </span>
+                    <span className="font-medium tabular-nums">{formatDate(pendingBilling.due_date)}</span>
+                  </li>
+                ) : null}
+                <li>
+                  <span className="text-amber-900/80 dark:text-amber-200/90">Status: </span>
+                  <span className="font-medium">{billingStatusLabelPt(pendingBilling.status)}</span>
+                </li>
+                <li>
+                  <span className="text-amber-900/80 dark:text-amber-200/90">Meio de pagamento: </span>
+                  <span className="font-medium">{paymentMethodOrDash(pendingBilling.payment_method)}</span>
+                </li>
+                {pendingBilling.invoice_number ? (
+                  <li>
+                    <span className="text-amber-900/80 dark:text-amber-200/90">Fatura: </span>
+                    <span className="font-medium tabular-nums">{pendingBilling.invoice_number}</span>
+                  </li>
+                ) : null}
+                {pendingBilling.gateway ? (
+                  <li>
+                    <span className="text-amber-900/80 dark:text-amber-200/90">Gateway: </span>
+                    <span className="font-medium">{pendingBilling.gateway}</span>
+                  </li>
+                ) : null}
+              </ul>
               {canManage && (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="mt-3 w-full sm:w-auto"
-                  variant="secondary"
-                  onClick={goToPaymentOrResume}
-                >
-                  Regularizar pagamento
+                <Button type="button" size="sm" className="mt-4 w-full sm:w-auto" onClick={goToPaymentOrResume}>
+                  Pagar agora
                 </Button>
               )}
-              </div>
+            </div>
           )}
 
           <div className="md:hidden space-y-2.5 border-b border-border/50 pb-4 text-sm">
@@ -1284,11 +1341,18 @@ export default function MeuPlano() {
                 ) : null}
               </>
             )}
-            {canManage && (commercialMode === 'trial_resume_required' || commercialMode === 'payment_pending') && (
-              <Button type="button" className="h-11 w-full sm:w-auto" onClick={goToPaymentOrResume}>
-                {commercialMode === 'payment_pending' ? 'Ver link de pagamento' : 'Regularizar pagamento'}
-              </Button>
-            )}
+            {canManage &&
+              (commercialMode === 'trial_resume_required' ||
+                commercialMode === 'payment_pending' ||
+                commercialMode === 'plan_period_expired') && (
+                <Button type="button" className="h-11 w-full sm:w-auto" onClick={goToPaymentOrResume}>
+                  {commercialMode === 'payment_pending' || commercialMode === 'plan_period_expired'
+                    ? myPlan.pending_billing
+                      ? 'Pagar agora'
+                      : 'Renovar plano'
+                    : 'Regularizar pagamento'}
+                </Button>
+              )}
             {!subscription && isPostFirstPaidActivation && (
               <p className="w-full text-xs text-muted-foreground">
                 Os detalhes da assinatura podem levar alguns instantes para atualizar.
@@ -1881,7 +1945,7 @@ export default function MeuPlano() {
                             className="h-11 w-full gap-2"
                       disabled={saving}
                       onClick={() =>
-                        navigate('/checkout', {
+                        navigate('/checkout?mode=renew', {
                           state: {
                             plan: {
                               id: p.id,
@@ -1892,7 +1956,7 @@ export default function MeuPlano() {
                               description: p.description,
                               benefits: p.benefits,
                             },
-                                  billingInterval: selectedIntervalKey,
+                            billingInterval: selectedIntervalKey,
                             usersCount: p.plan_type === 'custom' ? contractedSeats : undefined,
                           },
                         })

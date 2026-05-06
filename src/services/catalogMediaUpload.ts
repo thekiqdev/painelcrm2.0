@@ -31,6 +31,7 @@ export type CatalogMediaScope =
   | 'tenant_logo_dark';
 
 const RAW_PATH = '/api/public/catalog-media/raw';
+const MEDIA_RAW_PATH = '/api/media/v1/raw';
 const LEGACY_MEDIA = '/media/catalog/';
 const LEGACY_API_PUBLIC = '/api/catalog-media/public/';
 
@@ -52,7 +53,11 @@ export function extractCatalogMediaRelativeKeyFromUrl(stored: string | null | un
   if (stored == null) return null;
   const t = stored.trim();
   if (!t) return null;
-  if (t.startsWith('tenants/')) return t;
+  /** Layout catalog: `tenants/.../users/...`; paths MediaService não têm `users/`. */
+  if (t.startsWith('tenants/')) {
+    if (!t.includes('/users/')) return null;
+    return t;
+  }
   try {
     const base = typeof window !== 'undefined' ? window.location.origin : 'https://local.invalid';
     const u = new URL(t, base);
@@ -78,6 +83,35 @@ export function extractCatalogMediaRelativeKeyFromUrl(stored: string | null | un
     }
   } catch {
     return null;
+  }
+  return null;
+}
+
+/** Catalog (`/api/public/catalog-media/raw`) ou MediaService (`/api/media/v1/raw`) — para delete/replace. */
+export function extractCatalogOrMediaStorageKeyFromUrl(stored: string | null | undefined): string | null {
+  return extractCatalogMediaRelativeKeyFromUrl(stored) ?? extractMediaStorageKeyFromUrl(stored);
+}
+
+/** Chave relativa MediaService (`tenants/...` sem segmento `users/`) a partir da URL assinada ou da própria chave. */
+export function extractMediaStorageKeyFromUrl(stored: string | null | undefined): string | null {
+  if (stored == null) return null;
+  const t = stored.trim();
+  if (!t) return null;
+  if (t.startsWith('tenants/') && !t.includes('/users/')) {
+    const parts = t.split('/').filter(Boolean);
+    if (parts.length >= 6 && parts[0] === 'tenants') return t;
+    return null;
+  }
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'https://local.invalid';
+    const u = new URL(t, base);
+    if (u.pathname.includes(MEDIA_RAW_PATH)) {
+      const k = u.searchParams.get('k');
+      if (!k) return null;
+      return base64UrlToUtf8(k);
+    }
+  } catch {
+    /* ignore */
   }
   return null;
 }
@@ -210,7 +244,10 @@ export async function uploadCatalogImageFile(
   const form = new FormData();
   form.append('scope', scope);
   form.append('file', toSend);
-  const prevKey = options?.previousUrl ? extractCatalogMediaRelativeKeyFromUrl(options.previousUrl) : null;
+  const prevKey =
+    options?.previousUrl &&
+    (extractCatalogMediaRelativeKeyFromUrl(options.previousUrl) ??
+      extractMediaStorageKeyFromUrl(options.previousUrl));
   if (prevKey) form.append('previous_key', prevKey);
 
   const res = await apiClient.post<CatalogUploadResponse>('/api/catalog-media/upload', form);

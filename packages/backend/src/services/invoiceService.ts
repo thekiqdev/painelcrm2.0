@@ -378,13 +378,10 @@ export async function findInvoiceBySubscriptionAndPeriod(
 /**
  * Status em `tenant_billing` para o checkout SaaS do plano:
  *
- * Reutilizáveis (mesma linha, troca de método ou retorno ao checkout): `pending`, `waiting_payment`, `processing`.
- * Não reutilizáveis (nova cobrança / nova linha quando aplicável): `paid`, `cancelled`, `failed`, `refunded`,
- * `overdue` (vencida — exige nova cobrança no gateway), e demais que não estejam na lista reutilizável.
- *
- * `overdue` entra em SAAS_PLAN_SIBLING_OPEN_STATUSES para cancelar irmãs ao pagar uma cobrança válida.
+ * Reutilizáveis (mesma linha, troca de método, retorno ao checkout ou preparação no gateway): inclui `overdue`
+ * para o cliente pagar no painel após sincronizar com o gateway (links/PIX), sem forçar nova linha só pelo status.
  */
-export const SAAS_PLAN_CHECKOUT_REUSABLE_STATUSES = ['pending', 'waiting_payment', 'processing'];
+export const SAAS_PLAN_CHECKOUT_REUSABLE_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'];
 
 /** Irmãs concorrentes a cancelar ao confirmar pagamento (inclui overdue ainda “abertas” comercialmente). */
 export const SAAS_PLAN_SIBLING_OPEN_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'];

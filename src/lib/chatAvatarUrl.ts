@@ -2,6 +2,25 @@ import { getApiUrl } from '@/integrations/api/client';
 import { chatAvatarDebugLog } from '@/lib/chatAvatarDebug';
 
 const CATALOG_MEDIA_RAW_SEGMENT = '/api/public/catalog-media/raw';
+const MEDIA_SERVICE_RAW_SEGMENT = '/api/media/v1/raw';
+
+/**
+ * Normaliza referências a GET público assinado do MediaService (path relativo ou URL absoluta).
+ */
+function mediaServiceRawPathFromStored(url: string): string | null {
+  const t = url.trim();
+  if (!t) return null;
+  if (t.startsWith(MEDIA_SERVICE_RAW_SEGMENT)) return t;
+  try {
+    const u = new URL(t);
+    if (u.pathname.includes(MEDIA_SERVICE_RAW_SEGMENT)) {
+      return `${u.pathname}${u.search}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 /**
  * Normaliza qualquer referência a catalog-media/raw (path relativo ou URL absoluta com host/port errados)
@@ -74,6 +93,17 @@ export function chatAvatarUrlForImgSrc(url: string | null | undefined): string |
     return out;
   }
 
+  const mediaRel = mediaServiceRawPathFromStored(t);
+  if (mediaRel) {
+    const base = getApiUrl();
+    const out = base ? `${base.replace(/\/$/, '')}${mediaRel}` : mediaRel;
+    chatAvatarDebugLog('chatAvatarUrlForImgSrc', {
+      outcome: 'media_service_relative',
+      prefix: mediaRel.length > 96 ? `${mediaRel.slice(0, 96)}…` : mediaRel,
+    });
+    return out;
+  }
+
   try {
     const host = new URL(t).hostname.toLowerCase();
     if (isWhatsappProviderAvatarHost(host)) {
@@ -104,6 +134,7 @@ export function isUsablePersistedAvatarUrl(url: string | null | undefined): bool
   const t = url.trim();
   if (!t) return false;
   if (t.includes('/api/chat/avatar-proxy')) return false;
+  if (catalogMediaRawPathFromStored(t) || mediaServiceRawPathFromStored(t)) return true;
   try {
     const h = new URL(t).hostname.toLowerCase();
     if (

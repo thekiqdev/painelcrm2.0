@@ -18,6 +18,7 @@ import type {
 } from '../../../payments/paymentGatewayTypes.js';
 import { logGatewayOperation } from '../../../payments/gatewayLogger.js';
 import { getPaymentCustomer, createPaymentCustomer } from '../../../../services/paymentCustomersService.js';
+import { getAsaasDisableCustomerNotifications } from '../../../../services/asaasCustomerNotificationConfigService.js';
 import { activatePlanFromBilling } from '../../../../services/subscriptionService.js';
 import { pool } from '../../../../utils/db.js';
 import { isValidCpfOrCnpj, onlyDigits } from '../../../../utils/cpfCnpj.js';
@@ -84,10 +85,13 @@ function withLog<T>(
 }
 
 function buildGateway(config?: AsaasConfig | null): PaymentGateway {
+  const disableNativeCustomerNotifications = config?.disableCustomerNotifications !== false;
+
   return {
     async createCustomer(input: CreateCustomerInput): Promise<CreateCustomerResult> {
       return withLog('createCustomer', undefined, async () => {
-        const body = asaasMapper.toAsaasCustomer(input);
+        const raw = asaasMapper.toAsaasCustomer(input);
+        const body = asaasMapper.withAsaasCustomerNotificationPreference(raw, disableNativeCustomerNotifications);
         const res = await asaasClient.createCustomer(body, config);
         return { customerId: res.id };
       });
@@ -103,7 +107,8 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
       clientData: CreateCustomerInput
     ): Promise<string> {
       return withLog('ensureCustomerForClient', _tenantId, async () => {
-        const body = asaasMapper.toAsaasCustomer(clientData);
+        const raw = asaasMapper.toAsaasCustomer(clientData);
+        const body = asaasMapper.withAsaasCustomerNotificationPreference(raw, disableNativeCustomerNotifications);
         const res = await asaasClient.createCustomer(body, config);
         return res.id;
       });
@@ -336,7 +341,8 @@ function normalizeTenantCpfDigits(cpfCnpj: string | null | undefined): string | 
 async function syncTenantCpfToAsaasCustomerIfNeeded(
   customerId: string,
   tenantCpfDigits: string | null,
-  config?: AsaasConfig | null
+  config?: AsaasConfig | null,
+  disableNativeCustomerNotifications = true
 ): Promise<void> {
   if (!tenantCpfDigits) return;
   try {
@@ -347,12 +353,16 @@ async function syncTenantCpfToAsaasCustomerIfNeeded(
 
     const name = String(remote.name ?? '').trim() || 'Cliente';
     const email = String(remote.email).trim();
-    const payload = asaasMapper.tenantToAsaasCustomer({
+    const raw = asaasMapper.tenantToAsaasCustomer({
       name,
       email,
       cpfCnpj: tenantCpfDigits,
       phone: remote.phone != null ? String(remote.phone) : undefined,
     });
+    const payload = asaasMapper.withAsaasCustomerNotificationPreference(
+      raw,
+      disableNativeCustomerNotifications
+    );
     await asaasClient.updateCustomer(customerId, payload, config);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -371,6 +381,10 @@ export async function ensureCustomerForTenant(
   tenantId: string,
   config?: AsaasConfig | null
 ): Promise<string> {
+  const disableNativeCustomerNotifications = await getAsaasDisableCustomerNotifications({
+    billingType: 'saas',
+  });
+
   const tenantRow = await pool.query<{
     id: string;
     name: string;
@@ -391,13 +405,23 @@ export async function ensureCustomerForTenant(
 
   const existing = await getPaymentCustomer(tenantId, GATEWAY_KEY);
   if (existing) {
-    await syncTenantCpfToAsaasCustomerIfNeeded(existing.gateway_customer_id, tenantCpfDigits, config);
+    await syncTenantCpfToAsaasCustomerIfNeeded(
+      existing.gateway_customer_id,
+      tenantCpfDigits,
+      config,
+      disableNativeCustomerNotifications
+    );
     return existing.gateway_customer_id;
   }
 
   if (tenant.asaas_customer_id) {
     await createPaymentCustomer(tenantId, GATEWAY_KEY, tenant.asaas_customer_id, tenantId);
-    await syncTenantCpfToAsaasCustomerIfNeeded(tenant.asaas_customer_id, tenantCpfDigits, config);
+    await syncTenantCpfToAsaasCustomerIfNeeded(
+      tenant.asaas_customer_id,
+      tenantCpfDigits,
+      config,
+      disableNativeCustomerNotifications
+    );
     return tenant.asaas_customer_id;
   }
 
@@ -424,12 +448,16 @@ export async function ensureCustomerForTenant(
     customerName = tenant.name;
   }
 
-  const payload = asaasMapper.tenantToAsaasCustomer({
+  const rawPayload = asaasMapper.tenantToAsaasCustomer({
     name: customerName,
     email,
     cpfCnpj: cpfCnpj || undefined,
     phone: phone || undefined,
   });
+  const payload = asaasMapper.withAsaasCustomerNotificationPreference(
+    rawPayload,
+    disableNativeCustomerNotifications
+  );
   const payloadWithRef = { ...payload, externalReference: tenantId };
 
   const created = await asaasClient.createCustomer(payloadWithRef, config);

@@ -13,8 +13,10 @@ export async function getCheckoutContext(req: AuthRequest, res: Response): Promi
     const purpose = String((req.query as { purpose?: string }).purpose ?? '').trim();
     /** Checkout de assentos adicionais: conta já ativa; não é “retomada” — libera mesmo com CHECKOUT_RESUME_V1 off. */
     const forSeatAddonCheckout = purpose === 'seat_addon';
+    /** Hub Meu plano /checkout?mode=renew — dados da empresa para pagamento sem refazer cadastro (tenant já existe). */
+    const forPlanRenewalHub = purpose === 'renew';
 
-    if (!isCheckoutResumeV1Enabled() && !forSeatAddonCheckout) {
+    if (!isCheckoutResumeV1Enabled() && !forSeatAddonCheckout && !forPlanRenewalHub) {
       res.status(403).json({
         error:
           'Retomada de checkout está desligada no servidor. Defina CHECKOUT_RESUME_V1=true no .env da API e reinicie.',
@@ -71,7 +73,14 @@ export async function getCheckoutContext(req: AuthRequest, res: Response): Promi
 
     const canSeatAddonProfile = forSeatAddonCheckout && t.status === 'active';
 
-    if (!canResume && !canSeatAddonProfile) {
+    const canRenewalHubProfile =
+      forPlanRenewalHub &&
+      (t.status === 'active' ||
+        t.status === 'payment_pending' ||
+        t.status === 'trial' ||
+        (t.status === 'suspended' && t.suspension_reason === 'trial_expired'));
+
+    if (!canResume && !canSeatAddonProfile && !canRenewalHubProfile) {
       res.status(400).json({
         error: 'Retomada de checkout não aplicável a este estado da conta.',
         code: 'CHECKOUT_RESUME_NOT_APPLICABLE',

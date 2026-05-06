@@ -70,6 +70,14 @@ export interface GatewayStatusItem {
   status: PaymentGatewayConfigStatus | null;
 }
 
+/** Evita apagar chaves de `options` (ex.: Asaas) quando o PUT envia só `env`. */
+function mergePaymentGatewayOptions(
+  existing: Record<string, unknown> | null | undefined,
+  incoming: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  return { ...(existing ?? {}), ...(incoming ?? {}) };
+}
+
 function maskCredentials(credentials: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of Object.keys(credentials)) {
@@ -288,10 +296,12 @@ export async function saveGlobalConfig(data: {
 
   if (existing.rows.length > 0) {
     const existingCreds = (existing.rows[0].credentials as Record<string, unknown>) ?? {};
+    const existingOpts = (existing.rows[0].options as Record<string, unknown>) ?? {};
     const mergedCredentials: Record<string, unknown> = { ...existingCreds };
     for (const [k, v] of Object.entries(data.credentials)) {
       if (v !== '' && v !== '••••••••' && v != null) mergedCredentials[k] = v;
     }
+    const mergedOptions = mergePaymentGatewayOptions(existingOpts, data.options);
     const u = await pool.query<PaymentGatewayConfigRow>(
       `UPDATE payment_gateway_configs
        SET is_active = true, status = 'active', display_name = $2, credentials = $3::jsonb, options = $4::jsonb,
@@ -303,7 +313,7 @@ export async function saveGlobalConfig(data: {
         data.gateway_key,
         data.display_name ?? null,
         JSON.stringify(mergedCredentials),
-        JSON.stringify(data.options ?? {}),
+        JSON.stringify(mergedOptions),
         JSON.stringify(mergedPm.enabledSlugs),
         mergedPm.defaultSlug,
       ]
@@ -316,6 +326,7 @@ export async function saveGlobalConfig(data: {
     };
   }
 
+  const mergedInsertOptions = mergePaymentGatewayOptions({}, data.options);
   const ins = await pool.query<PaymentGatewayConfigRow>(
     `INSERT INTO payment_gateway_configs (
        scope, gateway_key, is_active, status, display_name, credentials, options,
@@ -328,7 +339,7 @@ export async function saveGlobalConfig(data: {
       data.gateway_key,
       data.display_name ?? null,
       JSON.stringify(data.credentials),
-      JSON.stringify(data.options ?? {}),
+      JSON.stringify(mergedInsertOptions),
       JSON.stringify(mergedPm.enabledSlugs),
       mergedPm.defaultSlug,
     ]
@@ -433,10 +444,12 @@ export async function saveTenantConfig(
 
   if (existing.rows.length > 0) {
     const existingCreds = (existing.rows[0].credentials as Record<string, unknown>) ?? {};
+    const existingOpts = (existing.rows[0].options as Record<string, unknown>) ?? {};
     const mergedCredentials: Record<string, unknown> = { ...existingCreds };
     for (const [k, v] of Object.entries(data.credentials)) {
       if (v !== '' && v !== '••••••••' && v != null) mergedCredentials[k] = v;
     }
+    const mergedOptions = mergePaymentGatewayOptions(existingOpts, data.options);
     const u = await pool.query<PaymentGatewayConfigRow>(
       `UPDATE payment_gateway_configs
        SET is_active = true, status = 'pending', display_name = $3, credentials = $4::jsonb, options = $5::jsonb,
@@ -449,7 +462,7 @@ export async function saveTenantConfig(
         data.gateway_key,
         data.display_name ?? null,
         JSON.stringify(mergedCredentials),
-        JSON.stringify(data.options ?? {}),
+        JSON.stringify(mergedOptions),
         JSON.stringify(mergedPm.enabledSlugs),
         mergedPm.defaultSlug,
       ]
@@ -462,6 +475,7 @@ export async function saveTenantConfig(
     };
   }
 
+  const mergedTenantInsertOptions = mergePaymentGatewayOptions({}, data.options);
   const ins = await pool.query<PaymentGatewayConfigRow>(
     `INSERT INTO payment_gateway_configs (
        scope, tenant_id, gateway_key, is_active, status, display_name, credentials, options,
@@ -475,7 +489,7 @@ export async function saveTenantConfig(
       data.gateway_key,
       data.display_name ?? null,
       JSON.stringify(data.credentials),
-      JSON.stringify(data.options ?? {}),
+      JSON.stringify(mergedTenantInsertOptions),
       JSON.stringify(mergedPm.enabledSlugs),
       mergedPm.defaultSlug,
     ]

@@ -5,6 +5,7 @@ import { isPgUndefinedColumn } from '../utils/pgErrors.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { checkPermission } from '../permissions/permissionEngine.js';
 import { requireTenantId } from '../middleware/auth.js';
+import { getTenantIdOrNull } from '../utils/tenantScope.js';
 import {
   confirmLoggedInPasswordChange,
   requestLoggedInPasswordChangeCode,
@@ -19,6 +20,11 @@ import {
   unlinkCatalogMediaRelativeKey,
 } from '../services/catalogMediaUploadService.js';
 import { extractCatalogMediaRelativeKeyFromStoredUrl } from '../utils/catalogMediaPublicSignedUrl.js';
+import { isMediaSimpleUploadsServiceEnabled } from '../services/media/mediaConfig.js';
+import {
+  maybeUnlinkPreviousAvatarUrl,
+  saveSimpleUploadFromBuffer,
+} from '../services/media/simpleUploadMediaService.js';
 
 const personalPutSchema = z.object({
   first_name: z.string().max(200).nullable().optional(),
@@ -282,30 +288,58 @@ export async function postMeProfileAvatar(req: AuthRequest, res: Response): Prom
     }
     assertAllowedImageUpload(file.mimetype, file.size);
     const tenantId = req.tenantId ?? null;
-    const relativeKey = buildCatalogMediaRelativeKey({
-      tenantId,
-      userId,
-      scope: 'user_avatar',
-      contentType: file.mimetype,
-      originalName: file.originalname,
-    });
-    await saveCatalogMediaBuffer(relativeKey, file.buffer);
+    const tenantUuid = getTenantIdOrNull(req.tenantId);
+    const tenantSegment = tenantUuid || 'no-tenant';
 
     const prevUrl = await getPreviousAvatarUrlForMe(userId);
-    if (prevUrl) {
-      const prevKey = extractCatalogMediaRelativeKeyFromStoredUrl(prevUrl);
-      if (prevKey && prevKey !== relativeKey && getScopeFromCatalogMediaKey(prevKey) === 'user_avatar') {
-        if (isCatalogMediaKeyOwnedByTenantUser(prevKey, tenantId, userId)) {
-          try {
-            await unlinkCatalogMediaRelativeKey(prevKey);
-          } catch {
-            /* ignore */
+
+    let publicUrl: string;
+    let keyOut: string;
+
+    if (isMediaSimpleUploadsServiceEnabled()) {
+      const saved = await saveSimpleUploadFromBuffer({
+        tenantSegment,
+        tenantUuid,
+        userId,
+        catalogScope: 'user_avatar',
+        buffer: file.buffer,
+        mimeType: file.mimetype,
+        originalFilename: file.originalname,
+      });
+      await maybeUnlinkPreviousAvatarUrl({
+        previousUrl: prevUrl,
+        newKey: saved.storageKey,
+        tenantUuid,
+        userId,
+      });
+      publicUrl = saved.relativeUrl;
+      keyOut = saved.storageKey;
+    } else {
+      const relativeKey = buildCatalogMediaRelativeKey({
+        tenantId,
+        userId,
+        scope: 'user_avatar',
+        contentType: file.mimetype,
+        originalName: file.originalname,
+      });
+      await saveCatalogMediaBuffer(relativeKey, file.buffer);
+
+      if (prevUrl) {
+        const prevKey = extractCatalogMediaRelativeKeyFromStoredUrl(prevUrl);
+        if (prevKey && prevKey !== relativeKey && getScopeFromCatalogMediaKey(prevKey) === 'user_avatar') {
+          if (isCatalogMediaKeyOwnedByTenantUser(prevKey, tenantId, userId)) {
+            try {
+              await unlinkCatalogMediaRelativeKey(prevKey);
+            } catch {
+              /* ignore */
+            }
           }
         }
       }
-    }
 
-    const publicUrl = buildCatalogMediaPublicUrl(req, relativeKey);
+      publicUrl = buildCatalogMediaPublicUrl(req, relativeKey);
+      keyOut = relativeKey;
+    }
 
     const wq = await pool.query<{ w: string | null }>(
       `SELECT NULLIF(TRIM(COALESCE(u.whatsapp_number, p.whatsapp_number)), '') AS w
@@ -336,7 +370,7 @@ export async function postMeProfileAvatar(req: AuthRequest, res: Response): Prom
       throw persistErr;
     }
 
-    res.json({ avatar_url: publicUrl, key: relativeKey });
+    res.json({ avatar_url: publicUrl, key: keyOut });
   } catch (e) {
     if (isPgUndefinedColumn(e)) {
       res.status(503).json({

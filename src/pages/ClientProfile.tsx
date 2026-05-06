@@ -53,6 +53,7 @@ import { io, Socket } from "socket.io-client";
 import { format, parseISO, startOfDay, endOfDay, addMonths } from "date-fns";
 import { ClientUpcomingAppointments } from "@/components/clients/ClientUpcomingAppointments";
 import { ClientAppointmentsHistory } from "@/components/clients/ClientAppointmentsHistory";
+import { ClientProfileDriveFilesTab } from "@/components/clients/ClientProfileDriveFilesTab";
 import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
@@ -284,6 +285,7 @@ const ClientProfile = () => {
   // Determinar qual aba mostrar baseado na rota
   const getActiveTab = () => {
     if (location.pathname.includes("/tasks")) return "tasks";
+    if (location.pathname.includes("/files")) return "files";
     if (location.pathname.includes("/notes")) return "notes";
     if (location.pathname.includes("/opportunities")) return "opportunities";
     if (location.pathname.includes("/messages")) return "messages";
@@ -2401,6 +2403,14 @@ const ClientProfile = () => {
                 </Button>
               </CardContent>
             </Card>
+          ) : null}
+
+          {activeTab === "files" && client.id ? (
+            <ClientProfileDriveFilesTab
+              clientId={client.id}
+              clientDisplayName={client.name || "Cliente"}
+              canUpload={canEdit("clients")}
+            />
           ) : null}
 
           {activeTab === "calendar" && canView("agenda") && client.id ? (

@@ -16,10 +16,12 @@ export function getPostAuthHomePath(user: {
   is_super_admin?: boolean;
   tenant_id?: string | null;
   registration_complete?: boolean;
+  commercial_access_required?: boolean;
 } | null | undefined): string {
   if (!user) return '/login';
   if (isSuperAdminPlatformUser(user)) return '/superadmin';
   if (!user.registration_complete) return '/register/steps';
+  if (user.commercial_access_required) return '/meu-plano?reason=payment_required';
   return '/dashboard';
 }
 

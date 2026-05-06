@@ -8,6 +8,11 @@ export interface AsaasConfig {
   /** 'sandbox' | 'production' ou URL base completa */
   env?: 'sandbox' | 'production';
   base_url?: string;
+  /**
+   * De `payment_gateway_configs.options.asaas_disable_customer_notifications` (default true).
+   * Quando true, envia `notificationDisabled: true` em create/update de customer no Asaas.
+   */
+  disableCustomerNotifications?: boolean;
 }
 
 export interface AsaasCustomerRequest {
@@ -23,6 +28,8 @@ export interface AsaasCustomerRequest {
   state?: string;
   /** Identificador externo (ex.: tenant_id) para resolver tenant no webhook. */
   externalReference?: string;
+  /** Desativa e-mail/SMS automáticos do Asaas para este cliente (nosso sistema continua notificando). */
+  notificationDisabled?: boolean;
 }
 
 export interface AsaasCustomerResponse {

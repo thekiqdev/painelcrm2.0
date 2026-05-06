@@ -40,6 +40,22 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [quickSyncingId, setQuickSyncingId] = useState<string | null>(null);
   const [sheetInstanceId, setSheetInstanceId] = useState<string | null>(null);
+  const [webhookStatusByInstance, setWebhookStatusByInstance] = useState<
+    Record<
+      string,
+      {
+        hasSecret: boolean;
+        needsReconfiguration: boolean;
+        lastSeenAt: string | null;
+        callbackUrlMasked: string | null;
+        statusLabel: "OK" | "Precisa reconfigurar" | "Secret ausente" | "Nunca recebeu webhook";
+      }
+    >
+  >({});
+  const [webhookStatusLoadingId, setWebhookStatusLoadingId] = useState<string | null>(null);
+  const [webhookActionLoadingId, setWebhookActionLoadingId] = useState<string | null>(null);
+  const [rotateSecretDialogOpen, setRotateSecretDialogOpen] = useState(false);
+  const [instanceToRotateSecret, setInstanceToRotateSecret] = useState<ChatInstance | null>(null);
 
   const loadInstances = async () => {
     try {
@@ -248,8 +264,110 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
   };
   const openDetailsSheet = (instance: ChatInstance) => {
     setSheetInstanceId(instance.id);
+    void loadWebhookStatus(instance.id);
   };
   const activeSheetInstance = instances.find((inst) => inst.id === sheetInstanceId) ?? null;
+
+  const maskCallbackUrl = (url: string | null | undefined): string | null => {
+    const raw = (url || "").trim();
+    if (!raw) return null;
+    try {
+      const u = new URL(raw);
+      const s = u.searchParams.get("secret");
+      if (s && s.length > 4) {
+        u.searchParams.set("secret", `********${s.slice(-4)}`);
+      } else if (s) {
+        u.searchParams.set("secret", "********");
+      }
+      return u.toString();
+    } catch {
+      return raw.replace(/([?&]secret=)([^&]+)/i, (_m, p1, p2) => `${p1}${"*".repeat(Math.max(8, p2.length - 4))}${p2.slice(-4)}`);
+    }
+  };
+
+  const deriveWebhookStatusLabel = (input: {
+    hasSecret: boolean;
+    needsReconfiguration: boolean;
+    lastSeenAt: string | null;
+  }): "OK" | "Precisa reconfigurar" | "Secret ausente" | "Nunca recebeu webhook" => {
+    if (!input.hasSecret) return "Secret ausente";
+    if (input.needsReconfiguration) return "Precisa reconfigurar";
+    if (!input.lastSeenAt) return "Nunca recebeu webhook";
+    return "OK";
+  };
+
+  const loadWebhookStatus = async (instanceId: string) => {
+    setWebhookStatusLoadingId(instanceId);
+    try {
+      const data = await chatService.getInstanceWebhook(instanceId);
+      const hasSecret = Boolean(data.webhookStatus?.has_secret);
+      const needsReconfiguration = Boolean(data.webhookStatus?.needs_reconfiguration);
+      const lastSeenAt = data.webhookStatus?.last_seen_at ?? null;
+      const callbackRaw =
+        (typeof data.database?.url === "string" ? data.database.url : null) ||
+        (typeof (data.database as Record<string, unknown> | null)?.["webhook_url"] === "string"
+          ? String((data.database as Record<string, unknown>)["webhook_url"])
+          : null);
+      const callbackUrlMasked = maskCallbackUrl(callbackRaw);
+      setWebhookStatusByInstance((prev) => ({
+        ...prev,
+        [instanceId]: {
+          hasSecret,
+          needsReconfiguration,
+          lastSeenAt,
+          callbackUrlMasked,
+          statusLabel: deriveWebhookStatusLabel({ hasSecret, needsReconfiguration, lastSeenAt }),
+        },
+      }));
+    } catch (error) {
+      toast.error("Erro ao carregar status do webhook", {
+        description: error instanceof Error ? error.message : "Tente novamente",
+      });
+    } finally {
+      setWebhookStatusLoadingId(null);
+    }
+  };
+
+  const handleWebhookReconfigure = async (instance: ChatInstance) => {
+    setWebhookActionLoadingId(instance.id);
+    try {
+      await chatService.reconfigureInstanceWebhook(instance.id);
+      toast.success("Webhook reconfigurado com sucesso");
+      await loadWebhookStatus(instance.id);
+      await loadInstances();
+    } catch (error) {
+      toast.error("Falha ao reconfigurar webhook", {
+        description: error instanceof Error ? error.message : "Tente novamente",
+      });
+    } finally {
+      setWebhookActionLoadingId(null);
+    }
+  };
+
+  const askRotateWebhookSecret = (instance: ChatInstance) => {
+    setInstanceToRotateSecret(instance);
+    setRotateSecretDialogOpen(true);
+  };
+
+  const confirmRotateWebhookSecret = async () => {
+    const instance = instanceToRotateSecret;
+    if (!instance) return;
+    setWebhookActionLoadingId(instance.id);
+    try {
+      await chatService.rotateInstanceWebhookSecret(instance.id);
+      toast.success("Secret rotacionado com sucesso");
+      await loadWebhookStatus(instance.id);
+      await loadInstances();
+    } catch (error) {
+      toast.error("Falha ao rotacionar secret", {
+        description: error instanceof Error ? error.message : "Tente novamente",
+      });
+    } finally {
+      setWebhookActionLoadingId(null);
+      setRotateSecretDialogOpen(false);
+      setInstanceToRotateSecret(null);
+    }
+  };
 
   const handleOpenChat = (instance: ChatInstance) => {
     navigate("/chat", { state: { focusInstanceId: instance.id } });
@@ -378,7 +496,33 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
         onRefresh={() => (activeSheetInstance ? handleCheckStatus(activeSheetInstance) : undefined)}
         onOpenQR={() => (activeSheetInstance ? handleGenerateQRCode(activeSheetInstance) : undefined)}
         onDisconnect={() => (activeSheetInstance ? handleDeleteClick(activeSheetInstance) : undefined)}
+        webhookStatus={activeSheetInstance ? webhookStatusByInstance[activeSheetInstance.id] ?? null : null}
+        webhookLoading={activeSheetInstance ? webhookStatusLoadingId === activeSheetInstance.id : false}
+        webhookActionLoading={activeSheetInstance ? webhookActionLoadingId === activeSheetInstance.id : false}
+        onWebhookRefresh={() => (activeSheetInstance ? void loadWebhookStatus(activeSheetInstance.id) : undefined)}
+        onWebhookReconfigure={() =>
+          activeSheetInstance ? void handleWebhookReconfigure(activeSheetInstance) : undefined
+        }
+        onWebhookRotateSecret={() =>
+          activeSheetInstance ? askRotateWebhookSecret(activeSheetInstance) : undefined
+        }
       />
+
+      <AlertDialog open={rotateSecretDialogOpen} onOpenChange={setRotateSecretDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Rotacionar secret do webhook?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Essa ação gera um novo secret e atualiza o callback na UazAPI para a conexão selecionada. A integração pode
+              precisar de alguns segundos para propagar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRotateWebhookSecret}>Rotacionar secret</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

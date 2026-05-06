@@ -133,6 +133,7 @@ const WhatsappOfficialChatFull = lazy(() => import("./pages/superadmin/connectio
 const SuperAdminLegalPages = lazy(() => import("./pages/superadmin/SuperAdminLegalPages"));
 const SuperAdminHubPage = lazy(() => import("./pages/superadmin/SuperAdminHubPage"));
 const SuperAdminSmtpSettings = lazy(() => import("./pages/superadmin/SuperAdminSmtpSettings"));
+const SuperAdminAdvancedScriptsPage = lazy(() => import("./pages/superadmin/SuperAdminAdvancedScriptsPage"));
 const PublicPrivacyPolicyPage = lazy(() =>
   import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
 );
@@ -821,6 +822,8 @@ const App = () => (
                 <Route path="conexoes/whatsapp-oficial/chat" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialChatFull /></Suspense>} />
                 <Route path="conexoes/uazapi" element={<Suspense fallback={<LoadingFallback />}><UazapiConnectionPage /></Suspense>} />
                 <Route path="plataforma" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="avancado" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="avancado/scripts" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAdvancedScriptsPage /></Suspense>} />
                 <Route path="seguranca" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
                 <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />

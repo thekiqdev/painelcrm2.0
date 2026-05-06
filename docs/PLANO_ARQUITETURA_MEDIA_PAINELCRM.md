@@ -1,8 +1,10 @@
 # Plano técnico — Arquitetura final de mídia (PainelCRM)
 
-**Versão:** 1.0  
+**Versão:** 1.2  
 **Estado:** proposta para validação — **não substitui decisões de produto nem PRs já merged.**  
 **Objetivo:** padronizar armazenamento e exposição de mídia (avatar, catálogo, chat, documentos) sem quebrar o sistema atual; permitir troca futura de storage local por R2/S3.
+
+**Contrato normativo (obrigatório para implementação):** [`MEDIA_CONTRACT_V1.md`](./MEDIA_CONTRACT_V1.md) — resolver único (§1), **precedência de avatar** (§2), `storage_key`, checksum, GC, chat/`media[]`, `MEDIA_MODE`, alias `/api/media/v1/raw`, backend como verdade vs frontend só host (§9), `assertPersistableMediaUrl` não destrutivo (§10), anti-retry proxy (§11), auditoria JSON (§12), resposta de upload relativa (§13), SQL seguro sem regex frágil (§14).
 
 ---
 
@@ -62,10 +64,11 @@ Legenda de **risco:** Baixo / Médio / Alto (inquérito, regressão, segurança 
 1. **Nunca persistir URL absoluta com host** em campos de negócio (exceto casos explicitamente externos e imutáveis — documentar em ADR).
 2. **Nunca persistir `localhost`** ou porta fixa de dev.
 3. **Nunca usar URL efémera WhatsApp (`pps.whatsapp.net`, etc.) como valor final** — apenas em `source_url` / metadados de tentativa.
-4. **Preferir path relativo canónico** — ex.: `/api/public/catalog-media/raw?k=&s=` ou, no futuro, `/api/media/v1/{id}`.
+4. **Preferir path relativo canónico** — ex.: `/api/public/catalog-media/raw?k=&s=` (legado) ou alias neutro [`GET /api/media/v1/raw`](./MEDIA_CONTRACT_V1.md#8-assinatura-de-url--endpoint-neutro-alias); no futuro `/api/media/v1/{id}` por asset.
 5. **Falha ao cachear remoto:** preservar asset anterior (já parcialmente garantido no código de avatar).
-6. **Frontend:** um helper **`resolveMediaUrl()`** (ou nome único acordado) que apenas prefixa API em dev / usa origin em prod — **sem** concatenar hosts manualmente por ecrã.
-7. **Backend:** gerar sempre URLs relativas ou IDs estáveis; assinatura quando for leitura pública sem sessão.
+6. **Frontend:** um helper **`resolveMediaUrl()`** que **apenas** prefixa a base da API para paths relativos — **não** reestruturar path/query (evitar dupla normalização; ver [`MEDIA_CONTRACT_V1.md` §9](./MEDIA_CONTRACT_V1.md#9-normalização-backend--verdade-frontend--host-apenas)).
+7. **Backend:** fonte da verdade para URLs persistidas e para [`precedência de avatar`](./MEDIA_CONTRACT_V1.md#2-precedência-de-avatar-obrigatório); gerar sempre URLs relativas ou IDs estáveis; assinatura quando for leitura pública sem sessão.
+8. **`assertPersistableMediaUrl`:** comportamento [**não destrutivo**](./MEDIA_CONTRACT_V1.md#10-assertpersistablemediaurl--comportamento-não-destrutivo) — nunca gravar `null` nem URL inválida por cima de valor válido existente.
 
 ---
 
@@ -83,8 +86,9 @@ Legenda de **risco:** Baixo / Médio / Alto (inquérito, regressão, segurança 
    (storage_key)      (mesmo storage_key) media_assets + colunas legado
 ```
 
-- **Hoje:** ficheiros sob `uploads/catalog-media/<tenant>/users/<uid>/<scope>/...` com `storage_key` implícito na URL assinada.
-- **Amanhã:** mesmo `storage_key` num bucket; só muda o adaptador de leitura (`getPublicReadPath` / signed GET).
+- **Hoje:** ficheiros sob disco legado (`uploads/catalog-media/...`) com `storage_key` implícito na URL assinada.
+- **Contrato definitivo de objeto:** `tenants/{tenantId}/{scope}/{entityType}/{entityId}/{uuid}.{ext}` — ver [`MEDIA_CONTRACT_V1.md` §3](./MEDIA_CONTRACT_V1.md#3-storage_key--contrato-definitivo-de-objeto).
+- **Amanhã:** mesmo `storage_key` lógico num bucket; só muda o adaptador de leitura (`getPublicReadPath` / signed GET).
 
 ---
 
@@ -97,9 +101,12 @@ Legenda de **risco:** Baixo / Médio / Alto (inquérito, regressão, segurança 
 **Completar na Fase 1:**
 
 - Inventário automatizado ou script SQL de **auditoria** de colunas que ainda contenham `http://localhost`, `pps.whatsapp.net` como único valor final.
-- Política única **no backend** ao gravar: função `assertPersistableMediaUrl()` rejeita/absorve absolutos proibidos.
+- **Também** auditar **JSON** (`chat_messages.metadata`, `notifications.metadata`, payloads de campanha, etc.) — apenas **identificar** padrões (`localhost`, `whatsapp.net`, `avatar-proxy`); sem correção automática em massa — [`MEDIA_CONTRACT_V1.md` §12](./MEDIA_CONTRACT_V1.md#12-auditoria-em-campos-json-identificar-apenas).
+- Política única **no backend** ao gravar: `assertPersistableMediaUrl()` com comportamento [**não destrutivo**](./MEDIA_CONTRACT_V1.md#10-assertpersistablemediaurl--comportamento-não-destrutivo) (manter valor antigo válido; log; opcional `source_url`).
+- Serviços de **upload**: respostas sempre com **path relativo** — [`MEDIA_CONTRACT_V1.md` §13](./MEDIA_CONTRACT_V1.md#13-upload--proteção-na-entrada-resposta-da-api).
+- Migrações SQL / relatórios: preferir `LIKE '%/api/public/catalog-media/raw%'` (ou filtros explícitos) a **`regexp_replace`** frágil em host — [`MEDIA_CONTRACT_V1.md` §14](./MEDIA_CONTRACT_V1.md#14-sql-de-auditoria--migração--evitar-regex-perigoso).
 - Documentar contrato da API: lista de campos que devolvem sempre paths relativos para catálogo.
-- Frontend: garantir **`resolveMediaUrl`** único (refator incremental de `chatAvatarUrlForImgSrc` + usos de imagem de produto/perfil).
+- Frontend: **`resolveMediaUrl`** único — só prefixo de host; **proxy de avatar**: falha → não repetir na mesma sessão; fallback iniciais — [`MEDIA_CONTRACT_V1.md` §9](./MEDIA_CONTRACT_V1.md#9-normalização-backend--verdade-frontend--host-apenas), [§11](./MEDIA_CONTRACT_V1.md#11-proxy-de-avatar--proteção-contra-retry-infinito-frontend).
 
 **Entrega:** checklist + PRs pequenos; sem nova tabela.
 
@@ -130,8 +137,15 @@ CREATE TABLE media_assets (
 );
 CREATE INDEX idx_media_assets_tenant_owner ON media_assets (tenant_id, owner_type, owner_id);
 CREATE INDEX idx_media_assets_storage_key ON media_assets (storage_key);
+
+-- Dedup por tenant + checksum (obrigatório desde o nascimento da tabela)
+CREATE UNIQUE INDEX idx_media_checksum_tenant
+ON media_assets (tenant_id, checksum)
+WHERE checksum IS NOT NULL;
 ```
 
+**Coluna `storage_key`:** seguir o contrato em [`MEDIA_CONTRACT_V1.md` §3](./MEDIA_CONTRACT_V1.md#3-storage_key--contrato-definitivo-de-objeto).  
+**Lifecycle:** soft `deleted` + remoção física +7d + linha +30d — [`MEDIA_CONTRACT_V1.md` §5](./MEDIA_CONTRACT_V1.md#5-política-de-limpeza-garbage--lifecycle).  
 **Riscos:** duplicação com ficheiros já existentes sem linha correspondente — exigir script de backfill opcional.
 
 ---
@@ -154,8 +168,8 @@ API interna sugerida:
 ### Fase 4 — Compatibilidade
 
 - Manter `avatar_url`, `avatar_cached_url`, `whatsapp_avatar_*`, etc.
-- API composita: `final_avatar_url` / resolver já calculado no backend; opcionalmente preencher `media_asset_id` quando existir.
-- Feature flags por tenant ou global (`USE_MEDIA_ASSETS_TABLE`) para rollout.
+- API composita: `final_avatar_url` / **resolver único** — [`MEDIA_CONTRACT_V1.md` §1](./MEDIA_CONTRACT_V1.md#1-prioridade-de-resolução-backend--resolver-único) + [**§2 precedência de avatar**](./MEDIA_CONTRACT_V1.md#2-precedência-de-avatar-obrigatório); opcionalmente preencher `media_asset_id` quando existir.
+- Modo global `MEDIA_MODE` (`legacy` \| `hybrid` \| `assets`) — [`MEDIA_CONTRACT_V1.md` §7](./MEDIA_CONTRACT_V1.md#7-modo-compatível-global-media_mode); pode coexistir com flags por tenant se necessário.
 
 ---
 
@@ -166,7 +180,7 @@ Ordem sugerida (dependências crescentes):
 1. Avatar WhatsApp + perfil (já próximo do catálogo).
 2. Logo tenant / empresa.
 3. Produtos / vitrine.
-4. Anexos e mídia de mensagens de chat (maior complexidade).
+4. Anexos e mídia de mensagens de chat (maior complexidade) — antes: contrato de `media[]` em [`MEDIA_CONTRACT_V1.md` §6](./MEDIA_CONTRACT_V1.md#6-chat--contrato-obrigatório-de-media-antes-da-fase-5-de-migração-total); **não** persistir base64 como formato final.
 5. Templates WhatsApp e documentos legais (avaliar separadamente).
 
 ---

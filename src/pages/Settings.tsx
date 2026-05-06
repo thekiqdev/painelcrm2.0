@@ -15,6 +15,7 @@ import { UserManagementSection } from "@/components/settings/UserManagementSecti
 import { TeamsSection } from "@/components/settings/TeamsSection";
 import { MessageTemplatesSection } from "@/components/settings/MessageTemplatesSection";
 import { GoogleCalendarSection } from "@/components/settings/GoogleCalendarSection";
+import { GoogleDriveSection } from "@/components/settings/GoogleDriveSection";
 import { AgendaAvailabilitySection } from "@/components/settings/AgendaAvailabilitySection";
 import { ChatAttendanceSettingsSection } from "@/components/settings/ChatAttendanceSettingsSection";
 import { ChatAutomationSettingsSection } from "@/components/settings/ChatAutomationSettings";
@@ -66,6 +67,8 @@ const Settings = () => {
       return null;
     case "googleCalendar":
       return <GoogleCalendarSection />;
+    case "googleDrive":
+      return <GoogleDriveSection />;
     case "agendaAvailability":
       return <AgendaAvailabilitySection />;
     case "chatAttendance":

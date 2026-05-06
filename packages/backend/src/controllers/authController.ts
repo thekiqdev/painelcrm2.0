@@ -486,6 +486,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
 
     let canManagePlan = false;
     let planExpired = false;
+    /** plan_period_end no passado: CRM retorna 402 nas rotas operacionais; o front deve ir ao hub comercial. */
+    let commercialAccessRequired = false;
     let tenantStatus: string | null = null;
     let onboardingCompleted = false;
     let trialEndsAt: string | null = null;
@@ -519,6 +521,12 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       tenantStatus = row.status;
       trialEndsAt = row.trial_ends_at;
       suspensionReason = row.suspension_reason;
+      if (row.plan_period_end) {
+        const pe = new Date(row.plan_period_end);
+        if (!Number.isNaN(pe.getTime()) && pe.getTime() < Date.now()) {
+          commercialAccessRequired = true;
+        }
+      }
       const trialEndedUnpaid =
         row.status === 'trial' &&
         row.trial_ends_at != null &&
@@ -597,6 +605,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       trial_ends_at: trialEndsAt,
       suspension_reason: suspensionReason,
       requires_checkout_resume: requiresCheckoutResume,
+      commercial_access_required: commercialAccessRequired,
     });
   } catch (error) {
     console.error('Get me error:', error);

@@ -50,6 +50,17 @@ function toAsaasCustomerRequest(data: {
   return out;
 }
 
+/** Aplica preferência de notificações nativas do Asaas no payload de customer. */
+export function withAsaasCustomerNotificationPreference(
+  body: AsaasCustomerRequest,
+  disableAsaasNativeCustomerNotifications: boolean
+): AsaasCustomerRequest {
+  return {
+    ...body,
+    notificationDisabled: disableAsaasNativeCustomerNotifications,
+  };
+}
+
 export function toAsaasCustomer(input: CreateCustomerInput): AsaasCustomerRequest {
   return toAsaasCustomerRequest({
     name: input.name,

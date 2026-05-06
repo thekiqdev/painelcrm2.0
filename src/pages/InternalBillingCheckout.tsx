@@ -265,8 +265,8 @@ export default function InternalBillingCheckout() {
           `/api/me/tenant/plan-checkout-pending?billing_id=${encodeURIComponent(billingId)}`
         ),
         apiClient.get<{ billings: CommercialBillingHubRow[] }>('/api/me/tenant/commercial-billings'),
-        /** `purpose=seat_addon` libera contas `active` no backend (CPF/CNPJ da empresa). */
-        apiClient.get<CheckoutContextLite>('/api/me/tenant/checkout-context?purpose=seat_addon'),
+        /** `purpose=renew` cobre active, payment_pending, trial, etc. (CPF/dados da empresa no hub). */
+        apiClient.get<CheckoutContextLite>('/api/me/tenant/checkout-context?purpose=renew'),
       ]);
 
       if (cancelled) return;

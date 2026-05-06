@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as clientsController from '../controllers/clientsController.js';
 import { tenantAuthCrm } from '../middleware/auth.js';
 import { requirePermission } from '../permissions/index.js';
+import { clientGoogleDriveFileUploadSingle } from '../middleware/clientGoogleDriveFilesMulter.js';
 
 const router = Router();
 router.use(...tenantAuthCrm);
@@ -9,6 +10,9 @@ router.use(...tenantAuthCrm);
 router.get('/', clientsController.getClients);
 router.get('/:id/timeline', clientsController.getClientTimeline);
 router.post('/:id/timeline/events', clientsController.createClientTimeline);
+router.post('/:id/google-drive/ensure-folders', clientsController.ensureClientGoogleDriveFolders);
+router.get('/:id/google-drive/files', clientsController.getClientGoogleDriveFiles);
+router.post('/:id/google-drive/files', clientGoogleDriveFileUploadSingle, clientsController.uploadClientGoogleDriveFileHandler);
 router.get('/:id', clientsController.getClientById);
 router.post('/', requirePermission('clients.create'), clientsController.createClient);
 router.patch('/:id', clientsController.updateClient);

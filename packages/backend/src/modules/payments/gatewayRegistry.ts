@@ -52,6 +52,11 @@ export function credentialsToAsaasConfig(credentials: Record<string, unknown>): 
 import { getAsaasGateway } from '../gateways/asaas/index.js';
 
 registerGateway('asaas', (config) => {
-  const asaasConfig = credentialsToAsaasConfig(config.credentials);
-  return getAsaasGateway(asaasConfig);
+  const cred = credentialsToAsaasConfig(config.credentials);
+  const opts = (config.options ?? {}) as Record<string, unknown>;
+  const disableCustomerNotifications = opts.asaas_disable_customer_notifications !== false;
+  return getAsaasGateway({
+    ...cred,
+    disableCustomerNotifications,
+  });
 });

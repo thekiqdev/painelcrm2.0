@@ -17,6 +17,8 @@ import {
   configureInstanceWebhook,
   getInstanceWebhook,
   forceConfigureWebhook,
+  reconfigureInstanceWebhook,
+  rotateInstanceWebhookSecret,
   syncConversationMessages,
   refreshConversationIdentity,
   markConversationRead,
@@ -98,6 +100,8 @@ router.patch('/instances/:id', patchInstance);
 router.get('/instances/:id/webhook', getInstanceWebhook);
 router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/instances/:id/webhook/force', forceConfigureWebhook);
+router.post('/instances/:id/webhook/reconfigure', reconfigureInstanceWebhook);
+router.post('/instances/:id/webhook/rotate-secret', rotateInstanceWebhookSecret);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations/attendance-counts', getConversationAttendanceCounts);
 router.get('/metrics', getChatMetrics);

@@ -5,6 +5,7 @@ import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
 import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
+import { COMMERCIAL_402_REDIRECT_FLAG } from '@/lib/commercialAccessPaths';
 
 interface User {
   id: string;
@@ -31,6 +32,8 @@ interface User {
   onboarding_completed?: boolean;
   /** Fase 2: trial expirou ou suspenso por trial — retomar pagamento no /checkout. */
   requires_checkout_resume?: boolean;
+  /** Período do plano (plan_period_end) expirado — CRM em 402; hub em /meu-plano. */
+  commercial_access_required?: boolean;
   trial_ends_at?: string | null;
   suspension_reason?: string | null;
 }
@@ -103,16 +106,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       path.startsWith('/proposal-view/') ||
       path.startsWith('/pay/');
     const skipPlanHub = commercialPayPath || publicCrmDocPath;
-    // Hub comercial primeiro: trial expirado / retomada → /meu-plano (CTA leva ao /checkout ou /saas-billing/...).
-    if (user?.requires_checkout_resume === true && !skipPlanHub && path !== '/meu-plano') {
-      navigate('/meu-plano', { replace: true });
-      return;
+    const skipForSuperadminCrm = user?.is_super_admin === true && path.startsWith('/superadmin');
+    const needsCommercialHub =
+      user?.requires_checkout_resume === true ||
+      user?.plan_expired === true ||
+      user?.commercial_access_required === true;
+    if (needsCommercialHub && !skipPlanHub && !skipForSuperadminCrm && path !== '/meu-plano') {
+      navigate('/meu-plano?reason=payment_required', { replace: true });
     }
-    /** Plano grátis com trial vencido: hub em /meu-plano, mas rotas de pagamento comercial devem poder abrir. */
-    if (user?.plan_expired && path !== '/meu-plano' && !skipPlanHub) {
-      navigate('/meu-plano', { replace: true });
-    }
-  }, [user?.requires_checkout_resume, user?.plan_expired, navigate, location.pathname]);
+  }, [
+    user?.requires_checkout_resume,
+    user?.plan_expired,
+    user?.commercial_access_required,
+    user?.is_super_admin,
+    navigate,
+    location.pathname,
+  ]);
 
   const fetchCurrentUser = async (): Promise<User | null> => {
     try {
@@ -292,7 +301,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Limpar armazenamento local relacionado à autenticação
       await clearAuthState();
       apiClient.setToken(null);
-      
+      try {
+        sessionStorage.removeItem(COMMERCIAL_402_REDIRECT_FLAG);
+      } catch {
+        /* ignore */
+      }
+
       toast.success('Logout realizado com sucesso!');
       navigate('/login');
     } catch (error: any) {
@@ -304,6 +318,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setFeatures([]);
       await clearAuthState();
       apiClient.setToken(null);
+      try {
+        sessionStorage.removeItem(COMMERCIAL_402_REDIRECT_FLAG);
+      } catch {
+        /* ignore */
+      }
       toast.success('Logout realizado com sucesso!');
       navigate('/login');
     }

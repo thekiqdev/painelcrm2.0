@@ -25,6 +25,8 @@ import {
   Mail,
   Link2,
   RadioTower,
+  Terminal,
+  FileCode2,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -229,6 +231,23 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "Auditoria",
         to: "/superadmin/audit",
         icon: ScrollText,
+      },
+    ],
+  },
+  {
+    id: "avancado",
+    label: "Avançado",
+    items: [
+      {
+        label: "Visão geral",
+        to: "/superadmin/avancado",
+        icon: Terminal,
+        end: true,
+      },
+      {
+        label: "Scripts",
+        to: "/superadmin/avancado/scripts",
+        icon: FileCode2,
       },
     ],
   },

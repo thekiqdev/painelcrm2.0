@@ -169,6 +169,8 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
   const [payBoleto, setPayBoleto] = useState(true);
   const [payCard, setPayCard] = useState(true);
   const [defaultPaySlug, setDefaultPaySlug] = useState<GatewayPaySlug | null>(null);
+  /** Quando true, enviamos `notificationDisabled` aos clientes Asaas (padrão do produto). */
+  const [asaasDisableCustomerNotifications, setAsaasDisableCustomerNotifications] = useState(true);
 
   const load = async (opts?: { preserveConnectionStatus?: boolean }) => {
     setLoading(true);
@@ -257,6 +259,11 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
     setDefaultPaySlug(config.default_payment_method ?? null);
   }, [config?.id, config?.enabled_payment_methods, config?.default_payment_method]);
 
+  useEffect(() => {
+    if (!config) return;
+    setAsaasDisableCustomerNotifications(config.options?.asaas_disable_customer_notifications !== false);
+  }, [config?.id, config?.options?.asaas_disable_customer_notifications]);
+
   const handleTestConnection = async () => {
     if (!config?.hasCredentials && !form.api_key.trim()) {
       toast.error('Configure a API Key antes de testar.');
@@ -337,7 +344,10 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
     const res = await apiClient.put<{ id: string; gateway_key: string }>(API_CONFIG, {
       gateway_key: gatewayKey,
       credentials,
-      options: { env: form.env },
+      options: {
+        env: form.env,
+        asaas_disable_customer_notifications: asaasDisableCustomerNotifications,
+      },
       enabled_payment_methods: enabled,
       default_payment_method: defaultPaySlug,
     });
@@ -681,6 +691,23 @@ export const PaymentGatewaySection: React.FC<PaymentGatewaySectionProps> = ({ ga
                   <Label htmlFor="env-production">Produção</Label>
                   </div>
                 </RadioGroup>
+              </div>
+
+              <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+                <div className="min-w-0 space-y-1 pr-2">
+                  <Label htmlFor="asaas-disable-customer-notif">Desligar notificações Asaas</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Quando ativado, o PainelCRM envia notificationDisabled ao criar ou atualizar clientes no Asaas. Assim, o
+                    cliente não recebe notificações automáticas do Asaas, mantendo apenas as notificações configuradas no
+                    sistema.
+                  </p>
+                </div>
+                <Switch
+                  id="asaas-disable-customer-notif"
+                  checked={asaasDisableCustomerNotifications}
+                  onCheckedChange={setAsaasDisableCustomerNotifications}
+                  className="shrink-0"
+                />
               </div>
 
               <div className="grid gap-2">

@@ -308,6 +308,17 @@ const order = [
   '200_whatsapp_official_campaigns_phase3.sql',
   '201_system_feature_flags.sql',
   '202_whatsapp_official_templates_meta_columns.sql',
+  '203_asaas_disable_customer_notifications_default.sql',
+  '204_admin_script_runs.sql',
+  '205_media_assets.sql',
+  '206_chat_avatar_cache_worker.sql',
+  /** Google Drive: OAuth por tenant + pastas empresa / Clientes no Drive */
+  '207_tenant_google_drive_integrations.sql',
+  /** Google Drive: pastas por cliente (Arquivos, Contratos, Propostas, Faturas) */
+  '208_client_google_drive_folders.sql',
+  /** Google Drive: metadados de upload em Cliente > Arquivos */
+  '209_client_google_drive_files.sql',
+  '210_uazapi_webhook_instance_secret_hardening.sql',
   'create-admin-user.sql',
 ];
 

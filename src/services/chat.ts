@@ -42,7 +42,21 @@ export interface ChatInstance {
   can_operate?: boolean;
   /** Apenas o criador da instância: QR, apagar, webhook, ativar no chat. */
   can_manage?: boolean;
+  webhook_secret_last_seen_at?: string | null;
+  webhook_needs_reconfiguration?: boolean;
 }
+
+export type ChatInstanceWebhookStatusResponse = {
+  instanceId: string;
+  webhookStatus?: {
+    has_secret: boolean;
+    needs_reconfiguration: boolean;
+    last_seen_at: string | null;
+  };
+  database?: Record<string, unknown> | null;
+  uazapi?: unknown;
+  synced?: boolean;
+};
 
 /** Etapa 5 — estado de atendimento (Fase 5 inclui valores legacy para payloads antigos). */
 export type ChatAttendanceStatus =
@@ -683,6 +697,25 @@ export const chatService = {
       throw new Error(response.error);
     }
     return response.data;
+  },
+
+  async getInstanceWebhook(id: string): Promise<ChatInstanceWebhookStatusResponse> {
+    const response = await apiClient.get<ChatInstanceWebhookStatusResponse>(`/api/chat/instances/${id}/webhook`);
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Resposta inválida');
+    return response.data;
+  },
+
+  async reconfigureInstanceWebhook(id: string): Promise<Record<string, unknown>> {
+    const response = await apiClient.post<Record<string, unknown>>(`/api/chat/instances/${id}/webhook/reconfigure`, {});
+    if (response.error) throw new Error(response.error);
+    return response.data ?? {};
+  },
+
+  async rotateInstanceWebhookSecret(id: string): Promise<Record<string, unknown>> {
+    const response = await apiClient.post<Record<string, unknown>>(`/api/chat/instances/${id}/webhook/rotate-secret`, {});
+    if (response.error) throw new Error(response.error);
+    return response.data ?? {};
   },
 
   async syncConversations(instanceId: string, options?: { limit?: number; syncMode?: InstanceSyncMode }) {

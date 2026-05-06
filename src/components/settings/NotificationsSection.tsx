@@ -125,6 +125,12 @@ function statusBadgeVariant(
   return "outline";
 }
 
+function isPreviewRenderError(
+  value: NePreviewResponse | null,
+): value is Extract<NePreviewResponse, { render_ok: false }> {
+  return !!value && value.ok === true && value.render_ok === false;
+}
+
 export const NotificationsSection: React.FC<SettingsSectionProps> = () => {
   const { canEdit, loading: permLoading } = useModulePermissions();
   const canEditSettings = canEdit("settings");
@@ -904,7 +910,7 @@ export const NotificationsSection: React.FC<SettingsSectionProps> = () => {
                 </Alert>
               )}
 
-              {preview && preview.ok && !preview.render_ok && (
+              {isPreviewRenderError(preview) && (
                 <Alert variant="destructive">
                   <AlertTitle>Modelo inválido no modo strict</AlertTitle>
                   <AlertDescription>

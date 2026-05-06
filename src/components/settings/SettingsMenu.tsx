@@ -20,6 +20,7 @@ import {
   LayoutTemplate,
   Calendar,
   Bot,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +41,7 @@ type SettingSection =
   | "messageTemplates"
   | "paymentGateway"
   | "googleCalendar"
+  | "googleDrive"
   | "agendaAvailability"
   | "chatAttendance"
   | "chatAutomation";
@@ -64,6 +66,7 @@ const INTEGRATIONS_SUBCATEGORY_ORDER = [
   "Modelos (CRM)",
   "Recebimentos",
   "Agenda",
+  "Arquivos",
 ] as const;
 
 const CHAT_AUTOMATION_UI_ENABLED = import.meta.env.VITE_CHAT_AUTOMATION_ENABLED === "true";
@@ -143,6 +146,13 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection, onSel
       icon: <Calendar className="h-4 w-4" />,
       category: "Integrações",
       subcategory: "Agenda",
+    },
+    {
+      id: "googleDrive",
+      label: "Google Drive",
+      icon: <FolderOpen className="h-4 w-4" />,
+      category: "Integrações",
+      subcategory: "Arquivos",
     },
     {
       id: "agendaAvailability",

@@ -19,6 +19,7 @@ import {
   MessageCircle,
   Link2,
   RadioTower,
+  FileCode2,
 } from "lucide-react";
 
 export type SuperAdminHubCardDef = {
@@ -196,6 +197,21 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
         title: "Auditoria",
         description: "Registo de ações administrativas na plataforma (paginado).",
         icon: ScrollText,
+      },
+    ],
+  },
+  {
+    path: "/superadmin/avancado",
+    title: "Avançado",
+    description:
+      "Ferramentas operacionais restritas: scripts de manutenção controlados e pré-aprovados no backend.",
+    cards: [
+      {
+        to: "/superadmin/avancado/scripts",
+        title: "Scripts de manutenção",
+        description:
+          "Auditorias e correções com preview, confirmação explícita e registo de cada execução.",
+        icon: FileCode2,
       },
     ],
   },

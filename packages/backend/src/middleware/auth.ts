@@ -344,7 +344,7 @@ export async function requireTenantCommercialAccess(
 
 /**
  * Middleware que bloqueia acesso se o período do plano do tenant estiver expirado (plan_period_end < now()).
- * Retorna 402 com code PLAN_EXPIRED para o front redirecionar para /renovar-plano.
+ * Retorna 402 com code PLAN_EXPIRED para o front redirecionar para /meu-plano.
  * Se o tenant não tiver plan_period_end (ex.: trial legado), permite.
  */
 export async function requireActivePlanPeriod(
@@ -371,7 +371,7 @@ export async function requireActivePlanPeriod(
       res.status(402).json({
         error: 'Período do plano expirado. Renove para continuar acessando.',
         code: 'PLAN_EXPIRED',
-        redirect: '/renovar-plano',
+        redirect: '/meu-plano',
       });
       return;
     }

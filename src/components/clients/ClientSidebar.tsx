@@ -23,6 +23,7 @@ import {
   FileText,
   CalendarSync,
   PieChart,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -128,6 +129,13 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         icon: FileCheck,
         path: `${base}/contracts`,
         description: "Contratos e documentos",
+      },
+      {
+        id: "files",
+        label: "Arquivos",
+        icon: FolderOpen,
+        path: `${base}/files`,
+        description: "Pastas no Google Drive",
       },
       {
         id: "messages",
