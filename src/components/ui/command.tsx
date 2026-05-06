@@ -4,7 +4,7 @@ import { Command as CommandPrimitive } from "cmdk"
 import { Search } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 
 const Command = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive>,
@@ -36,6 +36,10 @@ const CommandDialog = ({ children, dialogContentClassName, ...props }: CommandDi
           dialogContentClassName,
         )}
       >
+        <DialogTitle className="sr-only">Busca global</DialogTitle>
+        <DialogDescription className="sr-only">
+          Pesquise clientes, leads, faturas, propostas, contratos, tickets, projetos e produtos no CRM.
+        </DialogDescription>
         {/*
           shouldFilter={false}: a busca é feita na API; sem isto o cmdk filtra por `value` (ex.: UUID)
           e esconde todos os resultados no mobile (CommandDialog).

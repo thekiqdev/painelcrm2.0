@@ -9,6 +9,7 @@ import {
   Package,
   Receipt,
   Ticket,
+  UserPlus,
 } from 'lucide-react';
 import { CommandGroup, CommandItem, CommandList } from '@/components/ui/command';
 import { Badge } from '@/components/ui/badge';

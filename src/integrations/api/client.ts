@@ -275,6 +275,14 @@ class ApiClient {
 
       return { data };
     } catch (error) {
+      const aborted =
+        (typeof DOMException !== 'undefined' &&
+          error instanceof DOMException &&
+          error.name === 'AbortError') ||
+        (error instanceof Error && error.name === 'AbortError');
+      if (aborted) {
+        return {};
+      }
       console.error('API request error:', error, 'URL:', url);
       return {
         error: error instanceof Error ? error.message : 'Network error',
