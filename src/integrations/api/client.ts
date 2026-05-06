@@ -429,7 +429,10 @@ class ApiClient {
           return;
         }
 
-        if (!xhr.ok) {
+        // Não usar só `xhr.ok`: em browsers antigos a propriedade não existe (undefined → falha falsa).
+        // POST pode devolver 201 Created; o intervalo 200–299 é o mesmo que `fetch().response.ok`.
+        const httpOk = xhr.status >= 200 && xhr.status < 300;
+        if (!httpOk) {
           const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
           finish({
             error:
