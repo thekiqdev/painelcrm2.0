@@ -25,7 +25,15 @@ const AvatarImage = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
 >(({ className, onError, src, ...props }, ref) => {
   const proxyResolved = useChatAvatarProxySrc(typeof src === 'string' ? src : undefined);
-  const displaySrc = typeof src === 'string' && src.includes('/api/chat/avatar-proxy') ? proxyResolved : src
+  const isProxyAvatar =
+    typeof src === 'string' && src.includes('/api/chat/avatar-proxy');
+  const displaySrc = isProxyAvatar ? proxyResolved : src;
+  /**
+   * Proxy exige fetch+blob: sem `displaySrc`, não montar `<Image>` com src indefinido —
+   * o Radix deixava só o “buraco” sem disparar Fallback (lista do chat parecia sem foto).
+   * Sem proxy, `displaySrc` existe desde já (URLs assinadas / diretas).
+   */
+  const renderImage = typeof displaySrc === 'string' && displaySrc.trim().length > 0;
 
   const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     const target = e.target as HTMLImageElement;
@@ -40,6 +48,10 @@ const AvatarImage = React.forwardRef<
       onError(e);
     }
   };
+
+  if (!renderImage) {
+    return null;
+  }
 
   return (
     <AvatarPrimitive.Image
