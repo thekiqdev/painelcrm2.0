@@ -1,7 +1,15 @@
 import { pool } from '../utils/db.js';
 import { getDriveIntegrationSecrets } from './googleDriveConnectionService.js';
-import { getClientGoogleDriveFolders, ensureClientGoogleDriveFolderStructure } from './clientGoogleDriveFoldersService.js';
-import { refreshDriveTokenIfNeeded, uploadFileToDrive } from './googleDriveService.js';
+import {
+  getClientGoogleDriveFolders,
+  ensureClientGoogleDriveFolderStructure,
+  type ClientGoogleDriveFolderRow,
+} from './clientGoogleDriveFoldersService.js';
+import {
+  isFolderUnderClientArquivosTree,
+  refreshDriveTokenIfNeeded,
+  uploadFileToDrive,
+} from './googleDriveService.js';
 
 export const CLIENT_GOOGLE_DRIVE_SOURCE_MODULE = 'client_files' as const;
 
@@ -45,6 +53,19 @@ function normalizeFilename(name: string): string {
   return cleaned.slice(0, 180) || 'arquivo';
 }
 
+function forbiddenUploadParents(folders: ClientGoogleDriveFolderRow): Set<string> {
+  return new Set([
+    folders.client_root_folder_id,
+    folders.folder_contratos_id,
+    folders.folder_propostas_id,
+    folders.folder_faturas_id,
+  ]);
+}
+
+function moduleFolderIds(folders: ClientGoogleDriveFolderRow): Set<string> {
+  return new Set([folders.folder_contratos_id, folders.folder_propostas_id, folders.folder_faturas_id]);
+}
+
 export async function uploadClientGoogleDriveFile(params: {
   tenantId: string;
   clientId: string;
@@ -52,12 +73,22 @@ export async function uploadClientGoogleDriveFile(params: {
   originalName: string;
   mimeType: string;
   fileBytes: Buffer;
+  /** Pasta de destino no Drive; omitir = pasta raiz «Arquivos». */
+  parentFolderId?: string | null;
 }): Promise<ClientGoogleDriveFileRow> {
   await ensureClientGoogleDriveFolderStructure(params.tenantId, params.clientId);
   const folders = await getClientGoogleDriveFolders(params.tenantId, params.clientId);
   if (!folders) {
     const err = new Error('Estrutura de pastas do cliente indisponível.');
     (err as Error & { code?: string }).code = 'folders_unavailable';
+    throw err;
+  }
+
+  const arquivosRoot = folders.folder_arquivos_id;
+  const destFolderId = (params.parentFolderId || '').trim() || arquivosRoot;
+  if (forbiddenUploadParents(folders).has(destFolderId)) {
+    const err = new Error('Não é possível enviar para esta pasta.');
+    (err as Error & { code?: string }).code = 'folder_forbidden';
     throw err;
   }
 
@@ -69,9 +100,21 @@ export async function uploadClientGoogleDriveFile(params: {
   }
   conn = await refreshDriveTokenIfNeeded(conn);
 
+  const allowed = await isFolderUnderClientArquivosTree(
+    conn.accessToken,
+    destFolderId,
+    arquivosRoot,
+    moduleFolderIds(folders),
+  );
+  if (!allowed) {
+    const err = new Error('Pasta de destino inválida.');
+    (err as Error & { code?: string }).code = 'folder_invalid';
+    throw err;
+  }
+
   const uploaded = await uploadFileToDrive({
     accessToken: conn.accessToken,
-    folderId: folders.folder_arquivos_id,
+    folderId: destFolderId,
     filename: normalizeFilename(params.originalName),
     mimeType: params.mimeType,
     content: params.fileBytes,
@@ -89,7 +132,7 @@ export async function uploadClientGoogleDriveFile(params: {
       params.tenantId,
       params.clientId,
       uploaded.id,
-      folders.folder_arquivos_id,
+      destFolderId,
       uploaded.name,
       uploaded.mimeType,
       uploaded.size || params.fileBytes.length,

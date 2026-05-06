@@ -1,6 +1,7 @@
 import { pool } from '../utils/db.js';
 import { uazapiService } from './uazapi.js';
 import { randomUUID } from 'crypto';
+import { normalizeAttendanceStatusForDb } from '../utils/chatAttendanceStatus.js';
 
 export interface SendMessageParams {
   userId: string;
@@ -145,12 +146,12 @@ async function findOrCreateConversation(
     const newConversationResult = await pool.query(
       `
       INSERT INTO chat_conversations (
-        user_id, instance_id, external_chat_id, phone_number, status
+        user_id, instance_id, external_chat_id, phone_number, status, attendance_status
       )
-      VALUES ($1, $2, $3, $4, 'open')
+      VALUES ($1, $2, $3, $4, 'open', $5)
       RETURNING id
       `,
-      [userId, instanceId, phoneNumber, phoneNumber]
+      [userId, instanceId, phoneNumber, phoneNumber, normalizeAttendanceStatusForDb(undefined)]
     );
 
     return newConversationResult.rows[0].id;

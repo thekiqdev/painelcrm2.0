@@ -143,6 +143,100 @@ export async function refreshDriveTokenIfNeeded(
   };
 }
 
+export type DriveFileMetadata = {
+  id: string;
+  name: string;
+  mimeType: string;
+  parents?: string[];
+};
+
+export async function getDriveFileMetadata(accessToken: string, fileId: string): Promise<DriveFileMetadata> {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,parents`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const json = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = json.error as { message?: string } | undefined;
+    const msg = typeof err?.message === 'string' ? err.message : JSON.stringify(json);
+    throw new Error(`Drive: metadados falharam: ${msg}`);
+  }
+  const id = typeof json.id === 'string' ? json.id : '';
+  const name = typeof json.name === 'string' ? json.name : '';
+  const mimeType = typeof json.mimeType === 'string' ? json.mimeType : '';
+  const parentsRaw = json.parents;
+  const parents = Array.isArray(parentsRaw)
+    ? parentsRaw.filter((p): p is string => typeof p === 'string')
+    : undefined;
+  if (!id) throw new Error('Drive: metadados sem id');
+  return { id, name, mimeType, parents };
+}
+
+export type DriveListChildItem = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+  webViewLink?: string | null;
+  createdTime?: string;
+  modifiedTime?: string;
+};
+
+/** Lista ficheiros e subpastas diretos de uma pasta (não recursivo). */
+export async function listDriveFolderChildren(
+  accessToken: string,
+  folderId: string,
+): Promise<DriveListChildItem[]> {
+  const escaped = folderId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const q = encodeURIComponent(`'${escaped}' in parents and trashed=false`);
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,webViewLink,createdTime,modifiedTime)&pageSize=1000&supportsAllDrives=false`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const json = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = json.error as { message?: string } | undefined;
+    const msg = typeof err?.message === 'string' ? err.message : JSON.stringify(json);
+    throw new Error(`Drive: listar pasta falhou: ${msg}`);
+  }
+  const filesRaw = json.files;
+  if (!Array.isArray(filesRaw)) return [];
+  return filesRaw.map((raw) => {
+    const o = raw as Record<string, unknown>;
+    const id = typeof o.id === 'string' ? o.id : '';
+    const name = typeof o.name === 'string' ? o.name : '';
+    const mimeType = typeof o.mimeType === 'string' ? o.mimeType : '';
+    const size = o.size != null ? Number(o.size) : undefined;
+    const webViewLink = typeof o.webViewLink === 'string' ? o.webViewLink : null;
+    const createdTime = typeof o.createdTime === 'string' ? o.createdTime : undefined;
+    const modifiedTime = typeof o.modifiedTime === 'string' ? o.modifiedTime : undefined;
+    return { id, name, mimeType, size, webViewLink, createdTime, modifiedTime };
+  });
+}
+
+/**
+ * Verifica se folderId é a pasta «Arquivos» ou uma subpasta dela (não Contratos/Propostas/Faturas).
+ */
+export async function isFolderUnderClientArquivosTree(
+  accessToken: string,
+  folderId: string,
+  arquivosRootId: string,
+  moduleFolderIds: Set<string>,
+): Promise<boolean> {
+  let cur = folderId;
+  for (let i = 0; i < 64; i++) {
+    if (cur === arquivosRootId) return true;
+    if (moduleFolderIds.has(cur)) return false;
+    const meta = await getDriveFileMetadata(accessToken, cur);
+    const parents = meta.parents;
+    if (!parents?.length) return false;
+    cur = parents[0]!;
+  }
+  return false;
+}
+
 export async function createDriveFolder(
   accessToken: string,
   name: string,

@@ -43,9 +43,13 @@ export type UploadClientGoogleDriveFileResponse = {
 export async function uploadClientGoogleDriveFile(
   clientId: string,
   file: File,
+  options?: { parentFolderId?: string | null },
 ): Promise<UploadClientGoogleDriveFileResponse> {
   const form = new FormData();
   form.append('file', file);
+  if (options?.parentFolderId && options.parentFolderId.trim() !== '') {
+    form.append('parent_folder_id', options.parentFolderId.trim());
+  }
   const res = await apiClient.post<UploadClientGoogleDriveFileResponse>(
     `/api/clients/${encodeURIComponent(clientId)}/google-drive/files`,
     form,

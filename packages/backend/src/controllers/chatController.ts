@@ -89,6 +89,7 @@ import {
   type ChatMessageKind,
 } from '../utils/chatMessageContract.js';
 import { SQL_CHAT_ACCESS_PREDICATE, sqlChatAccessPredicate } from '../utils/chatConversationAccess.js';
+import { normalizeAttendanceStatusForDb } from '../utils/chatAttendanceStatus.js';
 import {
   decorateInstanceForApi,
   fetchInstanceForOperate,
@@ -1377,6 +1378,9 @@ async function upsertConversation(
       existingSourceUrl: null,
     });
 
+    /** Novas conversas por sync/webhook: equivalente ao legado "sem atendente" → pending (Fase 5). */
+    const attendanceStatusForInsert = normalizeAttendanceStatusForDb(undefined);
+
     if (leadColumnAvailable) {
       result = await pool.query(
         `
@@ -1388,10 +1392,10 @@ async function upsertConversation(
           canonical_chat_id, canonical_phone, display_name, avatar_url,
           avatar_cached_url, avatar_source_url, avatar_cached_at, avatar_cache_status,
           identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
-          provider, provider_conversation_id, communication_contact_id
+          provider, provider_conversation_id, communication_contact_id, attendance_status
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'whatsapp_uazapi', $29, $30)
+          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'whatsapp_uazapi', $29, $30, $31)
         RETURNING *
         `,
         [
@@ -1425,6 +1429,7 @@ async function upsertConversation(
           fcInsert.last_history_sync_reason,
           chatData.externalChatId,
           opts?.communicationContactId ?? null,
+          attendanceStatusForInsert,
         ]
       );
     } else {
@@ -1438,10 +1443,10 @@ async function upsertConversation(
           canonical_chat_id, canonical_phone, display_name, avatar_url,
           avatar_cached_url, avatar_source_url, avatar_cached_at, avatar_cache_status,
           identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
-          provider, provider_conversation_id, communication_contact_id
+          provider, provider_conversation_id, communication_contact_id, attendance_status
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14,
-          $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 'whatsapp_uazapi', $28, $29)
+          $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 'whatsapp_uazapi', $28, $29, $30)
         RETURNING *
         `,
         [
@@ -1474,6 +1479,7 @@ async function upsertConversation(
           fcInsert.last_history_sync_reason,
           chatData.externalChatId,
           opts?.communicationContactId ?? null,
+          attendanceStatusForInsert,
         ]
       );
     }
@@ -1579,16 +1585,29 @@ async function upsertConversation(
     );
   return upserted;
   } catch (error: any) {
-    console.error(`[UpsertConversation ${upsertId}] Database error:`, {
-      error: error.message,
-      code: error.code,
-      detail: error.detail,
-      stack: error.stack,
-      chatData: {
-        externalChatId: chatData.externalChatId,
-        instanceId: instance.id,
-      },
-    });
+    const code = error?.code as string | undefined;
+    const constraint = error?.constraint as string | undefined;
+    const externalChatId = chatData.externalChatId;
+    const instanceId = instance.id;
+    /** Caminho insert define explicitamente; update não altera attendance_status. */
+    const attendanceStatusIfInsert = normalizeAttendanceStatusForDb(undefined);
+    if (code === '23514') {
+      console.error(`[UpsertConversation ${upsertId}] check_violation`, {
+        code,
+        constraint: constraint ?? 'unknown',
+        externalChatId,
+        instanceId,
+        attendance_status_on_insert: attendanceStatusIfInsert,
+      });
+    } else {
+      console.error(`[UpsertConversation ${upsertId}] Database error`, {
+        code,
+        constraint,
+        externalChatId,
+        instanceId,
+        message: error?.message,
+      });
+    }
     throw error;
   }
 }

@@ -1,4 +1,5 @@
 import { pool } from '../../utils/db.js';
+import { normalizeAttendanceStatusForDb } from '../../utils/chatAttendanceStatus.js';
 
 function externalChatIdFromDigits(digits: string): string {
   const d = digits.replace(/\D/g, '');
@@ -44,12 +45,18 @@ export async function ingestOfficialInboundText(params: {
         `INSERT INTO chat_conversations (
            user_id, instance_id, external_chat_id, phone_number,
            whatsapp_official_account_id, provider, provider_conversation_id,
-           contact_name, last_message_preview, last_message_at, unread_count
+           contact_name, last_message_preview, last_message_at, unread_count, attendance_status
          ) VALUES (
            $1::uuid, NULL, $2, $3, $4::uuid, 'whatsapp_official', $2,
-           NULL, NULL, NULL, 0
+           NULL, NULL, NULL, 0, $5
          ) RETURNING id::text`,
-        [params.inboxUserId, extId, phoneDigits || null, params.accountId]
+        [
+          params.inboxUserId,
+          extId,
+          phoneDigits || null,
+          params.accountId,
+          normalizeAttendanceStatusForDb(undefined),
+        ]
       );
       conversationId = ins.rows[0]!.id;
     } else {

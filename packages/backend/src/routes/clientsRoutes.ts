@@ -11,6 +11,8 @@ router.get('/', clientsController.getClients);
 router.get('/:id/timeline', clientsController.getClientTimeline);
 router.post('/:id/timeline/events', clientsController.createClientTimeline);
 router.post('/:id/google-drive/ensure-folders', clientsController.ensureClientGoogleDriveFolders);
+router.get('/:id/google-drive/browser', clientsController.getClientGoogleDriveBrowser);
+router.post('/:id/google-drive/folders', clientsController.createClientGoogleDriveUserFolderHandler);
 router.get('/:id/google-drive/files', clientsController.getClientGoogleDriveFiles);
 router.post('/:id/google-drive/files', clientGoogleDriveFileUploadSingle, clientsController.uploadClientGoogleDriveFileHandler);
 router.get('/:id', clientsController.getClientById);

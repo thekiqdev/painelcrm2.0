@@ -1,4 +1,5 @@
 import { pool } from '../../utils/db.js';
+import { normalizeAttendanceStatusForDb } from '../../utils/chatAttendanceStatus.js';
 import { normalizeBrazilWhatsappPhone } from '../../utils/phone/normalizeBrazilPhone.js';
 import { sendTextMessage as graphSendText } from './whatsappOfficialClient.js';
 import { getAccountCredentials } from './whatsappOfficialConfigService.js';
@@ -56,12 +57,19 @@ export async function sendOfficialTextAndPersist(params: {
         `INSERT INTO chat_conversations (
            user_id, instance_id, external_chat_id, phone_number,
            whatsapp_official_account_id, provider, provider_conversation_id,
-           last_message_preview, last_message_at, unread_count
+           last_message_preview, last_message_at, unread_count, attendance_status
          ) VALUES (
            $1::uuid, NULL, $2, $3, $4::uuid, 'whatsapp_official', $2,
-           $5, NOW(), 0
+           $5, NOW(), 0, $6
          ) RETURNING id::text`,
-        [params.inboxUserId, extId, phoneDigits || null, params.accountId, params.text.slice(0, 240)]
+        [
+          params.inboxUserId,
+          extId,
+          phoneDigits || null,
+          params.accountId,
+          params.text.slice(0, 240),
+          normalizeAttendanceStatusForDb(undefined),
+        ]
       );
       conversationId = ins.rows[0]!.id;
     } else {

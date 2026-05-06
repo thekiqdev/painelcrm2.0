@@ -9,6 +9,8 @@ import {
   type ClientTimelineEventName,
 } from '../services/clientTimelineEventsService.js';
 import { ensureClientGoogleDriveFolderStructure } from '../services/clientGoogleDriveFoldersService.js';
+import { getClientGoogleDriveBrowserPayload } from '../services/clientGoogleDriveBrowserService.js';
+import { createClientGoogleDriveUserSubfolder } from '../services/clientGoogleDriveUserFoldersService.js';
 import {
   listClientGoogleDriveFiles,
   uploadClientGoogleDriveFile,
@@ -323,6 +325,98 @@ export async function getClientTimeline(req: AuthRequest, res: Response): Promis
   }
 }
 
+export async function getClientGoogleDriveBrowser(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'view', undefined, req);
+    const belongs = await clientBelongsToTenant(clientId, tenantId);
+    if (!belongs) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    const folderIdRaw = req.query.folderId;
+    const folderId = typeof folderIdRaw === 'string' && folderIdRaw.trim() ? folderIdRaw.trim() : undefined;
+    const payload = await getClientGoogleDriveBrowserPayload({ tenantId, clientId, folderId });
+    res.json(payload);
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao listar pasta no Google Drive';
+    if (code === 'drive_disabled' || code === 'drive_not_connected') {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    if (code === 'folder_forbidden' || code === 'folder_invalid') {
+      res.status(403).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] google drive browser', error);
+    res.status(500).json({ error: msg });
+  }
+}
+
+const createClientGoogleDriveFolderBodySchema = z.object({
+  name: z.string().min(1),
+  parent_folder_id: z.string().optional().nullable(),
+});
+
+export async function createClientGoogleDriveUserFolderHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const ownerId = await clientOwnerForTenant(clientId, tenantId);
+    if (!ownerId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'edit', { ownerId, assigneeId: null }, req);
+    const parsed = createClientGoogleDriveFolderBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Payload inválido.', details: parsed.error.flatten() });
+      return;
+    }
+    const created = await createClientGoogleDriveUserSubfolder({
+      tenantId,
+      clientId,
+      userId,
+      name: parsed.data.name,
+      parentFolderId: parsed.data.parent_folder_id,
+    });
+    res.status(201).json(created);
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao criar pasta';
+    if (code === 'drive_disabled' || code === 'drive_not_connected' || code === 'folders_unavailable') {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    if (code === 'invalid_name' || code === 'folder_forbidden' || code === 'folder_invalid') {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] create google drive user folder', error);
+    res.status(500).json({ error: msg });
+  }
+}
+
 export async function ensureClientGoogleDriveFolders(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
@@ -408,6 +502,11 @@ export async function uploadClientGoogleDriveFileHandler(req: AuthRequest, res: 
       res.status(400).json({ error: 'Arquivo obrigatório (campo: file).' });
       return;
     }
+    const body = req.body as Record<string, unknown> | undefined;
+    const parentFolderId =
+      typeof body?.parent_folder_id === 'string' && body.parent_folder_id.trim()
+        ? body.parent_folder_id.trim()
+        : undefined;
     const saved = await uploadClientGoogleDriveFile({
       tenantId,
       clientId,
@@ -415,6 +514,7 @@ export async function uploadClientGoogleDriveFileHandler(req: AuthRequest, res: 
       originalName: req.file.originalname || 'arquivo',
       mimeType: req.file.mimetype || 'application/octet-stream',
       fileBytes: req.file.buffer,
+      parentFolderId,
     });
     res.status(201).json({
       id: saved.id,
@@ -436,7 +536,13 @@ export async function uploadClientGoogleDriveFileHandler(req: AuthRequest, res: 
     }
     const code = (error as Error & { code?: string }).code;
     const msg = error instanceof Error ? error.message : 'Erro ao enviar arquivo';
-    if (code === 'drive_disabled' || code === 'drive_not_connected' || code === 'folders_unavailable') {
+    if (
+      code === 'drive_disabled' ||
+      code === 'drive_not_connected' ||
+      code === 'folders_unavailable' ||
+      code === 'folder_forbidden' ||
+      code === 'folder_invalid'
+    ) {
       res.status(400).json({ error: msg, code });
       return;
     }
