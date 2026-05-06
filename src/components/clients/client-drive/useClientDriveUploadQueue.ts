@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ClientGoogleDriveBrowserItem } from '@/services/clientGoogleDriveBrowser';
-import { mapUploadResponseToBrowserItem, uploadClientGoogleDriveFileWithProgress } from '@/services/clientGoogleDriveFiles';
+import { uploadClientGoogleDriveFileWithProgress } from '@/services/clientGoogleDriveFiles';
 
 export type UploadQueueEntry = {
   temp_id: string;
@@ -19,7 +19,7 @@ type Params = {
   maxMb: number;
   /** Pasta Drive atual + chave de cache da vista. */
   getUploadContext: () => { parent_folder_id?: string; cache_key: string };
-  onUploaded: (item: ClientGoogleDriveBrowserItem, cacheKey: string) => void;
+  onUploaded: () => void | Promise<void>;
 };
 
 export function useClientDriveUploadQueue({
@@ -66,9 +66,8 @@ export function useClientDriveUploadQueue({
           },
         });
 
-        const mapped = mapUploadResponseToBrowserItem(res);
         removeEntry(entry.temp_id);
-        onUploaded(mapped, entry.cache_key);
+        await onUploaded();
       } catch (e) {
         const msg =
           e instanceof Error ? e.message : typeof e === 'string' ? e : 'Falha no upload';

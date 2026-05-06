@@ -10,10 +10,14 @@ import {
 } from '../services/clientTimelineEventsService.js';
 import { ensureClientGoogleDriveFolderStructure } from '../services/clientGoogleDriveFoldersService.js';
 import { getClientGoogleDriveBrowserPayload } from '../services/clientGoogleDriveBrowserService.js';
-import { createClientGoogleDriveUserSubfolder } from '../services/clientGoogleDriveUserFoldersService.js';
+import {
+  createClientGoogleDriveUserSubfolder,
+  deleteClientGoogleDriveUserFolder,
+} from '../services/clientGoogleDriveUserFoldersService.js';
 import {
   listClientGoogleDriveFiles,
   uploadClientGoogleDriveFile,
+  retryFailedClientGoogleDriveUpload,
   moveClientGoogleDriveFile,
   deleteClientGoogleDriveFile,
   CLIENT_GOOGLE_DRIVE_SOURCE_MODULE,
@@ -529,6 +533,8 @@ export async function uploadClientGoogleDriveFileHandler(req: AuthRequest, res: 
       size_bytes: Number(saved.size_bytes),
       web_view_link: saved.web_view_link,
       web_content_link: saved.web_content_link,
+      upload_status: saved.upload_status,
+      upload_error: saved.upload_error,
       created_at: saved.created_at,
     });
   } catch (error) {
@@ -581,7 +587,7 @@ export async function moveClientGoogleDriveFileHandler(req: AuthRequest, res: Re
     const updated = await moveClientGoogleDriveFile({
       tenantId,
       clientId,
-      driveFileId: parsed.data.file_id.trim(),
+      fileRef: parsed.data.file_id.trim(),
       destinationFolderId: parsed.data.destination_folder_id.trim(),
     });
     res.json({
@@ -600,6 +606,10 @@ export async function moveClientGoogleDriveFileHandler(req: AuthRequest, res: Re
     const msg = error instanceof Error ? error.message : 'Erro ao mover arquivo';
     if (code === 'file_not_tracked') {
       res.status(404).json({ error: msg, code });
+      return;
+    }
+    if (code === 'file_pending') {
+      res.status(409).json({ error: msg, code });
       return;
     }
     if (
@@ -636,7 +646,7 @@ export async function deleteClientGoogleDriveFileHandler(req: AuthRequest, res: 
       res.status(400).json({ error: 'Identificador do arquivo inválido.' });
       return;
     }
-    await deleteClientGoogleDriveFile({ tenantId, clientId, driveFileId: fid });
+    await deleteClientGoogleDriveFile({ tenantId, clientId, fileRef: fid });
     res.status(204).send();
   } catch (error) {
     if (error instanceof ModulePermissionError) {
@@ -654,6 +664,135 @@ export async function deleteClientGoogleDriveFileHandler(req: AuthRequest, res: 
       return;
     }
     console.error('[clients] delete google drive file', error);
+    res.status(500).json({ error: msg });
+  }
+}
+
+export async function retryFailedClientGoogleDriveUploadHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const ownerId = await clientOwnerForTenant(clientId, tenantId);
+    if (!ownerId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'edit', { ownerId, assigneeId: null }, req);
+    if (!req.file || !req.file.buffer) {
+      res.status(400).json({ error: 'Arquivo obrigatório (campo: file).' });
+      return;
+    }
+    const body = req.body as Record<string, unknown> | undefined;
+    const fileRefRaw = body?.file_id ?? body?.file_ref;
+    const fileRef =
+      typeof fileRefRaw === 'string' && fileRefRaw.trim() ? fileRefRaw.trim() : '';
+    if (!fileRef) {
+      res.status(400).json({ error: 'Indique o arquivo a repetir (campo: file_id).' });
+      return;
+    }
+    const saved = await retryFailedClientGoogleDriveUpload({
+      tenantId,
+      clientId,
+      createdByUserId: userId,
+      fileRef,
+      originalName: req.file.originalname || 'arquivo',
+      mimeType: req.file.mimetype || 'application/octet-stream',
+      fileBytes: req.file.buffer,
+    });
+    res.status(200).json({
+      id: saved.id,
+      client_id: saved.client_id,
+      source_module: CLIENT_GOOGLE_DRIVE_SOURCE_MODULE,
+      drive_file_id: saved.drive_file_id,
+      drive_folder_id: saved.drive_folder_id,
+      name: saved.name,
+      mime_type: saved.mime_type,
+      size_bytes: Number(saved.size_bytes),
+      web_view_link: saved.web_view_link,
+      web_content_link: saved.web_content_link,
+      upload_status: saved.upload_status,
+      upload_error: saved.upload_error,
+      created_at: saved.created_at,
+    });
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao repetir envio';
+    if (code === 'retry_invalid') {
+      res.status(409).json({ error: msg, code });
+      return;
+    }
+    if (
+      code === 'drive_disabled' ||
+      code === 'drive_not_connected' ||
+      code === 'folders_unavailable' ||
+      code === 'folder_forbidden' ||
+      code === 'folder_invalid'
+    ) {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] retry google drive upload', error);
+    res.status(500).json({ error: msg });
+  }
+}
+
+export async function deleteClientGoogleDriveUserFolderHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId, folderDriveId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const ownerId = await clientOwnerForTenant(clientId, tenantId);
+    if (!ownerId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'edit', { ownerId, assigneeId: null }, req);
+    const fid = decodeURIComponent(folderDriveId || '').trim();
+    if (!fid) {
+      res.status(400).json({ error: 'Identificador da pasta inválido.' });
+      return;
+    }
+    await deleteClientGoogleDriveUserFolder({ tenantId, clientId, folderDriveId: fid });
+    res.status(204).send();
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao excluir pasta';
+    if (code === 'folder_not_found') {
+      res.status(404).json({ error: msg, code });
+      return;
+    }
+    if (code === 'folder_not_empty') {
+      res.status(409).json({ error: msg, code });
+      return;
+    }
+    if (
+      code === 'drive_disabled' ||
+      code === 'drive_not_connected' ||
+      code === 'folders_unavailable' ||
+      code === 'folder_forbidden' ||
+      code === 'folder_invalid'
+    ) {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] delete google drive user folder', error);
     res.status(500).json({ error: msg });
   }
 }

@@ -26,12 +26,13 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from '@/components/ui/sonner';
 import {
   createClientGoogleDriveUserFolder,
+  deleteClientGoogleDriveFolder,
   deleteClientGoogleDriveItem,
   getClientGoogleDriveBrowser,
   moveClientGoogleDriveItem,
   type ClientGoogleDriveBrowserItem,
-  type ClientGoogleDriveBrowserPayload,
 } from '@/services/clientGoogleDriveBrowser';
+import { retryFailedClientGoogleDriveUploadWithProgress } from '@/services/clientGoogleDriveFiles';
 import { cn } from '@/lib/utils';
 import { ClientDriveBreadcrumbDrop, CRUMB_DROP_PREFIX } from './ClientDriveBreadcrumbDrop';
 import { ClientDriveCreateFolderDialog } from './ClientDriveCreateFolderDialog';
@@ -69,6 +70,8 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
   const [sort, setSort] = useState<ClientDriveSort>('name');
   const [createOpen, setCreateOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const retryFileInputRef = useRef<HTMLInputElement | null>(null);
+  const retryTargetFileIdRef = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [moveDialogItem, setMoveDialogItem] = useState<ClientGoogleDriveBrowserItem | null>(null);
@@ -83,6 +86,16 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
   const browserQuery = useQuery({
     queryKey: ['client-google-drive-browser', clientId, folderId ?? 'root'],
     queryFn: () => getClientGoogleDriveBrowser(clientId, folderId),
+    refetchInterval: (query) => {
+      const items = query.state.data?.items ?? [];
+      const busy = items.some(
+        (i) =>
+          i.type === 'file' &&
+          i.upload_status &&
+          (i.upload_status === 'uploading' || i.upload_status === 'processing'),
+      );
+      return busy ? 4000 : false;
+    },
   });
 
   const invalidateBrowser = async () => {
@@ -99,21 +112,25 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
     clientId,
     maxMb: MAX_MB,
     getUploadContext,
-    onUploaded: (item, cacheKey) => {
+    onUploaded: async () => {
       toast.success('Arquivo enviado com sucesso.', { duration: 2600 });
-      queryClient.setQueryData(
-        ['client-google-drive-browser', clientId, cacheKey],
-        (prev: ClientGoogleDriveBrowserPayload | undefined) => {
-          if (!prev) return prev;
-          if (prev.items.some((i) => i.id === item.id)) return prev;
-          return { ...prev, items: [item, ...prev.items] };
-        },
-      );
+      await invalidateBrowser();
     },
   });
 
   const mergedItems = useMemo(() => {
-    return [...uploadQueue.optimisticBrowserItems, ...(browserQuery.data?.items ?? [])];
+    const server = browserQuery.data?.items ?? [];
+    const optimistic = uploadQueue.optimisticBrowserItems;
+    const filteredOptimistic = optimistic.filter((o) => {
+      const dup = server.some(
+        (s) =>
+          s.type === 'file' &&
+          s.name === o.name &&
+          (s.upload_status === 'uploading' || s.upload_status === 'processing'),
+      );
+      return !dup;
+    });
+    return [...filteredOptimistic, ...server];
   }, [uploadQueue.optimisticBrowserItems, browserQuery.data?.items]);
 
   const handleFilesSelected = (files: FileList | null) => {
@@ -159,16 +176,35 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (driveFileId: string) => {
-      await deleteClientGoogleDriveItem(clientId, driveFileId);
+    mutationFn: async (item: ClientGoogleDriveBrowserItem) => {
+      if (item.type === 'folder') {
+        await deleteClientGoogleDriveFolder(clientId, item.id);
+      } else {
+        await deleteClientGoogleDriveItem(clientId, item.id);
+      }
     },
-    onSuccess: async () => {
-      toast.success('Arquivo movido para a lixeira do Google Drive.');
+    onSuccess: async (_void, item) => {
+      toast.success(
+        item.type === 'folder'
+          ? 'Pasta enviada para a lixeira do Google Drive.'
+          : 'Arquivo movido para a lixeira do Google Drive.',
+      );
       setDeleteItem(null);
       setSelectedId(null);
       await invalidateBrowser();
     },
-    onError: (e: Error) => toast.error(e.message || 'Erro ao excluir arquivo'),
+    onError: (e: Error) => toast.error(e.message || 'Não foi possível concluir a exclusão.'),
+  });
+
+  const retryServerMutation = useMutation({
+    mutationFn: async (p: { fileId: string; file: File }) => {
+      await retryFailedClientGoogleDriveUploadWithProgress(clientId, p.fileId, p.file);
+    },
+    onSuccess: async () => {
+      toast.success('Arquivo enviado com sucesso.');
+      await invalidateBrowser();
+    },
+    onError: (e: Error) => toast.error(e.message || 'Não foi possível repetir o envio.'),
   });
 
   const movingFileId = moveMutation.isPending && moveMutation.variables ? moveMutation.variables.fileId : null;
@@ -227,7 +263,15 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
 
   const activeDragItem = useMemo(() => {
     if (!activeDragId) return null;
-    return mergedItems.find((i) => i.type === 'file' && i.id === activeDragId && !i.optimistic_upload) ?? null;
+    return (
+      mergedItems.find(
+        (i) =>
+          i.type === 'file' &&
+          i.id === activeDragId &&
+          !i.optimistic_upload &&
+          (i.upload_status === undefined || i.upload_status === 'ready'),
+      ) ?? null
+    );
   }, [activeDragId, mergedItems]);
 
   const errCode = browserQuery.error
@@ -294,6 +338,22 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
                   e.target.value = '';
                 }}
               />
+              <input
+                ref={retryFileInputRef}
+                type="file"
+                className="hidden"
+                accept={ACCEPT_EXT}
+                aria-hidden
+                tabIndex={-1}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  const fid = retryTargetFileIdRef.current;
+                  e.target.value = '';
+                  retryTargetFileIdRef.current = null;
+                  if (!file || !fid) return;
+                  void retryServerMutation.mutateAsync({ fileId: fid, file });
+                }}
+              />
 
               <div className="rounded-lg border border-border/60 bg-muted/10 px-3 py-2 sm:px-4">
                 <ClientDriveBreadcrumbDrop
@@ -335,6 +395,10 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
                 onSelectItem={(item) => setSelectedId(item.id)}
                 onMoveMenu={(item) => setMoveDialogItem(item)}
                 onDeleteMenu={(item) => setDeleteItem(item)}
+                onRetryServerFailedUpload={(fileId) => {
+                  retryTargetFileIdRef.current = fileId;
+                  retryFileInputRef.current?.click();
+                }}
                 onRetryOptimisticUpload={(tid) => uploadQueue.retry(tid)}
                 onRemoveOptimisticUpload={(tid) => uploadQueue.remove(tid)}
                 onCancelOptimisticUpload={(tid) => uploadQueue.cancel(tid)}
@@ -385,9 +449,18 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
       <AlertDialog open={deleteItem !== null} onOpenChange={(o) => !o && setDeleteItem(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir arquivo?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {deleteItem?.type === 'folder' ? 'Excluir pasta?' : 'Excluir arquivo?'}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              O ficheiro será enviado para a lixeira do Google Drive. Esta ação pode ser revertida no Drive.
+              {deleteItem?.type === 'folder' ? (
+                <>
+                  A pasta só pode ser eliminada se estiver vazia no PainelCRM. Será enviada para a lixeira do Google
+                  Drive; pode recuperá-la a partir daí.
+                </>
+              ) : (
+                <>O ficheiro será enviado para a lixeira do Google Drive. Esta ação pode ser revertida no Drive.</>
+              )}
               {deleteItem ? (
                 <>
                   {' '}
@@ -403,7 +476,7 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
               variant="destructive"
               disabled={deleteMutation.isPending || !deleteItem}
               onClick={() => {
-                if (deleteItem) void deleteMutation.mutateAsync(deleteItem.id);
+                if (deleteItem) void deleteMutation.mutateAsync(deleteItem);
               }}
             >
               {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}

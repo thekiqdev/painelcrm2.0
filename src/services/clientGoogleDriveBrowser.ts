@@ -8,6 +8,8 @@ export type ClientDriveOptimisticUploadMeta = {
   error_message?: string;
 };
 
+export type ClientGoogleDriveUploadStatus = 'uploading' | 'processing' | 'ready' | 'failed';
+
 export type ClientGoogleDriveBrowserItem = {
   id: string;
   type: 'folder' | 'file';
@@ -17,6 +19,11 @@ export type ClientGoogleDriveBrowserItem = {
   web_view_link?: string | null;
   created_at?: string;
   modified_at?: string;
+  /** Estado persistido no índice local (ficheiros). */
+  upload_status?: ClientGoogleDriveUploadStatus;
+  upload_error?: string | null;
+  /** Presente quando o ficheiro já existe no Drive (abrir link). */
+  drive_file_id?: string | null;
   optimistic_upload?: ClientDriveOptimisticUploadMeta;
 };
 
@@ -97,6 +104,17 @@ export async function moveClientGoogleDriveItem(
 export async function deleteClientGoogleDriveItem(clientId: string, driveFileId: string): Promise<void> {
   const res = await apiClient.delete(
     `/api/clients/${encodeURIComponent(clientId)}/google-drive/files/${encodeURIComponent(driveFileId)}`,
+  );
+  if (res.error) {
+    const e = new Error(res.error) as Error & { code?: string };
+    e.code = res.code;
+    throw e;
+  }
+}
+
+export async function deleteClientGoogleDriveFolder(clientId: string, folderDriveId: string): Promise<void> {
+  const res = await apiClient.delete(
+    `/api/clients/${encodeURIComponent(clientId)}/google-drive/folders/${encodeURIComponent(folderDriveId)}`,
   );
   if (res.error) {
     const e = new Error(res.error) as Error & { code?: string };

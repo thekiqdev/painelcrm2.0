@@ -23,6 +23,7 @@ import superadminWhatsappOfficialRoutes from './superadminWhatsappOfficialRoutes
 import connectionsRoutes from './connectionsRoutes.js';
 import * as adminScriptsController from '../controllers/adminScriptsController.js';
 import {
+  getSuperadminMediaStorageDiagnostics,
   listSuperadminRecentMediaAssets,
   postSuperadminMediaTestSaveBuffer,
 } from '../services/media/mediaController.js';
@@ -193,6 +194,7 @@ router.get('/advanced/scripts', adminScriptsController.listAdminScripts);
 router.post('/advanced/scripts/:scriptKey/preview', adminScriptsController.previewAdminScript);
 router.post('/advanced/scripts/:scriptKey/execute', adminScriptsController.executeAdminScript);
 router.post('/advanced/media/test-save-buffer', postSuperadminMediaTestSaveBuffer);
+router.get('/advanced/media/storage-diagnostics', getSuperadminMediaStorageDiagnostics);
 router.get('/advanced/media/assets', listSuperadminRecentMediaAssets);
 
 export default router;

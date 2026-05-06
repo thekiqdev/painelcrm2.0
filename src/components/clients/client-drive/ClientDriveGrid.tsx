@@ -20,6 +20,8 @@ type Props = {
   onSelectItem: (item: ClientGoogleDriveBrowserItem) => void;
   onMoveMenu: (item: ClientGoogleDriveBrowserItem) => void;
   onDeleteMenu: (item: ClientGoogleDriveBrowserItem) => void;
+  /** Repetir envio para falha persistida no servidor (escolher ficheiro no pai). */
+  onRetryServerFailedUpload?: (fileId: string) => void;
   onRetryOptimisticUpload?: (tempId: string) => void;
   onRemoveOptimisticUpload?: (tempId: string) => void;
   onCancelOptimisticUpload?: (tempId: string) => void;
@@ -34,6 +36,7 @@ function GridItem({
   onSelectItem,
   onMoveMenu,
   onDeleteMenu,
+  onRetryServerFailedUpload,
   onRetryOptimisticUpload,
   onRemoveOptimisticUpload,
   onCancelOptimisticUpload,
@@ -46,6 +49,7 @@ function GridItem({
   onSelectItem: (item: ClientGoogleDriveBrowserItem) => void;
   onMoveMenu: (item: ClientGoogleDriveBrowserItem) => void;
   onDeleteMenu: (item: ClientGoogleDriveBrowserItem) => void;
+  onRetryServerFailedUpload?: (fileId: string) => void;
   onRetryOptimisticUpload?: (tempId: string) => void;
   onRemoveOptimisticUpload?: (tempId: string) => void;
   onCancelOptimisticUpload?: (tempId: string) => void;
@@ -76,9 +80,14 @@ function GridItem({
     );
   }
 
+  const fileReady =
+    isFolder ||
+    item.upload_status === undefined ||
+    item.upload_status === 'ready';
+
   const draggable = useDraggable({
     id: `${DND_FILE_PREFIX}${item.id}`,
-    disabled: !canEdit || isFolder,
+    disabled: !canEdit || isFolder || !fileReady,
     data: { kind: 'file' as const, driveFileId: item.id },
   });
 
@@ -103,6 +112,7 @@ function GridItem({
         onActivate={() => onOpenFolder(item.id)}
         onOpenFolder={() => onOpenFolder(item.id)}
         openUrl={null}
+        onDelete={canEdit ? () => onDeleteMenu(item) : undefined}
       />
     );
   }
@@ -120,8 +130,24 @@ function GridItem({
       setDragRef={draggable.setNodeRef}
       onActivate={() => onSelectItem(item)}
       openUrl={item.web_view_link || undefined}
-      onMove={canEdit ? () => onMoveMenu(item) : undefined}
-      onDelete={canEdit ? () => onDeleteMenu(item) : undefined}
+      onMove={
+        canEdit && (!item.upload_status || item.upload_status === 'ready')
+          ? () => onMoveMenu(item)
+          : undefined
+      }
+      onDelete={
+        canEdit &&
+        (!item.upload_status ||
+          item.upload_status === 'ready' ||
+          item.upload_status === 'failed')
+          ? () => onDeleteMenu(item)
+          : undefined
+      }
+      onRetryServerFailedUpload={
+        canEdit && item.upload_status === 'failed' && !ox
+          ? () => onRetryServerFailedUpload?.(item.id)
+          : undefined
+      }
     />
   );
 }
@@ -137,6 +163,7 @@ export function ClientDriveGrid({
   onSelectItem,
   onMoveMenu,
   onDeleteMenu,
+  onRetryServerFailedUpload,
   onRetryOptimisticUpload,
   onRemoveOptimisticUpload,
   onCancelOptimisticUpload,
@@ -184,6 +211,7 @@ export function ClientDriveGrid({
           onSelectItem={onSelectItem}
           onMoveMenu={onMoveMenu}
           onDeleteMenu={onDeleteMenu}
+          onRetryServerFailedUpload={onRetryServerFailedUpload}
           onRetryOptimisticUpload={onRetryOptimisticUpload}
           onRemoveOptimisticUpload={onRemoveOptimisticUpload}
           onCancelOptimisticUpload={onCancelOptimisticUpload}

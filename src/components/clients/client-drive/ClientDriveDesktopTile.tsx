@@ -72,6 +72,18 @@ function formatWhen(iso: string | undefined): string {
   return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+/** Evita mostrar IDs ou texto excessivamente técnico na UI. */
+function formatDriveFailureHint(raw: string | undefined): string {
+  if (!raw?.trim()) return 'Não foi possível concluir o envio. Pode tentar de novo.';
+  let s = raw.trim().replace(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+    '',
+  );
+  s = s.replace(/\s{2,}/g, ' ').trim();
+  if (s.length > 220) s = `${s.slice(0, 217)}…`;
+  return s || 'Não foi possível concluir o envio. Pode tentar de novo.';
+}
+
 export type ClientDriveOptimisticHandlers = {
   onRetry?: () => void;
   onRemove?: () => void;
@@ -94,6 +106,8 @@ export type ClientDriveDesktopTileProps = {
   openUrl?: string | null;
   onMove?: () => void;
   onDelete?: () => void;
+  /** Repetir envio quando o servidor guardou o registo como falha (requer escolher o ficheiro outra vez). */
+  onRetryServerFailedUpload?: () => void;
   optimisticHandlers?: ClientDriveOptimisticHandlers;
 };
 
@@ -113,16 +127,43 @@ export function ClientDriveDesktopTile({
   openUrl,
   onMove,
   onDelete,
+  onRetryServerFailedUpload,
   optimisticHandlers,
 }: ClientDriveDesktopTileProps) {
   const isFolder = item.type === 'folder';
   const ox = item.optimistic_upload;
-  const isOptimistic = Boolean(ox);
-  const isError = ox?.phase === 'error';
+  /** Linha criada no índice local antes de existir no Drive (persistido no servidor). */
+  const derivedServerOx =
+    item.type === 'file' &&
+    item.upload_status &&
+    item.upload_status !== 'ready' &&
+    !ox
+      ? {
+          temp_id: item.id,
+          phase:
+            item.upload_status === 'failed'
+              ? ('error' as const)
+              : item.upload_status === 'processing'
+                ? ('processing' as const)
+                : ('uploading' as const),
+          progress:
+            item.upload_status === 'processing' ? 100 : item.upload_status === 'failed' ? 0 : 18,
+          error_message: item.upload_error ?? undefined,
+        }
+      : null;
+  const effectiveOx = ox ?? derivedServerOx;
+  const isOptimistic = Boolean(effectiveOx);
+  const isError = effectiveOx?.phase === 'error';
+  const showFailedServerDelete =
+    Boolean(canEdit && !isFolder && item.upload_status === 'failed' && !ox && onDelete);
 
   const showMenu =
-    !isOptimistic &&
-    (isFolder || Boolean(openUrl) || (canEdit && !isFolder && (onMove || onDelete)));
+    (!isOptimistic || showFailedServerDelete) &&
+    (isFolder ||
+      Boolean(openUrl) ||
+      (canEdit && !isFolder && (onMove || onDelete)) ||
+      (canEdit && isFolder && onDelete) ||
+      showFailedServerDelete);
 
   const mergedRef = (node: HTMLElement | null) => {
     setDragRef?.(node);
@@ -146,13 +187,13 @@ export function ClientDriveDesktopTile({
         isError && 'border-destructive/40 ring-1 ring-destructive/25',
       )}
       onClick={(e) => {
-        if (isOptimistic) return;
+        if (isOptimistic && !showFailedServerDelete) return;
         e.stopPropagation();
         if (isFolder && onOpenFolder) onOpenFolder();
         else onActivate();
       }}
       onKeyDown={(e) => {
-        if (isOptimistic) return;
+        if (isOptimistic && !showFailedServerDelete) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           if (isFolder && onOpenFolder) onOpenFolder();
@@ -160,7 +201,7 @@ export function ClientDriveDesktopTile({
         }
       }}
       onDoubleClick={(e) => {
-        if (isFolder || isOptimistic) return;
+        if (isFolder || (isOptimistic && !showFailedServerDelete)) return;
         e.preventDefault();
         e.stopPropagation();
         if (openUrl) window.open(openUrl, '_blank', 'noopener,noreferrer');
@@ -193,6 +234,14 @@ export function ClientDriveDesktopTile({
                   </a>
                 </DropdownMenuItem>
               ) : null}
+              {isFolder && canEdit && onDelete ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onDelete()}>
+                    Excluir pasta…
+                  </DropdownMenuItem>
+                </>
+              ) : null}
               {!isFolder && openUrl ? (
                 <DropdownMenuItem asChild>
                   <a href={openUrl} target="_blank" rel="noopener noreferrer">
@@ -216,7 +265,10 @@ export function ClientDriveDesktopTile({
         </div>
       ) : null}
 
-      {isOptimistic && ox && (ox.phase === 'uploading' || ox.phase === 'processing') && optimisticHandlers?.onCancel ? (
+      {isOptimistic &&
+      ox &&
+      (ox.phase === 'uploading' || ox.phase === 'processing') &&
+      optimisticHandlers?.onCancel ? (
         <div className="absolute right-1 top-1 z-20">
           <Button
             type="button"
@@ -238,7 +290,7 @@ export function ClientDriveDesktopTile({
         className={cn(
           'flex min-h-[112px] w-full flex-col items-center justify-center px-1 transition-opacity duration-300',
           canEdit && !isFolder && !isOptimistic && 'cursor-grab active:cursor-grabbing',
-          isOptimistic && ox?.phase !== 'error' && 'opacity-55',
+          isOptimistic && effectiveOx?.phase !== 'error' && 'opacity-[0.78]',
         )}
         {...(canEdit && !isFolder && !isOptimistic ? dragListeners : {})}
         {...(canEdit && !isFolder && !isOptimistic ? dragAttributes : {})}
@@ -257,29 +309,46 @@ export function ClientDriveDesktopTile({
         <p className="mt-1 text-xs text-muted-foreground">
           {isFolder
             ? 'Pasta'
-            : isOptimistic && ox?.phase !== 'error'
+            : isOptimistic && effectiveOx?.phase !== 'error'
               ? formatBytes(item.size_bytes)
               : `${formatBytes(item.size_bytes)} · ${formatWhen(item.modified_at || item.created_at)}`}
         </p>
       </div>
 
-      {isOptimistic && ox && ox.phase !== 'error' ? (
+      {isOptimistic && effectiveOx && effectiveOx.phase !== 'error' ? (
         <div className="absolute inset-x-2 bottom-2 z-10 rounded-lg border border-border/60 bg-background/95 p-3 shadow-md backdrop-blur-sm">
-          <ClientDriveUploadProgress meta={{ phase: ox.phase, progress: ox.progress }} />
+          <ClientDriveUploadProgress
+            meta={{ phase: effectiveOx.phase, progress: effectiveOx.progress }}
+          />
         </div>
       ) : null}
 
-      {isOptimistic && ox && ox.phase === 'error' ? (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-background/92 p-3 text-center backdrop-blur-sm">
-          <p className="text-sm font-medium text-destructive">Falha no upload</p>
-          <p className="line-clamp-3 text-xs text-muted-foreground">{ox.error_message || 'Erro desconhecido.'}</p>
+      {isOptimistic && effectiveOx && effectiveOx.phase === 'error' ? (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-gradient-to-b from-destructive/[0.07] to-background/95 p-3 text-center backdrop-blur-sm">
+          <p className="text-sm font-semibold text-destructive">Envio não concluído</p>
+          <p className="line-clamp-4 text-xs leading-relaxed text-muted-foreground">
+            {ox ? effectiveOx.error_message || 'Verifique a ligação e tente outra vez.' : formatDriveFailureHint(effectiveOx.error_message)}
+          </p>
           <div className="flex flex-wrap justify-center gap-2">
-            <Button type="button" size="sm" variant="secondary" onClick={() => optimisticHandlers?.onRetry?.()}>
-              Tentar novamente
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => optimisticHandlers?.onRemove?.()}>
-              Remover
-            </Button>
+            {ox ? (
+              <>
+                <Button type="button" size="sm" variant="secondary" onClick={() => optimisticHandlers?.onRetry?.()}>
+                  Tentar novamente
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => optimisticHandlers?.onRemove?.()}>
+                  Remover
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button type="button" size="sm" variant="default" onClick={() => onRetryServerFailedUpload?.()}>
+                  Tentar novamente
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => onDelete?.()}>
+                  Remover registo
+                </Button>
+              </>
+            )}
           </div>
         </div>
       ) : null}

@@ -25,15 +25,15 @@ export function ClientDriveUploadProgress({ meta, className }: Props) {
 
   return (
     <div className={cn('w-full space-y-2 px-1', className)}>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-muted/80">
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted/90 ring-1 ring-inset ring-primary/15">
         <div
-          className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+          className="h-full rounded-full bg-gradient-to-r from-primary to-primary/85 shadow-sm transition-[width] duration-200 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>
       <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-        <span className="font-medium text-foreground">Enviando…</span>
-        <span>{pct}%</span>
+        <span className="font-semibold text-foreground">A enviar para o Drive…</span>
+        <span className="tabular-nums">{pct}%</span>
       </div>
     </div>
   );

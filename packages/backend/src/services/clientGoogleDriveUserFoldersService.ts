@@ -6,7 +6,13 @@ import {
   type ClientGoogleDriveFolderRow,
 } from './clientGoogleDriveFoldersService.js';
 import { getDriveIntegrationSecrets } from './googleDriveConnectionService.js';
-import { createDriveFolder, isFolderUnderClientArquivosTree, refreshDriveTokenIfNeeded } from './googleDriveService.js';
+import {
+  createDriveFolder,
+  isFolderUnderClientArquivosTree,
+  refreshDriveTokenIfNeeded,
+  trashDriveFile,
+} from './googleDriveService.js';
+import { CLIENT_GOOGLE_DRIVE_SOURCE_MODULE } from './clientGoogleDriveFilesService.js';
 
 export function sanitizeUserFolderName(
   raw: string,
@@ -124,4 +130,105 @@ export async function createClientGoogleDriveUserSubfolder(params: {
   });
 
   return { drive_folder_id: driveFolderId, parent_drive_folder_id: parentId, name: parsed.name };
+}
+
+export async function deleteClientGoogleDriveUserFolder(params: {
+  tenantId: string;
+  clientId: string;
+  folderDriveId: string;
+}): Promise<void> {
+  if (!isGoogleDriveIntegrationEnabled()) {
+    const err = new Error('Integração Google Drive desativada neste servidor.');
+    (err as Error & { code?: string }).code = 'drive_disabled';
+    throw err;
+  }
+
+  const folderId = params.folderDriveId.trim();
+  if (!folderId) {
+    const err = new Error('Pasta inválida.');
+    (err as Error & { code?: string }).code = 'folder_invalid';
+    throw err;
+  }
+
+  await ensureClientGoogleDriveFolderStructure(params.tenantId, params.clientId);
+  const folders = await getClientGoogleDriveFolders(params.tenantId, params.clientId);
+  if (!folders) {
+    const err = new Error('Estrutura de pastas do cliente indisponível.');
+    (err as Error & { code?: string }).code = 'folders_unavailable';
+    throw err;
+  }
+
+  if (folderId === folders.folder_arquivos_id || forbiddenParentIds(folders).has(folderId)) {
+    const err = new Error('Esta pasta não pode ser eliminada.');
+    (err as Error & { code?: string }).code = 'folder_forbidden';
+    throw err;
+  }
+
+  const uf = await pool.query<{ id: string; drive_folder_id: string }>(
+    `SELECT id, drive_folder_id
+     FROM client_google_drive_user_folders
+     WHERE tenant_id = $1 AND client_id = $2 AND drive_folder_id = $3 AND trashed_at IS NULL
+     LIMIT 1`,
+    [params.tenantId, params.clientId, folderId],
+  );
+  if (!uf.rows[0]) {
+    const err = new Error('Pasta não encontrada ou já foi removida.');
+    (err as Error & { code?: string }).code = 'folder_not_found';
+    throw err;
+  }
+
+  const childFolders = await pool.query(
+    `SELECT 1 FROM client_google_drive_user_folders
+     WHERE tenant_id = $1 AND client_id = $2 AND parent_drive_folder_id = $3 AND trashed_at IS NULL
+     LIMIT 1`,
+    [params.tenantId, params.clientId, folderId],
+  );
+  if ((childFolders.rowCount ?? 0) > 0) {
+    const err = new Error('Só é possível eliminar pastas vazias. Remova primeiro o conteúdo.');
+    (err as Error & { code?: string }).code = 'folder_not_empty';
+    throw err;
+  }
+
+  const indexedFiles = await pool.query(
+    `SELECT 1 FROM client_google_drive_files
+     WHERE tenant_id = $1 AND client_id = $2 AND drive_folder_id = $3
+       AND source_module = $4 AND trashed_at IS NULL
+     LIMIT 1`,
+    [params.tenantId, params.clientId, folderId, CLIENT_GOOGLE_DRIVE_SOURCE_MODULE],
+  );
+  if ((indexedFiles.rowCount ?? 0) > 0) {
+    const err = new Error('Só é possível eliminar pastas vazias. Remova primeiro os arquivos.');
+    (err as Error & { code?: string }).code = 'folder_not_empty';
+    throw err;
+  }
+
+  let conn = await getDriveIntegrationSecrets(params.tenantId);
+  if (!conn) {
+    const err = new Error('Google Drive não está ligado para esta empresa.');
+    (err as Error & { code?: string }).code = 'drive_not_connected';
+    throw err;
+  }
+  conn = await refreshDriveTokenIfNeeded(conn);
+
+  const arquivosRoot = folders.folder_arquivos_id;
+  const allowed = await isFolderUnderClientArquivosTree(
+    conn.accessToken,
+    folderId,
+    arquivosRoot,
+    moduleFolderIds(folders),
+  );
+  if (!allowed) {
+    const err = new Error('Pasta de destino inválida.');
+    (err as Error & { code?: string }).code = 'folder_invalid';
+    throw err;
+  }
+
+  await trashDriveFile(conn.accessToken, folderId);
+
+  await pool.query(
+    `UPDATE client_google_drive_user_folders
+     SET trashed_at = now(), updated_at = now()
+     WHERE tenant_id = $1 AND client_id = $2 AND drive_folder_id = $3 AND trashed_at IS NULL`,
+    [params.tenantId, params.clientId, folderId],
+  );
 }

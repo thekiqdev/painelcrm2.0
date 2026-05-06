@@ -1,8 +1,17 @@
 import type { Request, Response } from 'express';
+import fs from 'fs/promises';
+import { constants as FsConstants } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { readBuffer, resolveAbsolutePath } from './mediaLocalStorageAdapter.js';
+import { exists, readBuffer, resolveAbsolutePath } from './mediaLocalStorageAdapter.js';
 import { verifyMediaSignature } from './mediaUrlSigner.js';
+import {
+  getMediaSigningSecretSource,
+  getMediaStorageRoot,
+  isMediaAssetsWriteEnabled,
+  isMediaAvatarWhatsappEnabled,
+  isMediaRawDiagnosticLogsEnabled,
+} from './mediaConfig.js';
 import { saveFromBuffer } from './mediaService.js';
 import type { AuthRequest } from '../../middleware/auth.js';
 import { pool } from '../../utils/db.js';
@@ -26,10 +35,27 @@ function decodeStorageKeyFromQuery(k: string): string {
   }
 }
 
+function prefixKey(storageKey: string, max = 48): string {
+  const t = String(storageKey || '');
+  return t.length <= max ? t : `${t.slice(0, max)}…`;
+}
+
+function logMediaRawDiagnostic(payload: Record<string, unknown>): void {
+  if (!isMediaRawDiagnosticLogsEnabled()) return;
+  console.log('[media-raw-request]', JSON.stringify(payload));
+}
+
 export async function getMediaRawBySignedKey(req: Request, res: Response): Promise<void> {
   const k = String(req.query.k || '').trim();
   const s = String(req.query.s || '').trim();
+  const root = getMediaStorageRoot();
   if (!k || !s) {
+    logMediaRawDiagnostic({
+      phase: 'missing_params',
+      hasK: Boolean(k),
+      hasS: Boolean(s),
+      storageRoot: root,
+    });
     res.status(400).type('text/plain').send('Parâmetros k e s são obrigatórios.');
     return;
   }
@@ -38,11 +64,24 @@ export async function getMediaRawBySignedKey(req: Request, res: Response): Promi
   try {
     storageKey = decodeStorageKeyFromQuery(k);
   } catch (e: unknown) {
+    logMediaRawDiagnostic({
+      phase: 'invalid_k',
+      storageRoot: root,
+      error: e instanceof Error ? e.message : 'decode_error',
+    });
     res.status(400).type('text/plain').send(e instanceof Error ? e.message : 'Parâmetro k inválido.');
     return;
   }
 
-  if (!verifyMediaSignature(storageKey, s)) {
+  const sigOk = verifyMediaSignature(storageKey, s);
+  if (!sigOk) {
+    logMediaRawDiagnostic({
+      phase: 'bad_signature',
+      storageKeyPrefix: prefixKey(storageKey),
+      signatureOk: false,
+      signingSecretSource: getMediaSigningSecretSource(),
+      storageRoot: root,
+    });
     res.status(400).type('text/plain').send('Assinatura inválida.');
     return;
   }
@@ -51,16 +90,47 @@ export async function getMediaRawBySignedKey(req: Request, res: Response): Promi
   try {
     absPath = resolveAbsolutePath(storageKey);
   } catch {
+    logMediaRawDiagnostic({
+      phase: 'bad_path',
+      storageKeyPrefix: prefixKey(storageKey),
+      signatureOk: true,
+      storageRoot: root,
+    });
     res.status(400).type('text/plain').send('Caminho inválido.');
     return;
   }
 
+  let fileExists = false;
+  try {
+    fileExists = await exists(storageKey);
+  } catch {
+    fileExists = false;
+  }
+
   try {
     const buf = await readBuffer(storageKey);
+    logMediaRawDiagnostic({
+      phase: 'read_ok',
+      storageKeyPrefix: prefixKey(storageKey),
+      signatureOk: true,
+      storageRoot: root,
+      absolutePathExists: fileExists,
+      contentType: contentTypeForFile(absPath),
+      sizeBytes: buf.length,
+    });
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.type(contentTypeForFile(absPath));
     res.send(buf);
-  } catch {
+  } catch (err: unknown) {
+    logMediaRawDiagnostic({
+      phase: 'read_fail',
+      storageKeyPrefix: prefixKey(storageKey),
+      signatureOk: true,
+      storageRoot: root,
+      absolutePathExists: fileExists,
+      absolutePathPrefix: prefixKey(absPath, 80),
+      error: err instanceof Error ? err.message : 'read_error',
+    });
     res.status(404).type('text/plain').send('Ficheiro não encontrado.');
   }
 }
@@ -97,10 +167,52 @@ export async function postSuperadminMediaTestSaveBuffer(req: AuthRequest, res: R
       pathBasename: path.basename(saved.storageKey),
       payloadSha256: createHash('sha256').update(payload).digest('hex'),
       writeAssetRecord,
+      resolvedMediaStorageRoot: getMediaStorageRoot(),
+      processCwd: process.cwd(),
+      signingSecretSource: getMediaSigningSecretSource(),
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Erro ao testar media save buffer.';
     res.status(500).json({ error: msg });
+  }
+}
+
+/** GET Super Admin — diagnóstico de storage (sem segredos). */
+export async function getSuperadminMediaStorageDiagnostics(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const root = getMediaStorageRoot();
+    let rootReadable = false;
+    let rootWritable = false;
+    try {
+      await fs.access(root, FsConstants.R_OK);
+      rootReadable = true;
+    } catch {
+      rootReadable = false;
+    }
+    try {
+      await fs.access(root, FsConstants.W_OK);
+      rootWritable = true;
+    } catch {
+      rootWritable = false;
+    }
+
+    res.json({
+      ok: true,
+      nodeEnv: process.env.NODE_ENV ?? null,
+      processCwd: process.cwd(),
+      resolvedMediaStorageRoot: root,
+      envMediaStorageRootRaw: process.env.MEDIA_STORAGE_ROOT?.trim() || null,
+      signingSecretSource: getMediaSigningSecretSource(),
+      mediaAvatarWhatsappEnabled: isMediaAvatarWhatsappEnabled(),
+      mediaAssetsWriteEnabled: isMediaAssetsWriteEnabled(),
+      storageRootReadable: rootReadable,
+      storageRootWritable: rootWritable,
+      note:
+        'URLs antigas podem ter sido assinadas com outro segredo; use test-save-buffer + GET relativeUrl para validar o pipeline atual.',
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Erro ao ler diagnóstico de media.';
+    res.status(500).json({ ok: false, error: msg });
   }
 }
 

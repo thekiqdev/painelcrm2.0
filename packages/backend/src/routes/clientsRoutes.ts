@@ -13,7 +13,13 @@ router.post('/:id/timeline/events', clientsController.createClientTimeline);
 router.post('/:id/google-drive/ensure-folders', clientsController.ensureClientGoogleDriveFolders);
 router.get('/:id/google-drive/browser', clientsController.getClientGoogleDriveBrowser);
 router.post('/:id/google-drive/folders', clientsController.createClientGoogleDriveUserFolderHandler);
+router.delete('/:id/google-drive/folders/:folderDriveId', clientsController.deleteClientGoogleDriveUserFolderHandler);
 router.get('/:id/google-drive/files', clientsController.getClientGoogleDriveFiles);
+router.post(
+  '/:id/google-drive/files/retry',
+  clientGoogleDriveFileUploadSingle,
+  clientsController.retryFailedClientGoogleDriveUploadHandler,
+);
 router.post('/:id/google-drive/files', clientGoogleDriveFileUploadSingle, clientsController.uploadClientGoogleDriveFileHandler);
 router.post('/:id/google-drive/move', clientsController.moveClientGoogleDriveFileHandler);
 router.delete('/:id/google-drive/files/:driveFileId', clientsController.deleteClientGoogleDriveFileHandler);

@@ -320,6 +320,8 @@ const order = [
   '209_client_google_drive_files.sql',
   /** Google Drive: pastas criadas pelo utilizador em Cliente > Arquivos */
   '212_client_google_drive_user_folders.sql',
+  /** Google Drive: upload_status / índice local em client_google_drive_files */
+  '213_client_google_drive_files_upload_status.sql',
   '210_uazapi_webhook_instance_secret_hardening.sql',
   '211_chat_conversations_attendance_status_default_fix.sql',
   'create-admin-user.sql',
