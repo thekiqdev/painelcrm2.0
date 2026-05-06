@@ -347,6 +347,114 @@ class ApiClient {
   async delete<T>(endpoint: string): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, { method: 'DELETE' });
   }
+
+  /**
+   * POST multipart com progresso real de upload (XMLHttpRequest).
+   * Usado para envio de ficheiros grandes com feedback na UI.
+   */
+  postFormDataWithProgress<T>(
+    endpoint: string,
+    formData: FormData,
+    options?: {
+      onUploadProgress?: (loaded: number, total: number) => void;
+      /** Chamado quando o envio em bytes terminou (antes da resposta do servidor). */
+      onUploadBytesFinished?: () => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<ApiResponse<T>> {
+    const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = `${this.baseURL}${path}`;
+
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      let settled = false;
+
+      const finish = (result: ApiResponse<T>) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+
+      const onAbort = () => {
+        xhr.abort();
+      };
+
+      if (options?.signal) {
+        if (options.signal.aborted) {
+          finish({ error: 'Pedido cancelado.' });
+          return;
+        }
+        options.signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      xhr.open('POST', url);
+      if (this.token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+      }
+      xhr.setRequestHeader('Accept', 'application/json');
+
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) {
+          options?.onUploadProgress?.(ev.loaded, ev.total);
+        }
+      };
+
+      xhr.upload.onload = () => {
+        options?.onUploadBytesFinished?.();
+      };
+
+      xhr.onload = () => {
+        if (options?.signal) {
+          options.signal.removeEventListener('abort', onAbort);
+        }
+        if (xhr.status === 402) {
+          redirectIfPaymentRequiredFromApi();
+        }
+
+        let body: unknown;
+        const ct = xhr.getResponseHeader('content-type');
+        const raw = xhr.responseText || '';
+        if (ct?.includes('application/json') && raw) {
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            body = { message: raw };
+          }
+        } else {
+          body = raw ? { message: raw } : {};
+        }
+
+        if (xhr.status === 0) {
+          finish({ error: 'Pedido cancelado.' });
+          return;
+        }
+
+        if (!xhr.ok) {
+          const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
+          finish({
+            error:
+              (typeof record.error === 'string' && record.error) ||
+              (typeof record.message === 'string' && record.message) ||
+              `Erro HTTP ${xhr.status}`,
+            code: typeof record.code === 'string' ? record.code : undefined,
+            details: { status: xhr.status, url, ...record },
+          });
+          return;
+        }
+
+        finish({ data: body as T });
+      };
+
+      xhr.onerror = () => {
+        if (options?.signal) {
+          options.signal.removeEventListener('abort', onAbort);
+        }
+        finish({ error: 'Erro de rede', details: { url } });
+      };
+
+      xhr.send(formData);
+    });
+  }
 }
 
 export const apiClient = new ApiClient(API_URL);

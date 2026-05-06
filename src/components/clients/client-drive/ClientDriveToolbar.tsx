@@ -28,7 +28,6 @@ type Props = {
   canGoBack: boolean;
   onNewFolder: () => void;
   onUploadClick: () => void;
-  isUploading: boolean;
   driveFolderUrl: string | null;
   search: string;
   onSearchChange: (v: string) => void;
@@ -44,7 +43,6 @@ export function ClientDriveToolbar({
   canGoBack,
   onNewFolder,
   onUploadClick,
-  isUploading,
   driveFolderUrl,
   search,
   onSearchChange,
@@ -101,19 +99,8 @@ export function ClientDriveToolbar({
             <FolderPlus className="h-4 w-4" aria-hidden />
             Nova pasta
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="gap-1.5"
-            onClick={onUploadClick}
-            disabled={!canEdit || isUploading}
-          >
-            {isUploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            ) : (
-              <Upload className="h-4 w-4" aria-hidden />
-            )}
+          <Button type="button" size="sm" variant="secondary" className="gap-1.5" onClick={onUploadClick} disabled={!canEdit}>
+            <Upload className="h-4 w-4" aria-hidden />
             Enviar arquivo
           </Button>
         </div>

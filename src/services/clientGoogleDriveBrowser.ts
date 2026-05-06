@@ -1,5 +1,13 @@
 import { apiClient } from '@/integrations/api/client';
 
+/** Upload otimista na grelha (apenas UI local). */
+export type ClientDriveOptimisticUploadMeta = {
+  temp_id: string;
+  phase: 'uploading' | 'processing' | 'error';
+  progress: number;
+  error_message?: string;
+};
+
 export type ClientGoogleDriveBrowserItem = {
   id: string;
   type: 'folder' | 'file';
@@ -9,6 +17,7 @@ export type ClientGoogleDriveBrowserItem = {
   web_view_link?: string | null;
   created_at?: string;
   modified_at?: string;
+  optimistic_upload?: ClientDriveOptimisticUploadMeta;
 };
 
 export type ClientGoogleDriveBrowserBreadcrumb = { name: string; folder_id: string };

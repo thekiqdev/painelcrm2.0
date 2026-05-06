@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
@@ -30,15 +30,15 @@ import {
   getClientGoogleDriveBrowser,
   moveClientGoogleDriveItem,
   type ClientGoogleDriveBrowserItem,
+  type ClientGoogleDriveBrowserPayload,
 } from '@/services/clientGoogleDriveBrowser';
-import { uploadClientGoogleDriveFile } from '@/services/clientGoogleDriveFiles';
 import { cn } from '@/lib/utils';
 import { ClientDriveBreadcrumbDrop, CRUMB_DROP_PREFIX } from './ClientDriveBreadcrumbDrop';
 import { ClientDriveCreateFolderDialog } from './ClientDriveCreateFolderDialog';
 import { ClientDriveGrid, DND_FILE_PREFIX, DND_FOLD_PREFIX } from './ClientDriveGrid';
 import { ClientDriveMoveDialog, type MoveDestinationOption } from './ClientDriveMoveDialog';
 import { ClientDriveToolbar, type ClientDriveSort } from './ClientDriveToolbar';
-import { ClientDriveUploadDialog } from './ClientDriveUploadDialog';
+import { useClientDriveUploadQueue } from './useClientDriveUploadQueue';
 
 type Props = {
   clientId: string;
@@ -68,7 +68,7 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<ClientDriveSort>('name');
   const [createOpen, setCreateOpen] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [moveDialogItem, setMoveDialogItem] = useState<ClientGoogleDriveBrowserItem | null>(null);
@@ -89,20 +89,45 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
     await queryClient.invalidateQueries({ queryKey: ['client-google-drive-browser', clientId] });
   };
 
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const parent = browserQuery.data?.current_folder_id;
-      return uploadClientGoogleDriveFile(clientId, file, {
-        parentFolderId: parent ?? undefined,
-      });
+  const getUploadContext = useCallback(() => {
+    const parent_folder_id = browserQuery.data?.current_folder_id;
+    const cache_key = folderId ?? 'root';
+    return { parent_folder_id, cache_key };
+  }, [browserQuery.data?.current_folder_id, folderId]);
+
+  const uploadQueue = useClientDriveUploadQueue({
+    clientId,
+    maxMb: MAX_MB,
+    getUploadContext,
+    onUploaded: (item, cacheKey) => {
+      toast.success('Arquivo enviado com sucesso.', { duration: 2600 });
+      queryClient.setQueryData(
+        ['client-google-drive-browser', clientId, cacheKey],
+        (prev: ClientGoogleDriveBrowserPayload | undefined) => {
+          if (!prev) return prev;
+          if (prev.items.some((i) => i.id === item.id)) return prev;
+          return { ...prev, items: [item, ...prev.items] };
+        },
+      );
     },
-    onSuccess: async () => {
-      toast.success('Arquivo enviado com sucesso.');
-      setUploadOpen(false);
-      await invalidateBrowser();
-    },
-    onError: (e: Error) => toast.error(e.message || 'Erro ao enviar arquivo'),
   });
+
+  const mergedItems = useMemo(() => {
+    return [...uploadQueue.optimisticBrowserItems, ...(browserQuery.data?.items ?? [])];
+  }, [uploadQueue.optimisticBrowserItems, browserQuery.data?.items]);
+
+  const handleFilesSelected = (files: FileList | null) => {
+    if (!files?.length || !canUpload) return;
+    const ok: File[] = [];
+    for (const f of Array.from(files)) {
+      if (f.size > MAX_MB * 1024 * 1024) {
+        toast.error(`«${f.name}» excede o máximo de ${MAX_MB} MB.`);
+        continue;
+      }
+      ok.push(f);
+    }
+    if (ok.length > 0) uploadQueue.queueFiles(ok);
+  };
 
   const createMutation = useMutation({
     mutationFn: (name: string) =>
@@ -169,15 +194,6 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
     return opts;
   }, [browserQuery.data, moveDialogItem]);
 
-  const onPickFile = (f: File | null) => {
-    if (!f) return;
-    if (f.size > MAX_MB * 1024 * 1024) {
-      toast.error(`Arquivo muito grande. Máximo ${MAX_MB} MB.`);
-      return;
-    }
-    void uploadMutation.mutateAsync(f);
-  };
-
   const goBack = () => {
     const data = browserQuery.data;
     if (!data?.parent_folder_id) return;
@@ -210,9 +226,9 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
   };
 
   const activeDragItem = useMemo(() => {
-    if (!activeDragId || !browserQuery.data) return null;
-    return browserQuery.data.items.find((i) => i.type === 'file' && i.id === activeDragId) ?? null;
-  }, [activeDragId, browserQuery.data]);
+    if (!activeDragId) return null;
+    return mergedItems.find((i) => i.type === 'file' && i.id === activeDragId && !i.optimistic_upload) ?? null;
+  }, [activeDragId, mergedItems]);
 
   const errCode = browserQuery.error
     ? (browserQuery.error as Error & { code?: string }).code
@@ -265,6 +281,20 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
 
           {browserQuery.data ? (
             <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept={ACCEPT_EXT}
+                aria-hidden
+                tabIndex={-1}
+                onChange={(e) => {
+                  handleFilesSelected(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+
               <div className="rounded-lg border border-border/60 bg-muted/10 px-3 py-2 sm:px-4">
                 <ClientDriveBreadcrumbDrop
                   segments={browserQuery.data.breadcrumb}
@@ -280,8 +310,7 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
                 onBack={goBack}
                 canGoBack={canGoBack}
                 onNewFolder={() => setCreateOpen(true)}
-                onUploadClick={() => setUploadOpen(true)}
-                isUploading={uploadMutation.isPending}
+                onUploadClick={() => fileInputRef.current?.click()}
                 driveFolderUrl={browserQuery.data.drive_folder_view_url}
                 search={search}
                 onSearchChange={setSearch}
@@ -296,7 +325,7 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
               ) : null}
 
               <ClientDriveGrid
-                items={browserQuery.data.items}
+                items={mergedItems}
                 sort={sort}
                 search={search}
                 canEdit={canUpload}
@@ -306,6 +335,9 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
                 onSelectItem={(item) => setSelectedId(item.id)}
                 onMoveMenu={(item) => setMoveDialogItem(item)}
                 onDeleteMenu={(item) => setDeleteItem(item)}
+                onRetryOptimisticUpload={(tid) => uploadQueue.retry(tid)}
+                onRemoveOptimisticUpload={(tid) => uploadQueue.remove(tid)}
+                onCancelOptimisticUpload={(tid) => uploadQueue.cancel(tid)}
               />
 
               <DragOverlay dropAnimation={null}>
@@ -331,15 +363,6 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
         onSubmit={async (name) => {
           await createMutation.mutateAsync(name);
         }}
-      />
-
-      <ClientDriveUploadDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        onFileSelected={onPickFile}
-        isUploading={uploadMutation.isPending}
-        maxMb={MAX_MB}
-        accept={ACCEPT_EXT}
       />
 
       <ClientDriveMoveDialog

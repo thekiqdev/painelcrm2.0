@@ -20,6 +20,9 @@ type Props = {
   onSelectItem: (item: ClientGoogleDriveBrowserItem) => void;
   onMoveMenu: (item: ClientGoogleDriveBrowserItem) => void;
   onDeleteMenu: (item: ClientGoogleDriveBrowserItem) => void;
+  onRetryOptimisticUpload?: (tempId: string) => void;
+  onRemoveOptimisticUpload?: (tempId: string) => void;
+  onCancelOptimisticUpload?: (tempId: string) => void;
 };
 
 function GridItem({
@@ -31,6 +34,9 @@ function GridItem({
   onSelectItem,
   onMoveMenu,
   onDeleteMenu,
+  onRetryOptimisticUpload,
+  onRemoveOptimisticUpload,
+  onCancelOptimisticUpload,
 }: {
   item: ClientGoogleDriveBrowserItem;
   canEdit: boolean;
@@ -40,8 +46,35 @@ function GridItem({
   onSelectItem: (item: ClientGoogleDriveBrowserItem) => void;
   onMoveMenu: (item: ClientGoogleDriveBrowserItem) => void;
   onDeleteMenu: (item: ClientGoogleDriveBrowserItem) => void;
+  onRetryOptimisticUpload?: (tempId: string) => void;
+  onRemoveOptimisticUpload?: (tempId: string) => void;
+  onCancelOptimisticUpload?: (tempId: string) => void;
 }) {
   const isFolder = item.type === 'folder';
+  const ox = item.optimistic_upload;
+
+  if (!isFolder && ox) {
+    return (
+      <ClientDriveDesktopTile
+        item={item}
+        selected={selected}
+        canEdit={canEdit}
+        isDragging={false}
+        isOverDrop={false}
+        isMoving={false}
+        onActivate={() => {}}
+        openUrl={null}
+        optimisticHandlers={{
+          onRetry: () => onRetryOptimisticUpload?.(ox.temp_id),
+          onRemove: () => onRemoveOptimisticUpload?.(ox.temp_id),
+          onCancel:
+            ox.phase === 'uploading' || ox.phase === 'processing'
+              ? () => onCancelOptimisticUpload?.(ox.temp_id)
+              : undefined,
+        }}
+      />
+    );
+  }
 
   const draggable = useDraggable({
     id: `${DND_FILE_PREFIX}${item.id}`,
@@ -104,6 +137,9 @@ export function ClientDriveGrid({
   onSelectItem,
   onMoveMenu,
   onDeleteMenu,
+  onRetryOptimisticUpload,
+  onRemoveOptimisticUpload,
+  onCancelOptimisticUpload,
 }: Props) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -148,6 +184,9 @@ export function ClientDriveGrid({
           onSelectItem={onSelectItem}
           onMoveMenu={onMoveMenu}
           onDeleteMenu={onDeleteMenu}
+          onRetryOptimisticUpload={onRetryOptimisticUpload}
+          onRemoveOptimisticUpload={onRemoveOptimisticUpload}
+          onCancelOptimisticUpload={onCancelOptimisticUpload}
         />
       ))}
     </div>

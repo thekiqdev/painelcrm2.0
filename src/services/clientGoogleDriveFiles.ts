@@ -1,4 +1,5 @@
 import { apiClient } from '@/integrations/api/client';
+import type { ClientGoogleDriveBrowserItem } from '@/services/clientGoogleDriveBrowser';
 
 export type ClientGoogleDriveFile = {
   id: string;
@@ -57,4 +58,51 @@ export async function uploadClientGoogleDriveFile(
   if (res.error) throw new Error(res.error);
   if (!res.data) throw new Error('Resposta inválida');
   return res.data;
+}
+
+export async function uploadClientGoogleDriveFileWithProgress(
+  clientId: string,
+  file: File,
+  options: {
+    parentFolderId?: string | null;
+    onProgress?: (percent: number) => void;
+    onUploadBytesFinished?: () => void;
+    signal?: AbortSignal;
+  },
+): Promise<UploadClientGoogleDriveFileResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  if (options.parentFolderId && options.parentFolderId.trim() !== '') {
+    form.append('parent_folder_id', options.parentFolderId.trim());
+  }
+  const res = await apiClient.postFormDataWithProgress<UploadClientGoogleDriveFileResponse>(
+    `/api/clients/${encodeURIComponent(clientId)}/google-drive/files`,
+    form,
+    {
+      onUploadProgress: (loaded, total) => {
+        if (total > 0) {
+          const pct = Math.min(99, Math.round((loaded / total) * 100));
+          options.onProgress?.(pct);
+        }
+      },
+      onUploadBytesFinished: options.onUploadBytesFinished,
+      signal: options.signal,
+    },
+  );
+  if (res.error) throw new Error(res.error);
+  if (!res.data) throw new Error('Resposta inválida');
+  return res.data;
+}
+
+export function mapUploadResponseToBrowserItem(res: UploadClientGoogleDriveFileResponse): ClientGoogleDriveBrowserItem {
+  return {
+    id: res.drive_file_id,
+    type: 'file',
+    name: res.name,
+    mime_type: res.mime_type,
+    size_bytes: res.size_bytes,
+    web_view_link: res.web_view_link,
+    created_at: res.created_at,
+    modified_at: res.created_at,
+  };
 }
