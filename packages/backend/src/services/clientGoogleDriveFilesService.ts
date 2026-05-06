@@ -6,8 +6,11 @@ import {
   type ClientGoogleDriveFolderRow,
 } from './clientGoogleDriveFoldersService.js';
 import {
+  getDriveFileMetadata,
   isFolderUnderClientArquivosTree,
+  moveDriveFile,
   refreshDriveTokenIfNeeded,
+  trashDriveFile,
   uploadFileToDrive,
 } from './googleDriveService.js';
 
@@ -144,4 +147,142 @@ export async function uploadClientGoogleDriveFile(params: {
   );
 
   return r.rows[0]!;
+}
+
+async function loadTrackedClientFileRow(params: {
+  tenantId: string;
+  clientId: string;
+  driveFileId: string;
+}): Promise<ClientGoogleDriveFileRow | null> {
+  const r = await pool.query<ClientGoogleDriveFileRow>(
+    `SELECT id, tenant_id, client_id, drive_file_id, drive_folder_id, name, mime_type, size_bytes,
+            web_view_link, web_content_link, source_module, created_by_user_id,
+            created_at::text AS created_at, updated_at::text AS updated_at, trashed_at::text AS trashed_at
+     FROM client_google_drive_files
+     WHERE tenant_id = $1 AND client_id = $2 AND drive_file_id = $3
+       AND source_module = $4 AND trashed_at IS NULL
+     LIMIT 1`,
+    [params.tenantId, params.clientId, params.driveFileId, CLIENT_GOOGLE_DRIVE_SOURCE_MODULE],
+  );
+  return r.rows[0] ?? null;
+}
+
+export async function moveClientGoogleDriveFile(params: {
+  tenantId: string;
+  clientId: string;
+  driveFileId: string;
+  destinationFolderId: string;
+}): Promise<ClientGoogleDriveFileRow> {
+  await ensureClientGoogleDriveFolderStructure(params.tenantId, params.clientId);
+  const folders = await getClientGoogleDriveFolders(params.tenantId, params.clientId);
+  if (!folders) {
+    const err = new Error('Estrutura de pastas do cliente indisponível.');
+    (err as Error & { code?: string }).code = 'folders_unavailable';
+    throw err;
+  }
+
+  const dest = params.destinationFolderId.trim();
+  if (!dest) {
+    const err = new Error('Pasta de destino inválida.');
+    (err as Error & { code?: string }).code = 'folder_invalid';
+    throw err;
+  }
+
+  if (forbiddenUploadParents(folders).has(dest)) {
+    const err = new Error('Não é possível mover para esta pasta.');
+    (err as Error & { code?: string }).code = 'folder_forbidden';
+    throw err;
+  }
+
+  const row = await loadTrackedClientFileRow({
+    tenantId: params.tenantId,
+    clientId: params.clientId,
+    driveFileId: params.driveFileId,
+  });
+  if (!row) {
+    const err = new Error('Arquivo não encontrado ou não gerido por esta área.');
+    (err as Error & { code?: string }).code = 'file_not_tracked';
+    throw err;
+  }
+
+  let conn = await getDriveIntegrationSecrets(params.tenantId);
+  if (!conn) {
+    const err = new Error('Google Drive não está ligado para esta empresa.');
+    (err as Error & { code?: string }).code = 'drive_not_connected';
+    throw err;
+  }
+  conn = await refreshDriveTokenIfNeeded(conn);
+
+  const arquivosRoot = folders.folder_arquivos_id;
+  const allowedDest = await isFolderUnderClientArquivosTree(
+    conn.accessToken,
+    dest,
+    arquivosRoot,
+    moduleFolderIds(folders),
+  );
+  if (!allowedDest) {
+    const err = new Error('Pasta de destino inválida.');
+    (err as Error & { code?: string }).code = 'folder_invalid';
+    throw err;
+  }
+
+  const destMeta = await getDriveFileMetadata(conn.accessToken, dest);
+  if (destMeta.mimeType !== 'application/vnd.google-apps.folder') {
+    const err = new Error('O destino não é uma pasta.');
+    (err as Error & { code?: string }).code = 'folder_invalid';
+    throw err;
+  }
+
+  const meta = await getDriveFileMetadata(conn.accessToken, params.driveFileId);
+  const parents = meta.parents;
+  const removeParents =
+    parents?.length ? parents[0]! : row.drive_folder_id;
+  if (removeParents === dest) {
+    return row;
+  }
+
+  await moveDriveFile(conn.accessToken, params.driveFileId, removeParents, dest);
+
+  const ur = await pool.query<ClientGoogleDriveFileRow>(
+    `UPDATE client_google_drive_files
+     SET drive_folder_id = $1, updated_at = now()
+     WHERE id = $2
+     RETURNING id, tenant_id, client_id, drive_file_id, drive_folder_id, name, mime_type, size_bytes,
+               web_view_link, web_content_link, source_module, created_by_user_id,
+               created_at::text AS created_at, updated_at::text AS updated_at, trashed_at::text AS trashed_at`,
+    [dest, row.id],
+  );
+  return ur.rows[0]!;
+}
+
+export async function deleteClientGoogleDriveFile(params: {
+  tenantId: string;
+  clientId: string;
+  driveFileId: string;
+}): Promise<void> {
+  const row = await loadTrackedClientFileRow({
+    tenantId: params.tenantId,
+    clientId: params.clientId,
+    driveFileId: params.driveFileId,
+  });
+  if (!row) {
+    const err = new Error('Arquivo não encontrado ou não gerido por esta área.');
+    (err as Error & { code?: string }).code = 'file_not_tracked';
+    throw err;
+  }
+
+  let conn = await getDriveIntegrationSecrets(params.tenantId);
+  if (!conn) {
+    const err = new Error('Google Drive não está ligado para esta empresa.');
+    (err as Error & { code?: string }).code = 'drive_not_connected';
+    throw err;
+  }
+  conn = await refreshDriveTokenIfNeeded(conn);
+
+  await trashDriveFile(conn.accessToken, params.driveFileId);
+
+  await pool.query(
+    `UPDATE client_google_drive_files SET trashed_at = now(), updated_at = now() WHERE id = $1`,
+    [row.id],
+  );
 }

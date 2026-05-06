@@ -14,6 +14,8 @@ import { createClientGoogleDriveUserSubfolder } from '../services/clientGoogleDr
 import {
   listClientGoogleDriveFiles,
   uploadClientGoogleDriveFile,
+  moveClientGoogleDriveFile,
+  deleteClientGoogleDriveFile,
   CLIENT_GOOGLE_DRIVE_SOURCE_MODULE,
 } from '../services/clientGoogleDriveFilesService.js';
 
@@ -547,6 +549,111 @@ export async function uploadClientGoogleDriveFileHandler(req: AuthRequest, res: 
       return;
     }
     console.error('[clients] upload google drive file', error);
+    res.status(500).json({ error: msg });
+  }
+}
+
+const moveClientGoogleDriveBodySchema = z.object({
+  file_id: z.string().min(1),
+  destination_folder_id: z.string().min(1),
+});
+
+export async function moveClientGoogleDriveFileHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const ownerId = await clientOwnerForTenant(clientId, tenantId);
+    if (!ownerId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'edit', { ownerId, assigneeId: null }, req);
+    const parsed = moveClientGoogleDriveBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Payload inválido.', details: parsed.error.flatten() });
+      return;
+    }
+    const updated = await moveClientGoogleDriveFile({
+      tenantId,
+      clientId,
+      driveFileId: parsed.data.file_id.trim(),
+      destinationFolderId: parsed.data.destination_folder_id.trim(),
+    });
+    res.json({
+      id: updated.id,
+      drive_file_id: updated.drive_file_id,
+      drive_folder_id: updated.drive_folder_id,
+      name: updated.name,
+      updated_at: updated.updated_at,
+    });
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao mover arquivo';
+    if (code === 'file_not_tracked') {
+      res.status(404).json({ error: msg, code });
+      return;
+    }
+    if (
+      code === 'drive_not_connected' ||
+      code === 'folders_unavailable' ||
+      code === 'folder_forbidden' ||
+      code === 'folder_invalid'
+    ) {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] move google drive file', error);
+    res.status(500).json({ error: msg });
+  }
+}
+
+export async function deleteClientGoogleDriveFileHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId, driveFileId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const ownerId = await clientOwnerForTenant(clientId, tenantId);
+    if (!ownerId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_CLIENTS, 'edit', { ownerId, assigneeId: null }, req);
+    const fid = decodeURIComponent(driveFileId || '').trim();
+    if (!fid) {
+      res.status(400).json({ error: 'Identificador do arquivo inválido.' });
+      return;
+    }
+    await deleteClientGoogleDriveFile({ tenantId, clientId, driveFileId: fid });
+    res.status(204).send();
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao excluir arquivo';
+    if (code === 'file_not_tracked') {
+      res.status(404).json({ error: msg, code });
+      return;
+    }
+    if (code === 'drive_not_connected') {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[clients] delete google drive file', error);
     res.status(500).json({ error: msg });
   }
 }

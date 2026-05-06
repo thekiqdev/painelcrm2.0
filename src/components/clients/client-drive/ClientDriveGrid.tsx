@@ -1,17 +1,110 @@
 import React, { useMemo } from 'react';
+import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { FolderOpen } from 'lucide-react';
 import type { ClientGoogleDriveBrowserItem } from '@/services/clientGoogleDriveBrowser';
-import { ClientDriveItemCard } from './ClientDriveItemCard';
+import { ClientDriveDesktopTile } from './ClientDriveDesktopTile';
 import type { ClientDriveSort } from './ClientDriveToolbar';
+
+export const DND_FILE_PREFIX = 'FILE|';
+export const DND_FOLD_PREFIX = 'FOLD|';
 
 type Props = {
   items: ClientGoogleDriveBrowserItem[];
   sort: ClientDriveSort;
   search: string;
+  canEdit: boolean;
+  selectedId: string | null;
+  /** drive file id em movimento */
+  movingFileId: string | null;
   onOpenFolder: (id: string) => void;
+  onSelectItem: (item: ClientGoogleDriveBrowserItem) => void;
+  onMoveMenu: (item: ClientGoogleDriveBrowserItem) => void;
+  onDeleteMenu: (item: ClientGoogleDriveBrowserItem) => void;
 };
 
-export function ClientDriveGrid({ items, sort, search, onOpenFolder }: Props) {
+function GridItem({
+  item,
+  canEdit,
+  selected,
+  movingFileId,
+  onOpenFolder,
+  onSelectItem,
+  onMoveMenu,
+  onDeleteMenu,
+}: {
+  item: ClientGoogleDriveBrowserItem;
+  canEdit: boolean;
+  selected: boolean;
+  movingFileId: string | null;
+  onOpenFolder: (id: string) => void;
+  onSelectItem: (item: ClientGoogleDriveBrowserItem) => void;
+  onMoveMenu: (item: ClientGoogleDriveBrowserItem) => void;
+  onDeleteMenu: (item: ClientGoogleDriveBrowserItem) => void;
+}) {
+  const isFolder = item.type === 'folder';
+
+  const draggable = useDraggable({
+    id: `${DND_FILE_PREFIX}${item.id}`,
+    disabled: !canEdit || isFolder,
+    data: { kind: 'file' as const, driveFileId: item.id },
+  });
+
+  const droppable = useDroppable({
+    id: `${DND_FOLD_PREFIX}${item.id}`,
+    disabled: !canEdit || !isFolder,
+    data: { kind: 'folder' as const, folderId: item.id },
+  });
+
+  const isMovingFile = !isFolder && movingFileId === item.id;
+
+  if (isFolder) {
+    return (
+      <ClientDriveDesktopTile
+        item={item}
+        selected={selected}
+        canEdit={canEdit}
+        isDragging={false}
+        isOverDrop={droppable.isOver}
+        isMoving={false}
+        setDropRef={droppable.setNodeRef}
+        onActivate={() => onOpenFolder(item.id)}
+        onOpenFolder={() => onOpenFolder(item.id)}
+        openUrl={null}
+      />
+    );
+  }
+
+  return (
+    <ClientDriveDesktopTile
+      item={item}
+      selected={selected}
+      canEdit={canEdit}
+      isDragging={draggable.isDragging}
+      isOverDrop={false}
+      isMoving={Boolean(isMovingFile)}
+      dragAttributes={draggable.attributes}
+      dragListeners={draggable.listeners}
+      setDragRef={draggable.setNodeRef}
+      onActivate={() => onSelectItem(item)}
+      openUrl={item.web_view_link || undefined}
+      onMove={canEdit ? () => onMoveMenu(item) : undefined}
+      onDelete={canEdit ? () => onDeleteMenu(item) : undefined}
+    />
+  );
+}
+
+export function ClientDriveGrid({
+  items,
+  sort,
+  search,
+  canEdit,
+  selectedId,
+  movingFileId,
+  onOpenFolder,
+  onSelectItem,
+  onMoveMenu,
+  onDeleteMenu,
+}: Props) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = q ? items.filter((i) => i.name.toLowerCase().includes(q)) : [...items];
@@ -43,9 +136,19 @@ export function ClientDriveGrid({ items, sort, search, onOpenFolder }: Props) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
       {filtered.map((item) => (
-        <ClientDriveItemCard key={`${item.type}-${item.id}`} item={item} onOpenFolder={onOpenFolder} />
+        <GridItem
+          key={`${item.type}-${item.id}`}
+          item={item}
+          canEdit={canEdit}
+          selected={selectedId === item.id}
+          movingFileId={movingFileId}
+          onOpenFolder={onOpenFolder}
+          onSelectItem={onSelectItem}
+          onMoveMenu={onMoveMenu}
+          onDeleteMenu={onDeleteMenu}
+        />
       ))}
     </div>
   );

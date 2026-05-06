@@ -1,19 +1,42 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderOpen, Loader2 } from 'lucide-react';
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import { FolderOpen, GripVertical, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from '@/components/ui/sonner';
 import {
   createClientGoogleDriveUserFolder,
+  deleteClientGoogleDriveItem,
   getClientGoogleDriveBrowser,
+  moveClientGoogleDriveItem,
+  type ClientGoogleDriveBrowserItem,
 } from '@/services/clientGoogleDriveBrowser';
 import { uploadClientGoogleDriveFile } from '@/services/clientGoogleDriveFiles';
-import { ClientDriveBreadcrumb } from './ClientDriveBreadcrumb';
+import { cn } from '@/lib/utils';
+import { ClientDriveBreadcrumbDrop, CRUMB_DROP_PREFIX } from './ClientDriveBreadcrumbDrop';
 import { ClientDriveCreateFolderDialog } from './ClientDriveCreateFolderDialog';
-import { ClientDriveGrid } from './ClientDriveGrid';
+import { ClientDriveGrid, DND_FILE_PREFIX, DND_FOLD_PREFIX } from './ClientDriveGrid';
+import { ClientDriveMoveDialog, type MoveDestinationOption } from './ClientDriveMoveDialog';
 import { ClientDriveToolbar, type ClientDriveSort } from './ClientDriveToolbar';
 import { ClientDriveUploadDialog } from './ClientDriveUploadDialog';
 
@@ -26,6 +49,19 @@ type Props = {
 const MAX_MB = 20;
 const ACCEPT_EXT = '.pdf,.jpg,.jpeg,.png,.webp,.gif,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip';
 
+function parseDragFileId(activeId: string | number): string | null {
+  const s = String(activeId);
+  if (!s.startsWith(DND_FILE_PREFIX)) return null;
+  return s.slice(DND_FILE_PREFIX.length);
+}
+
+function parseDropFolderId(overId: string | number): string | null {
+  const s = String(overId);
+  if (s.startsWith(DND_FOLD_PREFIX)) return s.slice(DND_FOLD_PREFIX.length);
+  if (s.startsWith(CRUMB_DROP_PREFIX)) return s.slice(CRUMB_DROP_PREFIX.length);
+  return null;
+}
+
 export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload }: Props) {
   const queryClient = useQueryClient();
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -33,6 +69,16 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
   const [sort, setSort] = useState<ClientDriveSort>('name');
   const [createOpen, setCreateOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [moveDialogItem, setMoveDialogItem] = useState<ClientGoogleDriveBrowserItem | null>(null);
+  const [deleteItem, setDeleteItem] = useState<ClientGoogleDriveBrowserItem | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 10 },
+    }),
+  );
 
   const browserQuery = useQuery({
     queryKey: ['client-google-drive-browser', clientId, folderId ?? 'root'],
@@ -72,6 +118,57 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
     onError: (e: Error) => toast.error(e.message || 'Erro ao criar pasta'),
   });
 
+  const moveMutation = useMutation({
+    mutationFn: async (p: { fileId: string; destinationFolderId: string }) => {
+      await moveClientGoogleDriveItem(clientId, {
+        file_id: p.fileId,
+        destination_folder_id: p.destinationFolderId,
+      });
+    },
+    onSuccess: async () => {
+      toast.success('Arquivo movido.');
+      setActiveDragId(null);
+      await invalidateBrowser();
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao mover arquivo'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (driveFileId: string) => {
+      await deleteClientGoogleDriveItem(clientId, driveFileId);
+    },
+    onSuccess: async () => {
+      toast.success('Arquivo movido para a lixeira do Google Drive.');
+      setDeleteItem(null);
+      setSelectedId(null);
+      await invalidateBrowser();
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao excluir arquivo'),
+  });
+
+  const movingFileId = moveMutation.isPending && moveMutation.variables ? moveMutation.variables.fileId : null;
+
+  const moveDialogOptions: MoveDestinationOption[] = useMemo(() => {
+    const data = browserQuery.data;
+    if (!data || !moveDialogItem || moveDialogItem.type !== 'file') return [];
+    const cur = data.current_folder_id;
+    const opts: MoveDestinationOption[] = [];
+    const seen = new Set<string>();
+    for (const seg of data.breadcrumb) {
+      if (seg.folder_id === cur) continue;
+      if (seen.has(seg.folder_id)) continue;
+      seen.add(seg.folder_id);
+      opts.push({ id: seg.folder_id, label: seg.name });
+    }
+    for (const it of data.items) {
+      if (it.type !== 'folder') continue;
+      if (seen.has(it.id)) continue;
+      seen.add(it.id);
+      opts.push({ id: it.id, label: it.name });
+    }
+    return opts;
+  }, [browserQuery.data, moveDialogItem]);
+
   const onPickFile = (f: File | null) => {
     if (!f) return;
     if (f.size > MAX_MB * 1024 * 1024) {
@@ -94,6 +191,28 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
     if (!data) return false;
     return data.current_folder_id !== data.breadcrumb[0]?.folder_id;
   }, [browserQuery.data]);
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const fid = parseDragFileId(event.active.id);
+    setActiveDragId(fid);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveDragId(null);
+    if (!over || !canUpload) return;
+    const fileId = parseDragFileId(active.id);
+    const destFolderId = parseDropFolderId(over.id);
+    if (!fileId || !destFolderId) return;
+    const cur = browserQuery.data?.current_folder_id;
+    if (!cur || destFolderId === cur) return;
+    void moveMutation.mutateAsync({ fileId, destinationFolderId: destFolderId });
+  };
+
+  const activeDragItem = useMemo(() => {
+    if (!activeDragId || !browserQuery.data) return null;
+    return browserQuery.data.items.find((i) => i.type === 'file' && i.id === activeDragId) ?? null;
+  }, [activeDragId, browserQuery.data]);
 
   const errCode = browserQuery.error
     ? (browserQuery.error as Error & { code?: string }).code
@@ -145,11 +264,12 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
           ) : null}
 
           {browserQuery.data ? (
-            <>
+            <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
               <div className="rounded-lg border border-border/60 bg-muted/10 px-3 py-2 sm:px-4">
-                <ClientDriveBreadcrumb
+                <ClientDriveBreadcrumbDrop
                   segments={browserQuery.data.breadcrumb}
                   onNavigate={(id) => setFolderId(id)}
+                  canDrop={canUpload}
                 />
               </div>
 
@@ -170,16 +290,37 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
               />
 
               {!canUpload ? (
-                <p className="text-xs text-muted-foreground">Sem permissão de edição para criar pastas ou enviar ficheiros.</p>
+                <p className="text-xs text-muted-foreground">
+                  Sem permissão de edição para criar pastas ou enviar ficheiros.
+                </p>
               ) : null}
 
               <ClientDriveGrid
                 items={browserQuery.data.items}
                 sort={sort}
                 search={search}
+                canEdit={canUpload}
+                selectedId={selectedId}
+                movingFileId={movingFileId}
                 onOpenFolder={(id) => setFolderId(id)}
+                onSelectItem={(item) => setSelectedId(item.id)}
+                onMoveMenu={(item) => setMoveDialogItem(item)}
+                onDeleteMenu={(item) => setDeleteItem(item)}
               />
-            </>
+
+              <DragOverlay dropAnimation={null}>
+                {activeDragItem ? (
+                  <div
+                    className={cn(
+                      'pointer-events-none flex max-w-[180px] flex-col items-center rounded-xl border-2 border-primary/40 bg-card p-4 text-center shadow-xl',
+                    )}
+                  >
+                    <GripVertical className="mb-1 h-4 w-4 text-muted-foreground" aria-hidden />
+                    <p className="line-clamp-2 text-xs font-medium">{activeDragItem.name}</p>
+                  </div>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
           ) : null}
         </CardContent>
       </Card>
@@ -200,6 +341,54 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
         maxMb={MAX_MB}
         accept={ACCEPT_EXT}
       />
+
+      <ClientDriveMoveDialog
+        open={moveDialogItem !== null}
+        onOpenChange={(o) => {
+          if (!o) setMoveDialogItem(null);
+        }}
+        fileName={moveDialogItem?.name ?? ''}
+        options={moveDialogOptions}
+        onConfirm={async (destinationFolderId) => {
+          if (!moveDialogItem || moveDialogItem.type !== 'file') return;
+          await moveMutation.mutateAsync({
+            fileId: moveDialogItem.id,
+            destinationFolderId,
+          });
+          setMoveDialogItem(null);
+        }}
+      />
+
+      <AlertDialog open={deleteItem !== null} onOpenChange={(o) => !o && setDeleteItem(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir arquivo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O ficheiro será enviado para a lixeira do Google Drive. Esta ação pode ser revertida no Drive.
+              {deleteItem ? (
+                <>
+                  {' '}
+                  <span className="font-medium text-foreground">{deleteItem.name}</span>
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancelar</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteMutation.isPending || !deleteItem}
+              onClick={() => {
+                if (deleteItem) void deleteMutation.mutateAsync(deleteItem.id);
+              }}
+            >
+              {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              Excluir
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

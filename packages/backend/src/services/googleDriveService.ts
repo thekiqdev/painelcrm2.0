@@ -219,6 +219,60 @@ export async function listDriveFolderChildren(
 /**
  * Verifica se folderId é a pasta «Arquivos» ou uma subpasta dela (não Contratos/Propostas/Faturas).
  */
+/** Move ficheiro entre pastas (um parent → outro) no «My Drive». */
+export async function moveDriveFile(
+  accessToken: string,
+  fileId: string,
+  removeParents: string,
+  addParents: string,
+): Promise<void> {
+  if (removeParents === addParents) {
+    return;
+  }
+  const params = new URLSearchParams({
+    addParents,
+    removeParents,
+    fields: 'id',
+  });
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    },
+  );
+  const json = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = json.error as { message?: string } | undefined;
+    const msg = typeof err?.message === 'string' ? err.message : JSON.stringify(json);
+    throw new Error(`Drive: mover ficheiro falhou: ${msg}`);
+  }
+}
+
+export async function trashDriveFile(accessToken: string, fileId: string): Promise<void> {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ trashed: true }),
+    },
+  );
+  const json = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = json.error as { message?: string } | undefined;
+    const msg = typeof err?.message === 'string' ? err.message : JSON.stringify(json);
+    throw new Error(`Drive: enviar para lixeira falhou: ${msg}`);
+  }
+}
+
 export async function isFolderUnderClientArquivosTree(
   accessToken: string,
   folderId: string,

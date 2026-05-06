@@ -66,3 +66,32 @@ export async function createClientGoogleDriveUserFolder(
   if (!res.data) throw new Error('Resposta inválida');
   return res.data;
 }
+
+export async function moveClientGoogleDriveItem(
+  clientId: string,
+  body: { file_id: string; destination_folder_id: string },
+): Promise<void> {
+  const res = await apiClient.post<unknown>(
+    `/api/clients/${encodeURIComponent(clientId)}/google-drive/move`,
+    {
+      file_id: body.file_id,
+      destination_folder_id: body.destination_folder_id,
+    },
+  );
+  if (res.error) {
+    const e = new Error(res.error) as Error & { code?: string };
+    e.code = res.code;
+    throw e;
+  }
+}
+
+export async function deleteClientGoogleDriveItem(clientId: string, driveFileId: string): Promise<void> {
+  const res = await apiClient.delete(
+    `/api/clients/${encodeURIComponent(clientId)}/google-drive/files/${encodeURIComponent(driveFileId)}`,
+  );
+  if (res.error) {
+    const e = new Error(res.error) as Error & { code?: string };
+    e.code = res.code;
+    throw e;
+  }
+}

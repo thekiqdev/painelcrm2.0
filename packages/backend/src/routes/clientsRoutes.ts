@@ -15,6 +15,8 @@ router.get('/:id/google-drive/browser', clientsController.getClientGoogleDriveBr
 router.post('/:id/google-drive/folders', clientsController.createClientGoogleDriveUserFolderHandler);
 router.get('/:id/google-drive/files', clientsController.getClientGoogleDriveFiles);
 router.post('/:id/google-drive/files', clientGoogleDriveFileUploadSingle, clientsController.uploadClientGoogleDriveFileHandler);
+router.post('/:id/google-drive/move', clientsController.moveClientGoogleDriveFileHandler);
+router.delete('/:id/google-drive/files/:driveFileId', clientsController.deleteClientGoogleDriveFileHandler);
 router.get('/:id', clientsController.getClientById);
 router.post('/', requirePermission('clients.create'), clientsController.createClient);
 router.patch('/:id', clientsController.updateClient);
