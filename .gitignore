@@ -21,6 +21,9 @@ packages/backend/.env
 # Uploads locais de mídia do catálogo (volume em produção)
 packages/backend/uploads/
 
+# Armazenamento local de media service / avatars (não versionar)
+packages/backend/storage/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
