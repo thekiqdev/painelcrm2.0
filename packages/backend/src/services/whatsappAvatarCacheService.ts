@@ -19,6 +19,16 @@ import { pool } from '../utils/db.js';
 import { persistConversationAvatarToCrm } from './conversationAvatarPersistence.js';
 import { isMediaAvatarWhatsappEnabled } from './media/mediaConfig.js';
 import { cacheRemoteUrl } from './media/mediaService.js';
+import {
+  analyzeBrokenInternalMediaRaw,
+  hasStableInternalCacheRow,
+} from './whatsappAvatarBrokenInternalCheck.js';
+import { persistConversationAvatarCacheFailure } from './whatsappAvatarCacheBackoff.js';
+import { getMediaAvatarWhatsappWorkerMaxFailures } from './media/mediaConfig.js';
+import { emitConversationUpdate } from './websocketService.js';
+
+const AUTO_RECACHE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const autoRecacheInFlight = new Set<string>();
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -407,4 +417,351 @@ export async function ensureCrmWhatsappAvatarCached(params: {
     patch.avatar_cached_at,
     patch.avatar_cache_status,
   ]);
+}
+
+type AvatarAutoRecacheTrigger = 'manual_sync' | 'open_conversation' | 'identity_refresh';
+
+type AvatarAutoRecacheAttemptResult = {
+  eligible: boolean;
+  reason: string;
+  attempted: boolean;
+  success: boolean;
+  nextRetryAt: string | null;
+};
+
+function parseIsoMs(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function bestSourceUrl(row: { avatar_source_url: string | null; avatar_url: string | null }): string | null {
+  const src = typeof row.avatar_source_url === 'string' ? row.avatar_source_url.trim() : '';
+  if (src && isWhatsAppCdnAvatarUrl(src)) return src;
+  const fallback = typeof row.avatar_url === 'string' ? row.avatar_url.trim() : '';
+  if (fallback && isWhatsAppCdnAvatarUrl(fallback)) return fallback;
+  return null;
+}
+
+function oldUrlKind(row: {
+  avatar_url: string | null;
+  avatar_cached_url: string | null;
+}): 'internal_raw' | 'whatsapp_cdn' | 'none' | 'other' {
+  const pick = [row.avatar_cached_url, row.avatar_url].find((v) => typeof v === 'string' && v.trim()) ?? '';
+  const t = pick.trim();
+  if (!t) return 'none';
+  if (t.includes('/api/media/v1/raw') || t.includes('/api/public/catalog-media/raw')) return 'internal_raw';
+  if (isWhatsAppCdnAvatarUrl(t)) return 'whatsapp_cdn';
+  return 'other';
+}
+
+function shouldRespectCooldown(trigger: AvatarAutoRecacheTrigger): boolean {
+  return trigger !== 'manual_sync' && trigger !== 'identity_refresh';
+}
+
+export async function attemptConversationAvatarAutoRecache(params: {
+  conversationId: string;
+  userId: string;
+  tenantId: string | null;
+  trigger: AvatarAutoRecacheTrigger;
+  force?: boolean;
+}): Promise<AvatarAutoRecacheAttemptResult> {
+  if (!isMediaAvatarWhatsappEnabled()) {
+    return {
+      eligible: false,
+      reason: 'media_avatar_feature_disabled',
+      attempted: false,
+      success: false,
+      nextRetryAt: null,
+    };
+  }
+  if (autoRecacheInFlight.has(params.conversationId)) {
+    return {
+      eligible: false,
+      reason: 'already_in_flight',
+      attempted: false,
+      success: false,
+      nextRetryAt: null,
+    };
+  }
+  autoRecacheInFlight.add(params.conversationId);
+  try {
+    const rowRes = await pool.query<{
+      id: string;
+      user_id: string;
+      client_id: string | null;
+      lead_id: string | null;
+      avatar_url: string | null;
+      avatar_cached_url: string | null;
+      avatar_source_url: string | null;
+      avatar_cache_status: string | null;
+      avatar_cache_attempts: number | null;
+      avatar_cache_next_retry_at: string | null;
+      avatar_cache_last_error: string | null;
+      avatar_cached_at: string | null;
+      metadata: Record<string, unknown> | null;
+    }>(
+      `SELECT c.id::text, c.user_id::text, c.client_id::text, c.lead_id::text, c.avatar_url, c.avatar_cached_url,
+              c.avatar_source_url, c.avatar_cache_status, c.avatar_cache_attempts,
+              c.avatar_cache_next_retry_at::text, c.avatar_cache_last_error, c.avatar_cached_at::text, c.metadata
+       FROM chat_conversations c
+       WHERE c.id = $1::uuid
+         AND c.user_id = $2::uuid
+       LIMIT 1`,
+      [params.conversationId, params.userId],
+    );
+    const row = rowRes.rows[0];
+    if (!row) {
+      return {
+        eligible: false,
+        reason: 'conversation_not_found',
+        attempted: false,
+        success: false,
+        nextRetryAt: null,
+      };
+    }
+
+    const sourceUrl = bestSourceUrl(row);
+    const broken = await analyzeBrokenInternalMediaRaw({
+      avatar_url: row.avatar_url,
+      avatar_cached_url: row.avatar_cached_url,
+      avatar_cache_status: row.avatar_cache_status,
+    });
+    const hasValidStableCache = hasStableInternalCacheRow(row.avatar_cached_url) && !broken.broken;
+    const status = String(row.avatar_cache_status || '').trim().toLowerCase();
+    const fetchFailed = status === 'fetch_failed';
+    const sourceWithoutValidCache = Boolean(sourceUrl && !hasValidStableCache);
+
+    const eligible = fetchFailed || broken.broken || sourceWithoutValidCache;
+    const reason = fetchFailed
+      ? 'fetch_failed'
+      : broken.broken
+        ? broken.motives[0] ?? 'broken_internal_cache'
+        : sourceWithoutValidCache
+          ? 'source_without_valid_internal_cache'
+          : 'cache_already_valid';
+
+    const nextRetryMs = parseIsoMs(row.avatar_cache_next_retry_at);
+    const lastAttemptRaw =
+      row.metadata && typeof row.metadata === 'object'
+        ? (row.metadata._avatar_auto_recache_last_attempt_at as string | null | undefined)
+        : null;
+    const lastAttemptMs = parseIsoMs(lastAttemptRaw);
+    const cooldownWindowActive =
+      lastAttemptMs != null && Date.now() - lastAttemptMs < AUTO_RECACHE_COOLDOWN_MS;
+    const retryBlocked = nextRetryMs != null && nextRetryMs > Date.now();
+    const respectCooldown = !params.force && shouldRespectCooldown(params.trigger);
+
+    if (!eligible) {
+      console.log('[avatar-auto-recache]', {
+        conversationId: row.id,
+        tenantId: params.tenantId,
+        trigger: params.trigger,
+        eligible,
+        reason,
+        sourceUrlKind: sourceUrl ? 'whatsapp_cdn' : 'none',
+        previousCacheKind: oldUrlKind(row),
+        previousCacheValid: hasValidStableCache,
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      });
+      return {
+        eligible,
+        reason,
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      };
+    }
+    if (!sourceUrl) {
+      console.log('[avatar-auto-recache]', {
+        conversationId: row.id,
+        tenantId: params.tenantId,
+        trigger: params.trigger,
+        eligible,
+        reason: 'missing_whatsapp_source_url',
+        sourceUrlKind: 'none',
+        previousCacheKind: oldUrlKind(row),
+        previousCacheValid: hasValidStableCache,
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      });
+      return {
+        eligible: true,
+        reason: 'missing_whatsapp_source_url',
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      };
+    }
+    if (respectCooldown && cooldownWindowActive) {
+      console.log('[avatar-auto-recache]', {
+        conversationId: row.id,
+        tenantId: params.tenantId,
+        trigger: params.trigger,
+        eligible,
+        reason: 'cooldown_24h_active',
+        sourceUrlKind: 'whatsapp_cdn',
+        previousCacheKind: oldUrlKind(row),
+        previousCacheValid: hasValidStableCache,
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      });
+      return {
+        eligible: true,
+        reason: 'cooldown_24h_active',
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      };
+    }
+    if (!params.force && retryBlocked) {
+      console.log('[avatar-auto-recache]', {
+        conversationId: row.id,
+        tenantId: params.tenantId,
+        trigger: params.trigger,
+        eligible,
+        reason: 'next_retry_at_in_future',
+        sourceUrlKind: 'whatsapp_cdn',
+        previousCacheKind: oldUrlKind(row),
+        previousCacheValid: hasValidStableCache,
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      });
+      return {
+        eligible: true,
+        reason: 'next_retry_at_in_future',
+        attempted: false,
+        success: false,
+        nextRetryAt: row.avatar_cache_next_retry_at,
+      };
+    }
+
+    const patch = await resolveConversationAvatarWithCache({
+      tenantId: params.tenantId,
+      userId: row.user_id,
+      mergedAvatarUrl: sourceUrl,
+      existingAvatarUrl: row.avatar_url,
+      existingCachedUrl: row.avatar_cached_url,
+      existingSourceUrl: row.avatar_source_url,
+    });
+    const nowIso = new Date().toISOString();
+    const nextMetadata = {
+      ...((row.metadata as Record<string, unknown> | null) ?? {}),
+      _avatar_auto_recache_last_attempt_at: nowIso,
+      _avatar_auto_recache_last_trigger: params.trigger,
+    };
+
+    if (patch.avatar_cache_status === 'ok' && patch.avatar_url && patch.avatar_cached_url) {
+      await pool.query(
+        `UPDATE chat_conversations
+         SET avatar_url = $2::text,
+             avatar_cached_url = $3::text,
+             avatar_source_url = COALESCE($4::text, avatar_source_url),
+             avatar_cached_at = COALESCE($5::timestamptz, now()),
+             avatar_cache_status = 'ok',
+             avatar_cache_attempts = 0,
+             avatar_cache_last_error = NULL,
+             avatar_cache_next_retry_at = NULL,
+             metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
+             updated_at = now()
+         WHERE id = $1::uuid`,
+        [row.id, patch.avatar_url, patch.avatar_cached_url, patch.avatar_source_url, patch.avatar_cached_at, JSON.stringify(nextMetadata)],
+      );
+      await persistConversationAvatarToCrm(row.user_id, row.client_id, row.lead_id, patch.avatar_url, {
+        cachedUrl: patch.avatar_cached_url,
+        sourceUrl: patch.avatar_source_url,
+        cachedAt: patch.avatar_cached_at,
+        status: 'ok',
+      });
+      const convFresh = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1::uuid LIMIT 1`, [row.id]);
+      if (convFresh.rows[0]) emitConversationUpdate(row.user_id, convFresh.rows[0]);
+      console.log('[avatar-auto-recache]', {
+        conversationId: row.id,
+        tenantId: params.tenantId,
+        trigger: params.trigger,
+        eligible: true,
+        reason,
+        sourceUrlKind: 'whatsapp_cdn',
+        previousCacheKind: oldUrlKind(row),
+        previousCacheValid: hasValidStableCache,
+        attempted: true,
+        success: true,
+        nextRetryAt: null,
+      });
+      return {
+        eligible: true,
+        reason,
+        attempted: true,
+        success: true,
+        nextRetryAt: null,
+      };
+    }
+
+    await pool.query(
+      `UPDATE chat_conversations
+       SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = now()
+       WHERE id = $1::uuid`,
+      [row.id, JSON.stringify(nextMetadata)],
+    );
+    const maxFailures = getMediaAvatarWhatsappWorkerMaxFailures();
+    await persistConversationAvatarCacheFailure(
+      pool,
+      row,
+      'auto_recache_fetch_failed',
+      maxFailures,
+      '[avatar-auto-recache]',
+    );
+    const retry = await pool.query<{ avatar_cache_next_retry_at: string | null }>(
+      `SELECT avatar_cache_next_retry_at::text FROM chat_conversations WHERE id = $1::uuid`,
+      [row.id],
+    );
+    const nextRetryAt = retry.rows[0]?.avatar_cache_next_retry_at ?? null;
+    console.log('[avatar-auto-recache]', {
+      conversationId: row.id,
+      tenantId: params.tenantId,
+      trigger: params.trigger,
+      eligible: true,
+      reason,
+      sourceUrlKind: 'whatsapp_cdn',
+      previousCacheKind: oldUrlKind(row),
+      previousCacheValid: hasValidStableCache,
+      attempted: true,
+      success: false,
+      nextRetryAt,
+    });
+    return {
+      eligible: true,
+      reason,
+      attempted: true,
+      success: false,
+      nextRetryAt,
+    };
+  } finally {
+    autoRecacheInFlight.delete(params.conversationId);
+  }
+}
+
+export function scheduleConversationAvatarAutoRecache(params: {
+  conversationId: string;
+  userId: string;
+  tenantId: string | null;
+  trigger: AvatarAutoRecacheTrigger;
+  force?: boolean;
+}): void {
+  void attemptConversationAvatarAutoRecache(params).catch((err) => {
+    console.warn('[avatar-auto-recache]', {
+      conversationId: params.conversationId,
+      tenantId: params.tenantId,
+      trigger: params.trigger,
+      attempted: true,
+      success: false,
+      reason: err instanceof Error ? err.message : 'unknown_error',
+    });
+  });
 }

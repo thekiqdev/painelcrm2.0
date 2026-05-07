@@ -63,6 +63,8 @@ import { logChatAvatarSyncResult } from '../utils/chatAvatarSyncResultLog.js';
 import {
   resolveConversationAvatarWithCache,
   ensureConversationAvatarCachedAndReplicateToCrm,
+  attemptConversationAvatarAutoRecache,
+  scheduleConversationAvatarAutoRecache,
 } from '../services/whatsappAvatarCacheService.js';
 import { persistConversationAvatarToCrm as persistConversationAvatarOnCrm } from '../services/conversationAvatarPersistence.js';
 import {
@@ -5749,6 +5751,13 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
       res.status(404).json({ error: 'Conversa não encontrada' });
       return;
     }
+    const tenantId = req.tenantId ?? null;
+    scheduleConversationAvatarAutoRecache({
+      conversationId: id,
+      userId,
+      tenantId,
+      trigger: 'open_conversation',
+    });
 
     const messages = await pool.query(
       `
@@ -5842,6 +5851,7 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
     const { id } = req.params;
+    const tenantId = req.tenantId ?? null;
     const leadColumnAvailable = await hasLeadIdColumn();
     /** Mesmo predicado que getConversations / inbox partilhado (não só c.user_id = ator). */
     const conversationResult = await pool.query<{
@@ -5865,6 +5875,12 @@ export async function getConversationProfile(req: AuthRequest, res: Response) {
       res.status(404).json({ error: 'Conversa não encontrada' });
       return;
     }
+    scheduleConversationAvatarAutoRecache({
+      conversationId: id,
+      userId,
+      tenantId,
+      trigger: 'open_conversation',
+    });
 
     const conversation = conversationResult.rows[0];
     let clientId = conversation.client_id ?? null;
@@ -6777,6 +6793,14 @@ export async function syncConversationMessages(req: AuthRequest, res: Response) 
         ? conversationRowForClientApi(convFresh.rows[0] as Record<string, unknown>)
         : undefined;
 
+    await attemptConversationAvatarAutoRecache({
+      conversationId: conversation.id,
+      userId,
+      tenantId,
+      trigger: 'manual_sync',
+      force: forceSync,
+    });
+
     res.json({
       synced: saved,
       totalReturned,
@@ -6835,6 +6859,15 @@ export async function refreshConversationIdentity(req: AuthRequest, res: Respons
       res.json({ ok: true, updated: false, reason: 'no_remote_chat' });
       return;
     }
+
+    const tenantId = req.tenantId ?? (await resolveTenantIdForUser(userId));
+    await attemptConversationAvatarAutoRecache({
+      conversationId: id,
+      userId,
+      tenantId,
+      trigger: 'identity_refresh',
+      force: true,
+    });
 
     res.json({ ok: true, updated: true, conversation: upserted });
   } catch (error: any) {
