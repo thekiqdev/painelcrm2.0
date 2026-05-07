@@ -45,11 +45,21 @@ export type AdminScriptListItem = {
   name: string;
   description: string;
   risk: 'low' | 'medium' | 'high';
-  category: 'audit' | 'repair' | 'reprocess';
+  category: 'diagnostic' | 'audit' | 'repair' | 'reprocess';
   implemented: boolean;
   auditOnly?: boolean;
   lastExecuteAt: string | null;
   lastPreviewAt: string | null;
+};
+
+const CONVERSATION_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const CATEGORY_ORDER: Record<AdminScriptListItem['category'], number> = {
+  diagnostic: 0,
+  audit: 1,
+  repair: 2,
+  reprocess: 3,
 };
 
 type AvatarWorkerStatusPayload = {
@@ -110,6 +120,8 @@ function riskVariant(r: AdminScriptListItem['risk']): 'default' | 'secondary' | 
 
 function categoryLabel(c: AdminScriptListItem['category']): string {
   switch (c) {
+    case 'diagnostic':
+      return 'Fix / Diagnóstico';
     case 'audit':
       return 'Auditoria';
     case 'repair':
@@ -119,6 +131,68 @@ function categoryLabel(c: AdminScriptListItem['category']): string {
     default:
       return c;
   }
+}
+
+function overallStatusBadge(status: unknown) {
+  const s = String(status ?? '');
+  if (s === 'OK') {
+    return (
+      <Badge className="bg-emerald-600 text-white hover:bg-emerald-700 border-transparent">OK</Badge>
+    );
+  }
+  if (s === 'Erro') {
+    return <Badge variant="destructive">Erro</Badge>;
+  }
+  return <Badge variant="secondary">Atenção</Badge>;
+}
+
+function formatDiagnosticValue(v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? 'sim' : 'não';
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'string') return v;
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
+function DiagnosticSectionsDisplay({ result }: { result: Record<string, unknown> }) {
+  const sections = result.sections;
+  if (!sections || typeof sections !== 'object' || Array.isArray(sections)) {
+    return null;
+  }
+  const entries = Object.entries(sections as Record<string, Record<string, unknown>>);
+  return (
+    <div className="space-y-3">
+      {entries.map(([name, sec]) => (
+        <Card key={name}>
+          <CardHeader className="py-3 px-4 space-y-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-sm font-medium capitalize">{name.replace(/_/g, ' ')}</CardTitle>
+              {typeof sec?.status === 'string' ? overallStatusBadge(sec.status) : null}
+            </div>
+          </CardHeader>
+          <CardContent className="text-xs space-y-2 pt-0 px-4 pb-4">
+            {Object.entries(sec || {})
+              .filter(([k]) => k !== 'status')
+              .map(([k, v]) => (
+                <div
+                  key={k}
+                  className="grid gap-1 sm:grid-cols-[minmax(0,140px)_1fr] border-b border-border/50 pb-2 last:border-0"
+                >
+                  <span className="text-muted-foreground font-medium break-words">{k}</span>
+                  <span className="break-all font-mono text-[11px] leading-snug whitespace-pre-wrap">
+                    {formatDiagnosticValue(v)}
+                  </span>
+                </div>
+              ))}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
 }
 
 function formatWhen(iso: string | null): string {
@@ -158,12 +232,34 @@ export default function SuperAdminAdvancedScriptsPage() {
   const [avatarReprocessTenantId, setAvatarReprocessTenantId] = useState('');
   const [avatarReprocessLimit, setAvatarReprocessLimit] = useState('20');
   const [uazGenerateMissingSecrets, setUazGenerateMissingSecrets] = useState(true);
+  const [diagConversationId, setDiagConversationId] = useState('');
+  const [diagRoundtripTenantId, setDiagRoundtripTenantId] = useState('');
+
+  const sortedScripts = useMemo(
+    () =>
+      [...scripts].sort(
+        (a, b) =>
+          CATEGORY_ORDER[a.category] - CATEGORY_ORDER[b.category] || a.name.localeCompare(b.name, 'pt-BR'),
+      ),
+    [scripts],
+  );
 
   const buildAvatarReprocessBody = useCallback(
     (s: AdminScriptListItem | null): Record<string, unknown> => {
       if (!s) return {};
       if (s.key === 'uazapi.review_webhooks') {
         return { generateMissingSecrets: uazGenerateMissingSecrets };
+      }
+      if (s.key === 'media.diagnose_conversation_avatar') {
+        const id = diagConversationId.trim();
+        if (!id) return {};
+        return { conversationId: id };
+      }
+      if (s.key === 'media.test_storage_roundtrip') {
+        const body: Record<string, unknown> = {};
+        const t = diagRoundtripTenantId.trim();
+        if (t) body.tenantId = t;
+        return body;
       }
       if (s.key !== 'media.reprocess_avatar_cache') return {};
       const lim = parseInt(avatarReprocessLimit, 10);
@@ -174,7 +270,13 @@ export default function SuperAdminAdvancedScriptsPage() {
       if (t) body.tenantId = t;
       return body;
     },
-    [avatarReprocessLimit, avatarReprocessTenantId, uazGenerateMissingSecrets],
+    [
+      avatarReprocessLimit,
+      avatarReprocessTenantId,
+      uazGenerateMissingSecrets,
+      diagConversationId,
+      diagRoundtripTenantId,
+    ],
   );
 
   const loadScripts = useCallback(async () => {
@@ -228,6 +330,13 @@ export default function SuperAdminAdvancedScriptsPage() {
 
   const runPreview = useCallback(
     async (s: AdminScriptListItem) => {
+      if (s.key === 'media.diagnose_conversation_avatar') {
+        const id = diagConversationId.trim();
+        if (!CONVERSATION_UUID_RE.test(id)) {
+          toast.error('Informe o ID da conversa (UUID válido).');
+          return;
+        }
+      }
       setPreviewLoading(true);
       try {
         const enc = encodeURIComponent(s.key);
@@ -246,7 +355,7 @@ export default function SuperAdminAdvancedScriptsPage() {
         setPreviewLoading(false);
       }
     },
-    [buildAvatarReprocessBody, loadScripts],
+    [buildAvatarReprocessBody, loadScripts, diagConversationId],
   );
 
   const openPreview = (s: AdminScriptListItem) => {
@@ -266,7 +375,15 @@ export default function SuperAdminAdvancedScriptsPage() {
 
   const confirmExecute = async () => {
     if (!executeScript) return;
-    const needsMediaAck = executeScript.key.startsWith('media.');
+    if (executeScript.key === 'media.diagnose_conversation_avatar') {
+      const id = diagConversationId.trim();
+      if (!CONVERSATION_UUID_RE.test(id)) {
+        toast.error('Informe o ID da conversa (UUID válido).');
+        return;
+      }
+    }
+    const needsMediaAck =
+      executeScript.key.startsWith('media.') && executeScript.category !== 'diagnostic';
     if (needsMediaAck && !executeAck) {
       toast.error('Confirme que compreende o impacto nos dados de mídia.');
       return;
@@ -562,7 +679,7 @@ export default function SuperAdminAdvancedScriptsPage() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-1 xl:grid-cols-2">
-          {scripts.map((s) => (
+          {sortedScripts.map((s) => (
             <Card key={s.key} className={cn(!s.implemented && 'opacity-80')}>
               <CardHeader className="space-y-2">
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -616,6 +733,34 @@ export default function SuperAdminAdvancedScriptsPage() {
                         Gerar secret interno para instâncias sem secret/secret curto durante execute
                       </Label>
                     </div>
+                  </div>
+                )}
+                {s.key === 'media.diagnose_conversation_avatar' && (
+                  <div className="grid gap-2 pt-2 rounded-md border bg-muted/20 p-3 text-xs">
+                    <Label htmlFor={`conv-${s.key}`} className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      ID da conversa (obrigatório)
+                    </Label>
+                    <Input
+                      id={`conv-${s.key}`}
+                      placeholder="UUID da conversa"
+                      value={diagConversationId}
+                      onChange={(e) => setDiagConversationId(e.target.value)}
+                      className="h-8 font-mono text-xs"
+                    />
+                  </div>
+                )}
+                {s.key === 'media.test_storage_roundtrip' && (
+                  <div className="grid gap-2 pt-2 rounded-md border bg-muted/20 p-3 text-xs">
+                    <Label htmlFor={`rt-tenant-${s.key}`} className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Tenant ID (opcional — default primeiro tenant)
+                    </Label>
+                    <Input
+                      id={`rt-tenant-${s.key}`}
+                      placeholder="UUID do tenant"
+                      value={diagRoundtripTenantId}
+                      onChange={(e) => setDiagRoundtripTenantId(e.target.value)}
+                      className="h-8 font-mono text-xs"
+                    />
                   </div>
                 )}
                 <div className="flex flex-wrap gap-2 pt-1">
@@ -1005,12 +1150,43 @@ export default function SuperAdminAdvancedScriptsPage() {
             )}
 
             {!previewLoading &&
+              previewScript?.category === 'diagnostic' &&
+              previewResult &&
+              typeof previewResult === 'object' && (
+                <div className="space-y-3 pr-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">Estado geral</span>
+                    {overallStatusBadge((previewResult as Record<string, unknown>).overall_status)}
+                  </div>
+                  <DiagnosticSectionsDisplay result={previewResult as Record<string, unknown>} />
+                  {(previewResult as Record<string, unknown>).hint != null &&
+                    typeof (previewResult as Record<string, unknown>).hint === 'string' && (
+                      <Alert>
+                        <AlertTitle>Nota</AlertTitle>
+                        <AlertDescription>
+                          {(previewResult as Record<string, unknown>).hint as string}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  <details className="text-xs border rounded-md p-2 bg-muted/20">
+                    <summary className="cursor-pointer font-medium text-muted-foreground select-none">
+                      JSON técnico
+                    </summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-all overflow-auto max-h-48 max-w-full font-mono text-[11px] leading-snug">
+                      {JSON.stringify(previewResult, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              )}
+
+            {!previewLoading &&
               previewResult &&
               previewScript &&
               previewScript.key !== 'media.strip_localhost_internal_urls' &&
               previewScript.key !== 'media.audit_urls' &&
               previewScript.key !== 'media.reprocess_avatar_cache' &&
-              previewScript.key !== 'uazapi.review_webhooks' && (
+              previewScript.key !== 'uazapi.review_webhooks' &&
+              previewScript.category !== 'diagnostic' && (
                 <ScrollArea className="max-h-[min(480px,55vh)] min-w-0 max-w-full">
                   <pre className="text-xs bg-muted/50 rounded-md p-3 whitespace-pre-wrap break-all max-w-full font-mono leading-snug">
                     {JSON.stringify(previewResult, null, 2)}
@@ -1047,11 +1223,15 @@ export default function SuperAdminAdvancedScriptsPage() {
               Executar {executeScript?.name ?? 'script'}
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-3 text-left">
-              Esta operação altera dados na base de dados. Confirme apenas após rever o preview.
+              {executeScript?.category === 'diagnostic'
+                ? 'Diagnóstico: sem reprocessar avatares. O teste de round-trip grava e remove um PNG mínimo; os outros scripts só leem evidências.'
+                : 'Esta operação altera dados na base de dados. Confirme apenas após rever o preview.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          {!executeOutcome && executeScript?.key.startsWith('media.') && (
+          {!executeOutcome &&
+            executeScript?.key.startsWith('media.') &&
+            executeScript.category !== 'diagnostic' && (
             <div className="flex min-w-0 items-start gap-3 py-2">
               <Checkbox
                 id="ack-media"
@@ -1071,11 +1251,31 @@ export default function SuperAdminAdvancedScriptsPage() {
               <div className="min-w-0 break-all font-mono text-xs">
                 <span className="font-medium font-sans text-sm">Run:</span> {executeOutcome.runId}
               </div>
+              {executeScript?.category === 'diagnostic' &&
+              executeOutcome.result &&
+              typeof executeOutcome.result === 'object' ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">Estado geral</span>
+                    {overallStatusBadge((executeOutcome.result as Record<string, unknown>).overall_status)}
+                  </div>
+                  <DiagnosticSectionsDisplay result={executeOutcome.result as Record<string, unknown>} />
+                  <details className="text-xs border rounded-md p-2 bg-muted/20">
+                    <summary className="cursor-pointer font-medium text-muted-foreground select-none">
+                      JSON técnico
+                    </summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-all overflow-auto max-h-48 font-mono text-[11px]">
+                      {JSON.stringify(executeOutcome.result, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              ) : (
               <div className="min-h-0 min-w-0 max-w-full overflow-hidden rounded-md border border-border/60 bg-muted/50">
                 <pre className="m-0 max-h-52 max-w-full overflow-auto p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all">
                   {JSON.stringify(executeOutcome.result, null, 2)}
                 </pre>
               </div>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -1098,7 +1298,13 @@ export default function SuperAdminAdvancedScriptsPage() {
                 <AlertDialogCancel disabled={executeLoading}>Cancelar</AlertDialogCancel>
                 <AlertDialogAction
                   type="button"
-                  disabled={executeLoading || (executeScript?.key.startsWith('media.') ? !executeAck : false)}
+                  disabled={
+                    executeLoading ||
+                    (executeScript?.key.startsWith('media.') &&
+                    executeScript.category !== 'diagnostic'
+                      ? !executeAck
+                      : false)
+                  }
                   onClick={(e) => {
                     e.preventDefault();
                     void confirmExecute();

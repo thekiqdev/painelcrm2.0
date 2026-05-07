@@ -23,8 +23,10 @@ import {
   exchangeGoogleDriveAuthorizationCode,
   ensureDriveCompanyFolderStructure,
   fetchGoogleUserProfile,
+  GOOGLE_DRIVE_SCOPES,
   revokeGoogleOAuthToken,
 } from '../services/googleDriveService.js';
+import { logGoogleOAuthConnectAudit, maskGoogleClientIdForAudit } from '../services/googleOAuthAuditLog.js';
 import { getTenantIdForUser, isTenantAdmin } from '../utils/tenant.js';
 import { pool } from '../utils/db.js';
 
@@ -64,6 +66,17 @@ export async function googleDriveConnect(req: AuthRequest, res: Response): Promi
     if (!(await isTenantAdmin(req.userId))) {
       res.status(403).json({ error: 'Apenas administradores da empresa podem ligar o Google Drive.' });
       return;
+    }
+    const driveCfg = getGoogleDriveOAuthClientConfig();
+    if (driveCfg) {
+      logGoogleOAuthConnectAudit({
+        provider: 'google_drive',
+        tenantId,
+        userId: req.userId,
+        scopesRequested: GOOGLE_DRIVE_SCOPES,
+        redirectUri: driveCfg.redirectUri,
+        clientIdMasked: maskGoogleClientIdForAudit(driveCfg.clientId),
+      });
     }
     const state = generateGoogleDriveOAuthState(tenantId, req.userId);
     const url = buildGoogleDriveAuthorizeUrl(state);

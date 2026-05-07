@@ -20,9 +20,11 @@ import {
   createEvent,
   exchangeAuthorizationCode,
   fetchGoogleUserProfile,
+  GOOGLE_CALENDAR_SCOPES,
   listEvents,
   loadConnectionForUser,
 } from '../services/googleCalendarService.js';
+import { logGoogleOAuthConnectAudit, maskGoogleClientIdForAudit } from '../services/googleOAuthAuditLog.js';
 import { getTenantIdForUser } from '../utils/tenant.js';
 
 function frontendBaseUrl(): string {
@@ -52,6 +54,17 @@ export async function googleCalendarConnect(req: AuthRequest, res: Response): Pr
     }
     const tenantId = requireTenantId(req, res);
     if (!tenantId || !req.userId) return;
+    const oauthCfg = getGoogleOAuthClientConfig();
+    if (oauthCfg) {
+      logGoogleOAuthConnectAudit({
+        provider: 'google_calendar',
+        tenantId,
+        userId: req.userId,
+        scopesRequested: GOOGLE_CALENDAR_SCOPES,
+        redirectUri: oauthCfg.redirectUri,
+        clientIdMasked: maskGoogleClientIdForAudit(oauthCfg.clientId),
+      });
+    }
     const state = generateGoogleCalendarOAuthState(tenantId, req.userId);
     const url = buildGoogleAuthorizeUrl(state);
     res.json({ url });

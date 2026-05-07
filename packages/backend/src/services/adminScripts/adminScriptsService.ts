@@ -7,6 +7,12 @@ import {
   getCatalogEntry,
 } from './adminScriptsCatalog.js';
 import { stripLocalhostInternalMediaUrl, summarizeUrlForLog } from './stripLocalhostMediaUrl.js';
+import {
+  AdminMediaDiagError,
+  runMediaDiagnoseConversationAvatar,
+  runMediaDiagnoseSystem,
+  runMediaTestStorageRoundtrip,
+} from './mediaDiagnosticsAdminScript.js';
 import { runWhatsappAvatarReprocessAdminScript } from './whatsappAvatarReprocessAdminScript.js';
 
 export type AdminScriptMode = 'preview' | 'execute';
@@ -715,6 +721,13 @@ export class AdminScriptNotImplementedError extends Error {
   }
 }
 
+function rethrowMediaDiagAsValidation(e: unknown): never {
+  if (e instanceof AdminMediaDiagError) {
+    throw new AdminScriptValidationError(e.message, e.statusCode);
+  }
+  throw e;
+}
+
 export async function runAdminScript(params: {
   scriptKey: string;
   mode: AdminScriptMode;
@@ -736,6 +749,38 @@ export async function runAdminScript(params: {
   const key = scriptKey as AdminScriptKey;
 
   switch (key) {
+    case 'media.diagnose_system':
+      try {
+        return await runMediaDiagnoseSystem({
+          userId,
+          mode,
+          insertScriptRun: (input) => insertScriptRun(pool, input),
+        });
+      } catch (e) {
+        rethrowMediaDiagAsValidation(e);
+      }
+    case 'media.test_storage_roundtrip':
+      try {
+        return await runMediaTestStorageRoundtrip({
+          userId,
+          mode,
+          body,
+          insertScriptRun: (input) => insertScriptRun(pool, input),
+        });
+      } catch (e) {
+        rethrowMediaDiagAsValidation(e);
+      }
+    case 'media.diagnose_conversation_avatar':
+      try {
+        return await runMediaDiagnoseConversationAvatar({
+          userId,
+          mode,
+          body,
+          insertScriptRun: (input) => insertScriptRun(pool, input),
+        });
+      } catch (e) {
+        rethrowMediaDiagAsValidation(e);
+      }
     case 'media.audit_urls':
       return runMediaAuditUrls(userId, mode);
     case 'media.strip_localhost_internal_urls':

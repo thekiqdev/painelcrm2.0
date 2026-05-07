@@ -1,4 +1,7 @@
 export type AdminScriptKey =
+  | 'media.diagnose_system'
+  | 'media.test_storage_roundtrip'
+  | 'media.diagnose_conversation_avatar'
   | 'media.audit_urls'
   | 'media.strip_localhost_internal_urls'
   | 'media.audit_whatsapp_cdn_avatars'
@@ -8,7 +11,7 @@ export type AdminScriptKey =
 
 export type AdminScriptRisk = 'low' | 'medium' | 'high';
 
-export type AdminScriptCategory = 'audit' | 'repair' | 'reprocess';
+export type AdminScriptCategory = 'diagnostic' | 'audit' | 'repair' | 'reprocess';
 
 export type AdminScriptCatalogEntry = {
   key: AdminScriptKey;
@@ -23,6 +26,34 @@ export type AdminScriptCatalogEntry = {
 };
 
 export const ADMIN_SCRIPTS_CATALOG: AdminScriptCatalogEntry[] = [
+  {
+    key: 'media.diagnose_system',
+    name: 'Diagnosticar mídia do sistema',
+    description:
+      'Ambiente (sem segredos), pasta MEDIA_STORAGE_ROOT, leitura/escrita, espaço em disco, rota esperada /api/media/v1/raw. Apenas preview.',
+    risk: 'low',
+    category: 'diagnostic',
+    implemented: true,
+    auditOnly: true,
+  },
+  {
+    key: 'media.test_storage_roundtrip',
+    name: 'Testar escrita/leitura de mídia',
+    description:
+      'Grava PNG mínimo via MediaService, indexa media_assets, valida ficheiro no disco, GET HTTP interno e remove o ficheiro de teste.',
+    risk: 'medium',
+    category: 'diagnostic',
+    implemented: true,
+  },
+  {
+    key: 'media.diagnose_conversation_avatar',
+    name: 'Diagnosticar avatar de conversa',
+    description:
+      'Mostra URLs de avatar na conversa, classifica origem (mídia assinada, catálogo, CDN, proxy) e valida assinatura/ficheiro quando aplicável. Requer conversationId.',
+    risk: 'low',
+    category: 'diagnostic',
+    implemented: true,
+  },
   {
     key: 'media.audit_urls',
     name: 'Auditar URLs de mídia',
