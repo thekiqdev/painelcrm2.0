@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { apiClient } from '@/integrations/api/client';
 import {
   AlertDialog,
@@ -36,7 +36,7 @@ import {
 import { toast } from '@/components/ui/sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
-import { Eye, Loader2, Play, RefreshCw, Terminal } from 'lucide-react';
+import { Eye, ListOrdered, Loader2, Play, RefreshCw, Stethoscope, Terminal } from 'lucide-react';
 
 const MEDIA_DATA_ACK_TEXT = 'Entendo que esta ação irá alterar dados de mídia.';
 
@@ -60,6 +60,20 @@ const CATEGORY_ORDER: Record<AdminScriptListItem['category'], number> = {
   audit: 1,
   repair: 2,
   reprocess: 3,
+};
+
+/** Evita NaN na ordenação se a API devolver categoria desconhecida ou ausente (build antigo). */
+function categorySortOrder(category: AdminScriptListItem['category'] | string | undefined): number {
+  if (category == null || category === '') return 99;
+  const n = CATEGORY_ORDER[category as AdminScriptListItem['category']];
+  return typeof n === 'number' ? n : 99;
+}
+
+/** Ordem sugerida dentro de Fix/Diagnóstico (não alfabética). */
+const DIAGNOSTIC_SCRIPT_ORDER: Record<string, number> = {
+  'media.diagnose_system': 1,
+  'media.test_storage_roundtrip': 2,
+  'media.diagnose_conversation_avatar': 3,
 };
 
 type AvatarWorkerStatusPayload = {
@@ -118,7 +132,7 @@ function riskVariant(r: AdminScriptListItem['risk']): 'default' | 'secondary' | 
   return 'secondary';
 }
 
-function categoryLabel(c: AdminScriptListItem['category']): string {
+function categoryLabel(c: AdminScriptListItem['category'] | string): string {
   switch (c) {
     case 'diagnostic':
       return 'Fix / Diagnóstico';
@@ -129,7 +143,7 @@ function categoryLabel(c: AdminScriptListItem['category']): string {
     case 'reprocess':
       return 'Reprocessamento';
     default:
-      return c;
+      return typeof c === 'string' && c ? `Categoria: ${c}` : '(sem categoria)';
   }
 }
 
@@ -235,12 +249,29 @@ export default function SuperAdminAdvancedScriptsPage() {
   const [diagConversationId, setDiagConversationId] = useState('');
   const [diagRoundtripTenantId, setDiagRoundtripTenantId] = useState('');
 
+  const scriptsDebugEnabled = useMemo(() => {
+    if (import.meta.env.DEV) return true;
+    try {
+      if (typeof window === 'undefined') return false;
+      if (new URLSearchParams(window.location.search).get('scriptsDebug') === '1') return true;
+      return localStorage.getItem('superadmin_scripts_debug') === '1';
+    } catch {
+      return false;
+    }
+  }, []);
+
   const sortedScripts = useMemo(
     () =>
-      [...scripts].sort(
-        (a, b) =>
-          CATEGORY_ORDER[a.category] - CATEGORY_ORDER[b.category] || a.name.localeCompare(b.name, 'pt-BR'),
-      ),
+      [...scripts].sort((a, b) => {
+        const byCat = categorySortOrder(a.category) - categorySortOrder(b.category);
+        if (byCat !== 0) return byCat;
+        if (a.category === 'diagnostic' && b.category === 'diagnostic') {
+          const stepA = DIAGNOSTIC_SCRIPT_ORDER[a.key] ?? 99;
+          const stepB = DIAGNOSTIC_SCRIPT_ORDER[b.key] ?? 99;
+          if (stepA !== stepB) return stepA - stepB;
+        }
+        return a.name.localeCompare(b.name, 'pt-BR');
+      }),
     [scripts],
   );
 
@@ -287,7 +318,25 @@ export default function SuperAdminAdvancedScriptsPage() {
       toast.error(res.error ?? 'Não foi possível carregar os scripts.');
       return;
     }
-    setScripts(res.data.scripts);
+    const list = res.data.scripts;
+    setScripts(list);
+
+    const diagKeys = ['media.diagnose_system', 'media.test_storage_roundtrip', 'media.diagnose_conversation_avatar'];
+    const wantDebug =
+      import.meta.env.DEV ||
+      (typeof window !== 'undefined' &&
+        (new URLSearchParams(window.location.search).get('scriptsDebug') === '1' ||
+          localStorage.getItem('superadmin_scripts_debug') === '1'));
+
+    if (wantDebug) {
+      console.debug('[GET /api/superadmin/advanced/scripts]', {
+        total: list.length,
+        keys: list.map((s) => s.key),
+        categories: [...new Set(list.map((s) => s.category))],
+        diagnosticScriptsPresent: diagKeys.filter((k) => list.some((s) => s.key === k)),
+        diagnosticScriptsMissing: diagKeys.filter((k) => !list.some((s) => s.key === k)),
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -678,12 +727,136 @@ export default function SuperAdminAdvancedScriptsPage() {
           <Loader2 className="h-4 w-4 animate-spin" /> A carregar…
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-1 xl:grid-cols-2">
-          {sortedScripts.map((s) => (
-            <Card key={s.key} className={cn(!s.implemented && 'opacity-80')}>
+        <>
+          {scriptsDebugEnabled && (
+            <Card className="border-dashed border-amber-500/50 bg-amber-500/[0.06]">
+              <CardHeader className="py-3 space-y-1">
+                <CardTitle className="text-sm">Diagnóstico da API (lista de scripts)</CardTitle>
+                <CardDescription className="text-xs leading-snug">
+                  Ativar em produção: acrescente{' '}
+                  <code className="rounded bg-muted px-1 py-0.5 text-[11px]">?scriptsDebug=1</code> à URL ou{' '}
+                  <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
+                    localStorage.setItem(&apos;superadmin_scripts_debug&apos;,&apos;1&apos;)
+                  </code>{' '}
+                  no consola. Em desenvolvimento este painel aparece sempre.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 font-mono text-[11px] leading-relaxed pb-4">
+                <div>
+                  <span className="text-muted-foreground">total:</span> {scripts.length}
+                </div>
+                <div className="break-all">
+                  <span className="text-muted-foreground">keys:</span>{' '}
+                  {scripts.length ? scripts.map((x) => x.key).join(', ') : '—'}
+                </div>
+                <div className="break-all">
+                  <span className="text-muted-foreground">categorias (únicas):</span>{' '}
+                  {scripts.length ? [...new Set(scripts.map((x) => x.category))].join(', ') : '—'}
+                </div>
+                <div className="break-all">
+                  <span className="text-muted-foreground">Fix/Diagnóstico esperados:</span>{' '}
+                  {['media.diagnose_system', 'media.test_storage_roundtrip', 'media.diagnose_conversation_avatar']
+                    .filter((k) => scripts.some((s) => s.key === k))
+                    .join(', ') || 'nenhum — provável backend/deploy antigo'}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          <Card className="border-primary/25 bg-gradient-to-br from-primary/[0.06] to-transparent">
+            <CardHeader className="pb-2">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <ListOrdered className="h-5 w-5" />
+                </div>
+                <div className="space-y-1 min-w-0">
+                  <CardTitle className="text-base leading-snug">Qual script usar? (mídia e avatares)</CardTitle>
+                  <CardDescription className="text-sm leading-relaxed">
+                    Secção <strong className="text-foreground font-medium">Fix / Diagnóstico</strong> abaixo — ordem
+                    recomendada em produção quando imagens ou avatares não carregam.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0 text-sm">
+              <ol className="list-decimal list-inside space-y-2.5 text-muted-foreground marker:text-primary">
+                <li>
+                  <span className="text-foreground font-medium">Diagnosticar mídia do sistema</span> — comece aqui:
+                  ambiente, pasta no servidor, leitura/escrita, espaço e rota esperada{' '}
+                  <code className="rounded bg-muted px-1 py-0.5 text-[11px]">/api/media/v1/raw</code>. Apenas preview.
+                </li>
+                <li>
+                  <span className="text-foreground font-medium">Testar escrita/leitura de mídia</span> — confirma gravação
+                  real, registo em <code className="rounded bg-muted px-1 py-0.5 text-[11px]">media_assets</code> e GET
+                  HTTP interno à URL assinada; remove o ficheiro de teste. Use execute após o passo 1 apontar problema de
+                  volume/permissões.
+                </li>
+                <li>
+                  <span className="text-foreground font-medium">Diagnosticar avatar de conversa</span> — quando um{' '}
+                  <strong className="text-foreground font-medium">chat específico</strong> está sem foto: indique o UUID
+                  da conversa e veja URL (CDN, assinatura, ficheiro em disco).
+                </li>
+              </ol>
+              <p className="text-xs text-muted-foreground border-t pt-3 leading-relaxed">
+                Auditoria (URLs localhost, CDN), correções e reprocessamento estão nas outras secções; não substituem o
+                diagnóstico técnico acima.
+              </p>
+            </CardContent>
+          </Card>
+          <div className="grid gap-4 md:grid-cols-1 xl:grid-cols-2">
+            {sortedScripts.map((s, i) => {
+              const showCategoryHeading =
+                i === 0 || sortedScripts[i - 1]?.category !== s.category;
+              const diagStep =
+                s.category === 'diagnostic' ? DIAGNOSTIC_SCRIPT_ORDER[s.key] : undefined;
+              return (
+                <Fragment key={s.key}>
+                  {showCategoryHeading && (
+                    <div
+                      className={cn(
+                        'col-span-full',
+                        i > 0 && 'pt-3 mt-2 border-t border-border',
+                        s.category === 'diagnostic' &&
+                          'rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-3 -mx-0 sm:px-4',
+                      )}
+                    >
+                      <div className="flex flex-wrap items-center gap-2 gap-y-1">
+                        {s.category === 'diagnostic' ? (
+                          <Stethoscope className="h-5 w-5 text-primary shrink-0" aria-hidden />
+                        ) : null}
+                        <h2 className="text-base font-semibold tracking-tight">{categoryLabel(s.category)}</h2>
+                      </div>
+                      {s.category === 'diagnostic' ? (
+                        <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                          Ferramentas de investigação (sem reprocessar avatares automaticamente). Os cartões seguem a
+                          ordem 1 → 2 → 3 do guia acima.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {sortedScripts.filter((x) => x.category === s.category).length} script(s)
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <Card
+                    className={cn(
+                      !s.implemented && 'opacity-80',
+                      s.category === 'diagnostic' && 'border-primary/15 shadow-sm',
+                    )}
+                  >
               <CardHeader className="space-y-2">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <CardTitle className="text-lg">{s.name}</CardTitle>
+                  <CardTitle className="text-lg flex flex-wrap items-center gap-2">
+                    {diagStep != null ? (
+                      <Badge
+                        variant="secondary"
+                        className="shrink-0 font-mono text-[10px] uppercase tracking-wide"
+                        title="Ordem sugerida na secção Fix / Diagnóstico"
+                      >
+                        Passo {diagStep}/3
+                      </Badge>
+                    ) : null}
+                    {s.name}
+                  </CardTitle>
                   {!s.implemented && (
                     <Badge variant="outline" className="shrink-0">
                       Em breve
@@ -809,8 +982,11 @@ export default function SuperAdminAdvancedScriptsPage() {
                 )}
               </CardFooter>
             </Card>
-          ))}
-        </div>
+                </Fragment>
+              );
+            })}
+          </div>
+        </>
       )}
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
