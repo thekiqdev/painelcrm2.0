@@ -6,8 +6,12 @@ import type { Pool } from 'pg';
 import { isWhatsAppCdnAvatarUrl } from '../utils/uazapiChatIdentity.js';
 import { resolveConversationAvatarWithCache } from './whatsappAvatarCacheService.js';
 import { persistConversationAvatarToCrm } from './conversationAvatarPersistence.js';
-import { isMediaAvatarWhatsappEnabled } from './media/mediaConfig.js';
+import {
+  getMediaAvatarWhatsappWorkerMaxFailures,
+  isMediaAvatarWhatsappEnabled,
+} from './media/mediaConfig.js';
 import { summarizeUrlForLog } from './adminScripts/stripLocalhostMediaUrl.js';
+import { persistConversationAvatarCacheFailure } from './whatsappAvatarCacheBackoff.js';
 
 export type CandidateRow = {
   id: string;
@@ -24,6 +28,7 @@ export type CandidateRow = {
   avatar_source_url: string | null;
   /** Opcional (worker): tentativas prévias */
   avatar_cache_attempts?: number | string | null;
+  avatar_cache_status?: string | null;
 };
 
 export type ReprocessSample = {
@@ -128,6 +133,15 @@ export async function processOneConversationReprocess(
 
   if (patch.avatar_cache_status !== 'ok') {
     const isFail = patch.avatar_cache_status === 'fetch_failed';
+    if (isFail && logMode === 'admin') {
+      await persistConversationAvatarCacheFailure(
+        pool,
+        row,
+        'download/CDN falhou — estado anterior preservado (admin)',
+        getMediaAvatarWhatsappWorkerMaxFailures(),
+        '[avatar-cache-repair-failed]',
+      );
+    }
     logReprocess(logMode, isFail ? 'failed' : 'skipped', row.id, String(patch.avatar_cache_status ?? ''));
     return {
       conversation_id: row.id,

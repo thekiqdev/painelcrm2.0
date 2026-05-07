@@ -6,6 +6,7 @@ export type AdminScriptKey =
   | 'media.strip_localhost_internal_urls'
   | 'media.audit_whatsapp_cdn_avatars'
   | 'media.reprocess_avatar_cache'
+  | 'media.repair_broken_avatar_cache'
   | 'campaigns.recalculate_counters'
   | 'uazapi.review_webhooks';
 
@@ -87,9 +88,18 @@ export const ADMIN_SCRIPTS_CATALOG: AdminScriptCatalogEntry[] = [
     key: 'media.reprocess_avatar_cache',
     name: 'Reprocessar cache de avatares WhatsApp',
     description:
-      'Baixa avatares ainda apontando para CDN temporária do WhatsApp e salva em mídia interna assinada.',
+      'Baixa avatares ainda apontando para CDN temporária do WhatsApp e salva em mídia interna assinada. Inclui URLs /api/media/v1/raw inválidas ou sem ficheiro quando há avatar_source_url CDN.',
     risk: 'medium',
     category: 'reprocess',
+    implemented: true,
+  },
+  {
+    key: 'media.repair_broken_avatar_cache',
+    name: 'Reparar cache interno de avatar (quebrado)',
+    description:
+      'Só conversas com cópia interna /api/media/v1/raw inválida ou blob ausente, desde que exista avatar_source_url CDN. Preview obrigatório; limite por defeito 10 (máx. 100). Não apaga URLs antigas se o download falhar.',
+    risk: 'medium',
+    category: 'repair',
     implemented: true,
   },
   {

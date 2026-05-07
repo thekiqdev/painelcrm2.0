@@ -169,6 +169,62 @@ function resolveInternalApiBaseForFetch(): { base: string; source: string } {
   return { base: `http://127.0.0.1:${port}`, source: `loopback:${port}` };
 }
 
+/** Monta URL absoluta para sonda HTTP a partir do mesmo env que o round-trip (evidência servidor ↔ API pública). */
+function resolveUrlForServerSideHttpProbe(stored: string): { url: string; base_source: string } | null {
+  const t = stored.trim();
+  if (!t) return null;
+  if (t.startsWith('/')) {
+    const { base, source } = resolveInternalApiBaseForFetch();
+    return { url: `${base.replace(/\/$/, '')}${t}`, base_source: source };
+  }
+  if (/^https?:\/\//i.test(t)) return { url: t, base_source: 'stored_absolute_url' };
+  return null;
+}
+
+/**
+ * HEAD/GET mínimo a partir do Node — não reproduz cookies do browser.
+ * Útil para comparar com DevTools; WhatsApp costuma devolver 403 ao servidor.
+ */
+async function probeHttpFromNode(absoluteUrl: string, baseHint: string): Promise<Record<string, unknown>> {
+  if (absoluteUrl.includes('/api/chat/avatar-proxy')) {
+    return {
+      skipped: true,
+      reason: 'avatar_proxy_requires_browser_session',
+    };
+  }
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 12000);
+    let res = await fetch(absoluteUrl, { method: 'HEAD', signal: ctrl.signal, redirect: 'follow' });
+    clearTimeout(to);
+    if (res.status === 405 || res.status === 501) {
+      const ctrl2 = new AbortController();
+      const to2 = setTimeout(() => ctrl2.abort(), 12000);
+      res = await fetch(absoluteUrl, {
+        method: 'GET',
+        signal: ctrl2.signal,
+        redirect: 'follow',
+        headers: { Range: 'bytes=0-0', Accept: 'image/*,*/*;q=0.8' },
+      });
+      clearTimeout(to2);
+    }
+    const ct = res.headers.get('content-type');
+    return {
+      resolved_fetch_base_source: baseHint,
+      http_status: res.status,
+      content_type: ct,
+      note:
+        'Sonda no processo backend. 403 em pps.whatsapp.net é frequente. Para /api/media/v1/raw, 200 + image/* sugere rota e assinatura coerentes no secret atual.',
+    };
+  } catch (e: unknown) {
+    return {
+      resolved_fetch_base_source: baseHint,
+      error: e instanceof Error ? e.message : String(e),
+      note: 'Timeout, DNS ou TLS — comparar com GET manual na mesma URL.',
+    };
+  }
+}
+
 async function pickTenantIdForProbe(): Promise<string> {
   const r = await pool.query(`SELECT id::text FROM public.tenants ORDER BY created_at ASC LIMIT 1`);
   const id = r.rows[0]?.id as string | undefined;
@@ -592,6 +648,24 @@ export async function runMediaDiagnoseConversationAvatar(params: {
     };
   } else if (cls === 'empty') {
     primary_analysis = { classification: cls, probable_status: 'Sem URL primária.' };
+  }
+
+  if (primary) {
+    const resolvedProbe = resolveUrlForServerSideHttpProbe(primary);
+    if (resolvedProbe) {
+      primary_analysis = {
+        ...primary_analysis,
+        external_http_probe: await probeHttpFromNode(resolvedProbe.url, resolvedProbe.base_source),
+      };
+    } else {
+      primary_analysis = {
+        ...primary_analysis,
+        external_http_probe: {
+          skipped: true,
+          reason: 'url_not_path_or_absolute_http',
+        },
+      };
+    }
   }
 
   let overall_status: 'OK' | 'Atenção' | 'Erro' = 'OK';

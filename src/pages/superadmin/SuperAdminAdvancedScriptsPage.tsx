@@ -242,9 +242,10 @@ export default function SuperAdminAdvancedScriptsPage() {
   const [workerStatus, setWorkerStatus] = useState<AvatarWorkerStatusPayload | null>(null);
   const [loadingWorkerStatus, setLoadingWorkerStatus] = useState(false);
 
-  /** Filtros opcionais do script `media.reprocess_avatar_cache` */
+  /** Filtros opcionais dos scripts de cache de avatar (reprocessar / reparar quebrado) */
   const [avatarReprocessTenantId, setAvatarReprocessTenantId] = useState('');
   const [avatarReprocessLimit, setAvatarReprocessLimit] = useState('20');
+  const [avatarRepairLimit, setAvatarRepairLimit] = useState('10');
   const [uazGenerateMissingSecrets, setUazGenerateMissingSecrets] = useState(true);
   const [diagConversationId, setDiagConversationId] = useState('');
   const [diagRoundtripTenantId, setDiagRoundtripTenantId] = useState('');
@@ -292,6 +293,15 @@ export default function SuperAdminAdvancedScriptsPage() {
         if (t) body.tenantId = t;
         return body;
       }
+      if (s.key === 'media.repair_broken_avatar_cache') {
+        const lim = parseInt(avatarRepairLimit, 10);
+        const body: Record<string, unknown> = {
+          limit: Number.isFinite(lim) ? lim : 10,
+        };
+        const t = avatarReprocessTenantId.trim();
+        if (t) body.tenantId = t;
+        return body;
+      }
       if (s.key !== 'media.reprocess_avatar_cache') return {};
       const lim = parseInt(avatarReprocessLimit, 10);
       const body: Record<string, unknown> = {
@@ -302,6 +312,7 @@ export default function SuperAdminAdvancedScriptsPage() {
       return body;
     },
     [
+      avatarRepairLimit,
       avatarReprocessLimit,
       avatarReprocessTenantId,
       uazGenerateMissingSecrets,
@@ -526,22 +537,35 @@ export default function SuperAdminAdvancedScriptsPage() {
   const isStripScript = previewScript?.key === 'media.strip_localhost_internal_urls';
 
   const avatarReprocessPreview = useMemo(() => {
-    if (previewScript?.key !== 'media.reprocess_avatar_cache' || !previewResult || typeof previewResult !== 'object') {
+    const k = previewScript?.key;
+    if (
+      (k !== 'media.reprocess_avatar_cache' && k !== 'media.repair_broken_avatar_cache') ||
+      !previewResult ||
+      typeof previewResult !== 'object'
+    ) {
       return null;
     }
     const r = previewResult as {
       mediaAvatarFlagEnabled?: boolean;
       warning?: string | null;
       totalCandidates?: number;
+      totalBroadSql?: number;
+      note?: string;
+      repairBrokenOnly?: boolean;
       candidatesPreviewed?: number;
       truncatedPreview?: boolean;
       candidates?: Array<{
         tenant_id: string | null;
         conversation_id: string;
         display_name: string;
-        avatar_url: string | null;
-        avatar_cached_url: string | null;
-        avatar_source_url: string | null;
+        avatar_url?: string | null;
+        avatar_cached_url?: string | null;
+        avatar_source_url?: string | null;
+        avatar_url_preview?: string;
+        avatar_cached_url_preview?: string;
+        avatar_source_url_preview?: string;
+        avatar_cache_status?: string | null;
+        motive_codes?: string[];
         motives: string[];
         predicted_action: string;
       }>;
@@ -864,7 +888,7 @@ export default function SuperAdminAdvancedScriptsPage() {
                   )}
                 </div>
                 <CardDescription className="text-sm leading-relaxed">{s.description}</CardDescription>
-                {s.key === 'media.reprocess_avatar_cache' && (
+                {(s.key === 'media.reprocess_avatar_cache' || s.key === 'media.repair_broken_avatar_cache') && (
                   <div className="grid gap-2 pt-2 sm:grid-cols-2 rounded-md border bg-muted/20 p-3 text-xs">
                     <div className="space-y-1">
                       <Label htmlFor={`tenant-${s.key}`} className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -880,15 +904,19 @@ export default function SuperAdminAdvancedScriptsPage() {
                     </div>
                     <div className="space-y-1">
                       <Label htmlFor={`lim-${s.key}`} className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                        Limite (1–100)
+                        Limite (1–100){s.key === 'media.repair_broken_avatar_cache' ? ' · defeito 10' : ''}
                       </Label>
                       <Input
                         id={`lim-${s.key}`}
                         type="number"
                         min={1}
                         max={100}
-                        value={avatarReprocessLimit}
-                        onChange={(e) => setAvatarReprocessLimit(e.target.value)}
+                        value={s.key === 'media.repair_broken_avatar_cache' ? avatarRepairLimit : avatarReprocessLimit}
+                        onChange={(e) =>
+                          s.key === 'media.repair_broken_avatar_cache'
+                            ? setAvatarRepairLimit(e.target.value)
+                            : setAvatarReprocessLimit(e.target.value)
+                        }
                         className="h-8 text-xs"
                       />
                     </div>
@@ -975,9 +1003,11 @@ export default function SuperAdminAdvancedScriptsPage() {
                     <Play className="h-4 w-4 mr-1.5" />
                     {s.key === 'media.reprocess_avatar_cache'
                       ? 'Executar reprocessamento'
-                      : s.category === 'repair'
-                        ? 'Executar correção'
-                        : 'Executar script'}
+                      : s.key === 'media.repair_broken_avatar_cache'
+                        ? 'Executar reparo de cache'
+                        : s.category === 'repair'
+                          ? 'Executar correção'
+                          : 'Executar script'}
                   </Button>
                 )}
               </CardFooter>
@@ -1073,13 +1103,16 @@ export default function SuperAdminAdvancedScriptsPage() {
                 )}
                 <div className="text-sm space-y-1 rounded-md border bg-muted/30 p-3">
                   <div>
-                    <span className="font-medium">Candidatos (total):</span>{' '}
-                    {avatarReprocessPreview.totalCandidates ?? '—'}
+                    <span className="font-medium">Candidatos (SQL amplo):</span>{' '}
+                    {avatarReprocessPreview.totalBroadSql ?? avatarReprocessPreview.totalCandidates ?? '—'}
                   </div>
                   <div>
                     <span className="font-medium">Nesta pré-visualização:</span>{' '}
                     {avatarReprocessPreview.candidatesPreviewed ?? 0}
                   </div>
+                  {avatarReprocessPreview.note && (
+                    <p className="text-xs text-muted-foreground leading-snug">{avatarReprocessPreview.note}</p>
+                  )}
                   {avatarReprocessPreview.filters?.tenantId && (
                     <div className="font-mono text-xs">
                       Filtro tenant: {avatarReprocessPreview.filters.tenantId}
@@ -1101,12 +1134,17 @@ export default function SuperAdminAdvancedScriptsPage() {
                           <TableHead>avatar_url</TableHead>
                           <TableHead>avatar_cached_url</TableHead>
                           <TableHead>avatar_source_url</TableHead>
+                          <TableHead>Códigos</TableHead>
                           <TableHead>Motivos</TableHead>
                           <TableHead>Ação prevista</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {avatarReprocessPreview.candidates.map((row) => (
+                        {avatarReprocessPreview.candidates.map((row) => {
+                          const av = row.avatar_url ?? row.avatar_url_preview ?? '';
+                          const cau = row.avatar_cached_url ?? row.avatar_cached_url_preview ?? '';
+                          const src = row.avatar_source_url ?? row.avatar_source_url_preview ?? '';
+                          return (
                           <TableRow key={row.conversation_id}>
                             <TableCell className="font-mono text-[10px] max-w-[100px] truncate align-top">
                               {row.tenant_id ?? '—'}
@@ -1115,18 +1153,17 @@ export default function SuperAdminAdvancedScriptsPage() {
                               {row.conversation_id}
                             </TableCell>
                             <TableCell className="text-xs align-top">{row.display_name}</TableCell>
-                            <TableCell className="text-[10px] align-top max-w-[120px] break-all" title={row.avatar_url ?? ''}>
-                              {row.avatar_url ? `${row.avatar_url.slice(0, 64)}${row.avatar_url.length > 64 ? '…' : ''}` : '—'}
+                            <TableCell className="text-[10px] align-top max-w-[120px] break-all" title={av}>
+                              {av ? `${av.slice(0, 64)}${av.length > 64 ? '…' : ''}` : '—'}
                             </TableCell>
-                            <TableCell className="text-[10px] align-top max-w-[120px] break-all" title={row.avatar_cached_url ?? ''}>
-                              {row.avatar_cached_url
-                                ? `${row.avatar_cached_url.slice(0, 64)}${row.avatar_cached_url.length > 64 ? '…' : ''}`
-                                : '—'}
+                            <TableCell className="text-[10px] align-top max-w-[120px] break-all" title={cau}>
+                              {cau ? `${cau.slice(0, 64)}${cau.length > 64 ? '…' : ''}` : '—'}
                             </TableCell>
-                            <TableCell className="text-[10px] align-top max-w-[120px] break-all" title={row.avatar_source_url ?? ''}>
-                              {row.avatar_source_url
-                                ? `${row.avatar_source_url.slice(0, 64)}${row.avatar_source_url.length > 64 ? '…' : ''}`
-                                : '—'}
+                            <TableCell className="text-[10px] align-top max-w-[120px] break-all" title={src}>
+                              {src ? `${src.slice(0, 64)}${src.length > 64 ? '…' : ''}` : '—'}
+                            </TableCell>
+                            <TableCell className="text-[10px] align-top max-w-[100px] break-all">
+                              {(row.motive_codes ?? []).join(', ') || '—'}
                             </TableCell>
                             <TableCell className="text-[11px] align-top">
                               <ul className="list-disc pl-3 space-y-0.5">
@@ -1137,7 +1174,8 @@ export default function SuperAdminAdvancedScriptsPage() {
                             </TableCell>
                             <TableCell className="text-[11px] align-top max-w-[200px]">{row.predicted_action}</TableCell>
                           </TableRow>
-                        ))}
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </ScrollArea>
@@ -1361,6 +1399,7 @@ export default function SuperAdminAdvancedScriptsPage() {
               previewScript.key !== 'media.strip_localhost_internal_urls' &&
               previewScript.key !== 'media.audit_urls' &&
               previewScript.key !== 'media.reprocess_avatar_cache' &&
+              previewScript.key !== 'media.repair_broken_avatar_cache' &&
               previewScript.key !== 'uazapi.review_webhooks' &&
               previewScript.category !== 'diagnostic' && (
                 <ScrollArea className="max-h-[min(480px,55vh)] min-w-0 max-w-full">

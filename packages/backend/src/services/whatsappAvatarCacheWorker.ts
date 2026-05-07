@@ -13,6 +13,7 @@ import {
 } from './media/mediaConfig.js';
 import type { CandidateRow } from './whatsappAvatarReprocessExecution.js';
 import { processOneConversationReprocess } from './whatsappAvatarReprocessExecution.js';
+import { persistConversationAvatarCacheFailure } from './whatsappAvatarCacheBackoff.js';
 
 function sqlHasWaCdn(column: string): string {
   return `((${column})::text ILIKE '%whatsapp.net%' OR (${column})::text ILIKE '%whatsapp.com%')`;
@@ -41,22 +42,7 @@ export function isWhatsappAvatarCacheWorkerBusy(): boolean {
   return workerCycleBusy;
 }
 
-function sanitizeErr(msg: string): string {
-  const t = msg.replace(/\s+/g, ' ').trim();
-  return t.length <= 500 ? t : `${t.slice(0, 497)}…`;
-}
-
-/** Próximo instante de retry após mais uma falha (valor de avatar_cache_attempts após incremento). */
-export function computeNextRetryAtAfterFailure(
-  attemptsAfterIncrement: number,
-  maxFailures: number,
-): Date | null {
-  if (attemptsAfterIncrement >= maxFailures) return null;
-  let hours = 1;
-  if (attemptsAfterIncrement === 2) hours = 6;
-  if (attemptsAfterIncrement >= 3) hours = 24;
-  return new Date(Date.now() + hours * 3600 * 1000);
-}
+export { computeNextRetryAtAfterFailure } from './whatsappAvatarCacheBackoff.js';
 
 async function fetchWorkerCandidates(db: Pool, limit: number, maxFailures: number): Promise<CandidateRow[]> {
   const q = `
@@ -89,32 +75,6 @@ async function fetchWorkerCandidates(db: Pool, limit: number, maxFailures: numbe
     ...row,
     avatar_cache_attempts: row.avatar_cache_attempts ?? 0,
   }));
-}
-
-async function recordFailureBackoff(
-  db: Pool,
-  row: CandidateRow,
-  reason: string,
-  maxFailures: number,
-): Promise<void> {
-  const prev = Number(row.avatar_cache_attempts ?? 0);
-  const next = prev + 1;
-  const nextAt = computeNextRetryAtAfterFailure(next, maxFailures);
-  const err = sanitizeErr(reason);
-  try {
-    await db.query(
-      `UPDATE public.chat_conversations
-       SET avatar_cache_attempts = $2::integer,
-           avatar_cache_last_error = $3::text,
-           avatar_cache_next_retry_at = $4::timestamptz,
-           avatar_cache_status = 'fetch_failed',
-           updated_at = now()
-       WHERE id = $1::uuid`,
-      [row.id, next, err, nextAt],
-    );
-  } catch (e: unknown) {
-    console.warn('[avatar-cache-worker-failed]', 'recordFailureBackoff', row.id, e);
-  }
 }
 
 async function persistCycleMetrics(
@@ -190,7 +150,13 @@ export async function runWhatsappAvatarCacheWorkerCycle(db: Pool = pool): Promis
             sample.status === 'failed' &&
             sample.reason !== 'MEDIA_AVATAR_WHATSAPP_ENABLED desligado'
           ) {
-            await recordFailureBackoff(db, row, sample.reason, maxFailures);
+            await persistConversationAvatarCacheFailure(
+              db,
+              row,
+              sample.reason,
+              maxFailures,
+              '[avatar-cache-worker-failed]',
+            );
           }
           return sample;
         }),

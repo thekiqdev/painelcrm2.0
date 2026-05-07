@@ -13,7 +13,10 @@ import {
   runMediaDiagnoseSystem,
   runMediaTestStorageRoundtrip,
 } from './mediaDiagnosticsAdminScript.js';
-import { runWhatsappAvatarReprocessAdminScript } from './whatsappAvatarReprocessAdminScript.js';
+import {
+  runWhatsappAvatarRepairBrokenCacheAdminScript,
+  runWhatsappAvatarReprocessAdminScript,
+} from './whatsappAvatarReprocessAdminScript.js';
 
 export type AdminScriptMode = 'preview' | 'execute';
 
@@ -788,6 +791,30 @@ export async function runAdminScript(params: {
     case 'media.reprocess_avatar_cache':
       try {
         return await runWhatsappAvatarReprocessAdminScript({
+          pool,
+          userId,
+          mode,
+          body,
+          insertScriptRun: (input) => insertScriptRun(pool, input),
+          allowPreview,
+          allowExecute,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('MEDIA_AVATAR_WHATSAPP_ENABLED')) {
+          throw new AdminScriptValidationError(msg, 400);
+        }
+        if (msg.includes('tenantId inválido')) {
+          throw new AdminScriptValidationError(msg, 400);
+        }
+        if (msg.includes('Aguarde')) {
+          throw new AdminScriptValidationError(msg, 429);
+        }
+        throw e;
+      }
+    case 'media.repair_broken_avatar_cache':
+      try {
+        return await runWhatsappAvatarRepairBrokenCacheAdminScript({
           pool,
           userId,
           mode,
