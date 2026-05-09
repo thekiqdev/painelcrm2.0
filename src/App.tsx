@@ -78,6 +78,8 @@ const FinanceCreditCardDetailPage = lazyWithReload(() => import("./pages/finance
 const FinanceCreditCardStatementPage = lazyWithReload(() => import("./pages/finance/FinanceCreditCardStatementPage"));
 const FinancialReportsPage = lazyWithReload(() => import("./pages/finance/FinancialReportsPage"));
 const Settings = lazyWithReload(() => import("./pages/Settings"));
+const SettingsIndex = lazyWithReload(() => import("./pages/settings/SettingsIndex"));
+const SettingsSectionPage = lazyWithReload(() => import("./pages/settings/SettingsSectionPage"));
 const PaymentsPanelPage = lazyWithReload(() => import("./pages/settings/PaymentsPanelPage"));
 const GatewayConfigPage = lazyWithReload(() => import("./pages/settings/GatewayConfigPage"));
 const Chat = lazyWithReload(() => import("./pages/Chat"));
@@ -723,7 +725,7 @@ const App = () => (
             }>
               <Route index element={
                 <Suspense fallback={<LoadingFallback />}>
-                  <Settings />
+                  <SettingsIndex />
                 </Suspense>
               } />
               <Route path="integrations" element={
@@ -739,6 +741,11 @@ const App = () => (
               <Route path="payments/:gatewayKey" element={
                 <Suspense fallback={<LoadingFallback />}>
                   <GatewayConfigPage />
+                </Suspense>
+              } />
+              <Route path=":sectionSlug" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <SettingsSectionPage />
                 </Suspense>
               } />
             </Route>

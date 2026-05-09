@@ -27,7 +27,6 @@ const CHAT_AUTOMATION_UI_ENABLED = import.meta.env.VITE_CHAT_AUTOMATION_ENABLED 
 const Settings = () => {
   const ctx = useContext(SettingsLayoutContext);
   const activeSection = ctx?.activeSection ?? "companyData";
-  const setActiveSection = ctx?.setActiveSection ?? (() => {});
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
