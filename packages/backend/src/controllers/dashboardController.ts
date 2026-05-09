@@ -240,6 +240,7 @@ function stubFinancialReport(range: { from: string; to: string }): FinancialEnte
 }
 
 const zeroCountRow = Promise.resolve({ rows: [{ c: '0' }] });
+const zeroPaidInvoiceAggRow = Promise.resolve({ rows: [{ c: '0', sum_cents: '0' }] });
 
 // GET /api/dashboard/overview
 export async function getExecutiveOverview(req: AuthRequest, res: Response): Promise<void> {
@@ -277,25 +278,19 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
           ])
         : [stubFinancialReport({ from, to }), stubFinancialReport({ from: prev.from, to: prev.to })];
 
-    const [paidSalesCountR, leadsCreatedR, leadsConvertedR, leadsCreatedPrevR, leadsConvertedPrevR] = await Promise.all([
+    const [paidSalesAggR, leadsCreatedR, leadsConvertedR, leadsCreatedPrevR, leadsConvertedPrevR] = await Promise.all([
       canDashboardPaidInvoiceMetrics
-        ? pool.query<{ c: string }>(
-            `SELECT COUNT(*)::text AS c
+        ? pool.query<{ c: string; sum_cents: string }>(
+            `SELECT COUNT(*)::text AS c,
+                    COALESCE(SUM(ci.amount_cents), 0)::text AS sum_cents
              FROM customer_invoices ci
              WHERE ci.tenant_id = $1
                AND ci.status = 'paid'
                AND ci.paid_at IS NOT NULL
-               AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date
-               AND NOT EXISTS (
-                 SELECT 1 FROM financial_transactions ft
-                 WHERE ft.tenant_id = ci.tenant_id
-                   AND ft.entry_source = 'gateway_payment'
-                   AND ft.reference_type = 'customer_invoice'
-                   AND ft.reference_id = ci.id
-               )`,
+               AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date`,
             [tenantId, from, to]
           )
-        : zeroCountRow,
+        : zeroPaidInvoiceAggRow,
       gates.canLeads
         ? pool.query<{ c: string }>(
             `SELECT COUNT(*)::text AS c
@@ -336,7 +331,11 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
         : zeroCountRow,
     ]);
 
-    const paidSalesCount = Number(paidSalesCountR.rows[0]?.c ?? 0);
+    const paidSalesCount = Number(paidSalesAggR.rows[0]?.c ?? 0);
+    const paidSalesSumReais =
+      canDashboardPaidInvoiceMetrics && paidSalesAggR.rows[0]?.sum_cents != null
+        ? Number(paidSalesAggR.rows[0]?.sum_cents ?? 0) / 100
+        : 0;
     const leadsCreated = Number(leadsCreatedR.rows[0]?.c ?? 0);
     const leadsConverted = Number(leadsConvertedR.rows[0]?.c ?? 0);
     const leadsCreatedPrev = Number(leadsCreatedPrevR.rows[0]?.c ?? 0);
@@ -803,10 +802,10 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
 
     const futureRevenue = gates.billingView ? report.general.projected_subscription_income : 0;
     const receivedRevenue = gates.billingView ? report.general.received_income : 0;
-    const invoiceIncomeForTicket = canDashboardPaidInvoiceMetrics ? report.general.invoice_income : 0;
+    /** Ticket médio = soma dos valores das faturas pagas no período / quantidade (inclui gateway). */
     const averageTicket =
       canDashboardPaidInvoiceMetrics && paidSalesCount > 0
-        ? invoiceIncomeForTicket / paidSalesCount
+        ? paidSalesSumReais / paidSalesCount
         : 0;
     const expensePaid = gates.financeViewExpenses
       ? report.general.expense_paid ?? report.general.total_expense

@@ -11,6 +11,7 @@ import {
   DollarSign,
   FileSignature,
   FileText,
+  Landmark,
   MessageSquare,
   Target,
   TrendingUp,
@@ -171,7 +172,6 @@ const Dashboard = () => {
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
   const showBillingDash = show(hasInvoices, "billing") && hasPermissionKey("billing.view");
-  const showBillingInvoiceKpis = show(hasInvoices, "billing") && hasPermissionKey("billing.view_invoices");
   const showFinancePayables = show(hasExpenses, "finance") && hasPermissionKey("finance.view_accounts_payable");
   const showFinanceExpenses = show(hasExpenses, "finance") && hasPermissionKey("finance.view_expenses");
   const showFinanceProfit = show(hasExpenses, "finance") && hasPermissionKey("finance.view_profit");
@@ -289,13 +289,17 @@ const Dashboard = () => {
               <p className="mt-1 text-[11px] text-muted-foreground">{formatPct(overview.sales.conversion_rate_change_pct)} vs anterior</p>
             </div>
             ) : null}
-            {showBillingInvoiceKpis ? (
+            {showBillingDash ? (
             <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
               <p className="text-xs text-muted-foreground">Ticket médio</p>
               <p className="mt-1 text-lg font-semibold tabular-nums leading-tight">
                 {overview.sales.average_ticket != null ? formatCurrency(overview.sales.average_ticket) : "—"}
               </p>
-              <p className="mt-1 text-[11px] text-muted-foreground">Vendas pagas</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {overview.sales.paid_sales_count > 0
+                  ? `${overview.sales.paid_sales_count} fatura(s) paga(s)`
+                  : "Nenhuma fatura paga no período"}
+              </p>
             </div>
             ) : null}
           </div>
@@ -724,7 +728,7 @@ const Dashboard = () => {
       </div>
 
       {/* Linha principal */}
-      {(showBillingDash || showBillingInvoiceKpis || showLeadsDash) ? (
+      {(showBillingDash || showLeadsDash) ? (
       <div className="hidden gap-6 md:grid md:grid-cols-2 lg:grid-cols-4">
         {showBillingDash ? (
         <Card className="hover:shadow-md transition-shadow">
@@ -759,7 +763,7 @@ const Dashboard = () => {
           </CardContent>
         </Card>
         ) : null}
-        {showBillingInvoiceKpis ? (
+        {showBillingDash ? (
         <Card>
             <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-amber-600" />Ticket médio</CardDescription>
@@ -767,13 +771,17 @@ const Dashboard = () => {
               {overview?.sales.average_ticket != null ? formatCurrency(overview.sales.average_ticket) : "—"}
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">Receita recebida / vendas pagas.</CardContent>
+          <CardContent className="text-xs text-muted-foreground">
+            {(overview?.sales.paid_sales_count ?? 0) > 0
+              ? `Média de ${overview?.sales.paid_sales_count} fatura(s) paga(s) no período.`
+              : "Nenhuma fatura paga no período selecionado."}
+          </CardContent>
         </Card>
         ) : null}
                 </div>
       ) : null}
 
-      {/* Gráfico receita vs prevista e funil */}
+      {/* Gráfico receita vs prevista e contas a pagar (7 dias) */}
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
         {showBillingDash ? (
         <Card>
@@ -872,32 +880,44 @@ const Dashboard = () => {
             </CardContent>
           </Card>
         ) : null}
-        {show(hasClients, "clients") ? (
-        <Card>
+        {showFinancePayables ? (
+        <Card className="flex flex-col">
           <CardHeader>
-            <CardTitle>Funil de vendas</CardTitle>
-            <CardDescription>Etapas com quantidade e valor estimado</CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <Landmark className="h-5 w-5 text-rose-600" />
+              Contas a pagar
+            </CardTitle>
+            <CardDescription>Vencimentos nos próximos 7 dias</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {(overview?.funnel ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">Ainda não há dados neste período.</p>
+          <CardContent className="flex flex-1 flex-col space-y-3">
+            {(overview?.accounts_payable_next_7_days ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhuma conta a vencer nos próximos 7 dias.</p>
             ) : (
-              overview!.funnel.map((f) => {
-                const total = overview!.funnel.reduce((acc, row) => acc + row.count, 0);
-                const pct = total > 0 ? (f.count / total) * 100 : 0;
-                return (
-                  <div key={`${f.stage_id}-${f.stage_name}`} className="rounded-lg border p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-medium">{f.stage_name}</p>
-                      <p className="text-xs text-muted-foreground">{pct.toFixed(0)}%</p>
+              <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                {(overview?.accounts_payable_next_7_days ?? []).slice(0, 6).map((item) => (
+                  <Link
+                    key={`${item.source}-${item.id}`}
+                    to="/finance/accounts-payable?preset=week"
+                    className="flex items-start justify-between gap-3 rounded-lg border p-2.5 text-left transition-colors hover:bg-muted/50"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium leading-snug">{item.description}</p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {new Date(`${item.due_date}T00:00:00`).toLocaleDateString("pt-BR")} · {payableTag(item.due_date)}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {f.count} {f.count === 1 ? "lead" : "leads"}{f.amount > 0 ? ` | ${formatCurrency(f.amount)}` : ""}
-                    </p>
-            </div>
-                );
-              })
+                    <p className="shrink-0 text-sm font-semibold tabular-nums">{formatCurrencyCents(item.amount_cents)}</p>
+                  </Link>
+                ))}
+              </div>
             )}
+            <div className="mt-auto flex items-center justify-between border-t pt-3">
+              <span className="text-xs text-muted-foreground">Total da semana</span>
+              <span className="text-sm font-semibold">{formatCurrencyCents(overview?.accounts_payable_total_cents ?? 0)}</span>
+            </div>
+            <Button asChild variant="outline" size="sm" className="w-full">
+              <Link to="/finance/accounts-payable?preset=week">Ver todas as contas a pagar</Link>
+            </Button>
           </CardContent>
         </Card>
         ) : null}
@@ -1269,12 +1289,11 @@ const Dashboard = () => {
         ) : null}
                     </div>
 
-      {/* Financeiro resumido + alertas */}
+      {/* Financeiro resumido (contas a pagar no bloco acima, junto ao gráfico) */}
       {(showBillingDash ||
         showFinanceExpenses ||
         showFinanceProfit ||
-        showFinanceCash ||
-        showFinancePayables) ? (
+        showFinanceCash) ? (
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -1319,39 +1338,6 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
-        {showFinancePayables ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Contas a pagar</CardTitle>
-            <CardDescription>Próximos 7 dias</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {(overview?.accounts_payable_next_7_days ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhuma conta a vencer nos próximos 7 dias.</p>
-            ) : (
-              (overview?.accounts_payable_next_7_days ?? []).map((item) => (
-                <Link
-                  key={`${item.source}-${item.id}`}
-                  to="/finance/accounts-payable?preset=week"
-                  className="flex items-start justify-between gap-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors"
-                >
-                  <div>
-                    <p className="text-sm font-medium">{item.description}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(`${item.due_date}T00:00:00`).toLocaleDateString("pt-BR")} · {payableTag(item.due_date)}
-                    </p>
-                    </div>
-                  <p className="text-sm font-semibold tabular-nums">{formatCurrencyCents(item.amount_cents)}</p>
-                </Link>
-                ))
-              )}
-            <div className="flex items-center justify-between border-t pt-2">
-              <span className="text-xs text-muted-foreground">Total da semana</span>
-              <span className="text-sm font-semibold">{formatCurrencyCents(overview?.accounts_payable_total_cents ?? 0)}</span>
-            </div>
-          </CardContent>
-        </Card>
-        ) : null}
       </div>
       ) : null}
       </div>
