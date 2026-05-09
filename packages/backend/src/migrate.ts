@@ -342,6 +342,8 @@ const order = [
   '221_subscriptions_pricing_snapshot.sql',
   /** Atualizações: índice por user_id para contagem de não lidas */
   '222_announcement_reads_user_id_idx.sql',
+  /** WhatsApp: índice user_id + external_instance_name (webhook / resolução) */
+  '223_chat_instances_user_external_name_idx.sql',
   'create-admin-user.sql',
 ];
 

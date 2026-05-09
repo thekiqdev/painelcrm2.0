@@ -19,6 +19,41 @@ const MAX_NEW_CODES_PER_HOUR = 5;
 
 export type CodePurpose = 'password' | 'profile_edit';
 
+/** Garante coluna purpose (migração 220) — evita 42703 se migrate não correu no deploy. */
+let purposeSchemaEnsurePromise: Promise<void> | null = null;
+
+async function runUserPasswordChangeCodesPurposeMigration(pool: Pool): Promise<void> {
+  await pool.query(`
+    ALTER TABLE public.user_password_change_codes
+      ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'password'
+  `);
+  await pool.query(`
+    ALTER TABLE public.user_password_change_codes
+      DROP CONSTRAINT IF EXISTS user_password_change_codes_purpose_check
+  `);
+  await pool.query(`
+    ALTER TABLE public.user_password_change_codes
+      ADD CONSTRAINT user_password_change_codes_purpose_check
+      CHECK (purpose IN ('password', 'profile_edit'))
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_user_password_change_codes_user_purpose_created
+      ON public.user_password_change_codes (user_id, purpose, created_at DESC)
+  `);
+  await pool.query(`
+    COMMENT ON COLUMN public.user_password_change_codes.purpose IS
+      'password = alterar senha; profile_edit = desbloquear edição de dados pessoais / foto.'
+  `);
+}
+
+async function ensureUserPasswordChangeCodesPurposeSchema(pool: Pool): Promise<void> {
+  purposeSchemaEnsurePromise ??= runUserPasswordChangeCodesPurposeMigration(pool).catch((e) => {
+    purposeSchemaEnsurePromise = null;
+    throw e;
+  });
+  await purposeSchemaEnsurePromise;
+}
+
 function generateSixDigitCode(): string {
   return String(randomInt(100000, 1000000));
 }
@@ -118,6 +153,7 @@ async function requestWhatsappSixDigitCode(
   messageForPlainCode: (code: string) => string,
   noWhatsappError: string,
 ): Promise<RequestLoggedInPasswordChangeCodeResult> {
+  await ensureUserPasswordChangeCodesPurposeSchema(pool);
   const digits = await getRegisteredWhatsappDigits(pool, userId);
   if (digits.length < 8) {
     return { ok: false, error: noWhatsappError, code: 'NO_WHATSAPP' };
@@ -216,6 +252,7 @@ export async function confirmLoggedInPasswordChange(
   newPassword: string,
   confirmPassword: string,
 ): Promise<ConfirmLoggedInPasswordChangeResult> {
+  await ensureUserPasswordChangeCodesPurposeSchema(pool);
   if (!newPassword || newPassword.length < 8) {
     return { ok: false, error: 'A nova senha deve ter pelo menos 8 caracteres.' };
   }
@@ -277,6 +314,7 @@ export async function confirmProfileEditVerificationCode(
   userId: string,
   rawCode: string,
 ): Promise<ConfirmProfileEditCodeResult> {
+  await ensureUserPasswordChangeCodesPurposeSchema(pool);
   const code = String(rawCode ?? '').replace(/\D/g, '').trim();
   if (code.length !== 6) {
     return { ok: false, error: 'Código inválido ou expirado.' };

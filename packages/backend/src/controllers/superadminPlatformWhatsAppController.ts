@@ -17,6 +17,7 @@ import {
   upsertPlatformNotificationsGlobalSettings,
 } from '../services/platformNotifications/platformNotificationsGlobalSettingsService.js';
 import { refreshPlatformNotificationsFlagsFromPool } from '../services/platformNotifications/platformNotificationsRuntimeFlags.js';
+import { deleteChatInstanceComplete } from '../services/whatsappInstanceDeletionService.js';
 
 export { listInstances, createInstance, connectInstance, getInstanceStatus, patchInstance };
 
@@ -27,11 +28,8 @@ export async function deleteSuperadminPlatformWhatsAppInstance(req: AuthRequest,
     const settings = await getPlatformNotificationsGlobalSettingsRow(pool);
     const wasDesignated = settings.platform_notifications_whatsapp_chat_instance_id === id;
 
-    const del = await pool.query<{ id: string }>(
-      `DELETE FROM chat_instances WHERE id = $1::uuid AND user_id = $2::uuid RETURNING id::text AS id`,
-      [id, userId],
-    );
-    if (del.rowCount === 0) {
+    const result = await deleteChatInstanceComplete(pool, id, userId);
+    if (!result.deleted || !result.audit) {
       res.status(404).json({ error: 'Instância não encontrada' });
       return;
     }
@@ -43,7 +41,14 @@ export async function deleteSuperadminPlatformWhatsAppInstance(req: AuthRequest,
       await refreshPlatformNotificationsFlagsFromPool(pool);
     }
 
-    res.json({ message: 'Instância deletada com sucesso' });
+    res.json({
+      message: 'Instância removida no provedor e no sistema.',
+      ok: true,
+      audit: {
+        notifications_deleted: result.audit.notifications_deleted,
+        provider_delete_ok: result.audit.provider_delete_ok,
+      },
+    });
   } catch (e: unknown) {
     console.error('[superadmin/platform-whatsapp] delete', e);
     res.status(500).json({ error: e instanceof Error ? e.message : 'Erro ao remover instância.' });

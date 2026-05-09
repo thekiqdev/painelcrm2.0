@@ -157,6 +157,57 @@ export class UazapiService {
     });
   }
 
+  /**
+   * Remove instância no servidor UazAPI (best-effort).
+   * Tenta DELETE /instance; em 405 ou falha, POST /instance/delete (variantes de deploy).
+   * 404/410 no provedor = já removida → ok para limpeza local.
+   */
+  async deleteInstanceAtProvider(instanceToken: string): Promise<{
+    ok: boolean;
+    httpStatus?: number;
+    note?: string;
+  }> {
+    const token = instanceToken?.trim();
+    if (!token) return { ok: false, note: 'missing_token' };
+
+    const tryOnce = async (
+      method: string,
+      path: string,
+      body?: string,
+    ): Promise<{ ok: true } | { fail: number | undefined }> => {
+      try {
+        await this.request<unknown>(path, {
+          method,
+          token,
+          ...(body !== undefined ? { body } : {}),
+        });
+        return { ok: true };
+      } catch (e: unknown) {
+        const st =
+          typeof e === 'object' && e !== null && 'status' in e ? Number((e as { status: unknown }).status) : undefined;
+        return { fail: st };
+      }
+    };
+
+    const first = await tryOnce('DELETE', '/instance');
+    if ('ok' in first && first.ok) return { ok: true };
+
+    const st1 = 'fail' in first ? first.fail : undefined;
+    if (st1 === 404 || st1 === 410) return { ok: true, httpStatus: st1, note: 'already_absent' };
+
+    const second = await tryOnce('POST', '/instance/delete', '{}');
+    if ('ok' in second && second.ok) return { ok: true };
+
+    const st2 = 'fail' in second ? second.fail : undefined;
+    if (st2 === 404 || st2 === 410) return { ok: true, httpStatus: st2, note: 'already_absent' };
+
+    console.warn('[UazAPI] deleteInstanceAtProvider incomplete — local cleanup will continue', {
+      deleteStatus: st1,
+      postDeleteStatus: st2,
+    });
+    return { ok: false, httpStatus: st2 ?? st1, note: 'provider_delete_failed' };
+  }
+
   async getInstanceStatus(instanceToken: string) {
     return this.request('/instance/status', {
       method: 'GET',

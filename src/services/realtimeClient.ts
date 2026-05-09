@@ -6,6 +6,8 @@ export const REALTIME_EVENTS = {
   conversationUpdated: 'conversation.updated',
   notificationCreated: 'notification.created',
   channelStatusChanged: 'channel.status_changed',
+  /** Instância WhatsApp removida no backend — limpar caches de chat */
+  whatsappInstanceRemoved: 'whatsapp.instance_removed',
 } as const;
 
 export const REALTIME_WINDOW_EVENTS = {
@@ -13,6 +15,7 @@ export const REALTIME_WINDOW_EVENTS = {
   conversationUpdated: 'painelcrm:realtime:conversation.updated',
   notificationCreated: 'painelcrm:realtime:notification.created',
   channelStatusChanged: 'painelcrm:realtime:channel.status_changed',
+  whatsappInstanceRemoved: 'painelcrm:realtime:whatsapp.instance_removed',
 } as const;
 
 let socket: Socket | null = null;
@@ -64,6 +67,9 @@ export function connectRealtime(token: string): Socket {
   );
   socket.on(REALTIME_EVENTS.channelStatusChanged, (payload) =>
     emitWindowEvent(REALTIME_WINDOW_EVENTS.channelStatusChanged, payload)
+  );
+  socket.on(REALTIME_EVENTS.whatsappInstanceRemoved, (payload) =>
+    emitWindowEvent(REALTIME_WINDOW_EVENTS.whatsappInstanceRemoved, payload)
   );
 
   return socket;

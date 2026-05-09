@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -19,6 +20,7 @@ import { InstanceDetailsDialog } from "./InstanceDetailsDialog";
 import { WhatsAppInstanceCard } from "./WhatsAppInstanceCard";
 import { WhatsAppInstanceDetailsSheet } from "./WhatsAppInstanceDetailsSheet";
 import { REALTIME_WINDOW_EVENTS } from "@/services/realtimeClient";
+import { resetWhatsAppIntegrationCaches } from "@/lib/whatsappInstanceCacheReset";
 
 interface InstancesListProps {
   onAddInstance: () => void;
@@ -27,6 +29,7 @@ interface InstancesListProps {
 
 export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onInstanceCreated }) => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [instances, setInstances] = useState<ChatInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -244,9 +247,13 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
     setDeletingId(instanceToDelete.id);
     try {
       await chatService.deleteInstance(instanceToDelete.id);
-      toast.success("Conexão removida");
+      resetWhatsAppIntegrationCaches(queryClient);
+      toast.success("Instância removida", {
+        description: "Conversas e mensagens desta linha foram apagadas. Pode ligar uma nova instância.",
+      });
       await loadInstances();
       onInstanceCreated?.();
+      navigate("/settings?section=whatsapp&openAddConnection=1", { replace: true });
     } catch (error) {
       console.error("Erro ao remover:", error);
       toast.error("Não foi possível remover", {
@@ -462,19 +469,38 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent className="rounded-2xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Desconectar este número?</AlertDialogTitle>
-            <AlertDialogDescription>
-              A conexão com &ldquo;{instanceToDelete?.name}&rdquo; será removida da plataforma. Esta ação não pode ser
-              desfeita. Você poderá conectar de novo com um novo QR Code depois.
+            <AlertDialogTitle>Remover esta instância WhatsApp?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 text-left">
+              <span className="block font-medium text-foreground">
+                Ao remover esta instância, todas as conversas e mensagens ligadas a ela serão apagadas neste PainelCRM.
+              </span>
+              <span className="block">
+                A ligação no servidor UazAPI será terminada e a instância removida quando possível. Ao voltar a
+                conectar, tudo começa do zero (novo QR e novos dados).
+              </span>
+              <span className="block text-destructive">
+                Esta ação não pode ser desfeita.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel disabled={deletingId !== null}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteConfirm}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleDeleteConfirm();
+              }}
+              disabled={deletingId !== null}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Desconectar
+              {deletingId ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin inline" />
+                  A remover…
+                </>
+              ) : (
+                "Remover instância"
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

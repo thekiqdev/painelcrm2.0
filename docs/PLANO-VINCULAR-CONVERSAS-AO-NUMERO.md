@@ -3,6 +3,8 @@
 ## Objetivo
 Fazer com que o **card de Detalhes da Instância** seja o armazenador das conversas para aquele número, gerando uma **chave única** baseada no número conectado. Quando uma nova instância for criada com o mesmo número, ela herdará automaticamente as conversas da chave única. As conversas serão deletadas quando o card da instância for excluído.
 
+**Política atual (2026):** a herança automática entre instâncias com o mesmo `phone_key` **não** é o comportamento padrão. Por defeito a reconexão é **limpa**; a herança só ocorre se `WHATSAPP_INHERIT_CONVERSATIONS_ON_CONNECT=true` (modo legacy opcional). O texto histórico abaixo descreve o desenho técnico; o default de produto está invertido relativamente à redação original.
+
 ## Situação Atual
 
 ### Estrutura do Banco de Dados

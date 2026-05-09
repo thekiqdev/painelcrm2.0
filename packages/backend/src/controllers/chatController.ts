@@ -17,7 +17,12 @@ import { resolveOutgoingMediaPayload } from '../services/outgoingMediaPayloadRes
 import { buildWhatsappTemplateMediaPublicUrlFromStoragePath } from '../services/whatsappTemplateMediaStorageService.js';
 import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import * as notificationService from '../services/notifications.js';
-import { emitConversationUpdate, emitMessageUpdated, emitNewMessage } from '../services/websocketService.js';
+import {
+  emitConversationUpdate,
+  emitMessageUpdated,
+  emitNewMessage,
+  emitToUser,
+} from '../services/websocketService.js';
 import {
   resolveConversationMatch,
   normalizeConversationPhone,
@@ -28,6 +33,8 @@ import { applyKanbanAutomationForConversation } from '../services/chatKanbanAuto
 import { readKanbanTagIdsFromConversationMetadata } from '../services/chatKanbanConversationKanbanTagsService.js';
 import { DEFAULT_KANBAN_TAG_COLOR_UI } from '../services/chatKanbanTagStore.js';
 import { resolveTenantIdForUser } from '../utils/resolveTenantIdForUser.js';
+import { deleteChatInstanceComplete } from '../services/whatsappInstanceDeletionService.js';
+import { isWhatsappPhoneKeyInheritEnabled } from '../config/whatsappInheritEnv.js';
 import {
   extractUazapiChatDisplayName,
   extractUazapiChatImageUrl,
@@ -438,8 +445,8 @@ function buildMatchMetadata(match: ConversationMatchResult): Record<string, unkn
 }
 
 /**
- * Herda conversas de outras instâncias com o mesmo phone_key
- * Quando uma nova instância é conectada com o mesmo número, ela herda as conversas antigas
+ * Herda conversas de outras instâncias com o mesmo phone_key (modo legacy, só se ENV explícita).
+ * Por defeito o sistema **não** chama herança efetiva; reconexão com o mesmo número começa limpa.
  */
 async function inheritConversationsFromPhoneKey(
   userId: string,
@@ -451,17 +458,38 @@ async function inheritConversationsFromPhoneKey(
     return 0;
   }
 
+  if (!isWhatsappPhoneKeyInheritEnabled()) {
+    logUazChat('info', {
+      event_type: 'inherit_skipped_by_default_policy',
+      user_id: userId,
+      instance_id: newInstanceId,
+      phase: 'phone_key_inherit',
+      detail:
+        'Política padrão: sem herança por phone_key (reconexão limpa). Ative apenas com WHATSAPP_INHERIT_CONVERSATIONS_ON_CONNECT=true (legacy).',
+    });
+    return 0;
+  }
+
   try {
+    logUazChat('info', {
+      event_type: 'inherit_enabled_by_env',
+      user_id: userId,
+      instance_id: newInstanceId,
+      phase: 'phone_key_inherit',
+      detail: 'WHATSAPP_INHERIT_CONVERSATIONS_ON_CONNECT=true — herança legacy ativa',
+    });
     console.log(`[InheritConversations] Herdando conversas para instância ${newInstanceId} com phone_key ${phoneKey}`);
 
-    // Buscar todas as conversas do mesmo user_id e phone_key, mas de outras instâncias
+    // Só reassocia conversas cujo instance_id ainda existe (instância eliminada já CASCADE-apagou linhas).
     const result = await pool.query(
-      `UPDATE chat_conversations 
+      `UPDATE chat_conversations c
        SET instance_id = $1, updated_at = now()
-       WHERE user_id = $2 
-         AND phone_key = $3
-         AND instance_id != $1
-       RETURNING id, phone_number, external_chat_id`,
+       FROM chat_instances i
+       WHERE c.instance_id = i.id
+         AND c.user_id = $2::uuid
+         AND c.phone_key = $3
+         AND c.instance_id <> $1::uuid
+       RETURNING c.id, c.phone_number, c.external_chat_id`,
       [newInstanceId, userId, phoneKey]
     );
 
@@ -471,6 +499,14 @@ async function inheritConversationsFromPhoneKey(
       });
     } else {
       console.log(`[InheritConversations] Nenhuma conversa encontrada para herdar com phone_key ${phoneKey}`);
+      logUazChat('info', {
+        event_type: 'inherit_skipped_deleted_instance',
+        user_id: userId,
+        instance_id: newInstanceId,
+        phase: 'phone_key_inherit',
+        detail:
+          'Herança legacy ligada mas nenhuma conversa elegível (ex.: instância anterior removida em CASCADE ou sem outra instância com o mesmo phone_key).',
+      });
     }
 
     return result.rows.length;
@@ -3960,6 +3996,15 @@ async function runBootstrapSyncJob(
       sync_run_id: syncRunId,
       detail: 'instância não encontrada',
     });
+    logUazChat('warn', {
+      event_type: 'sync_ignored_deleted_instance',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: instanceId,
+      sync_run_id: syncRunId,
+      phase: 'bootstrap_job',
+      detail: 'instância ausente (provável DELETE); job abortado sem chamadas UazAPI',
+    });
     return;
   }
 
@@ -4610,8 +4655,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
       }
     }
 
-    // Se phone_key foi gerado, herdar conversas de outras instâncias com mesmo número (em background)
-    // NOTA: Se a instância foi recriada, a herança já foi feita acima, mas não faz mal fazer novamente
+    // Se phone_key foi gerado, opcionalmente herdar conversas legacy (só com WHATSAPP_INHERIT_CONVERSATIONS_ON_CONNECT=true)
     if (phoneKey) {
       inheritConversationsFromPhoneKey(instanceToUse.user_id, instanceToUse.id, phoneKey)
         .then(count => {
@@ -4658,14 +4702,52 @@ export async function deleteInstance(req: AuthRequest, res: Response) {
     const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
-    // Deletar instância na UazAPI (se necessário)
-    // Nota: A UazAPI pode não ter endpoint de delete, então apenas deletamos do nosso banco
-    // Se a UazAPI tiver endpoint, adicionar aqui: await uazapiService.deleteInstance(instance.instance_token);
+    const tenantId = await resolveTenantIdForUser(userId);
+    const ownerT = await pool.query<{ tenant_id: string | null }>(`SELECT tenant_id FROM users WHERE id = $1`, [
+      instance.user_id,
+    ]);
+    const actorT = await pool.query<{ tenant_id: string | null }>(`SELECT tenant_id FROM users WHERE id = $1`, [userId]);
+    if ((ownerT.rows[0]?.tenant_id ?? null) !== (actorT.rows[0]?.tenant_id ?? null)) {
+      res.status(403).json({
+        error: 'Não é possível remover esta instância.',
+        code: 'INSTANCE_DELETE_TENANT_MISMATCH',
+      });
+      return;
+    }
 
-    // Deletar do banco de dados (cascade vai deletar conversas e mensagens)
-    await pool.query('DELETE FROM chat_instances WHERE id = $1 AND user_id = $2', [id, userId]);
+    const result = await deleteChatInstanceComplete(pool, id, userId);
+    if (!result.deleted || !result.audit) {
+      res.status(404).json({ error: 'Instância não encontrada' });
+      return;
+    }
 
-    res.json({ message: 'Instância deletada com sucesso' });
+    logUazChat('info', {
+      event_type: 'whatsapp_instance_deleted',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: result.audit.instance_id,
+      notifications_deleted: result.audit.notifications_deleted,
+      provider_delete_ok: result.audit.provider_delete_ok,
+      provider_delete_note: result.audit.provider_delete_note,
+      external_instance_name: instance.external_instance_name ?? null,
+    });
+
+    try {
+      emitToUser(userId, 'whatsapp.instance_removed', { instance_id: id });
+    } catch {
+      /* socket opcional */
+    }
+
+    res.json({
+      ok: true,
+      message:
+        'Instância removida. Todas as conversas e mensagens desta linha foram apagadas deste PainelCRM. Ao conectar de novo, comece do zero.',
+      audit: {
+        notifications_deleted: result.audit.notifications_deleted,
+        provider_delete_ok: result.audit.provider_delete_ok,
+        provider_disconnect_attempted: result.audit.provider_disconnect_attempted,
+      },
+    });
   } catch (error: any) {
     console.error('Error deleting instance:', error);
     res.status(500).json({ error: error.message || 'Failed to delete instance' });
@@ -5250,7 +5332,7 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
         }
       }
 
-      // Se phone_key foi gerado, herdar conversas de outras instâncias com mesmo número (em background)
+      // Se phone_key foi gerado, opcionalmente herdar conversas legacy (só com ENV explícita)
       if (phoneKey) {
         inheritConversationsFromPhoneKey(instance.user_id, instance.id, phoneKey)
           .then(count => {
@@ -10485,14 +10567,23 @@ export async function handleWebhook(req: Request, res: Response) {
     const instanceMatchCount = instanceRows.length;
     if (instanceMatchCount === 0) {
       const providerCandidates = extractProviderInstanceIdCandidates(payload);
-      console.warn(`[Webhook ${webhookId}] instance_resolution_failed`, {
-        webhookId,
-        reason: 'instance_not_found',
-        hasInstanceId: Boolean(requestedInstanceId),
-        hasExternalKey: Boolean(externalKeyEarly),
-        providerCandidatesSample: providerCandidates.slice(0, 5),
+      logUazChat('warn', {
+        event_type: 'webhook_ignored_unknown_instance',
+        webhook_id: webhookId,
+        reason: 'instance_not_registered',
+        has_instance_id_param: Boolean(requestedInstanceId),
+        has_external_key: Boolean(externalKeyEarly),
+        provider_candidates_count: providerCandidates.length,
+        provider_candidates_sample: providerCandidates.slice(0, 3).map((s) =>
+          typeof s === 'string' && s.length > 24 ? `${s.slice(0, 12)}…` : s,
+        ),
       });
-      res.status(404).json({ error: 'Instance not registered' });
+      res.status(200).json({
+        received: true,
+        ignored: true,
+        reason: 'webhook_ignored_unknown_instance',
+        webhookId,
+      });
       return;
     }
     if (instanceMatchCount > 1) {
@@ -10552,12 +10643,13 @@ export async function handleWebhook(req: Request, res: Response) {
 
     const secretValid = matchedSource !== 'none';
     if (!secretValid || secretCandidates.length === 0) {
+      const tenantIdForLog = await resolveTenantIdForUser(instance.user_id);
       console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
         webhookId,
         hasInstanceId: Boolean(requestedInstanceId),
         instanceResolved: true,
         instanceId: instance.id,
-        tenantId: await resolveTenantIdForUser(instance.user_id),
+        tenantId: tenantIdForLog,
         hasQuerySecret: Boolean(normalizeIncomingWebhookSecret(req.query?.secret) || normalizeIncomingWebhookSecret(req.query?.webhookSecret)),
         hasHeaderSecret: Boolean(normalizeIncomingWebhookSecret(req.headers['x-uazapi-secret'])),
         candidateSecretLengths: secretCandidates.map((c) => c.length),
@@ -10565,7 +10657,15 @@ export async function handleWebhook(req: Request, res: Response) {
         matchedSource: 'none',
         reason: secretCandidates.length === 0 ? 'missing_secret' : 'invalid_secret',
       });
-      res.status(401).json({ error: 'Invalid or missing webhook secret' });
+      logUazChat('warn', {
+        event_type: 'webhook_secret_rejected',
+        webhook_id: webhookId,
+        instance_id: instance.id,
+        tenant_id: tenantIdForLog,
+        reason: secretCandidates.length === 0 ? 'missing_secret' : 'invalid_secret',
+        candidate_secret_lengths: secretCandidates.map((c) => c.length),
+      });
+      res.status(401).json({ error: 'Invalid or missing webhook secret', code: 'webhook_secret_rejected' });
       return;
     }
     if (matchedSource === 'legacy_env' && !instanceSecretRequired) {
