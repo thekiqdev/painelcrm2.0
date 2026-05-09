@@ -4,6 +4,15 @@ import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
 
 const router = Router();
 
+/** UazAPI pode acrescentar sufixos ao URL base (ex.: /messages/text). `router.post('/v2/...')` não casa subpaths — usar `use` aqui. */
+function postWebhookV2(req: Request, res: Response, next: NextFunction) {
+  if (req.method !== 'POST') {
+    next();
+    return;
+  }
+  void handleWebhookV2(req, res);
+}
+
 // Middleware de logging específico para webhooks
 router.use((req: Request, res: Response, next: NextFunction) => {
   if (isUazIntegrationVerboseLogs()) {
@@ -27,8 +36,8 @@ router.get('/', (req: Request, res: Response) => {
   });
 });
 
-/** v2 — identificação por path (:instanceId + token interno). Registar antes do wildcard. */
-router.post('/v2/:instanceId/:webhookToken', handleWebhookV2);
+/** v2 — identificação por path (:instanceId + token). Inclui subpaths (/messages/text, etc.). Antes do wildcard. */
+router.use('/v2/:instanceId/:webhookToken', postWebhookV2);
 
 // Endpoint principal de webhook (v1 legacy — query ?instanceId=&secret=)
 // A UazAPI pode enviar para diferentes paths como /messages/text, /messages, etc.

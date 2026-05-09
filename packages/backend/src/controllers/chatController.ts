@@ -11245,6 +11245,7 @@ async function runUazWebhookPayloadPipeline(
 /**
  * Webhook UazAPI v2 — identificação apenas por URL:
  * POST .../api/webhooks/uazapi/v2/:instanceId/:webhookToken
+ * O provedor pode acrescentar sufixos (ex.: /messages/text); a rota usa prefix match.
  */
 export async function handleWebhookV2(req: Request, res: Response) {
   const startTime = Date.now();
