@@ -16,6 +16,7 @@ import {
 } from '../services/platformNotifications/platformBusinessNotifications.js';
 import { z } from 'zod';
 import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/userIdentity.js';
+import { refreshCatalogMediaRelativeSignedUrl } from '../utils/catalogMediaPublicSignedUrl.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -586,7 +587,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       first_name: user.first_name,
       last_name: user.last_name,
       company_name: user.company_name,
-      avatar_url: user.avatar_url ?? null,
+      avatar_url: refreshCatalogMediaRelativeSignedUrl(user.avatar_url ?? null),
       job_title: user.job_title ?? null,
       locale: user.locale ?? null,
       timezone: user.timezone ?? null,

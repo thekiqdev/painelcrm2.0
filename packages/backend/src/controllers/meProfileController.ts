@@ -22,7 +22,10 @@ import {
   saveCatalogMediaBuffer,
   unlinkCatalogMediaRelativeKey,
 } from '../services/catalogMediaUploadService.js';
-import { extractCatalogMediaRelativeKeyFromStoredUrl } from '../utils/catalogMediaPublicSignedUrl.js';
+import {
+  extractCatalogMediaRelativeKeyFromStoredUrl,
+  refreshCatalogMediaRelativeSignedUrl,
+} from '../utils/catalogMediaPublicSignedUrl.js';
 import { isMediaSimpleUploadsServiceEnabled } from '../services/media/mediaConfig.js';
 import {
   maybeUnlinkPreviousAvatarUrl,
@@ -187,7 +190,7 @@ export async function getMeProfile(req: AuthRequest, res: Response): Promise<voi
         job_title: row.job_title ?? null,
         locale: row.locale ?? null,
         timezone: row.timezone ?? null,
-        avatar_url: row.avatar_url ?? null,
+        avatar_url: refreshCatalogMediaRelativeSignedUrl(row.avatar_url as string | null),
       },
       can_edit_business_profile: can,
     });
@@ -272,7 +275,7 @@ export async function putMeProfile(req: AuthRequest, res: Response): Promise<voi
         job_title: merged.job_title,
         locale: merged.locale,
         timezone: merged.timezone,
-        avatar_url: merged.avatar_url,
+        avatar_url: refreshCatalogMediaRelativeSignedUrl(merged.avatar_url ?? null),
       },
     });
   } catch (e) {

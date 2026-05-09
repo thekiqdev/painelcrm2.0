@@ -13,6 +13,25 @@ function getCatalogMediaSigningSecret(): string {
   return s || 'dev-only-catalog-media-signing';
 }
 
+/**
+ * Aceita assinaturas feitas com qualquer segredo já usado em produção (rotação de JWT ou token dedicado).
+ * Inclui CATALOG_MEDIA_PUBLIC_TOKEN_SECRET_PREVIOUS durante migração de segredo.
+ */
+function getCatalogMediaVerificationSecrets(): string[] {
+  const catalog = process.env.CATALOG_MEDIA_PUBLIC_TOKEN_SECRET?.trim();
+  const jwt = process.env.JWT_SECRET?.trim();
+  const prev = process.env.CATALOG_MEDIA_PUBLIC_TOKEN_SECRET_PREVIOUS?.trim();
+  const out: string[] = [];
+  const add = (secret: string | undefined) => {
+    if (secret && !out.includes(secret)) out.push(secret);
+  };
+  add(catalog);
+  add(jwt);
+  add(prev);
+  if (!catalog && !jwt) add('dev-only-catalog-media-signing');
+  return out;
+}
+
 export function signCatalogMediaPublicQuery(relativeKey: string): { k: string; s: string } {
   const k = Buffer.from(relativeKey, 'utf8').toString('base64url');
   const s = createHmac('sha256', getCatalogMediaSigningSecret()).update(k).digest('base64url');
@@ -20,10 +39,13 @@ export function signCatalogMediaPublicQuery(relativeKey: string): { k: string; s
 }
 
 export function verifyCatalogMediaPublicQuery(k: string, s: string): boolean {
-  const expected = createHmac('sha256', getCatalogMediaSigningSecret()).update(k).digest('base64url');
-  const a = Buffer.from(expected);
-  const b = Buffer.from(s);
-  return a.length === b.length && timingSafeEqual(a, b);
+  const sigBuf = Buffer.from(s);
+  for (const secret of getCatalogMediaVerificationSecrets()) {
+    const expected = createHmac('sha256', secret).update(k).digest('base64url');
+    const a = Buffer.from(expected);
+    if (a.length === sigBuf.length && timingSafeEqual(a, sigBuf)) return true;
+  }
+  return false;
 }
 
 export function resolveCatalogMediaPublicOrigin(req: Request): string {
@@ -103,6 +125,20 @@ export function extractCatalogMediaRelativeKeyFromStoredUrl(stored: string): str
     return null;
   }
   return null;
+}
+
+/**
+ * Re-emite `/api/public/catalog-media/raw?k=&s=` com o segredo atual (mantém o path lógico em `k`).
+ * Evita 403 no browser quando o JWT_SECRET foi rodado mas a BD ainda tem query antiga.
+ */
+export function refreshCatalogMediaRelativeSignedUrl(stored: string | null | undefined): string | null {
+  if (stored == null) return null;
+  const t = String(stored).trim();
+  if (!t) return null;
+  const key = extractCatalogMediaRelativeKeyFromStoredUrl(t);
+  if (!key) return t;
+  if (key.includes('..') || path.isAbsolute(key) || key.startsWith('/')) return t;
+  return buildCatalogMediaRawSignedRelativeUrl(key);
 }
 
 export function rewriteStoredCatalogMediaUrlForClient(req: Request, stored: string | null | undefined): string | null {

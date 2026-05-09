@@ -3,6 +3,11 @@ import type { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
 import * as notificationService from '../services/notifications.js';
+import {
+  getCachedUpdatesUnreadCount,
+  invalidateUpdatesUnreadCountCache,
+  setCachedUpdatesUnreadCount,
+} from '../services/announcements/updatesUnreadCountCache.js';
 
 function buildVisibilityClause(
   isSuperAdmin: boolean,
@@ -149,7 +154,10 @@ export async function getUpdatesUnreadCount(req: AuthRequest, res: Response): Pr
          )`,
       params
     );
-    res.json({ count: parseInt(r.rows[0]?.count ?? '0', 10) });
+    const count = parseInt(r.rows[0]?.count ?? '0', 10);
+    setCachedUpdatesUnreadCount(tenantId, userId, count);
+    res.setHeader('Cache-Control', 'private, max-age=15');
+    res.json({ count });
   } catch (e) {
     console.error('[announcements/updates] unread-count', e);
     res.status(500).json({ error: 'Erro ao contar não lidas' });
@@ -227,6 +235,8 @@ export async function postMarkUpdatesRead(req: AuthRequest, res: Response): Prom
     );
 
     await notificationService.markAnnouncementNotificationsAsReadForUser(userId, allowed);
+
+    invalidateUpdatesUnreadCountCache(tenantId, userId);
 
     res.json({ marked: allowed.length });
   } catch (e) {

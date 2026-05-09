@@ -336,8 +336,12 @@ const order = [
   '218_chat_kanban_scheduled_moves_to_board.sql',
   /** system_feature_flags: grupos WhatsApp UazAPI (default on; Super Admin) */
   '218_whatsapp_groups_system_feature_flag.sql',
+  /** user_password_change_codes: purpose password | profile_edit (código para editar perfil) */
+  '220_user_password_change_codes_purpose.sql',
   /** Billing: snapshot de preço contratado em subscriptions (sem alterar motor de renovação) */
   '221_subscriptions_pricing_snapshot.sql',
+  /** Atualizações: índice por user_id para contagem de não lidas */
+  '222_announcement_reads_user_id_idx.sql',
   'create-admin-user.sql',
 ];
 

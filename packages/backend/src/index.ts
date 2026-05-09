@@ -131,6 +131,9 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = parseInt(process.env.API_PORT || '3001', 10);
 
+/** Sem ETag em res.json: evita 304 após executar o handler completo (query à BD já correu). APIs JSON autenticadas não beneficiam. */
+app.set('etag', false);
+
 // Trust proxy - necessário quando atrás de Nginx/reverse proxy
 // Usar configuração segura para não confiar em qualquer IP arbitrário
 const trustProxySetting =
