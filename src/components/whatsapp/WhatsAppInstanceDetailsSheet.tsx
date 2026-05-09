@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, QrCode, RefreshCw, Unplug, MessageSquare, Shield, RotateCcw } from "lucide-react";
+import { Loader2, QrCode, RefreshCw, Unplug, MessageSquare, Shield, RotateCcw, Wrench } from "lucide-react";
 import type { ChatInstance } from "@/services/chat";
 import {
   formatWhatsappDisplayPhone,
@@ -39,6 +39,7 @@ type Props = {
   webhookActionLoading?: boolean;
   onWebhookRefresh: () => void;
   onWebhookReconfigure: () => void;
+  onWebhookRepair?: () => void;
   onWebhookRotateSecret: () => void;
 };
 
@@ -61,6 +62,7 @@ export function WhatsAppInstanceDetailsSheet({
   webhookActionLoading = false,
   onWebhookRefresh,
   onWebhookReconfigure,
+  onWebhookRepair,
   onWebhookRotateSecret,
 }: Props) {
   const profile = instance ? getWhatsAppInstanceProfileInfo(instance) : null;
@@ -145,11 +147,17 @@ export function WhatsAppInstanceDetailsSheet({
                 <p>Secret configurado: {webhookStatus?.hasSecret ? "Sim" : "Não"}</p>
                 <p className="break-all">Callback atual: {webhookStatus?.callbackUrlMasked ?? "—"}</p>
               </div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                 <Button type="button" variant="secondary" disabled={webhookActionLoading} onClick={onWebhookReconfigure}>
                   {webhookActionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                   Reconfigurar webhook
                 </Button>
+                {onWebhookRepair ? (
+                  <Button type="button" variant="outline" disabled={webhookActionLoading} onClick={onWebhookRepair}>
+                    <Wrench className="mr-2 h-4 w-4" />
+                    Reparar webhook
+                  </Button>
+                ) : null}
                 <Button type="button" variant="outline" disabled={webhookActionLoading} onClick={onWebhookRotateSecret}>
                   <RotateCcw className="mr-2 h-4 w-4" />
                   Rotacionar secret

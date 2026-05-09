@@ -874,6 +874,12 @@ export const chatService = {
     return response.data ?? {};
   },
 
+  async repairInstanceWebhook(id: string): Promise<Record<string, unknown>> {
+    const response = await apiClient.post<Record<string, unknown>>(`/api/chat/instances/${id}/repair-webhook`, {});
+    if (response.error) throw new Error(response.error);
+    return response.data ?? {};
+  },
+
   async rotateInstanceWebhookSecret(id: string): Promise<Record<string, unknown>> {
     const response = await apiClient.post<Record<string, unknown>>(`/api/chat/instances/${id}/webhook/rotate-secret`, {});
     if (response.error) throw new Error(response.error);

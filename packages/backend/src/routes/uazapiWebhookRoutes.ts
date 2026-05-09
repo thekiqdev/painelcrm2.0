@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { handleWebhook } from '../controllers/chatController.js';
+import { handleWebhook, handleWebhookV2 } from '../controllers/chatController.js';
 import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
 
 const router = Router();
@@ -27,7 +27,10 @@ router.get('/', (req: Request, res: Response) => {
   });
 });
 
-// Endpoint principal de webhook - captura todas as rotas POST
+/** v2 — identificação por path (:instanceId + token interno). Registar antes do wildcard. */
+router.post('/v2/:instanceId/:webhookToken', handleWebhookV2);
+
+// Endpoint principal de webhook (v1 legacy — query ?instanceId=&secret=)
 // A UazAPI pode enviar para diferentes paths como /messages/text, /messages, etc.
 router.post('*', handleWebhook);
 

@@ -35,6 +35,7 @@ import { DEFAULT_KANBAN_TAG_COLOR_UI } from '../services/chatKanbanTagStore.js';
 import { resolveTenantIdForUser } from '../utils/resolveTenantIdForUser.js';
 import { deleteChatInstanceComplete } from '../services/whatsappInstanceDeletionService.js';
 import { isWhatsappPhoneKeyInheritEnabled } from '../config/whatsappInheritEnv.js';
+import { useLegacyQueryWebhookUrlRegistration } from '../config/uazapiWebhookRouting.js';
 import {
   extractUazapiChatDisplayName,
   extractUazapiChatImageUrl,
@@ -2433,11 +2434,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         oldWebhookUrl: existingWebhook?.url,
         newWebhookUrl: webhookUrl.split('?')[0],
       });
-    } else if (
-      existingWebhook?.url === resolvedUrl &&
-      !!existingWebhook?.webhookSecretInQuery === true &&
-      !existingWebhook?.needsReconfigure
-    ) {
+    } else if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure) {
       logUazChat('info', {
         ...baseLog,
         webhook_result: 'skipped',
@@ -2496,150 +2493,71 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     });
 
     /**
-     * Fonte de verdade: `chat_instances.webhook_secret` + URL com `?secret=`.
-     * O provedor pode normalizar/alterar o secret na URL registada (GET /webhook ≠ valor gerado localmente).
-     * Se detetarmos mismatch, atualizamos a coluna e voltamos a configurar o webhook para alinhar entrega real.
+     * Contrato v2: `chat_instances.webhook_secret` + path …/v2/:id/:token são autoridade local.
+     * GET /webhook na Uaz serve só para auditoria — não sobrescrever o token por valor devolvido pelo provedor.
      */
-    let effectiveSecret = secretTrim;
-    let finalResolvedUrl = resolvedUrl;
+    const effectiveSecret = secretTrim;
+    const finalResolvedUrl = resolvedUrl;
     let uazDeliverySecrets: string[] = [];
 
     try {
-      const maxRounds = 3;
-      let lastRemote: unknown = null;
+      const remote = await uazapiService.getWebhook(instance.instance_token);
+      logSanitizedUazGetWebhookAudit(
+        { ...baseLog, phase: 'post_configure_audit' },
+        remote,
+        instance.id,
+        instance.external_instance_name,
+        effectiveSecret,
+      );
 
-      for (let round = 0; round < maxRounds; round++) {
-        const remote = await uazapiService.getWebhook(instance.instance_token);
-        lastRemote = remote;
-
-        logSanitizedUazGetWebhookAudit(
-          {
-            ...baseLog,
-            phase: `webhook_reconcile_round_${round}`,
-          },
-          remote,
-          instance.id,
-          instance.external_instance_name,
-          effectiveSecret,
-        );
-
-        const canonical = extractCanonicalWebhookUrlSecretForInstance(remote, instance.id);
-        const authoritativeMismatch = pickAuthoritativeSecretFromUazWebhookRemote(remote, instance.id, effectiveSecret);
-
-        let nextFromProvider: string | undefined;
-        if (canonical && !webhookSecretsEqual(canonical, effectiveSecret)) {
-          nextFromProvider = canonical;
-        } else if (authoritativeMismatch && !webhookSecretsEqual(authoritativeMismatch, effectiveSecret)) {
-          nextFromProvider = authoritativeMismatch;
-        }
-
-        if (nextFromProvider) {
-          logUazChat('info', {
-            ...baseLog,
-            event_type: 'webhook_secret_reconciled_from_provider',
-            phase: 'webhook_secret_reconciled_from_provider',
-            saved_secret_length: effectiveSecret.length,
-            provider_secret_length: nextFromProvider.length,
-            saved_fp: webhookSecretFingerprint(effectiveSecret),
-            provider_fp: webhookSecretFingerprint(nextFromProvider),
-            reconcile_round: round,
-            token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
-            detail: 'GET /webhook: secret difere do valor local — atualizar BD e repetir POST /webhook',
-          });
-          await pool.query(
-            `UPDATE chat_instances
-             SET webhook_secret = $1,
-                 metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-                 updated_at = now()
-             WHERE id = $3`,
-            [nextFromProvider, JSON.stringify({ webhook_secret: nextFromProvider }), instance.id]
-          );
-          effectiveSecret = nextFromProvider.trim();
-          const rebuilt = buildInstanceWebhookUrl(instance.id, effectiveSecret);
-          if (rebuilt) finalResolvedUrl = rebuilt;
-
-          await uazapiService.configureWebhook(instance.instance_token, {
-            enabled: true,
-            url: finalResolvedUrl,
-            events: defaultEvents,
-            excludeMessages: defaultExcludeMessages,
-            addUrlEvents: true,
-            AddUrlTypesMessages: true,
-            ...(effectiveSecret ? { secret: effectiveSecret } : {}),
-          });
-          continue;
-        }
-
-        uazDeliverySecrets = dedupeNormalizedSecrets([
-          effectiveSecret,
-          ...extractWebhookDeliverySecretsFromUazRemote(remote),
-          ...extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(remote)),
-        ]);
-
-        let urlSecretLen = 0;
-        try {
-          urlSecretLen = new URL(finalResolvedUrl).searchParams.get('secret')?.length ?? 0;
-        } catch {
-          urlSecretLen = 0;
-        }
-
-        const lengthsMatch = urlSecretLen > 0 && urlSecretLen === effectiveSecret.length;
-
-        if (lengthsMatch) {
-          logUazChat('info', {
-            ...baseLog,
-            event_type: 'webhook_configure_audit',
-            phase: 'webhook_configure_audit',
-            saved_secret_length: effectiveSecret.length,
-            webhook_url_has_secret: finalResolvedUrl.includes('secret='),
-            webhook_url_secret_length: urlSecretLen,
-            saved_secret_fp: webhookSecretFingerprint(effectiveSecret),
-            lengths_match: true,
-            reconcile_round: round,
-            provider_webhook_configured: true,
-            uaz_delivery_secret_count: uazDeliverySecrets.length,
-            token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
-            detail: 'auditoria pós-configuração (sem secret em claro)',
-          });
-          break;
-        }
-
-        if (round < maxRounds - 1) {
-          await uazapiService.configureWebhook(instance.instance_token, {
-            enabled: true,
-            url: finalResolvedUrl,
-            events: defaultEvents,
-            excludeMessages: defaultExcludeMessages,
-            addUrlEvents: true,
-            AddUrlTypesMessages: true,
-            ...(effectiveSecret ? { secret: effectiveSecret } : {}),
-          });
-          continue;
-        }
-
-        logUazChat('warn', {
+      const canonical = extractCanonicalWebhookUrlSecretForInstance(remote, instance.id);
+      if (canonical && !webhookSecretsEqual(canonical, effectiveSecret)) {
+        logUazChat('info', {
           ...baseLog,
-          event_type: 'webhook_configure_mismatch',
-          phase: 'webhook_configure_mismatch',
-          webhook_result: 'failed',
-          saved_secret_length: effectiveSecret.length,
-          webhook_url_secret_length: urlSecretLen,
-          lengths_match: false,
-          reconcile_round: round,
-          token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
+          event_type: 'provider_returned_different_secret_ignored',
+          phase: 'provider_snapshot',
+          saved_fp: webhookSecretFingerprint(effectiveSecret),
+          provider_url_secret_fp: webhookSecretFingerprint(canonical),
           detail:
-            'secret na URL local vs comprimento efetivo não coincidiram com GET /webhook após várias tentativas',
+            'Token interno no PainelCRM é autoridade; não sincronizar coluna a partir do GET /webhook',
         });
-        break;
       }
 
-      if (uazDeliverySecrets.length === 0 && lastRemote) {
-        uazDeliverySecrets = dedupeNormalizedSecrets([
-          effectiveSecret,
-          ...extractWebhookDeliverySecretsFromUazRemote(lastRemote),
-          ...extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(lastRemote)),
-        ]);
+      uazDeliverySecrets = dedupeNormalizedSecrets([
+        effectiveSecret,
+        ...extractWebhookDeliverySecretsFromUazRemote(remote),
+        ...extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(remote)),
+      ]);
+
+      const legacyReg = useLegacyQueryWebhookUrlRegistration();
+      let urlTokLen = 0;
+      try {
+        if (legacyReg) {
+          urlTokLen = new URL(finalResolvedUrl).searchParams.get('secret')?.length ?? 0;
+        } else {
+          const parts = finalResolvedUrl.split('/').filter(Boolean);
+          const last = parts[parts.length - 1];
+          urlTokLen = last ? decodeURIComponent(last).length : 0;
+        }
+      } catch {
+        urlTokLen = 0;
       }
+
+      const routeVer = legacyReg ? 'v1' : 'v2';
+      logUazChat('info', {
+        ...baseLog,
+        event_type: legacyReg ? 'webhook_configure_audit' : 'webhook_v2_configured',
+        phase: 'webhook_configure_audit',
+        webhook_route_version: routeVer,
+        saved_secret_length: effectiveSecret.length,
+        webhook_url_secret_length: urlTokLen,
+        saved_secret_fp: webhookSecretFingerprint(effectiveSecret),
+        lengths_match: urlTokLen > 0 && urlTokLen === effectiveSecret.length,
+        provider_webhook_configured: true,
+        uaz_delivery_secret_count: uazDeliverySecrets.length,
+        token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
+        detail: `registo ${routeVer}; GET /webhook apenas auditoria`,
+      });
     } catch (syncErr: any) {
       console.warn('[Auto-Webhook] getWebhook após configurar falhou (uazDeliverySecrets não sincronizados)', {
         instanceId: instance.id,
@@ -2665,8 +2583,10 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         JSON.stringify({
           webhook: {
             url: finalResolvedUrl,
-            webhookSecretInQuery: !!effectiveSecret,
+            webhookSecretInQuery: useLegacyQueryWebhookUrlRegistration() && !!effectiveSecret,
             webhookSecretMask: maskSecretForLogs(effectiveSecret),
+            webhook_route_version: useLegacyQueryWebhookUrlRegistration() ? 'v1' : 'v2',
+            path_based_webhook: !useLegacyQueryWebhookUrlRegistration(),
             events: defaultEvents,
             excludeMessages: defaultExcludeMessages,
             configuredAt: new Date().toISOString(),
@@ -5238,6 +5158,77 @@ export async function reconfigureInstanceWebhook(req: AuthRequest, res: Response
   } catch (error: any) {
     console.error('Error reconfiguring webhook:', error);
     res.status(500).json({ error: error.message || 'Failed to reconfigure webhook' });
+  }
+}
+
+/** Regista novamente o webhook na Uaz com URL v2 (path) ou v1 (legacy env). */
+export async function repairInstanceWebhook(req: AuthRequest, res: Response) {
+  const userId = req.userId!;
+  const { id } = req.params;
+  const tenantId = await resolveTenantIdForUser(userId);
+  logUazChat('info', {
+    event_type: 'webhook_repair_started',
+    tenant_id: tenantId,
+    user_id: userId,
+    instance_id: id,
+    phase: 'start',
+  });
+  try {
+    const instance = await loadInstanceForManage(userId, id, res);
+    if (!instance) return;
+
+    const prevFp = webhookSecretFingerprint(
+      normalizeIncomingWebhookSecret((instance as any).webhook_secret),
+    );
+    await ensureInstanceWebhookSecret(instance);
+    const peek = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [id]);
+    const inst = peek.rows[0];
+    if (!inst) {
+      logUazChat('warn', {
+        event_type: 'webhook_repair_failed',
+        instance_id: id,
+        detail: 'instance_not_found_after_ensure',
+      });
+      res.status(404).json({ error: 'Instância não encontrada' });
+      return;
+    }
+
+    await autoConfigureWebhook(inst);
+
+    const after = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [id]);
+    const row = after.rows[0];
+    const nextFp = webhookSecretFingerprint(
+      normalizeIncomingWebhookSecret((row as any)?.webhook_secret),
+    );
+    const routeVer = useLegacyQueryWebhookUrlRegistration() ? 'v1' : 'v2';
+    const tokenRotated = Boolean(prevFp && nextFp && prevFp !== nextFp);
+
+    logUazChat('info', {
+      event_type: 'webhook_repair_completed',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: id,
+      webhook_route_version: routeVer,
+      token_rotated: tokenRotated,
+      phase: 'completed',
+    });
+
+    res.json({
+      ok: true,
+      instance_id: id,
+      webhook_route_version: routeVer,
+      configured: true,
+      token_rotated: tokenRotated,
+    });
+  } catch (error: any) {
+    logUazChat('warn', {
+      event_type: 'webhook_repair_failed',
+      tenant_id: tenantId,
+      user_id: userId,
+      instance_id: id,
+      detail: error?.message || String(error),
+    });
+    res.status(500).json({ error: error.message || 'Failed to repair webhook' });
   }
 }
 
@@ -10545,14 +10536,26 @@ async function ensureInstanceWebhookSecret(instance: ChatInstanceRow): Promise<s
 }
 
 function buildInstanceWebhookUrl(instanceId: string, secret: string): string | null {
-  const base =
+  const baseRaw =
     process.env.UAZAPI_WEBHOOK_URL ||
     (process.env.PUBLIC_API_URL ? `${process.env.PUBLIC_API_URL.replace(/\/$/, '')}/api/webhooks/uazapi` : null);
-  if (!base) return null;
-  const u = new URL(base);
-  u.searchParams.set('instanceId', instanceId);
-  u.searchParams.set('secret', secret);
-  return u.toString();
+  if (!baseRaw) return null;
+  const base = baseRaw.replace(/\/$/, '');
+  const token = secret.trim();
+
+  if (useLegacyQueryWebhookUrlRegistration()) {
+    let u: URL;
+    try {
+      u = new URL(base);
+    } catch {
+      u = new URL(base.startsWith('http') ? base : `https://${base}`);
+    }
+    u.searchParams.set('instanceId', instanceId);
+    u.searchParams.set('secret', token);
+    return u.toString();
+  }
+
+  return `${base}/v2/${instanceId}/${encodeURIComponent(token)}`;
 }
 
 function getConfiguredWebhookSecrets(): string[] {
@@ -10979,24 +10982,15 @@ async function mergeWebhookSecretsFromProviderSkipPath(instance: ChatInstanceRow
     const canonical = extractCanonicalWebhookUrlSecretForInstance(remote, instance.id);
     const col = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
     if (canonical && col && !webhookSecretsEqual(canonical, col)) {
-      await pool.query(
-        `UPDATE chat_instances
-         SET webhook_secret = $1,
-             metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-             updated_at = now()
-         WHERE id = $3`,
-        [canonical, JSON.stringify({ webhook_secret: canonical }), instance.id]
-      );
       logUazChat('info', {
-        event_type: 'webhook_skip_path_secret_corrected',
+        event_type: 'provider_returned_different_secret_ignored',
         tenant_id: tenantId,
         instance_id: instance.id,
-        detail: 'canonical URL secret diferente da coluna — corrigido em already_configured',
+        detail: 'skip already_configured: não sobrescrever token local a partir do GET /webhook',
       });
     }
 
     const merged = dedupeNormalizedSecrets([
-      ...(canonical ? [canonical] : []),
       ...(col ? [col] : []),
       ...extractWebhookDeliverySecretsFromUazRemote(remote),
       ...extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(remote)),
@@ -11095,6 +11089,259 @@ function logSanitizedUazGetWebhookAudit(
     saved_fp: webhookSecretFingerprint(effectiveSecret),
     lengths_match_hint: lengthsMatchHint,
   });
+}
+
+/** UUID v4 para segmento :instanceId na rota webhook v2 */
+const UAZ_WEBHOOK_V2_INSTANCE_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type UazWebhookPipelineOpts = {
+  routeVersion: 'v1' | 'v2';
+  tenantIdForLog: string | null;
+  requestedInstanceId?: string | null;
+  externalKeyEarly?: string | null;
+  matchedSource?: string;
+  v1LogExtras?: {
+    secretCandidates: string[];
+    configuredSecretLengths: number[];
+    instanceColumnSecret: string | undefined;
+    metadataSecret: string | null;
+  };
+};
+
+/**
+ * Processamento comum após autenticação (v1 secret ou v2 path token).
+ * Não resolve instância pelo payload — `instance` já é a fonte de verdade.
+ */
+async function runUazWebhookPayloadPipeline(
+  req: Request,
+  res: Response,
+  instance: ChatInstanceRow,
+  payload: Record<string, any>,
+  webhookId: string,
+  startTime: number,
+  opts: UazWebhookPipelineOpts
+): Promise<void> {
+  const webhookVerbose = isUazIntegrationVerboseLogs();
+  const { routeVersion, tenantIdForLog, requestedInstanceId, externalKeyEarly } = opts;
+
+  await pool.query(
+    `UPDATE chat_instances
+     SET webhook_secret_last_seen_at = now(), updated_at = now()
+     WHERE id = $1`,
+    [instance.id]
+  );
+
+  if (opts.routeVersion === 'v1' && opts.v1LogExtras) {
+    const x = opts.v1LogExtras;
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] secret_validated`, {
+        webhookId,
+        instanceId: instance.id,
+        matchedSource: opts.matchedSource,
+        candidateSecretLengths: x.secretCandidates.map((c) => c.length),
+        configuredSecretLengths: x.configuredSecretLengths,
+        instanceColumnSecretMask: maskSecretForLogs(x.instanceColumnSecret),
+        metadataSecretMask: maskSecretForLogs(x.metadataSecret),
+      });
+    }
+  }
+
+  if (webhookVerbose) {
+    console.log(`[Webhook ${webhookId}] received`, {
+      webhookRoute: opts.routeVersion,
+      method: req.method,
+      path: req.path,
+      ip: req.ip,
+      contentType: req.get('content-type'),
+      xUazapiInstance: req.headers['x-uazapi-instance'],
+      bodyKeys: req.body ? Object.keys(req.body) : [],
+    });
+  } else {
+    logUazChat('info', {
+      event_type: 'webhook_request',
+      phase: 'received',
+      webhook_route: opts.routeVersion === 'v2' ? 'v2_path' : 'v1_legacy',
+      instance_id: instance.id,
+      tenant_id: tenantIdForLog,
+      detail: `${req.method} ${req.path} webhookId=${webhookId}`,
+    });
+  }
+
+  if (!payload || Object.keys(payload).length === 0) {
+    console.warn(`[Webhook ${webhookId}] Empty payload`, {
+      ip: req.ip,
+      bodyType: typeof req.body,
+    });
+    res.status(400).json({ error: 'Empty payload' });
+    return;
+  }
+
+  if (
+    opts.routeVersion === 'v2' &&
+    externalKeyEarly &&
+    instance.external_instance_name &&
+    externalKeyEarly.trim().toLowerCase() !== String(instance.external_instance_name).trim().toLowerCase()
+  ) {
+    logUazChat('warn', {
+      event_type: 'webhook_v2_payload_instance_mismatch',
+      webhook_id: webhookId,
+      instance_id: instance.id,
+      tenant_id: tenantIdForLog,
+      payload_label: truncateWebhookDebugLabel(externalKeyEarly, 48),
+      db_external_instance_name: instance.external_instance_name,
+      detail: 'Ignorado para roteamento — identidade veio da URL v2',
+    });
+  }
+
+  const externalKey = externalKeyEarly || instance.external_instance_name || requestedInstanceId || instance.id;
+
+  if (webhookVerbose) {
+    console.log(`[Webhook ${webhookId}] Instance identification`, {
+      resolvedInstanceName: externalKey,
+      fromHeader: !!req.headers['x-uazapi-instance'],
+      webhookRoute: opts.routeVersion,
+    });
+  }
+
+  const event = payload.event || req.query.event || payload.type || 'unknown';
+
+  logUazChat('info', {
+    event_type: 'webhook_instance_matched',
+    instance_id: instance.id,
+    external_instance_name: instance.external_instance_name,
+    webhook_route_version: opts.routeVersion,
+    tenant_id: tenantIdForLog,
+    phase: event,
+    detail: `receiveTimeMs=${Date.now() - startTime} payloadBytes=${JSON.stringify(payload).length}`,
+  });
+  if (webhookVerbose) {
+    console.log(`[Webhook ${webhookId}] instance matched`, {
+      instanceName: externalKey,
+      instanceId: instance.id,
+      event,
+      webhookRoute: opts.routeVersion,
+    });
+  }
+
+  res.status(200).json({
+    received: true,
+    webhookId,
+    event,
+    instance: externalKey,
+    webhook_route: opts.routeVersion === 'v2' ? 'v2_path' : 'v1_legacy',
+  });
+
+  processProviderWebhook(DEFAULT_COMMUNICATION_PROVIDER, instance, payload, event).catch((error: any) => {
+    console.error(`[Webhook ${webhookId}] Async processing error:`, {
+      error: error.message,
+      stack: error.stack,
+      event,
+      instance: externalKey,
+    });
+  });
+}
+
+/**
+ * Webhook UazAPI v2 — identificação apenas por URL:
+ * POST .../api/webhooks/uazapi/v2/:instanceId/:webhookToken
+ */
+export async function handleWebhookV2(req: Request, res: Response) {
+  const startTime = Date.now();
+  const webhookId = randomUUID();
+
+  try {
+    const instanceIdRaw = req.params.instanceId?.trim() ?? '';
+    const tokenRaw = req.params.webhookToken ?? '';
+    const tokenDecoded =
+      typeof tokenRaw === 'string' ? decodeURIComponent(tokenRaw.trim()) : '';
+
+    logUazChat('info', {
+      event_type: 'webhook_v2_received',
+      webhook_id: webhookId,
+      phase: 'ingress',
+      detail: `path=${req.path}`,
+    });
+
+    if (!instanceIdRaw || !UAZ_WEBHOOK_V2_INSTANCE_ID_RE.test(instanceIdRaw)) {
+      logUazChat('warn', {
+        event_type: 'webhook_v2_token_rejected',
+        webhook_id: webhookId,
+        reason: 'invalid_instance_id_format',
+      });
+      res.status(400).json({ error: 'Invalid instance id', code: 'webhook_v2_bad_instance_id' });
+      return;
+    }
+
+    const r = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [
+      instanceIdRaw,
+    ]);
+    const row = r.rows[0];
+    if (!row) {
+      logUazChat('warn', {
+        event_type: 'webhook_v2_ignored_unknown_instance',
+        webhook_id: webhookId,
+        instance_id: instanceIdRaw,
+        reason: 'instance_not_found',
+      });
+      res.status(200).json({
+        received: true,
+        ignored: true,
+        reason: 'webhook_v2_ignored_unknown_instance',
+        webhookId,
+      });
+      return;
+    }
+
+    const stored = normalizeIncomingWebhookSecret((row as any).webhook_secret);
+    const incoming = normalizeIncomingWebhookSecret(tokenDecoded);
+    if (!stored || !incoming || !webhookSecretsEqual(incoming, stored)) {
+      logUazChat('warn', {
+        event_type: 'webhook_v2_token_rejected',
+        webhook_id: webhookId,
+        instance_id: row.id,
+        token_length_incoming: incoming?.length ?? 0,
+        token_length_expected: stored?.length ?? 0,
+      });
+      res.status(401).json({ error: 'Invalid webhook token', code: 'webhook_v2_token_rejected' });
+      return;
+    }
+
+    const tenantIdForLog = await resolveTenantIdForUser(row.user_id);
+    logUazChat('info', {
+      event_type: 'webhook_v2_token_valid',
+      webhook_id: webhookId,
+      instance_id: row.id,
+      tenant_id: tenantIdForLog,
+      external_instance_name: row.external_instance_name,
+      token_fp: webhookSecretFingerprint(incoming),
+    });
+
+    const payload: Record<string, any> =
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+        ? (req.body as Record<string, any>)
+        : {};
+    const externalKeyEarly = extractUazWebhookInstanceExternalKey(payload, req);
+
+    await runUazWebhookPayloadPipeline(req, res, row, payload, webhookId, startTime, {
+      routeVersion: 'v2',
+      tenantIdForLog,
+      requestedInstanceId: instanceIdRaw,
+      externalKeyEarly: externalKeyEarly ?? undefined,
+    });
+  } catch (error: any) {
+    console.error(`[Webhook ${webhookId}] Error handling webhook v2:`, {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: error.message || 'Failed to process webhook',
+        webhookId,
+      });
+    }
+  }
 }
 
 /**
@@ -11295,96 +11542,19 @@ export async function handleWebhook(req: Request, res: Response) {
     } else if (matchedSource === 'legacy_env' && instanceSecretRequired) {
       // legado permitido apenas com instância resolvida (já resolvida acima)
     }
-    await pool.query(
-      `UPDATE chat_instances
-       SET webhook_secret_last_seen_at = now(), updated_at = now()
-       WHERE id = $1`,
-      [instance.id]
-    );
-    if (webhookVerbose) {
-      console.log(`[Webhook ${webhookId}] secret_validated`, {
-        webhookId,
-        instanceId: instance.id,
-        matchedSource,
-        candidateSecretLengths: secretCandidates.map((c) => c.length),
+
+    await runUazWebhookPayloadPipeline(req, res, instance, payload, webhookId, startTime, {
+      routeVersion: 'v1',
+      tenantIdForLog,
+      requestedInstanceId,
+      externalKeyEarly: externalKeyEarly ?? undefined,
+      matchedSource,
+      v1LogExtras: {
+        secretCandidates,
         configuredSecretLengths,
-        instanceColumnSecretMask: maskSecretForLogs(instanceColumnSecret),
-        metadataSecretMask: maskSecretForLogs(metadataSecret),
-      });
-    }
-
-    if (webhookVerbose) {
-      console.log(`[Webhook ${webhookId}] received`, {
-        method: req.method,
-        path: req.path,
-        ip: req.ip,
-        contentType: req.get('content-type'),
-        xUazapiInstance: req.headers['x-uazapi-instance'],
-        bodyKeys: req.body ? Object.keys(req.body) : [],
-      });
-    } else {
-      logUazChat('info', {
-        event_type: 'webhook_request',
-        phase: 'received',
-        detail: `${req.method} ${req.path} webhookId=${webhookId}`,
-      });
-    }
-
-    // 2. Validar payload (já materializado acima para auth por instance_token)
-    if (!payload || Object.keys(payload).length === 0) {
-      console.warn(`[Webhook ${webhookId}] Empty payload`, {
-        ip: req.ip,
-        bodyType: typeof req.body,
-      });
-      res.status(400).json({ error: 'Empty payload' });
-      return;
-    }
-
-    const externalKey = externalKeyEarly || instance.external_instance_name || requestedInstanceId || instance.id;
-
-    if (webhookVerbose) {
-      console.log(`[Webhook ${webhookId}] Instance identification`, {
-        resolvedInstanceName: externalKey,
-        fromHeader: !!req.headers['x-uazapi-instance'],
-      });
-    }
-
-    
-
-    // 3. Identificar tipo de evento
-    const event = payload.event || req.query.event || payload.type || 'unknown';
-
-    logUazChat('info', {
-      event_type: 'webhook_instance_matched',
-      instance_id: instance.id,
-      external_instance_name: instance.external_instance_name,
-      phase: event,
-      detail: `receiveTimeMs=${Date.now() - startTime} payloadBytes=${JSON.stringify(payload).length}`,
-    });
-    if (webhookVerbose) {
-      console.log(`[Webhook ${webhookId}] instance matched`, {
-      instanceName: externalKey,
-      instanceId: instance.id,
-      event,
-    });
-    }
-
-    // 7. Responder rapidamente (antes de processar)
-    res.status(200).json({
-      received: true,
-      webhookId,
-      event,
-      instance: externalKey,
-    });
-
-    // 8. Processar evento de forma assíncrona (não bloqueia a resposta)
-    processProviderWebhook(DEFAULT_COMMUNICATION_PROVIDER, instance, payload, event).catch((error) => {
-      console.error(`[Webhook ${webhookId}] Async processing error:`, {
-        error: error.message,
-        stack: error.stack,
-        event,
-        instance: externalKey,
-      });
+        instanceColumnSecret,
+        metadataSecret,
+      },
     });
   } catch (error: any) {
     console.error(`[Webhook ${webhookId}] Error handling webhook:`, {

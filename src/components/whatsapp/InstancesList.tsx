@@ -336,6 +336,22 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
     }
   };
 
+  const handleWebhookRepair = async (instance: ChatInstance) => {
+    setWebhookActionLoadingId(instance.id);
+    try {
+      await chatService.repairInstanceWebhook(instance.id);
+      toast.success("Webhook reconfigurado com sucesso.");
+      await loadWebhookStatus(instance.id);
+      await loadInstances();
+    } catch (error) {
+      toast.error("Não foi possível reparar o webhook", {
+        description: error instanceof Error ? error.message : "Tente novamente",
+      });
+    } finally {
+      setWebhookActionLoadingId(null);
+    }
+  };
+
   const handleWebhookReconfigure = async (instance: ChatInstance) => {
     setWebhookActionLoadingId(instance.id);
     try {
@@ -555,6 +571,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
         onWebhookReconfigure={() =>
           activeSheetInstance ? void handleWebhookReconfigure(activeSheetInstance) : undefined
         }
+        onWebhookRepair={() => (activeSheetInstance ? void handleWebhookRepair(activeSheetInstance) : undefined)}
         onWebhookRotateSecret={() =>
           activeSheetInstance ? askRotateWebhookSecret(activeSheetInstance) : undefined
         }

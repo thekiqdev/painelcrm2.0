@@ -21,6 +21,7 @@ import {
   forceConfigureWebhook,
   reconfigureInstanceWebhook,
   rotateInstanceWebhookSecret,
+  repairInstanceWebhook,
   syncConversationMessages,
   refreshConversationIdentity,
   markConversationRead,
@@ -125,6 +126,7 @@ router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/instances/:id/webhook/force', forceConfigureWebhook);
 router.post('/instances/:id/webhook/reconfigure', reconfigureInstanceWebhook);
 router.post('/instances/:id/webhook/rotate-secret', rotateInstanceWebhookSecret);
+router.post('/instances/:id/repair-webhook', repairInstanceWebhook);
 router.get('/runtime-config', getChatRuntimeConfig);
 router.get('/tenant-users-for-group', getChatTenantUsersForGroupInvite);
 router.post('/conversations/sync', syncConversations);
